@@ -64,4 +64,16 @@ return [
 
     'route_prefix' => env('MAGIC_STARTER_ROUTE_PREFIX', ''),
 
+    /*
+    |--------------------------------------------------------------------------
+    | Token Expiration
+    |--------------------------------------------------------------------------
+    |
+    | Set the number of minutes until issued tokens expire. Null means
+    | tokens never expire. Configure Sanctum's pruning command to clean
+    | up expired tokens: php artisan sanctum:prune-expired --hours=24
+    |
+    */
+
+    'token_expiration_minutes' => env('MAGIC_STARTER_TOKEN_EXPIRATION', null),
 ];

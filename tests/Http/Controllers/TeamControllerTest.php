@@ -86,7 +86,7 @@ final class TeamControllerTest extends TestCase
 
         $this->app->instance(CreatesTeams::class, new class implements CreatesTeams
         {
-            public function create(mixed $user, array $input): mixed
+            public function create(\Illuminate\Contracts\Auth\Authenticatable $user, array $input): \Illuminate\Database\Eloquent\Model
             {
                 $team = $user->ownedTeams()->create([
                     'name' => $input['name'],
@@ -102,7 +102,7 @@ final class TeamControllerTest extends TestCase
 
         $this->app->instance(UpdatesTeams::class, new class implements UpdatesTeams
         {
-            public function update(mixed $user, mixed $team, array $input): void
+            public function update(\Illuminate\Contracts\Auth\Authenticatable $user, \Illuminate\Database\Eloquent\Model $team, array $input): void
             {
                 $team->update(['name' => $input['name']]);
             }
@@ -110,7 +110,7 @@ final class TeamControllerTest extends TestCase
 
         $this->app->instance(DeletesTeams::class, new class implements DeletesTeams
         {
-            public function delete(mixed $team): void
+            public function delete(\Illuminate\Database\Eloquent\Model $team): void
             {
                 $team->delete();
             }

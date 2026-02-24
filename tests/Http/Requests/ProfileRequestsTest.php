@@ -69,7 +69,7 @@ final class ProfileRequestsTest extends TestCase
 
         \call_user_func('app')->instance(UpdatesUserProfiles::class, new class implements UpdatesUserProfiles
         {
-            public function update(mixed $user, array $input): void
+            public function update(\Illuminate\Contracts\Auth\Authenticatable $user, array $input): void
             {
                 $user->forceFill($input)->save();
             }
@@ -77,7 +77,7 @@ final class ProfileRequestsTest extends TestCase
 
         \call_user_func('app')->instance(UpdatesUserPasswords::class, new class implements UpdatesUserPasswords
         {
-            public function update(mixed $user, array $input): void
+            public function update(\Illuminate\Contracts\Auth\Authenticatable $user, array $input): void
             {
                 $user->forceFill([
                     'password' => \password_hash((string) ($input['password'] ?? ''), PASSWORD_BCRYPT),
@@ -87,7 +87,7 @@ final class ProfileRequestsTest extends TestCase
 
         \call_user_func('app')->instance(DeletesUsers::class, new class implements DeletesUsers
         {
-            public function delete(mixed $user): void
+            public function delete(\Illuminate\Contracts\Auth\Authenticatable $user): void
             {
                 $user->tokens()->delete();
                 $user->delete();

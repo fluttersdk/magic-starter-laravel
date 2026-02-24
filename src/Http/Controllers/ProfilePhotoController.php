@@ -4,6 +4,7 @@ namespace FlutterSdk\MagicStarter\Http\Controllers;
 
 use FlutterSdk\MagicStarter\Http\Requests\UpdateProfilePhotoRequest;
 use FlutterSdk\MagicStarter\Http\Resources\UserResource;
+use Illuminate\Http\Request;
 
 /**
  * Handles profile photo upload and deletion.
@@ -38,13 +39,9 @@ class ProfilePhotoController
 
     /**
      * Delete the authenticated user's profile photo.
-     *
-     * @param  mixed|null  $request
      */
-    public function delete($request = null): UserResource
+    public function delete(Request $request): UserResource
     {
-        $request ??= request();
-
         $user = $request->user();
         $disk = (string) (config('magic-starter.profile_photo_disk')
             ?? config('filesystems.default', 'public'));

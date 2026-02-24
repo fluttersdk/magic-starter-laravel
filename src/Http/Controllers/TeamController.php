@@ -88,25 +88,38 @@ class TeamController
 
         if ($user->allTeams()->count() <= 1) {
             return response()->json([
+                'data' => null,
                 'message' => 'You cannot delete your last team.',
             ], 403);
         }
 
         $teamId = $teamModel->getKey();
-
         $deleter->delete($teamModel);
 
-        if ((string) $user->current_team_id === (string) $teamId) {
-            $user->unsetRelation('ownedTeams')->unsetRelation('teams');
+        // Switch to the next available team if the deleted team was active.
+        $this->switchToNextTeamIfNeeded($user, $teamId);
 
-            $nextTeam = $user->allTeams()->first();
+        return response()->json([
+            'data' => null,
+            'message' => 'Team deleted successfully.',
+        ]);
+    }
 
-            if ($nextTeam) {
-                $user->update(['current_team_id' => $nextTeam->getKey()]);
-            }
+    /**
+     * Switch the user to their next available team if needed.
+     */
+    private function switchToNextTeamIfNeeded(mixed $user, string $deletedTeamId): void
+    {
+        if ((string) $user->current_team_id !== (string) $deletedTeamId) {
+            return;
         }
 
-        return response()->json(['data' => null, 'message' => 'Team deleted successfully.']);
+        $user->unsetRelation('ownedTeams')->unsetRelation('teams');
+        $nextTeam = $user->allTeams()->first();
+
+        if ($nextTeam) {
+            $user->update(['current_team_id' => $nextTeam->getKey()]);
+        }
     }
 
     /**

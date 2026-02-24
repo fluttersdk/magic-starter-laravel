@@ -82,7 +82,7 @@ final class TeamMemberControllerTest extends TestCase
 
         $this->app->instance(AddsTeamMembers::class, new class implements AddsTeamMembers
         {
-            public function add(mixed $user, mixed $team, string $email, string $role): void
+            public function add(\Illuminate\Contracts\Auth\Authenticatable $user, \Illuminate\Database\Eloquent\Model $team, string $email, string $role): void
             {
                 $userClass = MagicStarter::userModel();
                 $member = $userClass::query()->where('email', $email)->firstOrFail();
@@ -92,7 +92,7 @@ final class TeamMemberControllerTest extends TestCase
 
         $this->app->instance(RemovesTeamMembers::class, new class implements RemovesTeamMembers
         {
-            public function remove(mixed $user, mixed $team, mixed $teamMember): void
+            public function remove(\Illuminate\Contracts\Auth\Authenticatable $user, \Illuminate\Database\Eloquent\Model $team, \Illuminate\Database\Eloquent\Model $teamMember): void
             {
                 $team->users()->detach($teamMember->getKey());
             }

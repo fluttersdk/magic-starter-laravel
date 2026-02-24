@@ -429,7 +429,7 @@ final class AuthControllerCurrentAccessToken
 
 final class AuthControllerCreatesUsersAction implements CreatesUsers
 {
-    public function create(array $input): mixed
+    public function create(array $input): \Illuminate\Contracts\Auth\Authenticatable
     {
         $model = MagicStarter::userModel();
 

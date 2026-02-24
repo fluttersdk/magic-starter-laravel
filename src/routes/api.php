@@ -30,6 +30,9 @@ Route::prefix((string) config('magic-starter.route_prefix', ''))
             Route::post('reset-password', [PasswordResetController::class, 'reset']);
         });
 
+        // To require email verification on protected routes, add the 'verified'
+        // middleware: Route::middleware(['auth:sanctum', 'verified'])->group(...)
+        // Your User model must implement MustVerifyEmail.
         Route::middleware('auth:sanctum')->group(function (): void {
             Route::prefix('auth')->group(function (): void {
                 Route::post('logout', [AuthController::class, 'logout']);

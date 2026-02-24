@@ -87,7 +87,7 @@ final class TeamInvitationControllerTest extends TestCase
 
         $this->app->instance(InvitesTeamMembers::class, new class implements InvitesTeamMembers
         {
-            public function invite(mixed $user, mixed $team, string $email, string $role): mixed
+            public function invite(\Illuminate\Contracts\Auth\Authenticatable $user, \Illuminate\Database\Eloquent\Model $team, string $email, string $role): \Illuminate\Database\Eloquent\Model
             {
                 return $team->invitations()->create([
                     'email' => $email,

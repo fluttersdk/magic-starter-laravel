@@ -89,7 +89,7 @@ final class AuthRequestsTest extends TestCase
         $this->app->bind(CreatesUsers::class, function () {
             return new class implements CreatesUsers
             {
-                public function create(array $input): mixed
+                public function create(array $input): \Illuminate\Contracts\Auth\Authenticatable
                 {
                     $model = MagicStarter::userModel();
 
