@@ -1,14 +1,15 @@
 <?php
 
+declare(strict_types=1);
+
 namespace FlutterSdk\MagicStarter\Http\Requests;
 
-use FlutterSdk\MagicStarter\Enums\Role;
 use Illuminate\Foundation\Http\FormRequest;
 
 /**
- * Validates the request to add a new member to a team.
+ * Validates team photo upload requests.
  */
-class StoreTeamMemberRequest extends FormRequest
+class UpdateTeamPhotoRequest extends FormRequest
 {
     /**
      * Determine if the user is authorized to make this request.
@@ -19,15 +20,18 @@ class StoreTeamMemberRequest extends FormRequest
     }
 
     /**
-     * Get the validation rules that apply to the team member creation request.
+     * Get the validation rules for the team photo upload.
      *
      * @return array<string, mixed>
      */
     public function rules(): array
     {
         return [
-            'email' => ['required', 'email', 'max:255'],
-            'role' => ['required', 'string', 'in:' . Role::assignableForValidation()],
+            'photo' => [
+                'required',
+                'image',
+                'max:2048',
+            ],
         ];
     }
 }

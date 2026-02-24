@@ -27,7 +27,7 @@ class RegisterRequest extends FormRequest
             'name' => ['required', 'string', 'max:255'],
             'email' => ['required', 'string', 'email', 'max:255', Rule::unique((new (MagicStarter::userModel()))->getTable(), 'email')],
             'password' => ['required', 'string', 'min:8', 'confirmed'],
-            'subscribe_newsletter' => ['nullable', 'boolean'],
+
             'locale' => ['nullable', 'string', 'max:5'],
             'timezone' => ['nullable', 'string', 'timezone'],
         ];

@@ -118,22 +118,7 @@ final class TeamMemberControllerTest extends TestCase
         $this->assertTrue(\call_user_func('collect', $response->json('data'))->contains('role', 'editor'));
     }
 
-    public function test_store_adds_member_via_contract_action(): void
-    {
-        $owner = TeamMemberControllerTestUser::query()->create(['name' => 'Owner', 'email' => 'owner@test.dev']);
-        $newMember = TeamMemberControllerTestUser::query()->create(['name' => 'Member', 'email' => 'member@test.dev']);
-        $team = TeamMemberControllerTestTeam::query()->create(['user_id' => $owner->id, 'name' => 'A Team', 'personal_team' => false]);
 
-        $this->actingAs($owner)
-            ->postJson('/teams/' . $team->id . '/members', [
-                'email' => $newMember->email,
-                'role' => 'member',
-            ])
-            ->assertOk()
-            ->assertJsonPath('message', 'Team member added successfully.');
-
-        $this->assertTrue($team->fresh()->users()->where('user_id', $newMember->id)->exists());
-    }
 
     public function test_update_changes_member_role(): void
     {
@@ -185,21 +170,7 @@ final class TeamMemberControllerTest extends TestCase
         $this->assertSame($teamB->id, $member->fresh()->current_team_id);
     }
 
-    public function test_store_returns_403_for_non_owner(): void
-    {
-        $owner = TeamMemberControllerTestUser::query()->create(['name' => 'Owner', 'email' => 'owner@test.dev']);
-        $member = TeamMemberControllerTestUser::query()->create(['name' => 'Member', 'email' => 'member@test.dev']);
-        $newUser = TeamMemberControllerTestUser::query()->create(['name' => 'New', 'email' => 'new@test.dev']);
-        $team = TeamMemberControllerTestTeam::query()->create(['user_id' => $owner->id, 'name' => 'A Team', 'personal_team' => false]);
-        $team->users()->attach($member->id, ['role' => 'member']);
-        $this->actingAs($member)
-            ->postJson('/teams/' . $team->id . '/members', [
-                'email' => $newUser->email,
-                'role' => 'member',
-            ])
-            ->assertStatus(403);
-        $this->assertFalse($team->fresh()->users()->where('user_id', $newUser->id)->exists());
-    }
+
 
     public function test_update_returns_403_when_changing_owner_role(): void
     {

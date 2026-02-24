@@ -37,7 +37,11 @@ Route::prefix((string) config('magic-starter.route_prefix', ''))
             });
 
             if (Features::enabled(Features::teams())) {
-                Route::apiResource('teams', TeamController::class);
+                Route::get('teams', [TeamController::class, 'index']);
+                Route::post('teams', [TeamController::class, 'store']);
+                Route::get('teams/{team}', [TeamController::class, 'show']);
+                Route::put('teams/{team}', [TeamController::class, 'update']);
+                Route::delete('teams/{team}', [TeamController::class, 'destroy']);
 
                 Route::prefix('teams/{team}')->group(function (): void {
                     Route::get('invitations', [TeamInvitationController::class, 'index']);

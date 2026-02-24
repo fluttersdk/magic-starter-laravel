@@ -31,7 +31,7 @@ return [
 
     'models' => [
         'user' => env('MAGIC_STARTER_USER_MODEL'),
-        'team' => env('MAGIC_STARTER_TEAM_MODEL'),
+        'team' => env('MAGIC_STARTER_TEAM_MODEL', \FlutterSdk\MagicStarter\Models\Team::class),
     ],
 
     'profile_photo_disk' => env('MAGIC_STARTER_PROFILE_PHOTO_DISK', 'public'),

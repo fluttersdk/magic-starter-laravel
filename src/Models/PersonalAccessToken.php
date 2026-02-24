@@ -2,7 +2,9 @@
 
 namespace FlutterSdk\MagicStarter\Models;
 
+use FlutterSdk\MagicStarter\Database\Factories\PersonalAccessTokenFactory;
 use Illuminate\Database\Eloquent\Concerns\HasUuids;
+use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 
 /**
@@ -21,6 +23,7 @@ use Illuminate\Database\Eloquent\Model;
  */
 class PersonalAccessToken extends Model
 {
+    use HasFactory;
     use HasUuids;
 
     public $incrementing = false;
@@ -28,4 +31,12 @@ class PersonalAccessToken extends Model
     protected $keyType = 'string';
 
     protected $table = 'personal_access_tokens';
+
+    /**
+     * Create a new factory instance for the model.
+     */
+    protected static function newFactory(): PersonalAccessTokenFactory
+    {
+        return PersonalAccessTokenFactory::new();
+    }
 }

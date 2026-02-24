@@ -2,10 +2,8 @@
 
 namespace FlutterSdk\MagicStarter\Http\Controllers;
 
-use FlutterSdk\MagicStarter\Contracts\AddsTeamMembers;
 use FlutterSdk\MagicStarter\Contracts\RemovesTeamMembers;
 use FlutterSdk\MagicStarter\Enums\Role;
-use FlutterSdk\MagicStarter\Http\Requests\StoreTeamMemberRequest;
 use FlutterSdk\MagicStarter\Http\Requests\UpdateTeamMemberRequest;
 use FlutterSdk\MagicStarter\Http\Resources\TeamMemberResource;
 use FlutterSdk\MagicStarter\MagicStarter;
@@ -38,23 +36,6 @@ class TeamMemberController
         $allMembers = collect([$owner])->merge($members)->unique('id')->filter();
 
         return TeamMemberResource::collection($allMembers);
-    }
-
-    /**
-     * Add a new member to the specified team.
-     */
-    public function store(StoreTeamMemberRequest $request, string $team): JsonResponse
-    {
-        $adder = app(AddsTeamMembers::class);
-        $teamModel = $this->findTeam($team);
-        $user = $request->user();
-        Gate::forUser($user)->authorize('manageMembers', $teamModel);
-
-        $validated = $request->validated();
-
-        $adder->add($user, $teamModel, $validated['email'], $validated['role']);
-
-        return response()->json(['message' => 'Team member added successfully.']);
     }
 
     /**
