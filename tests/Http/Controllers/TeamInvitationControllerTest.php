@@ -69,6 +69,7 @@ final class TeamInvitationControllerTest extends TestCase
             $table->string('email');
             $table->string('role')->nullable()->default('member');
             $table->string('token')->unique();
+            $table->timestamp('expires_at')->nullable();
             $table->timestamps();
         });
 
@@ -164,6 +165,45 @@ final class TeamInvitationControllerTest extends TestCase
 
         $this->assertTrue($team->fresh()->users()->where('user_id', $invitee->id)->exists());
         $this->assertSame('admin', $team->fresh()->users()->find($invitee->id)?->pivot?->role);
+        $this->assertNull(TeamInvitation::query()->find($invitation->id));
+    }
+
+    public function test_accept_rejects_when_email_does_not_match(): void
+    {
+        $owner = TeamInvitationControllerTestUser::query()->create(['name' => 'Owner', 'email' => 'owner@test.dev']);
+        $team = TeamInvitationControllerTestTeam::query()->create(['user_id' => $owner->id, 'name' => 'A Team', 'personal_team' => false]);
+        $team->invitations()->create([
+            'email' => 'invitee@test.dev',
+            'role' => 'admin',
+            'token' => 'accept-token',
+        ]);
+
+        $otherUser = TeamInvitationControllerTestUser::query()->create(['name' => 'Other', 'email' => 'other@test.dev']);
+
+        $this->actingAs($otherUser)
+            ->postJson('/invitations/accept-token/accept')
+            ->assertStatus(403)
+            ->assertJsonPath('message', 'This invitation was sent to a different email address.');
+    }
+
+    public function test_accept_rejects_expired_invitation(): void
+    {
+        $owner = TeamInvitationControllerTestUser::query()->create(['name' => 'Owner', 'email' => 'owner@test.dev']);
+        $team = TeamInvitationControllerTestTeam::query()->create(['user_id' => $owner->id, 'name' => 'A Team', 'personal_team' => false]);
+        $invitation = $team->invitations()->create([
+            'email' => 'invitee@test.dev',
+            'role' => 'admin',
+            'token' => 'accept-token',
+            'expires_at' => now()->subDay(),
+        ]);
+
+        $invitee = TeamInvitationControllerTestUser::query()->create(['name' => 'Invitee', 'email' => 'invitee@test.dev']);
+
+        $this->actingAs($invitee)
+            ->postJson('/invitations/accept-token/accept')
+            ->assertStatus(410)
+            ->assertJsonPath('message', 'This invitation has expired.');
+
         $this->assertNull(TeamInvitation::query()->find($invitation->id));
     }
 

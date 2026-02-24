@@ -108,7 +108,7 @@ final class ProfileRequestsTest extends TestCase
             'phone' => '+1234567890',
             'timezone' => 'UTC',
             'language' => 'en',
-            'password' => Hash::make('password123'),
+            'password' => Hash::make('Password123'),
         ]);
     }
 
@@ -194,7 +194,7 @@ final class ProfileRequestsTest extends TestCase
 
         $this->actingAs($user)
             ->putJson('/user/password', [
-                'current_password' => 'password123',
+                'current_password' => 'Password123',
             ])
             ->assertUnprocessable()
             ->assertJsonValidationErrors(['password']);

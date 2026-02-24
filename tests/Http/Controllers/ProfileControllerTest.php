@@ -126,21 +126,21 @@ final class ProfileControllerTest extends TestCase
         $user = ProfileControllerTestUser::query()->create([
             'name' => 'User',
             'email' => 'user@example.test',
-            'password' => \password_hash('old-password', PASSWORD_BCRYPT),
+            'password' => \password_hash('Old-Password-123', PASSWORD_BCRYPT),
         ]);
 
         $this->actingAs($user)
             ->putJson('/user/password', [
-                'current_password' => 'old-password',
-                'password' => 'new-password-123',
-                'password_confirmation' => 'new-password-123',
+                'current_password' => 'Old-Password-123',
+                'password' => 'New-Password-123',
+                'password_confirmation' => 'New-Password-123',
             ])
             ->assertOk()
             ->assertJson([
                 'message' => 'Password updated successfully.',
             ]);
 
-        $this->assertTrue(\password_verify('new-password-123', (string) $user->fresh()->password));
+        $this->assertTrue(\password_verify('New-Password-123', (string) $user->fresh()->password));
     }
 
     public function test_destroy_deletes_user_and_revokes_all_tokens(): void

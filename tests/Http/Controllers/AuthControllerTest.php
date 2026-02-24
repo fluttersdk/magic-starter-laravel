@@ -120,8 +120,8 @@ class AuthControllerTest extends TestCase
         $response = $this->postJson('/register', [
             'name' => 'John Doe',
             'email' => 'john@example.com',
-            'password' => 'password123',
-            'password_confirmation' => 'password123',
+            'password' => 'Password123',
+            'password_confirmation' => 'Password123',
             'locale' => 'en',
             'timezone' => 'UTC',
         ]);
@@ -142,14 +142,14 @@ class AuthControllerTest extends TestCase
             'id' => (string) Str::uuid(),
             'name' => 'Jane Doe',
             'email' => 'jane@example.com',
-            'password' => Hash::make('password123'),
+            'password' => Hash::make('Password123'),
             'locale' => 'en',
             'timezone' => 'UTC',
         ]);
 
         $response = $this->postJson('/login', [
             'email' => 'jane@example.com',
-            'password' => 'password123',
+            'password' => 'Password123',
         ]);
 
         $response
@@ -206,7 +206,7 @@ class AuthControllerTest extends TestCase
             'id' => (string) Str::uuid(),
             'name' => 'Logout User',
             'email' => 'logout@example.com',
-            'password' => Hash::make('password123'),
+            'password' => Hash::make('Password123'),
             'locale' => 'en',
             'timezone' => 'UTC',
         ]);
@@ -228,7 +228,7 @@ class AuthControllerTest extends TestCase
             'id' => (string) Str::uuid(),
             'name' => 'Current User',
             'email' => 'current@example.com',
-            'password' => Hash::make('password123'),
+            'password' => Hash::make('Password123'),
             'locale' => 'en',
             'timezone' => 'UTC',
         ]);
@@ -257,7 +257,7 @@ class AuthControllerTest extends TestCase
             'id' => (string) Str::uuid(),
             'name' => 'Switch User',
             'email' => 'switch@example.com',
-            'password' => Hash::make('password123'),
+            'password' => Hash::make('Password123'),
             'locale' => 'en',
             'timezone' => 'UTC',
         ]);
@@ -281,6 +281,41 @@ class AuthControllerTest extends TestCase
         $this->assertSame($team->id, $user->fresh()->current_team_id);
     }
 
+    public function test_switch_team_rejects_non_member(): void
+    {
+        $user = AuthControllerTestUser::query()->create([
+            'id' => (string) Str::uuid(),
+            'name' => 'Switch User',
+            'email' => 'switch2@example.com',
+            'password' => Hash::make('Password123'),
+            'locale' => 'en',
+            'timezone' => 'UTC',
+        ]);
+
+        $otherUser = AuthControllerTestUser::query()->create([
+            'id' => (string) Str::uuid(),
+            'name' => 'Other User',
+            'email' => 'other@example.com',
+            'password' => Hash::make('Password123'),
+            'locale' => 'en',
+            'timezone' => 'UTC',
+        ]);
+
+        $team = AuthControllerTestTeam::query()->create([
+            'id' => (string) Str::uuid(),
+            'user_id' => $otherUser->id,
+            'name' => 'Other Team',
+            'personal_team' => false,
+        ]);
+
+        $response = $this->actingAs($user)->postJson('/switch-team', [
+            'team_id' => $team->id,
+        ]);
+
+        $response
+            ->assertStatus(403)
+            ->assertJsonPath('message', 'You are not a member of this team.');
+    }
     public function test_login_returns_401_for_wrong_password(): void
     {
         AuthControllerTestUser::query()->create([
@@ -293,7 +328,7 @@ class AuthControllerTest extends TestCase
         ]);
         $this->postJson('/login', [
             'email' => 'jane@example.com',
-            'password' => 'wrong-password',
+            'password' => 'Wrong-Password-123',
         ])
             ->assertStatus(401)
             ->assertJsonPath('message', 'Invalid credentials');

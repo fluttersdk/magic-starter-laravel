@@ -4,8 +4,8 @@ namespace FlutterSdk\MagicStarter\Http\Requests;
 
 use Illuminate\Foundation\Http\FormRequest;
 use Illuminate\Support\Facades\Hash;
+use Illuminate\Validation\Rules\Password;
 use Illuminate\Validation\Validator;
-
 class UpdatePasswordRequest extends FormRequest
 {
     /**
@@ -25,7 +25,12 @@ class UpdatePasswordRequest extends FormRequest
     {
         return [
             'current_password' => ['required', 'string'],
-            'password' => ['required', 'string', 'min:8', 'confirmed'],
+            'password' => [
+                'required',
+                'string',
+                Password::min(8)->letters()->numbers()->mixedCase(),
+                'confirmed',
+            ],
         ];
     }
 

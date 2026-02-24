@@ -4,8 +4,8 @@ namespace FlutterSdk\MagicStarter\Http\Requests;
 
 use FlutterSdk\MagicStarter\MagicStarter;
 use Illuminate\Foundation\Http\FormRequest;
+use Illuminate\Validation\Rules\Password;
 use Illuminate\Validation\Rule;
-
 class RegisterRequest extends FormRequest
 {
     /**
@@ -26,8 +26,12 @@ class RegisterRequest extends FormRequest
         return [
             'name' => ['required', 'string', 'max:255'],
             'email' => ['required', 'string', 'email', 'max:255', Rule::unique((new (MagicStarter::userModel()))->getTable(), 'email')],
-            'password' => ['required', 'string', 'min:8', 'confirmed'],
-
+            'password' => [
+                'required',
+                'string',
+                Password::min(8)->letters()->numbers()->mixedCase(),
+                'confirmed',
+            ],
             'locale' => ['nullable', 'string', 'max:5'],
             'timezone' => ['nullable', 'string', 'timezone'],
         ];

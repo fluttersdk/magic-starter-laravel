@@ -121,8 +121,8 @@ final class AuthRequestsTest extends TestCase
     {
         $this->postJson('/auth/register', [
             'email' => 'john@example.com',
-            'password' => 'password123',
-            'password_confirmation' => 'password123',
+            'password' => 'Password123',
+            'password_confirmation' => 'Password123',
         ])
             ->assertUnprocessable()
             ->assertJsonValidationErrors(['name']);
@@ -133,8 +133,8 @@ final class AuthRequestsTest extends TestCase
         $this->postJson('/auth/register', [
             'name' => 'John Doe',
             'email' => 'not-an-email',
-            'password' => 'password123',
-            'password_confirmation' => 'password123',
+            'password' => 'Password123',
+            'password_confirmation' => 'Password123',
         ])
             ->assertUnprocessable()
             ->assertJsonValidationErrors(['email']);
@@ -145,19 +145,48 @@ final class AuthRequestsTest extends TestCase
         $this->postJson('/auth/register', [
             'name' => 'John Doe',
             'email' => 'john@example.com',
-            'password' => 'short',
-            'password_confirmation' => 'short',
+            'password' => 'Short12',
+            'password_confirmation' => 'Short12',
         ])
             ->assertUnprocessable()
             ->assertJsonValidationErrors(['password']);
     }
 
+    public function test_register_rejects_weak_password(): void
+    {
+        $this->postJson('/auth/register', [
+            'name' => 'John Doe',
+            'email' => 'john@example.com',
+            'password' => 'alllowercase123',
+            'password_confirmation' => 'alllowercase123',
+        ])
+            ->assertUnprocessable()
+            ->assertJsonValidationErrors(['password']);
+
+        $this->postJson('/auth/register', [
+            'name' => 'John Doe',
+            'email' => 'john@example.com',
+            'password' => 'ALLUPPERCASE123',
+            'password_confirmation' => 'ALLUPPERCASE123',
+        ])
+            ->assertUnprocessable()
+            ->assertJsonValidationErrors(['password']);
+
+        $this->postJson('/auth/register', [
+            'name' => 'John Doe',
+            'email' => 'john@example.com',
+            'password' => 'NoNumbersHere',
+            'password_confirmation' => 'NoNumbersHere',
+        ])
+            ->assertUnprocessable()
+            ->assertJsonValidationErrors(['password']);
+    }
     public function test_register_missing_password_confirmation_returns_422(): void
     {
         $this->postJson('/auth/register', [
             'name' => 'John Doe',
             'email' => 'john@example.com',
-            'password' => 'password123',
+            'password' => 'Password123',
         ])
             ->assertUnprocessable()
             ->assertJsonValidationErrors(['password']);
@@ -168,14 +197,14 @@ final class AuthRequestsTest extends TestCase
         AuthRequestsTestUser::query()->create([
             'name' => 'Existing',
             'email' => 'taken@example.com',
-            'password' => Hash::make('password123'),
+            'password' => Hash::make('Password123'),
         ]);
 
         $this->postJson('/auth/register', [
             'name' => 'John Doe',
             'email' => 'taken@example.com',
-            'password' => 'password123',
-            'password_confirmation' => 'password123',
+            'password' => 'Password123',
+            'password_confirmation' => 'Password123',
         ])
             ->assertUnprocessable()
             ->assertJsonValidationErrors(['email']);
@@ -186,8 +215,8 @@ final class AuthRequestsTest extends TestCase
         $this->postJson('/auth/register', [
             'name' => 'John Doe',
             'email' => 'john@example.com',
-            'password' => 'password123',
-            'password_confirmation' => 'password123',
+            'password' => 'Password123',
+            'password_confirmation' => 'Password123',
         ])
             ->assertCreated()
             ->assertJsonPath('data.user.email', 'john@example.com');
@@ -196,7 +225,7 @@ final class AuthRequestsTest extends TestCase
     public function test_login_missing_email_returns_422(): void
     {
         $this->postJson('/auth/login', [
-            'password' => 'password123',
+            'password' => 'Password123',
         ])
             ->assertUnprocessable()
             ->assertJsonValidationErrors(['email']);
@@ -215,7 +244,7 @@ final class AuthRequestsTest extends TestCase
     {
         $this->postJson('/auth/login', [
             'email' => 'not-valid',
-            'password' => 'password123',
+            'password' => 'Password123',
         ])
             ->assertUnprocessable()
             ->assertJsonValidationErrors(['email']);
@@ -281,7 +310,7 @@ final class AuthRequestsTest extends TestCase
         $user = AuthRequestsTestUser::query()->create([
             'name' => 'User',
             'email' => 'user@example.com',
-            'password' => Hash::make('password123'),
+            'password' => Hash::make('Password123'),
         ]);
 
         $this->actingAs($user)
@@ -294,7 +323,7 @@ final class AuthRequestsTest extends TestCase
         $user = AuthRequestsTestUser::query()->create([
             'name' => 'User',
             'email' => 'user2@example.com',
-            'password' => Hash::make('password123'),
+            'password' => Hash::make('Password123'),
         ]);
 
         $this->actingAs($user)

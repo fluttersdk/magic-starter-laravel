@@ -71,7 +71,7 @@ class PasswordResetControllerTest extends TestCase
     public function test_reset_returns_ok_when_password_is_reset(): void
     {
         $user = new PasswordResetTestUser;
-        $user->password = Hash::make('old-password');
+        $user->password = Hash::make('Old-Password-123');
 
         Password::shouldReceive('reset')
             ->once()
@@ -84,15 +84,15 @@ class PasswordResetControllerTest extends TestCase
         $response = $this->postJson('/reset-password', [
             'token' => 'token-1',
             'email' => 'john@example.com',
-            'password' => 'new-password-123',
-            'password_confirmation' => 'new-password-123',
+            'password' => 'New-Password-123',
+            'password_confirmation' => 'New-Password-123',
         ]);
 
         $response
             ->assertOk()
             ->assertJsonPath('message', __((string) Password::PASSWORD_RESET));
 
-        $this->assertTrue(Hash::check('new-password-123', $user->password));
+        $this->assertTrue(Hash::check('New-Password-123', $user->password));
         $this->assertNotNull($user->remember_token);
         $this->assertTrue($user->saved);
     }
@@ -106,8 +106,8 @@ class PasswordResetControllerTest extends TestCase
         $response = $this->postJson('/reset-password', [
             'token' => 'invalid-token',
             'email' => 'john@example.com',
-            'password' => 'new-password-123',
-            'password_confirmation' => 'new-password-123',
+            'password' => 'New-Password-123',
+            'password_confirmation' => 'New-Password-123',
         ]);
 
         $response

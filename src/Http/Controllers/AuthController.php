@@ -151,10 +151,18 @@ class AuthController
      */
     public function switchTeam(SwitchTeamRequest $request): JsonResponse
     {
-        $request->user()->update([
-            'current_team_id' => $request->validated('team_id'),
-        ]);
+        $teamId = $request->validated('team_id');
+        $user = $request->user();
 
+        if (! $user->allTeams()->contains('id', $teamId)) {
+            return response()->json([
+                'message' => 'You are not a member of this team.',
+            ], 403);
+        }
+
+        $user->update([
+            'current_team_id' => $teamId,
+        ]);
         return response()->json([
             'data' => new UserResource($request->user()->fresh()),
             'message' => 'Team switched successfully',

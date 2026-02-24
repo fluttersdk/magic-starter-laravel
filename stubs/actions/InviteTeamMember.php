@@ -16,6 +16,7 @@ class InviteTeamMember implements InvitesTeamMembers
     {
         // TODO: Implement team member invitation logic.
         // Example: create invitation record, send invitation email, return invitation.
+        // Set expiry: $invitation->expires_at = now()->addDays(config('magic-starter.invitation_expiry_days', 7));
         throw new \RuntimeException('InviteTeamMember action not implemented. Publish and implement this stub.');
     }
 }

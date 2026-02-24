@@ -2,8 +2,8 @@
 
 namespace FlutterSdk\MagicStarter\Http\Requests;
 
+use Illuminate\Validation\Rules\Password;
 use Illuminate\Foundation\Http\FormRequest;
-
 class ResetPasswordRequest extends FormRequest
 {
     /**
@@ -24,7 +24,11 @@ class ResetPasswordRequest extends FormRequest
         return [
             'token' => ['required'],
             'email' => ['required', 'email'],
-            'password' => ['required', 'confirmed', 'min:8'],
+            'password' => [
+                'required',
+                'confirmed',
+                Password::min(8)->letters()->numbers()->mixedCase(),
+            ],
         ];
     }
 }

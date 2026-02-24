@@ -83,6 +83,19 @@ class TeamInvitationController
 
         $user = request()->user();
 
+        if (mb_strtolower($invitation->email) !== mb_strtolower($user->email)) {
+            return response()->json([
+                'message' => 'This invitation was sent to a different email address.',
+            ], 403);
+        }
+
+        if ($invitation->isExpired()) {
+            $invitation->delete();
+
+            return response()->json([
+                'message' => 'This invitation has expired.',
+            ], 410);
+        }
         if ($invitation->team->users()->where('user_id', $user->id)->exists() || (string) $invitation->team->user_id === (string) $user->id) {
             $invitation->delete();
 
