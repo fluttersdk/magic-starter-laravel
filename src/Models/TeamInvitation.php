@@ -13,9 +13,8 @@ use Illuminate\Database\Eloquent\Relations\BelongsTo;
  * @property string $email
  * @property string $role
  * @property string $token
+ * @property \Illuminate\Support\Carbon|null $expires_at
  * @property \Illuminate\Support\Carbon|null $created_at
- * @property \Illuminate\Support\Carbon|null $updated_at
- * @property-read  \FlutterSdk\MagicStarter\Models\Team  $team
  */
 class TeamInvitation extends Model
 {
