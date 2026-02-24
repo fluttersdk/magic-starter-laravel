@@ -1,0 +1,68 @@
+includes:
+    - vendor/larastan/larastan/extension.neon
+
+parameters:
+    paths:
+        - src/
+    level: 6
+    treatPhpDocTypesAsCertain: false
+    ignoreErrors:
+        # JsonResource magic property access ($this->id, $this->name, etc.)
+        -
+            identifier: property.notFound
+            path: src/Http/Resources/*
+
+
+        # User model methods from HasTeams/HasApiTokens traits (applied by consumer)
+        -
+            identifier: method.notFound
+            path: src/Http/Controllers/*
+        -
+            identifier: method.notFound
+            path: src/Http/Resources/*
+        -
+            identifier: property.notFound
+            path: src/Http/Controllers/*
+
+
+        # Traits analysed in isolation — used by consumer's User model
+        -
+            identifier: trait.unused
+            path: src/Traits/*
+
+        # Fluent API returns new static() — intentional pattern
+        -
+            identifier: new.static
+            path: src/MagicStarter.php
+
+        # Contract params intentionally use untyped array (consumer-defined shape)
+        -
+            identifier: missingType.iterableValue
+            path: src/Contracts/*
+        -
+            identifier: missingType.iterableValue
+            path: src/Features.php
+
+        # Eloquent generic type resolution (belongsTo, belongsToMany with dynamic models)
+        -
+            identifier: argument.templateType
+            path: src/Models/*
+        -
+            identifier: return.type
+            path: src/Models/*
+        -
+            identifier: missingType.generics
+            path: src/Models/*
+        -
+            identifier: missingType.iterableValue
+            path: src/Models/*
+
+        # Socialite provider method (userFromToken exists at runtime)
+        -
+            message: '#Call to an undefined method Laravel\\Socialite\\Contracts\\Provider::userFromToken#'
+            path: src/Http/Controllers/AuthController.php
+
+        # Nullsafe on pivot role — defensive, not harmful
+        -
+            identifier: nullsafe.neverNull
+            path: src/Http/Resources/*

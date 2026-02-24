@@ -1,0 +1,153 @@
+<?php
+
+declare(strict_types=1);
+
+namespace FlutterSdk\MagicStarter\Tests\Http\Controllers;
+
+use FlutterSdk\MagicStarter\Http\Controllers\PasswordResetController;
+use FlutterSdk\MagicStarter\MagicStarter;
+use FlutterSdk\MagicStarter\Tests\TestCase;
+use Illuminate\Support\Facades\Hash;
+use Illuminate\Support\Facades\Password;
+use Illuminate\Support\Facades\Route;
+use Mockery;
+
+class PasswordResetControllerTest extends TestCase
+{
+    protected function setUp(): void
+    {
+        parent::setUp();
+
+        MagicStarter::reset();
+
+        config([
+            'magic-starter.models.user' => PasswordResetControllerTestUser::class,
+            'magic-starter.models.team' => PasswordResetControllerTestTeam::class,
+        ]);
+
+        Route::post('/forgot-password', [PasswordResetController::class, 'sendResetLinkEmail']);
+        Route::post('/reset-password', [PasswordResetController::class, 'reset']);
+    }
+
+    protected function tearDown(): void
+    {
+        Mockery::close();
+        MagicStarter::reset();
+        parent::tearDown();
+    }
+
+    public function test_send_reset_link_email_returns_ok_when_broker_succeeds(): void
+    {
+        Password::shouldReceive('sendResetLink')
+            ->once()
+            ->with(['email' => 'john@example.com'])
+            ->andReturn(Password::RESET_LINK_SENT);
+
+        $response = $this->postJson('/forgot-password', [
+            'email' => 'john@example.com',
+        ]);
+
+        $response
+            ->assertOk()
+            ->assertJsonPath('message', __((string) Password::RESET_LINK_SENT));
+    }
+
+    public function test_send_reset_link_email_returns_bad_request_when_broker_fails(): void
+    {
+        Password::shouldReceive('sendResetLink')
+            ->once()
+            ->with(['email' => 'missing@example.com'])
+            ->andReturn(Password::INVALID_USER);
+
+        $response = $this->postJson('/forgot-password', [
+            'email' => 'missing@example.com',
+        ]);
+
+        $response
+            ->assertStatus(400)
+            ->assertJsonPath('message', __((string) Password::INVALID_USER));
+    }
+
+    public function test_reset_returns_ok_when_password_is_reset(): void
+    {
+        $user = new PasswordResetTestUser;
+        $user->password = Hash::make('old-password');
+
+        Password::shouldReceive('reset')
+            ->once()
+            ->andReturnUsing(function (array $credentials, callable $callback) use ($user): string {
+                $callback($user, $credentials['password']);
+
+                return Password::PASSWORD_RESET;
+            });
+
+        $response = $this->postJson('/reset-password', [
+            'token' => 'token-1',
+            'email' => 'john@example.com',
+            'password' => 'new-password-123',
+            'password_confirmation' => 'new-password-123',
+        ]);
+
+        $response
+            ->assertOk()
+            ->assertJsonPath('message', __((string) Password::PASSWORD_RESET));
+
+        $this->assertTrue(Hash::check('new-password-123', $user->password));
+        $this->assertNotNull($user->remember_token);
+        $this->assertTrue($user->saved);
+    }
+
+    public function test_reset_returns_bad_request_when_broker_fails(): void
+    {
+        Password::shouldReceive('reset')
+            ->once()
+            ->andReturn(Password::INVALID_TOKEN);
+
+        $response = $this->postJson('/reset-password', [
+            'token' => 'invalid-token',
+            'email' => 'john@example.com',
+            'password' => 'new-password-123',
+            'password_confirmation' => 'new-password-123',
+        ]);
+
+        $response
+            ->assertStatus(400)
+            ->assertJsonPath('message', __((string) Password::INVALID_TOKEN));
+    }
+}
+
+final class PasswordResetTestUser
+{
+    public ?string $password = null;
+
+    public ?string $remember_token = null;
+
+    public bool $saved = false;
+
+    public function forceFill(array $attributes): self
+    {
+        if (array_key_exists('password', $attributes)) {
+            $this->password = $attributes['password'];
+        }
+
+        return $this;
+    }
+
+    public function setRememberToken(string $value): self
+    {
+        $this->remember_token = $value;
+
+        return $this;
+    }
+
+    public function save(): bool
+    {
+        $this->saved = true;
+
+        return true;
+    }
+}
+
+final class PasswordResetControllerTestUser {}
+
+final class PasswordResetControllerTestTeam {}

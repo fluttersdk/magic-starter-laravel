@@ -1,0 +1,70 @@
+<?php
+
+namespace FlutterSdk\MagicStarter\Traits;
+
+use FlutterSdk\MagicStarter\MagicStarter;
+
+trait HasTeams
+{
+    /**
+     * Get all of the teams the user owns.
+     *
+     * @return \Illuminate\Database\Eloquent\Relations\HasMany<\Illuminate\Database\Eloquent\Model, $this>
+     */
+    public function ownedTeams()
+    {
+        return $this->hasMany(MagicStarter::teamModel(), 'user_id');
+    }
+
+    /**
+     * Get all of the teams the user belongs to.
+     *
+     * @return \Illuminate\Database\Eloquent\Relations\BelongsToMany<\Illuminate\Database\Eloquent\Model, $this>
+     */
+    public function teams()
+    {
+        $relationship = $this->belongsToMany(MagicStarter::teamModel(), 'team_user', 'user_id', 'team_id');
+
+        if (class_exists('FlutterSdk\\MagicStarter\\Models\\TeamUser')) {
+            $relationship->using('FlutterSdk\\MagicStarter\\Models\\TeamUser');
+        }
+
+        return $relationship;
+    }
+
+    /**
+     * Get the user's personal team.
+     */
+    public function personalTeam(): mixed
+    {
+        return $this->ownedTeams->where('personal_team', true)->first();
+    }
+
+    /**
+     * Get the current team of the user.
+     *
+     * @return \Illuminate\Database\Eloquent\Relations\BelongsTo<\Illuminate\Database\Eloquent\Model, $this>
+     */
+    public function currentTeam()
+    {
+        return $this->belongsTo(MagicStarter::teamModel(), 'current_team_id');
+    }
+
+    /**
+     * Get all of the teams the user owns or belongs to.
+     *
+     * @return \Illuminate\Support\Collection<int, \Illuminate\Database\Eloquent\Model>
+     */
+    public function allTeams()
+    {
+        return $this->ownedTeams->merge($this->teams)->sortBy('name');
+    }
+
+    /**
+     * Get the current team or fall back to the personal team.
+     */
+    public function getCurrentTeamOrPersonal(): mixed
+    {
+        return $this->currentTeam ?? $this->personalTeam();
+    }
+}

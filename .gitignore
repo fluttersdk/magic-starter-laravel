@@ -1,0 +1,13 @@
+vendor/
+.phpunit.result.cache
+.phpunit.cache/
+composer.lock
+
+**/AGENTS.md
+CLAUDE.md
+.claude/
+.opencode/
+.sisyphus/
+.agent
+.omc/
+.mcp.json
