@@ -45,6 +45,13 @@ return [
     ],
 
     'profile_photo_disk' => env('MAGIC_STARTER_PROFILE_PHOTO_DISK', 'public'),
+    'profile_photo_path' => env('MAGIC_STARTER_PROFILE_PHOTO_PATH', 'profile-photos'),
+    'team_photo_path' => env('MAGIC_STARTER_TEAM_PHOTO_PATH', 'team-photos'),
+
+    'defaults' => [
+        'locale' => env('MAGIC_STARTER_DEFAULT_LOCALE', 'en'),
+        'timezone' => env('MAGIC_STARTER_DEFAULT_TIMEZONE', 'UTC'),
+    ],
 
     /*
     |--------------------------------------------------------------------------

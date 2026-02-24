@@ -36,7 +36,8 @@
     },
     "autoload-dev": {
         "psr-4": {
-            "FlutterSdk\\MagicStarter\\Tests\\": "tests/"
+            "FlutterSdk\\MagicStarter\\Tests\\": "tests/",
+            "FlutterSdk\\MagicStarter\\Database\\Factories\\": "database/factories/"
         }
     },
     "extra": {

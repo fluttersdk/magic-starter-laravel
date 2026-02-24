@@ -3,6 +3,7 @@
 namespace FlutterSdk\MagicStarter\Http\Controllers;
 
 use FlutterSdk\MagicStarter\Contracts\RemovesTeamMembers;
+use FlutterSdk\MagicStarter\Contracts\UpdatesTeamMemberRoles;
 use FlutterSdk\MagicStarter\Enums\Role;
 use FlutterSdk\MagicStarter\Http\Requests\UpdateTeamMemberRequest;
 use FlutterSdk\MagicStarter\Http\Resources\TeamMemberResource;
@@ -52,11 +53,14 @@ class TeamMemberController
             abort(403, 'Cannot change role of team owner.');
         }
 
-        $teamModel->users()->updateExistingPivot($member->getKey(), [
-            'role' => $request->validated('role'),
-        ]);
+        app(UpdatesTeamMemberRoles::class)->update(
+            $actor,
+            $teamModel,
+            $member,
+            $request->validated('role'),
+        );
 
-        return response()->json(['message' => 'Team member updated successfully.']);
+        return response()->json(['data' => null, 'message' => 'Team member updated successfully.']);
     }
 
     /**
@@ -76,7 +80,7 @@ class TeamMemberController
 
         $remover->remove($actor, $teamModel, $member);
 
-        return response()->json(['message' => 'Team member removed successfully.']);
+        return response()->json(['data' => null, 'message' => 'Team member removed successfully.']);
     }
 
     /**
@@ -103,7 +107,7 @@ class TeamMemberController
             $user->update(['current_team_id' => $nextTeam?->getKey()]);
         }
 
-        return response()->json(['message' => 'You have left the team.']);
+        return response()->json(['data' => null, 'message' => 'You have left the team.']);
     }
 
     /**

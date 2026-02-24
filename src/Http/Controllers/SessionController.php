@@ -11,11 +11,17 @@ use Illuminate\Http\Resources\Json\AnonymousResourceCollection;
  */
 class SessionController
 {
+    /**
+     * Retrieve all active sessions.
+     */
     public function index(): AnonymousResourceCollection
     {
         return SessionResource::collection(request()->user()->tokens);
     }
 
+    /**
+     * Revoke a specific session.
+     */
     public function destroy(string $tokenId): JsonResponse
     {
         $token = request()->user()
@@ -29,9 +35,12 @@ class SessionController
 
         $token->delete();
 
-        return response()->json(['message' => 'Session revoked successfully.']);
+        return response()->json(['data' => null, 'message' => 'Session revoked successfully.']);
     }
 
+    /**
+     * Revoke all other sessions.
+     */
     public function destroyOther(): JsonResponse
     {
         $user = request()->user();
@@ -41,6 +50,6 @@ class SessionController
             ->where('id', '!=', $currentId)
             ->delete();
 
-        return response()->json(['message' => 'Other sessions revoked successfully.']);
+        return response()->json(['data' => null, 'message' => 'Other sessions revoked successfully.']);
     }
 }

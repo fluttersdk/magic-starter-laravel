@@ -23,8 +23,8 @@ class PasswordResetController
         $status = Password::sendResetLink($request->validated());
 
         return $status === Password::RESET_LINK_SENT
-            ? response()->json(['message' => __($status)])
-            : response()->json(['message' => __($status)], 400);
+            ? response()->json(['data' => null, 'message' => __($status)])
+            : response()->json(['data' => null, 'message' => __($status)], 400);
     }
 
     /**
@@ -46,7 +46,7 @@ class PasswordResetController
         );
 
         return $status === Password::PASSWORD_RESET
-            ? response()->json(['message' => __($status)])
-            : response()->json(['message' => __($status)], 400);
+            ? response()->json(['data' => null, 'message' => __($status)])
+            : response()->json(['data' => null, 'message' => __($status)], 400);
     }
 }

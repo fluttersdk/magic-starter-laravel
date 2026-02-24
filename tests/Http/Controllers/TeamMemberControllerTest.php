@@ -6,6 +6,7 @@ namespace FlutterSdk\MagicStarter\Tests\Http\Controllers;
 
 use FlutterSdk\MagicStarter\Contracts\AddsTeamMembers;
 use FlutterSdk\MagicStarter\Contracts\RemovesTeamMembers;
+use FlutterSdk\MagicStarter\Contracts\UpdatesTeamMemberRoles;
 use FlutterSdk\MagicStarter\Http\Controllers\TeamMemberController;
 use FlutterSdk\MagicStarter\MagicStarter;
 use FlutterSdk\MagicStarter\Tests\TestCase;
@@ -94,6 +95,14 @@ final class TeamMemberControllerTest extends TestCase
             public function remove(mixed $user, mixed $team, mixed $teamMember): void
             {
                 $team->users()->detach($teamMember->getKey());
+            }
+        });
+
+        $this->app->instance(UpdatesTeamMemberRoles::class, new class implements UpdatesTeamMemberRoles
+        {
+            public function update(mixed $user, mixed $team, mixed $teamMember, string $role): void
+            {
+                $team->users()->updateExistingPivot($teamMember->getKey(), ['role' => $role]);
             }
         });
 

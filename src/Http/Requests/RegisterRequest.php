@@ -35,6 +35,7 @@ class RegisterRequest extends FormRequest
             ],
             'locale' => ['nullable', 'string', 'max:5'],
             'timezone' => ['nullable', 'string', 'timezone'],
+            'subscribe_newsletter' => ['nullable', 'boolean'],
         ];
     }
 

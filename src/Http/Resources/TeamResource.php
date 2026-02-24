@@ -15,21 +15,20 @@ class TeamResource extends JsonResource
      */
     public function toArray($request): array
     {
-        $userRole = null;
         $user = $request->user();
         $resource = $this->resource;
-
         $ownerId = \data_get($resource, 'user_id');
+
+        $userRole = null;
 
         if ($user) {
             if ((string) $ownerId === (string) $user->id) {
                 $userRole = Role::OWNER->value;
             } else {
-                $users = \data_get($resource, 'users');
-                $membership = \is_object($users) && method_exists($users, 'find')
-                    ? $users->find($user->id)
-                    : null;
-                $userRole = $membership?->pivot?->role;
+                if ($this->resource->relationLoaded('users')) {
+                    $membership = $this->resource->users->find($user->id);
+                    $userRole = $membership?->pivot?->role;
+                }
             }
         }
 

@@ -25,7 +25,7 @@ class ProfilePhotoController
         }
 
         $path = $request->file('photo')->storePublicly(
-            'profile-photos',
+            config('magic-starter.profile_photo_path', 'profile-photos'),
             ['disk' => $disk],
         );
 

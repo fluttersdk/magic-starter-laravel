@@ -32,7 +32,7 @@ class TeamPhotoController
         }
 
         $path = $request->file('photo')->storePublicly(
-            'team-photos',
+            config('magic-starter.team_photo_path', 'team-photos'),
             ['disk' => $disk],
         );
 

@@ -132,7 +132,7 @@ class AuthController
         $request->user()?->currentAccessToken()?->delete();
 
         return response()->json([
-            'message' => 'Logged out successfully',
+            'data' => null, 'message' => 'Logged out successfully',
         ]);
     }
 

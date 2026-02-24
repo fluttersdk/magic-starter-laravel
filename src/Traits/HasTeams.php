@@ -3,6 +3,11 @@
 namespace FlutterSdk\MagicStarter\Traits;
 
 use FlutterSdk\MagicStarter\MagicStarter;
+use Illuminate\Database\Eloquent\Model;
+use Illuminate\Database\Eloquent\Relations\BelongsTo;
+use Illuminate\Database\Eloquent\Relations\BelongsToMany;
+use Illuminate\Database\Eloquent\Relations\HasMany;
+use Illuminate\Support\Collection;
 
 trait HasTeams
 {
@@ -11,7 +16,7 @@ trait HasTeams
      *
      * @return \Illuminate\Database\Eloquent\Relations\HasMany<\Illuminate\Database\Eloquent\Model, $this>
      */
-    public function ownedTeams()
+    public function ownedTeams(): HasMany
     {
         return $this->hasMany(MagicStarter::teamModel(), 'user_id');
     }
@@ -21,7 +26,7 @@ trait HasTeams
      *
      * @return \Illuminate\Database\Eloquent\Relations\BelongsToMany<\Illuminate\Database\Eloquent\Model, $this>
      */
-    public function teams()
+    public function teams(): BelongsToMany
     {
         $relationship = $this->belongsToMany(MagicStarter::teamModel(), 'team_user', 'user_id', 'team_id');
 
@@ -35,7 +40,7 @@ trait HasTeams
     /**
      * Get the user's personal team.
      */
-    public function personalTeam(): mixed
+    public function personalTeam(): ?Model
     {
         return $this->ownedTeams->where('personal_team', true)->first();
     }
@@ -45,7 +50,7 @@ trait HasTeams
      *
      * @return \Illuminate\Database\Eloquent\Relations\BelongsTo<\Illuminate\Database\Eloquent\Model, $this>
      */
-    public function currentTeam()
+    public function currentTeam(): BelongsTo
     {
         return $this->belongsTo(MagicStarter::teamModel(), 'current_team_id');
     }
@@ -55,7 +60,7 @@ trait HasTeams
      *
      * @return \Illuminate\Support\Collection<int, \Illuminate\Database\Eloquent\Model>
      */
-    public function allTeams()
+    public function allTeams(): Collection
     {
         return $this->ownedTeams->merge($this->teams)->sortBy('name');
     }
@@ -63,7 +68,7 @@ trait HasTeams
     /**
      * Get the current team or fall back to the personal team.
      */
-    public function getCurrentTeamOrPersonal(): mixed
+    public function getCurrentTeamOrPersonal(): ?Model
     {
         return $this->currentTeam ?? $this->personalTeam();
     }

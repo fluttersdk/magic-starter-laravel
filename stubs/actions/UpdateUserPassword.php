@@ -3,19 +3,23 @@
 namespace App\Actions\MagicStarter;
 
 use FlutterSdk\MagicStarter\Contracts\UpdatesUserPasswords;
+use Illuminate\Contracts\Auth\Authenticatable;
 
 /**
- * Handle updating a user's password.
+ * Handle password updates.
  */
 class UpdateUserPassword implements UpdatesUserPasswords
 {
     /**
-     * Update the given user's password.
+     * Validate and update the given user's password.
+     *
+     * @param  Authenticatable  $user  The user whose password to update.
+     * @param  array<string, mixed>  $input  The validated password data.
      */
-    public function update(mixed $user, array $input): void
+    public function update(Authenticatable $user, array $input): void
     {
-        // TODO: Implement user password update logic.
-        // Example: validate current password, hash and update new password.
+        // TODO: Implement password update logic.
+        // Example: check current_password, hash new password, save.
         throw new \RuntimeException('UpdateUserPassword action not implemented. Publish and implement this stub.');
     }
 }

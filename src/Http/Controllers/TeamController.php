@@ -106,7 +106,7 @@ class TeamController
             }
         }
 
-        return response()->json(['message' => 'Team deleted successfully.']);
+        return response()->json(['data' => null, 'message' => 'Team deleted successfully.']);
     }
 
     /**

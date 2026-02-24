@@ -42,7 +42,7 @@ class ProfileController
             );
 
         return response()->json([
-            'message' => 'Password updated successfully.',
+            'data' => null, 'message' => 'Password updated successfully.',
         ]);
     }
 
