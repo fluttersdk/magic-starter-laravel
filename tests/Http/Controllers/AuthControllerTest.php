@@ -316,6 +316,7 @@ class AuthControllerTest extends TestCase
             ->assertStatus(403)
             ->assertJsonPath('message', 'You are not a member of this team.');
     }
+
     public function test_login_returns_401_for_wrong_password(): void
     {
         AuthControllerTestUser::query()->create([

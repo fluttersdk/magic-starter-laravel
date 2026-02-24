@@ -234,7 +234,7 @@ final class TeamPhotoControllerTest extends TestCase
         ]);
 
         // Clear existing routes and reload
-        Route::setRoutes(new \Illuminate\Routing\RouteCollection());
+        Route::setRoutes(new \Illuminate\Routing\RouteCollection);
         require __DIR__ . '/../../../src/routes/api.php';
         Route::getRoutes()->refreshNameLookups();
         $user = TestUserForTeamPhoto::create([

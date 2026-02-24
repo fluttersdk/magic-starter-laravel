@@ -118,8 +118,6 @@ final class TeamMemberControllerTest extends TestCase
         $this->assertTrue(\call_user_func('collect', $response->json('data'))->contains('role', 'editor'));
     }
 
-
-
     public function test_update_changes_member_role(): void
     {
         $owner = TeamMemberControllerTestUser::query()->create(['name' => 'Owner', 'email' => 'owner@test.dev']);
@@ -169,8 +167,6 @@ final class TeamMemberControllerTest extends TestCase
         $this->assertFalse($teamA->fresh()->users()->where('user_id', $member->id)->exists());
         $this->assertSame($teamB->id, $member->fresh()->current_team_id);
     }
-
-
 
     public function test_update_returns_403_when_changing_owner_role(): void
     {

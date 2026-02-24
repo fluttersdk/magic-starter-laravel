@@ -181,6 +181,7 @@ final class AuthRequestsTest extends TestCase
             ->assertUnprocessable()
             ->assertJsonValidationErrors(['password']);
     }
+
     public function test_register_missing_password_confirmation_returns_422(): void
     {
         $this->postJson('/auth/register', [

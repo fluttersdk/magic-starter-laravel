@@ -163,6 +163,7 @@ class AuthController
         $user->update([
             'current_team_id' => $teamId,
         ]);
+
         return response()->json([
             'data' => new UserResource($request->user()->fresh()),
             'message' => 'Team switched successfully',
