@@ -29,7 +29,7 @@ trait HasTeams
      */
     public function teams(): BelongsToMany
     {
-        $relationship = $this->belongsToMany(MagicStarter::teamModel(), 'team_user', 'user_id', 'team_id');
+        $relationship = $this->belongsToMany(MagicStarter::teamModel(), 'team_user', 'user_id', 'team_id')->withPivot('role');
 
         if (class_exists(TeamUser::class)) {
             $relationship->using(TeamUser::class);

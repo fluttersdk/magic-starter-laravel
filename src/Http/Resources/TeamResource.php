@@ -25,9 +25,18 @@ class TeamResource extends JsonResource
             if ((string) $ownerId === (string) $user->id) {
                 $userRole = Role::OWNER->value;
             } else {
-                if ($this->resource->relationLoaded('users')) {
+                if (isset($this->resource->pivot) && $this->resource->pivot->role !== null) {
+                    // When team is loaded via $user->teams
+                    $userRole = $this->resource->pivot->role;
+                } elseif ($this->resource->relationLoaded('users')) {
+                    // When team is loaded via Team::with('users')
                     $membership = $this->resource->users->find($user->id);
                     $userRole = $membership?->pivot?->role;
+                } else {
+                    // Fallback for currentTeam (loaded via BelongsTo without pivot)
+                    // We check the user's teams relationship which should have the pivot loaded.
+                    $teamFromUser = $user->teams->firstWhere('id', $this->resource->id);
+                    $userRole = $teamFromUser?->pivot?->role;
                 }
             }
         }
