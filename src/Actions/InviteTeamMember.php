@@ -28,7 +28,7 @@ class InviteTeamMember implements InvitesTeamMembers
      */
     public function invite(Authenticatable $user, Model $team, string $email, string $role): Model
     {
-        /** @var TeamInvitation $invitation */
+        
         $invitation = $team->invitations()->create([
             'email' => $email,
             'role' => $role,
