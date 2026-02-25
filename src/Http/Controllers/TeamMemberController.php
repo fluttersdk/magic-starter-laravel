@@ -60,7 +60,10 @@ class TeamMemberController
             $request->validated('role'),
         );
 
-        return response()->json(['data' => null, 'message' => 'Team member updated successfully.']);
+        return response()->json([
+            'data' => null,
+            'message' => 'Team member updated successfully.',
+        ]);
     }
 
     /**
@@ -80,7 +83,10 @@ class TeamMemberController
 
         $remover->remove($actor, $teamModel, $member);
 
-        return response()->json(['data' => null, 'message' => 'Team member removed successfully.']);
+        return response()->json([
+            'data' => null,
+            'message' => 'Team member removed successfully.',
+        ]);
     }
 
     /**
@@ -107,7 +113,10 @@ class TeamMemberController
             $user->update(['current_team_id' => $nextTeam?->getKey()]);
         }
 
-        return response()->json(['data' => null, 'message' => 'You have left the team.']);
+        return response()->json([
+            'data' => null,
+            'message' => 'You have left the team.',
+        ]);
     }
 
     /**

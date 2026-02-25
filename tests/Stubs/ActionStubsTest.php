@@ -7,6 +7,7 @@ namespace FlutterSdk\MagicStarter\Tests\Stubs;
 use FlutterSdk\MagicStarter\Tests\TestCase;
 use Illuminate\Contracts\Auth\Authenticatable;
 use Illuminate\Database\Eloquent\Model;
+
 final class ActionStubsTest extends TestCase
 {
     public function test_add_team_member_stub_throws_runtime_exception(): void
@@ -127,5 +128,22 @@ final class ActionStubsTest extends TestCase
         $this->expectExceptionMessage('UpdateUserProfile action not implemented. Publish and implement this stub.');
 
         $action->update($this->createMock(Authenticatable::class), []);
+    }
+
+    public function test_update_team_member_role_stub_throws_runtime_exception(): void
+    {
+        require_once __DIR__ . '/../../stubs/actions/UpdateTeamMemberRole.php';
+
+        $action = new \App\Actions\MagicStarter\UpdateTeamMemberRole;
+
+        $this->expectException(\RuntimeException::class);
+        $this->expectExceptionMessage('UpdateTeamMemberRole action not implemented. Publish and implement this stub.');
+
+        $action->update(
+            $this->createMock(Authenticatable::class),
+            $this->createMock(Model::class),
+            $this->createMock(Model::class),
+            '',
+        );
     }
 }

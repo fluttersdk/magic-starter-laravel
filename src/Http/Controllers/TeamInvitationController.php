@@ -74,7 +74,10 @@ class TeamInvitationController
 
         $invitationModel->delete();
 
-        return response()->json(['data' => null, 'message' => 'Invitation canceled successfully.']);
+        return response()->json([
+            'data' => null,
+            'message' => 'Invitation canceled successfully.',
+        ]);
     }
 
     public function accept(string $token): JsonResponse
@@ -99,13 +102,19 @@ class TeamInvitationController
         if ($invitation->team->users()->where('user_id', $user->id)->exists() || (string) $invitation->team->user_id === (string) $user->id) {
             $invitation->delete();
 
-            return response()->json(['data' => null, 'message' => 'You are already a member of this team.']);
+            return response()->json([
+                'data' => null,
+                'message' => 'You are already a member of this team.',
+            ]);
         }
 
         $invitation->team->users()->attach($user->id, ['role' => $invitation->role]);
         $invitation->delete();
 
-        return response()->json(['data' => null, 'message' => 'Invitation accepted. You have joined the team.']);
+        return response()->json([
+            'data' => null,
+            'message' => 'Invitation accepted. You have joined the team.',
+        ]);
     }
 
     /**

@@ -23,7 +23,7 @@ class TeamPhotoController
         $teamModel = $this->findTeam($team);
         Gate::forUser($request->user())->authorize('update', $teamModel);
 
-        $disk = (string) (config('magic-starter.profile_photo_disk')
+        $disk = (string) (config('magic-starter.team_photo_disk') ?? config('magic-starter.profile_photo_disk')
             ?? config('filesystems.default', 'public'));
         $filesystem = app('filesystem')->disk($disk);
 
@@ -51,7 +51,7 @@ class TeamPhotoController
         $teamModel = $this->findTeam($team);
         Gate::forUser($request->user())->authorize('update', $teamModel);
 
-        $disk = (string) (config('magic-starter.profile_photo_disk')
+        $disk = (string) (config('magic-starter.team_photo_disk') ?? config('magic-starter.profile_photo_disk')
             ?? config('filesystems.default', 'public'));
         $filesystem = app('filesystem')->disk($disk);
 

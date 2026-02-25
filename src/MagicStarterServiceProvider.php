@@ -3,15 +3,22 @@
 namespace FlutterSdk\MagicStarter;
 
 use FlutterSdk\MagicStarter\Console\InstallCommand;
+use Illuminate\Auth\Events\Registered;
+use Illuminate\Auth\Notifications\ResetPassword;
+use Illuminate\Support\Facades\Event;
 use Illuminate\Support\ServiceProvider;
 
 /**
  * Service provider for the Magic Starter package.
+ *
+ * Handles configuration merging, action contract binding,
+ * Sanctum token model setup, password reset URL, and
+ * personal team creation on registration.
  */
 class MagicStarterServiceProvider extends ServiceProvider
 {
     /**
-     * Register package services and merge configuration.
+     * Register package services, merge configuration, and bind action contracts.
      */
     public function register(): void
     {
@@ -19,17 +26,61 @@ class MagicStarterServiceProvider extends ServiceProvider
             __DIR__ . '/../config/magic-starter.php',
             'magic-starter',
         );
+
+        // Bind all action contracts to package default implementations.
+        // Consuming apps can override any of these with singleton() in their AppServiceProvider.
+        $this->app->bind(Contracts\CreatesUsers::class, Actions\CreateUser::class);
+        $this->app->bind(Contracts\UpdatesUserProfiles::class, Actions\UpdateUserProfile::class);
+        $this->app->bind(Contracts\UpdatesUserPasswords::class, Actions\UpdateUserPassword::class);
+        $this->app->bind(Contracts\DeletesUsers::class, Actions\DeleteUser::class);
+        $this->app->bind(Contracts\CreatesTeams::class, Actions\CreateTeam::class);
+        $this->app->bind(Contracts\UpdatesTeams::class, Actions\UpdateTeam::class);
+        $this->app->bind(Contracts\DeletesTeams::class, Actions\DeleteTeam::class);
+        $this->app->bind(Contracts\AddsTeamMembers::class, Actions\AddTeamMember::class);
+        $this->app->bind(Contracts\RemovesTeamMembers::class, Actions\RemoveTeamMember::class);
+        $this->app->bind(Contracts\InvitesTeamMembers::class, Actions\InviteTeamMember::class);
+        $this->app->bind(Contracts\UpdatesTeamMemberRoles::class, Actions\UpdateTeamMemberRole::class);
     }
 
     /**
-     * Bootstrap package routes, commands, and publishable assets.
+     * Bootstrap package routes, commands, Sanctum, password reset, and event listeners.
      */
     public function boot(): void
     {
+        // 1. Sanctum personal access token model binding.
+        if (class_exists(\Laravel\Sanctum\Sanctum::class)) {
+            \Laravel\Sanctum\Sanctum::usePersonalAccessTokenModel(
+                Models\PersonalAccessToken::class,
+            );
+        }
+
+        // 2. Password reset URL using package config with app config fallback.
+        ResetPassword::createUrlUsing(
+            function (object $notifiable, string $token) {
+                $frontendUrl = config(
+                    'magic-starter.frontend_url',
+                    config('app.frontend_url'),
+                );
+
+                return "{$frontendUrl}/auth/reset-password?token={$token}&email="
+                    . $notifiable->getEmailForPasswordReset();
+            },
+        );
+
+        // 3. Auto-register personal team creation when teams feature is enabled.
+        if (Features::hasTeamFeatures()) {
+            Event::listen(
+                Registered::class,
+                Listeners\CreatePersonalTeamListener::class,
+            );
+        }
+
+        // 4. Load package routes unless explicitly ignored.
         if (! MagicStarter::shouldIgnoreRoutes()) {
             $this->loadRoutesFrom(__DIR__ . '/routes/api.php');
         }
 
+        // 5. Console-only: publish config, migrations, and stubs.
         if ($this->app->runningInConsole()) {
             $this->commands([
                 InstallCommand::class,
@@ -42,10 +93,6 @@ class MagicStarterServiceProvider extends ServiceProvider
             $this->publishesMigrations([
                 __DIR__ . '/../database/migrations' => database_path('migrations'),
             ], 'magic-starter-migrations');
-
-            $this->publishes([
-                __DIR__ . '/../stubs' => base_path('stubs/vendor/magic-starter'),
-            ], 'magic-starter-stubs');
 
             $this->publishes([
                 __DIR__ . '/../stubs/actions' => app_path('Actions/MagicStarter'),

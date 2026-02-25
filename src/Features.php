@@ -12,7 +12,7 @@ class Features
     /**
      * Enable the teams feature.
      */
-    public static function teams(array $options = []): string
+    public static function teams(): string
     {
         return 'teams';
     }
@@ -39,6 +39,30 @@ class Features
     public static function socialLogin(): string
     {
         return 'social-login';
+    }
+
+    /**
+     * Enable the newsletter subscription feature.
+     */
+    public static function newsletterSubscription(): string
+    {
+        return 'newsletter-subscription';
+    }
+
+    /**
+     * Enable the extended profile feature (phone, timezone, language, locale).
+     */
+    public static function extendedProfile(): string
+    {
+        return 'extended-profile';
+    }
+
+    /**
+     * Enable the notification preferences feature.
+     */
+    public static function notifications(): string
+    {
+        return 'notifications';
     }
 
     /**
@@ -79,5 +103,29 @@ class Features
     public static function hasSocialLoginFeatures(): bool
     {
         return static::enabled(static::socialLogin());
+    }
+
+    /**
+     * Determine whether the newsletter subscription feature is enabled.
+     */
+    public static function hasNewsletterSubscriptionFeatures(): bool
+    {
+        return static::enabled(static::newsletterSubscription());
+    }
+
+    /**
+     * Determine whether the extended profile feature is enabled.
+     */
+    public static function hasExtendedProfileFeatures(): bool
+    {
+        return static::enabled(static::extendedProfile());
+    }
+
+    /**
+     * Determine whether the notification preferences feature is enabled.
+     */
+    public static function hasNotificationFeatures(): bool
+    {
+        return static::enabled(static::notifications());
     }
 }

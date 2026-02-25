@@ -27,7 +27,8 @@ class MagicStarter
      */
     public static function userModel(): string
     {
-        $model = config('magic-starter.models.user')
+        $model = static::$using['user']
+            ?? config('magic-starter.models.user')
             ?? config('auth.providers.users.model');
 
         if ($model === null || $model === '') {
@@ -47,7 +48,8 @@ class MagicStarter
      */
     public static function teamModel(): string
     {
-        $model = config('magic-starter.models.team');
+        $model = static::$using['team']
+            ?? config('magic-starter.models.team');
 
         if ($model === null || $model === '') {
             throw new \RuntimeException(

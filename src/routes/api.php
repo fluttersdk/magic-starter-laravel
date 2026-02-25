@@ -3,13 +3,15 @@
 /**
  * Magic Starter API route definitions.
  *
- * Registers authentication, team management, profile, session, and social login
- * routes conditionally based on enabled features. All routes respect the
- * configured route prefix from `config('magic-starter.route_prefix')`.
+ * Registers authentication, team management, profile, session, notification,
+ * and social login routes conditionally based on enabled features. All routes
+ * respect the configured route prefix from `config('magic-starter.route_prefix')`.
  */
 
 use FlutterSdk\MagicStarter\Features;
 use FlutterSdk\MagicStarter\Http\Controllers\AuthController;
+use FlutterSdk\MagicStarter\Http\Controllers\NotificationController;
+use FlutterSdk\MagicStarter\Http\Controllers\NotificationPreferenceController;
 use FlutterSdk\MagicStarter\Http\Controllers\PasswordResetController;
 use FlutterSdk\MagicStarter\Http\Controllers\ProfileController;
 use FlutterSdk\MagicStarter\Http\Controllers\ProfilePhotoController;
@@ -17,6 +19,7 @@ use FlutterSdk\MagicStarter\Http\Controllers\SessionController;
 use FlutterSdk\MagicStarter\Http\Controllers\TeamController;
 use FlutterSdk\MagicStarter\Http\Controllers\TeamInvitationController;
 use FlutterSdk\MagicStarter\Http\Controllers\TeamMemberController;
+use FlutterSdk\MagicStarter\Http\Controllers\TeamPhotoController;
 use Illuminate\Support\Facades\Route;
 
 Route::prefix((string) config('magic-starter.route_prefix', ''))
@@ -51,6 +54,11 @@ Route::prefix((string) config('magic-starter.route_prefix', ''))
                     Route::post('invitations', [TeamInvitationController::class, 'store']);
                     Route::delete('invitations/{invitation}', [TeamInvitationController::class, 'destroy']);
 
+                    if (Features::enabled(Features::profilePhotos())) {
+                        Route::post('profile-photo', [TeamPhotoController::class, 'update']);
+                        Route::delete('profile-photo', [TeamPhotoController::class, 'delete']);
+                    }
+
                     Route::get('members', [TeamMemberController::class, 'index']);
                     Route::put('members/{user}', [TeamMemberController::class, 'update']);
                     Route::delete('members/{user}', [TeamMemberController::class, 'destroy']);
@@ -77,6 +85,21 @@ Route::prefix((string) config('magic-starter.route_prefix', ''))
                     Route::get('/', [SessionController::class, 'index']);
                     Route::delete('/other', [SessionController::class, 'destroyOther']);
                     Route::delete('/{token}', [SessionController::class, 'destroy']);
+                });
+            }
+
+            if (Features::enabled(Features::notifications())) {
+                Route::prefix('notifications')->group(function (): void {
+                    Route::get('/', [NotificationController::class, 'index']);
+                    Route::get('/unread-count', [NotificationController::class, 'unreadCount']);
+                    Route::post('/{id}/read', [NotificationController::class, 'markAsRead']);
+                    Route::post('/read-all', [NotificationController::class, 'markAllAsRead']);
+                    Route::delete('/{id}', [NotificationController::class, 'destroy']);
+                });
+
+                Route::prefix('notification-preferences')->group(function (): void {
+                    Route::get('/', [NotificationPreferenceController::class, 'show']);
+                    Route::patch('/', [NotificationPreferenceController::class, 'update']);
                 });
             }
         });

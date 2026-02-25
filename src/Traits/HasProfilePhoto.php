@@ -37,6 +37,8 @@ trait HasProfilePhoto
         );
         $name = implode(' ', $initials);
 
-        return 'https://ui-avatars.com/api/?name=' . urlencode($name) . '&color=FFFFFF&background=009E60';
+        $baseUrl = rtrim((string) config('magic-starter.ui_avatars_url', 'https://ui-avatars.com/api/'), '/');
+
+        return $baseUrl . '/?name=' . urlencode($name) . '&color=FFFFFF&background=009E60';
     }
 }

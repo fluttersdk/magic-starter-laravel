@@ -111,4 +111,61 @@ class FeaturesTest extends TestCase
     {
         $this->assertSame('teams', Features::teams(['invitations' => true]));
     }
+
+    public function test_newsletter_subscription_feature_constant(): void
+    {
+        $this->assertSame('newsletter-subscription', Features::newsletterSubscription());
+    }
+
+    public function test_extended_profile_feature_constant(): void
+    {
+        $this->assertSame('extended-profile', Features::extendedProfile());
+    }
+
+    public function test_has_newsletter_subscription_features_returns_false_by_default(): void
+    {
+        config(['magic-starter.features' => []]);
+
+        $this->assertFalse(Features::hasNewsletterSubscriptionFeatures());
+    }
+
+    public function test_has_newsletter_subscription_features_returns_true_when_enabled(): void
+    {
+        config(['magic-starter.features' => [Features::newsletterSubscription()]]);
+
+        $this->assertTrue(Features::hasNewsletterSubscriptionFeatures());
+    }
+
+    public function test_has_extended_profile_features_returns_false_by_default(): void
+    {
+        config(['magic-starter.features' => []]);
+
+        $this->assertFalse(Features::hasExtendedProfileFeatures());
+    }
+
+    public function test_has_extended_profile_features_returns_true_when_enabled(): void
+    {
+        config(['magic-starter.features' => [Features::extendedProfile()]]);
+
+        $this->assertTrue(Features::hasExtendedProfileFeatures());
+    }
+
+    public function test_notification_feature_constant(): void
+    {
+        $this->assertSame('notifications', Features::notifications());
+    }
+
+    public function test_has_notification_features_returns_false_by_default(): void
+    {
+        config(['magic-starter.features' => []]);
+
+        $this->assertFalse(Features::hasNotificationFeatures());
+    }
+
+    public function test_has_notification_features_returns_true_when_enabled(): void
+    {
+        config(['magic-starter.features' => [Features::notifications()]]);
+
+        $this->assertTrue(Features::hasNotificationFeatures());
+    }
 }

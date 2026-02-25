@@ -36,13 +36,19 @@ parameters:
             identifier: new.static
             path: src/MagicStarter.php
 
-        # Contract params intentionally use untyped array (consumer-defined shape)
+        # Action classes use Model/Authenticatable params — properties/methods resolved at runtime
         -
-            identifier: missingType.iterableValue
-            path: src/Contracts/*
+            identifier: property.notFound
+            path: src/Actions/*
         -
-            identifier: missingType.iterableValue
-            path: src/Features.php
+            identifier: method.notFound
+            path: src/Actions/*
+
+        # Listener accesses Authenticatable properties ($id, $name) resolved at runtime
+        -
+            identifier: property.notFound
+            path: src/Listeners/*
+
 
         # Eloquent generic type resolution (belongsTo, belongsToMany with dynamic models)
         -

@@ -5,7 +5,7 @@ namespace FlutterSdk\MagicStarter\Models;
 use FlutterSdk\MagicStarter\Database\Factories\PersonalAccessTokenFactory;
 use Illuminate\Database\Eloquent\Concerns\HasUuids;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
-use Illuminate\Database\Eloquent\Model;
+use Laravel\Sanctum\PersonalAccessToken as SanctumPersonalAccessToken;
 
 /**
  * @property string $id
@@ -21,7 +21,7 @@ use Illuminate\Database\Eloquent\Model;
  * @property \Illuminate\Support\Carbon|null $created_at
  * @property \Illuminate\Support\Carbon|null $updated_at
  */
-class PersonalAccessToken extends Model
+class PersonalAccessToken extends SanctumPersonalAccessToken
 {
     use HasFactory;
     use HasUuids;
@@ -29,8 +29,6 @@ class PersonalAccessToken extends Model
     public $incrementing = false;
 
     protected $keyType = 'string';
-
-    protected $table = 'personal_access_tokens';
 
     /**
      * Create a new factory instance for the model.

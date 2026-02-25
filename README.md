@@ -27,7 +27,10 @@ A modular Laravel backend package providing authentication, team management, pro
   - [Team Invitations](#team-invitations)
   - [Profile Management](#profile-management)
   - [Profile Photo](#profile-photo)
+  - [Team Photo](#team-photo)
   - [Session Management](#session-management)
+  - [Notifications](#notifications)
+  - [Newsletter Subscription](#newsletter-subscription)
 - [API Reference](#api-reference)
   - [Public Routes](#public-routes)
   - [Protected Routes](#protected-routes)
@@ -404,7 +407,16 @@ Token-based invitation system:
 
 Fallback generates avatar via [ui-avatars.com](https://ui-avatars.com) using name initials.
 
-<a name="session-management"></a>
+
+<a name="team-photo"></a>
+### Team Photo
+
+> Requires `Features::profilePhotos()` and `Features::teams()` enabled.
+
+- **Upload**: Stores to configurable disk (`team-photos/` directory), replaces previous
+- **Delete**: Removes from storage, clears `profile_photo_path`
+
+Fallback generates avatar via ui-avatars.com (configurable URL).
 ### Session Management
 
 > Requires `Features::sessions()` enabled.
@@ -415,7 +427,25 @@ Manages Sanctum personal access tokens as "sessions":
 - **Revoke One**: Delete a specific token by ID
 - **Revoke Others**: Delete all tokens except the current one
 
-<a name="api-reference"></a>
+
+<a name="notifications"></a>
+### Notifications
+
+> Requires `Features::notifications()` enabled.
+
+Provides a channel-based notification preference registry and APIs for managing user settings and database notifications.
+
+- **Registry**: Register notification types (e.g., `monitor_down`) and available channels (`mail`, `database`, `push`) via `NotificationPreferenceRegistry::register()`.
+- **Preference Matrix**: Returns user's overrides merged with registry defaults.
+- **Update Preferences**: Supports single or bulk `{type, channel, is_enabled}` updates.
+- **Notification Management**: Endpoints for listing, marking read, and deleting database notifications.
+
+<a name="newsletter-subscription"></a>
+### Newsletter Subscription
+
+> Requires `Features::newsletterSubscription()` enabled.
+
+Adds a `subscribe_newsletter` boolean field to the registration form. If checked, creates a `NewsletterSubscriber` record for the user during sign-up.
 ## API Reference
 
 All routes use the configured `route_prefix`. Examples below assume no prefix.
@@ -629,7 +659,11 @@ The package ships with 4 Eloquent models, all using UUIDs (`HasUuids`, non-incre
 
 - Table: `personal_access_tokens`
 
-<a name="user-traits"></a>
+**`NotificationSetting`** — `FlutterSdk\MagicStarter\Models\NotificationSetting`
+
+- Stores sparse overrides for user notification preferences.
+- Polymorphic `notifiable` relation.
+
 ## User Traits
 
 **`HasTeams`** — adds to your User model:
@@ -650,7 +684,13 @@ The package ships with 4 Eloquent models, all using UUIDs (`HasUuids`, non-incre
 | `getProfilePhotoUrlAttribute()` | string | Storage URL or ui-avatars.com fallback |
 | `defaultProfilePhotoUrl()` | string | Generated avatar URL from name initials |
 
-<a name="form-requests"></a>
+**`HasNotificationPreferences`** — adds to your User model:
+
+| Method | Returns | Description |
+|:-------|:--------|:------------|
+| `prefers(string $type, string $channel)` | bool | True if user wants this notification on this channel |
+| `notificationPreferenceMatrix()` | array | Full matrix of registered types, channels, and user overrides |
+
 ## Form Requests
 
 14 form requests with built-in validation:

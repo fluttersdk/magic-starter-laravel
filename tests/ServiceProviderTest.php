@@ -35,4 +35,9 @@ class ServiceProviderTest extends TestCase
         $this->assertArrayHasKey('user', $models);
         $this->assertArrayHasKey('team', $models);
     }
+
+    public function test_config_has_frontend_url_key(): void
+    {
+        $this->assertArrayHasKey('frontend_url', config('magic-starter'));
+    }
 }

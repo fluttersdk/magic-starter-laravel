@@ -35,7 +35,10 @@ class SessionController
 
         $token->delete();
 
-        return response()->json(['data' => null, 'message' => 'Session revoked successfully.']);
+        return response()->json([
+            'data' => null,
+            'message' => 'Session revoked successfully.',
+        ]);
     }
 
     /**
@@ -50,6 +53,9 @@ class SessionController
             ->where('id', '!=', $currentId)
             ->delete();
 
-        return response()->json(['data' => null, 'message' => 'Other sessions revoked successfully.']);
+        return response()->json([
+            'data' => null,
+            'message' => 'Other sessions revoked successfully.',
+        ]);
     }
 }
