@@ -1,6 +1,8 @@
 <?php
 
 use FlutterSdk\MagicStarter\Models\Team;
+use FlutterSdk\MagicStarter\Models\TeamInvitation;
+use FlutterSdk\MagicStarter\Models\TeamUser;
 
 return [
 
@@ -50,6 +52,8 @@ return [
     'models' => [
         'user' => env('MAGIC_STARTER_USER_MODEL'),
         'team' => env('MAGIC_STARTER_TEAM_MODEL', Team::class),
+        'membership' => env('MAGIC_STARTER_MEMBERSHIP_MODEL', TeamUser::class),
+        'team_invitation' => env('MAGIC_STARTER_TEAM_INVITATION_MODEL', TeamInvitation::class),
     ],
 
     /*

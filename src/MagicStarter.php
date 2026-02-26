@@ -59,6 +59,43 @@ class MagicStarter
 
         return $model;
     }
+    /**
+     * Resolve the configured membership model class name.
+     *
+     * @throws \RuntimeException
+     */
+    public static function membershipModel(): string
+    {
+        $model = static::$using['membership']
+            ?? config('magic-starter.models.membership');
+
+        if ($model === null || $model === '') {
+            throw new \RuntimeException(
+                'Membership model not configured. Set magic-starter.models.membership.',
+            );
+        }
+
+        return $model;
+    }
+
+    /**
+     * Resolve the configured team invitation model class name.
+     *
+     * @throws \RuntimeException
+     */
+    public static function teamInvitationModel(): string
+    {
+        $model = static::$using['team_invitation']
+            ?? config('magic-starter.models.team_invitation');
+
+        if ($model === null || $model === '') {
+            throw new \RuntimeException(
+                'TeamInvitation model not configured. Set magic-starter.models.team_invitation.',
+            );
+        }
+
+        return $model;
+    }
 
     /**
      * Instruct Magic Starter to skip route registration.
@@ -94,6 +131,25 @@ class MagicStarter
     public static function useTeamModel(string $class): static
     {
         static::$using['team'] = $class;
+
+        return new static;
+    }
+    /**
+     * Register a custom membership model class.
+     */
+    public static function useMembershipModel(string $class): static
+    {
+        static::$using['membership'] = $class;
+
+        return new static;
+    }
+
+    /**
+     * Register a custom team invitation model class.
+     */
+    public static function useTeamInvitationModel(string $class): static
+    {
+        static::$using['team_invitation'] = $class;
 
         return new static;
     }
