@@ -36,35 +36,4 @@ enum Role: string
     {
         return implode(',', self::assignable());
     }
-
-    /**
-     * Get the numeric level of this role for hierarchy comparison.
-     *
-     * Higher values indicate more permissions.
-     */
-    public function level(): int
-    {
-        return match ($this) {
-            self::OWNER => 40,
-            self::ADMIN => 30,
-            self::EDITOR => 20,
-            self::MEMBER => 10,
-        };
-    }
-
-    /**
-     * Determine whether this role is at least the given role level.
-     */
-    public function isAtLeast(self $role): bool
-    {
-        return $this->level() >= $role->level();
-    }
-
-    /**
-     * Determine whether this role can manage (is strictly higher than) the given role.
-     */
-    public function canManage(self $role): bool
-    {
-        return $this->level() > $role->level();
-    }
 }
