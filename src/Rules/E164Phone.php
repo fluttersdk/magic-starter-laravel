@@ -6,6 +6,7 @@ namespace FlutterSdk\MagicStarter\Rules;
 
 use Closure;
 use Illuminate\Contracts\Validation\ValidationRule;
+use Illuminate\Translation\PotentiallyTranslatedString;
 
 /**
  * Validation rule for E.164 international phone numbers.
@@ -20,7 +21,7 @@ final class E164Phone implements ValidationRule
      *
      * @param  string  $attribute  The name of the attribute being validated.
      * @param  mixed  $value  The value of the attribute being validated.
-     * @param  \Closure(string): \Illuminate\Translation\PotentiallyTranslatedString  $fail  The failure callback.
+     * @param  Closure(string): PotentiallyTranslatedString  $fail  The failure callback.
      */
     public function validate(string $attribute, mixed $value, Closure $fail): void
     {

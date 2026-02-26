@@ -4,12 +4,14 @@ namespace FlutterSdk\MagicStarter\Models;
 
 use FlutterSdk\MagicStarter\MagicStarter;
 use Illuminate\Database\Eloquent\Casts\Attribute;
+use Illuminate\Database\Eloquent\Collection;
 use Illuminate\Database\Eloquent\Concerns\HasUuids;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\BelongsToMany;
 use Illuminate\Database\Eloquent\Relations\HasMany;
+use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\Storage;
 
 /**
@@ -19,11 +21,11 @@ use Illuminate\Support\Facades\Storage;
  * @property bool $personal_team
  * @property string|null $profile_photo_path
  * @property-read  string  $profile_photo_url
- * @property \Illuminate\Support\Carbon|null $created_at
- * @property \Illuminate\Support\Carbon|null $updated_at
- * @property-read  \Illuminate\Database\Eloquent\Model  $owner
- * @property-read  \Illuminate\Database\Eloquent\Collection<int, \Illuminate\Database\Eloquent\Model>  $users
- * @property-read  \Illuminate\Database\Eloquent\Collection<int, \FlutterSdk\MagicStarter\Models\TeamInvitation>  $invitations
+ * @property Carbon|null $created_at
+ * @property Carbon|null $updated_at
+ * @property-read  Model $owner
+ * @property-read  Collection<int, Model>  $users
+ * @property-read  Collection<int, TeamInvitation>  $invitations
  */
 class Team extends Model
 {
@@ -60,7 +62,7 @@ class Team extends Model
     /**
      * Get the owner of the team.
      *
-     * @return \Illuminate\Database\Eloquent\Relations\BelongsTo<\Illuminate\Database\Eloquent\Model, $this>
+     * @return BelongsTo<Model, $this>
      */
     public function owner(): BelongsTo
     {
@@ -70,7 +72,7 @@ class Team extends Model
     /**
      * Get all of the users that belong to the team.
      *
-     * @return \Illuminate\Database\Eloquent\Relations\BelongsToMany<\Illuminate\Database\Eloquent\Model, $this>
+     * @return BelongsToMany<Model, $this>
      */
     public function users(): BelongsToMany
     {
@@ -83,7 +85,7 @@ class Team extends Model
     /**
      * Get all of the pending invitations for the team.
      *
-     * @return \Illuminate\Database\Eloquent\Relations\HasMany<\FlutterSdk\MagicStarter\Models\TeamInvitation, $this>
+     * @return HasMany<TeamInvitation, $this>
      */
     public function invitations(): HasMany
     {
@@ -93,7 +95,7 @@ class Team extends Model
     /**
      * Get the team's profile photo URL.
      *
-     * @return \Illuminate\Database\Eloquent\Casts\Attribute<string, never>
+     * @return Attribute<string, never>
      */
     protected function profilePhotoUrl(): Attribute
     {

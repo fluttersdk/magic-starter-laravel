@@ -5,8 +5,10 @@ namespace FlutterSdk\MagicStarter;
 use FlutterSdk\MagicStarter\Console\InstallCommand;
 use Illuminate\Auth\Events\Registered;
 use Illuminate\Auth\Notifications\ResetPassword;
+use Illuminate\Notifications\Events\NotificationSending;
 use Illuminate\Support\Facades\Event;
 use Illuminate\Support\ServiceProvider;
+use Laravel\Sanctum\Sanctum;
 
 /**
  * Service provider for the Magic Starter package.
@@ -48,8 +50,8 @@ class MagicStarterServiceProvider extends ServiceProvider
     public function boot(): void
     {
         // 1. Sanctum personal access token model binding.
-        if (class_exists(\Laravel\Sanctum\Sanctum::class)) {
-            \Laravel\Sanctum\Sanctum::usePersonalAccessTokenModel(
+        if (class_exists(Sanctum::class)) {
+            Sanctum::usePersonalAccessTokenModel(
                 Models\PersonalAccessToken::class,
             );
         }
@@ -77,7 +79,7 @@ class MagicStarterServiceProvider extends ServiceProvider
         // 3.5. Auto-gate notification channels when notification feature is enabled.
         if (Features::hasNotificationFeatures()) {
             Event::listen(
-                \Illuminate\Notifications\Events\NotificationSending::class,
+                NotificationSending::class,
                 Listeners\GateNotificationChannels::class,
             );
         }

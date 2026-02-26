@@ -6,6 +6,7 @@ namespace FlutterSdk\MagicStarter\Models;
 
 use Illuminate\Database\Eloquent\Concerns\HasUuids;
 use Illuminate\Database\Eloquent\Model;
+use Illuminate\Support\Carbon;
 
 /**
  * Newsletter subscriber model for opt-in email subscriptions.
@@ -14,8 +15,8 @@ use Illuminate\Database\Eloquent\Model;
  * @property string $email
  * @property bool $is_active
  * @property string|null $source
- * @property \Illuminate\Support\Carbon|null $created_at
- * @property \Illuminate\Support\Carbon|null $updated_at
+ * @property Carbon|null $created_at
+ * @property Carbon|null $updated_at
  */
 class NewsletterSubscriber extends Model
 {

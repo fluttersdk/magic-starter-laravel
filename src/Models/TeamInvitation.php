@@ -7,6 +7,7 @@ use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\Concerns\HasUuids;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
+use Illuminate\Support\Carbon;
 
 /**
  * @property string $id
@@ -14,8 +15,8 @@ use Illuminate\Database\Eloquent\Relations\BelongsTo;
  * @property string $email
  * @property string $role
  * @property string $token
- * @property \Illuminate\Support\Carbon|null $expires_at
- * @property \Illuminate\Support\Carbon|null $created_at
+ * @property Carbon|null $expires_at
+ * @property Carbon|null $created_at
  */
 class TeamInvitation extends Model
 {
@@ -42,7 +43,7 @@ class TeamInvitation extends Model
     /**
      * Get the team that the invitation belongs to.
      *
-     * @return \Illuminate\Database\Eloquent\Relations\BelongsTo<\FlutterSdk\MagicStarter\Models\Team, $this>
+     * @return BelongsTo<Team, $this>
      */
     public function team(): BelongsTo
     {
@@ -60,8 +61,8 @@ class TeamInvitation extends Model
     /**
      * Scope to only valid (non-expired) invitations.
      *
-     * @param  \Illuminate\Database\Eloquent\Builder<static>  $query
-     * @return \Illuminate\Database\Eloquent\Builder<static>
+     * @param  Builder<static>  $query
+     * @return Builder<static>
      */
     public function scopeValid(Builder $query): Builder
     {

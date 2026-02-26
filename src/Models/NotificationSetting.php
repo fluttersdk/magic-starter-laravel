@@ -6,6 +6,7 @@ use Illuminate\Database\Eloquent\Concerns\HasUuids;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\MorphTo;
+use Illuminate\Support\Carbon;
 
 /**
  * Stores user notification preference overrides.
@@ -16,9 +17,9 @@ use Illuminate\Database\Eloquent\Relations\MorphTo;
  * @property string $type
  * @property string $channel
  * @property bool $is_enabled
- * @property \Illuminate\Support\Carbon|null $created_at
- * @property \Illuminate\Support\Carbon|null $updated_at
- * @property-read \Illuminate\Database\Eloquent\Model $notifiable
+ * @property Carbon|null $created_at
+ * @property Carbon|null $updated_at
+ * @property-read Model $notifiable
  */
 class NotificationSetting extends Model
 {
@@ -52,7 +53,7 @@ class NotificationSetting extends Model
     /**
      * Get the notifiable entity that this setting belongs to.
      *
-     * @return \Illuminate\Database\Eloquent\Relations\MorphTo<\Illuminate\Database\Eloquent\Model, $this>
+     * @return MorphTo<Model, $this>
      */
     public function notifiable(): MorphTo
     {

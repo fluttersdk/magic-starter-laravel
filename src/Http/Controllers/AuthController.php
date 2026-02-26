@@ -16,6 +16,7 @@ use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Hash;
 use Illuminate\Support\Str;
 use Laravel\Socialite\Facades\Socialite;
+use Throwable;
 
 /**
  * Handles authentication, registration, social login, and team switching.
@@ -45,7 +46,7 @@ class AuthController
                 $accessToken = (string) $request->input('access_token');
                 $socialUser = $driver->userFromToken($accessToken);
             }
-        } catch (\Throwable $exception) {
+        } catch (Throwable $exception) {
             report($exception);
 
             $payload = ['message' => 'Invalid token or provider'];
