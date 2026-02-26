@@ -47,6 +47,23 @@ class AuthControllerTest extends TestCase
             ],
         ]);
 
+        config([
+            'magic-starter.supported_locales' => [
+                'en',
+                'tr',
+                'de',
+            ],
+            'magic-starter.supported_timezones' => [
+                'UTC',
+                'Europe/Istanbul',
+                'Europe/London',
+                'America/New_York',
+            ],
+            'magic-starter.features' => [
+                'extended-profile',
+            ],
+        ]);
+
         if (! enum_exists('App\\Enums\\TeamRole')) {
             eval('namespace App\\Enums; enum TeamRole: string { case Owner = "owner"; }');
         }
@@ -160,6 +177,95 @@ class AuthControllerTest extends TestCase
                 'data' => ['user', 'token'],
                 'message',
             ]);
+    }
+
+    public function test_login_response_includes_correct_user_role_for_team_owner(): void
+    {
+        // 1. Create user with an owned team + pivot membership.
+        $userId = (string) Str::uuid();
+        $teamId = (string) Str::uuid();
+
+        $user = AuthControllerTestUser::query()->create([
+            'id' => $userId,
+            'name' => 'Owner User',
+            'email' => 'owner@example.com',
+            'password' => Hash::make('Password123'),
+            'locale' => 'en',
+            'timezone' => 'UTC',
+            'current_team_id' => $teamId,
+        ]);
+
+        AuthControllerTestTeam::query()->create([
+            'id' => $teamId,
+            'user_id' => $userId,
+            'name' => 'Owner Team',
+            'personal_team' => true,
+        ]);
+
+        $user->teams()->attach($teamId, [
+            'id' => (string) Str::uuid(),
+            'role' => 'admin',
+        ]);
+
+        // 2. Login and verify user_role is resolved correctly.
+        $response = $this->postJson('/login', [
+            'email' => 'owner@example.com',
+            'password' => 'Password123',
+        ]);
+
+        $response
+            ->assertOk()
+            ->assertJsonPath('data.user.current_team.user_role', 'owner')
+            ->assertJsonPath('data.user.all_teams.0.user_role', 'owner');
+    }
+
+    public function test_login_response_includes_correct_user_role_for_team_member(): void
+    {
+        // 1. Create an owner and a member user.
+        $ownerId = (string) Str::uuid();
+        $memberId = (string) Str::uuid();
+        $teamId = (string) Str::uuid();
+
+        AuthControllerTestUser::query()->create([
+            'id' => $ownerId,
+            'name' => 'Team Owner',
+            'email' => 'team-owner@example.com',
+            'password' => Hash::make('Password123'),
+            'locale' => 'en',
+            'timezone' => 'UTC',
+        ]);
+
+        AuthControllerTestTeam::query()->create([
+            'id' => $teamId,
+            'user_id' => $ownerId,
+            'name' => 'Shared Team',
+            'personal_team' => false,
+        ]);
+
+        $member = AuthControllerTestUser::query()->create([
+            'id' => $memberId,
+            'name' => 'Member User',
+            'email' => 'member@example.com',
+            'password' => Hash::make('Password123'),
+            'locale' => 'en',
+            'timezone' => 'UTC',
+            'current_team_id' => $teamId,
+        ]);
+
+        $member->teams()->attach($teamId, [
+            'id' => (string) Str::uuid(),
+            'role' => 'member',
+        ]);
+
+        // 2. Login as member and verify role.
+        $response = $this->postJson('/login', [
+            'email' => 'member@example.com',
+            'password' => 'Password123',
+        ]);
+
+        $response
+            ->assertOk()
+            ->assertJsonPath('data.user.current_team.user_role', 'member');
     }
 
     public function test_social_login_creates_user_and_returns_token(): void
@@ -344,6 +450,73 @@ class AuthControllerTest extends TestCase
             ->assertStatus(401)
             ->assertJsonPath('message', 'Invalid credentials');
     }
+
+    public function test_register_auto_detects_locale_from_accept_language_header(): void
+    {
+        // Bind real CreateUser action to test auto-detection.
+        $this->app->bind(CreatesUsers::class, \FlutterSdk\MagicStarter\Actions\CreateUser::class);
+
+        $this->postJson(
+            '/register',
+            [
+                'name' => 'Auto Locale User',
+                'email' => 'auto-locale@example.com',
+                'password' => 'Password123',
+                'password_confirmation' => 'Password123',
+            ],
+            [
+                'Accept-Language' => 'tr-TR,tr;q=0.9,en;q=0.8',
+            ],
+        )
+            ->assertCreated()
+            ->assertJsonPath('data.user.locale', 'tr');
+    }
+
+    public function test_register_auto_detects_timezone_from_x_timezone_header(): void
+    {
+        // Bind real CreateUser action to test auto-detection.
+        $this->app->bind(CreatesUsers::class, \FlutterSdk\MagicStarter\Actions\CreateUser::class);
+
+        $this->postJson(
+            '/register',
+            [
+                'name' => 'Auto TZ User',
+                'email' => 'auto-tz@example.com',
+                'password' => 'Password123',
+                'password_confirmation' => 'Password123',
+            ],
+            [
+                'X-Timezone' => 'Europe/Istanbul',
+            ],
+        )
+            ->assertCreated()
+            ->assertJsonPath('data.user.timezone', 'Europe/Istanbul');
+    }
+
+    public function test_register_explicit_locale_overrides_header_detection(): void
+    {
+        // Bind real CreateUser action to test auto-detection.
+        $this->app->bind(CreatesUsers::class, \FlutterSdk\MagicStarter\Actions\CreateUser::class);
+
+        $this->postJson(
+            '/register',
+            [
+                'name' => 'Override User',
+                'email' => 'override@example.com',
+                'password' => 'Password123',
+                'password_confirmation' => 'Password123',
+                'locale' => 'en',
+                'timezone' => 'UTC',
+            ],
+            [
+                'Accept-Language' => 'tr-TR',
+                'X-Timezone' => 'Europe/Istanbul',
+            ],
+        )
+            ->assertCreated()
+            ->assertJsonPath('data.user.locale', 'en')
+            ->assertJsonPath('data.user.timezone', 'UTC');
+    }
 }
 
 final class AuthControllerTestUser extends Model implements AuthenticatableContract
@@ -384,6 +557,8 @@ final class AuthControllerTestTeam extends \FlutterSdk\MagicStarter\Models\Team
     public $incrementing = false;
 
     protected $keyType = 'string';
+
+    protected $fillable = [];
 
     protected $guarded = [];
 }

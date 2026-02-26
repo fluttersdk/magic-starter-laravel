@@ -2,6 +2,7 @@
 
 namespace FlutterSdk\MagicStarter\Http\Requests;
 
+use DateTimeZone;
 use FlutterSdk\MagicStarter\MagicStarter;
 use Illuminate\Foundation\Http\FormRequest;
 use Illuminate\Validation\Rule;
@@ -33,8 +34,26 @@ class RegisterRequest extends FormRequest
                 Password::min(8)->letters()->numbers()->mixedCase(),
                 'confirmed',
             ],
-            'locale' => ['nullable', 'string', 'max:5'],
-            'timezone' => ['nullable', 'string', 'timezone'],
+            'locale' => [
+                'nullable',
+                'string',
+                Rule::in(
+                    config(
+                        'magic-starter.supported_locales',
+                        ['en'],
+                    ),
+                ),
+            ],
+            'timezone' => [
+                'nullable',
+                'string',
+                Rule::in(
+                    config(
+                        'magic-starter.supported_timezones',
+                        DateTimeZone::listIdentifiers(),
+                    ),
+                ),
+            ],
             'subscribe_newsletter' => ['nullable', 'boolean'],
         ];
     }

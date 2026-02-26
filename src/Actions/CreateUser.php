@@ -8,6 +8,7 @@ use FlutterSdk\MagicStarter\Contracts\CreatesUsers;
 use FlutterSdk\MagicStarter\Features;
 use FlutterSdk\MagicStarter\MagicStarter;
 use FlutterSdk\MagicStarter\Models\NewsletterSubscriber;
+use FlutterSdk\MagicStarter\Support\RequestLocaleDetector;
 use Illuminate\Contracts\Auth\Authenticatable;
 use Illuminate\Support\Arr;
 use Illuminate\Support\Facades\Validator;
@@ -63,8 +64,22 @@ class CreateUser implements CreatesUsers
 
         if (Features::hasExtendedProfileFeatures()) {
             $defaults = config('magic-starter.defaults', []);
-            $attributes['locale'] = Arr::get($validated, 'locale', $defaults['locale'] ?? 'en');
-            $attributes['timezone'] = Arr::get($validated, 'timezone', $defaults['timezone'] ?? 'UTC');
+            $request = request();
+
+            // 2a. Auto-detect from request headers, falling back to config defaults.
+            $detectedLocale = $request
+                ? RequestLocaleDetector::detectLocale($request)
+                : null;
+            $detectedTimezone = $request
+                ? RequestLocaleDetector::detectTimezone($request)
+                : null;
+
+            $attributes['locale'] = Arr::get($validated, 'locale')
+                ?? $detectedLocale
+                ?? ($defaults['locale'] ?? 'en');
+            $attributes['timezone'] = Arr::get($validated, 'timezone')
+                ?? $detectedTimezone
+                ?? ($defaults['timezone'] ?? 'UTC');
             $attributes['email_verified_at'] = Arr::get($validated, 'email_verified_at');
         }
 

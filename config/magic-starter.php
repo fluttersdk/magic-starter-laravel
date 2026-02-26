@@ -58,13 +58,70 @@ return [
     |--------------------------------------------------------------------------
     |
     | Default locale and timezone for new users. These values are used when
-    | creating a new user account, and can be updated by the user later.
+    | creating a new user account and can be updated by the user later.
+    |
+    | When the client sends Accept-Language or X-Timezone headers during
+    | registration, the package auto-detects values from those headers and
+    | validates them against the supported lists below.
     |
     */
 
     'defaults' => [
         'locale' => env('MAGIC_STARTER_DEFAULT_LOCALE', 'en'),
         'timezone' => env('MAGIC_STARTER_DEFAULT_TIMEZONE', 'UTC'),
+    ],
+
+    /*
+    |--------------------------------------------------------------------------
+    | Supported Locales
+    |--------------------------------------------------------------------------
+    |
+    | The list of locale codes your application supports. Used for validation
+    | during registration and profile updates, and for auto-detection from
+    | the Accept-Language header. Locale codes should be 2-letter ISO 639-1.
+    |
+    */
+
+    'supported_locales' => [
+        'en',
+        'tr',
+    ],
+
+    /*
+    |--------------------------------------------------------------------------
+    | Supported Timezones
+    |--------------------------------------------------------------------------
+    |
+    | The list of IANA timezone identifiers your application supports. Used
+    | for validation during registration and profile updates, and for
+    | auto-detection from the X-Timezone header. When empty or null, falls
+    | back to the full PHP DateTimeZone::listIdentifiers() list.
+    |
+    | This default list is aligned with the TimezoneController's curated set.
+    |
+    */
+
+    'supported_timezones' => [
+        'UTC',
+        'America/New_York',
+        'America/Chicago',
+        'America/Denver',
+        'America/Los_Angeles',
+        'America/Sao_Paulo',
+        'America/Mexico_City',
+        'Canada/Eastern',
+        'Europe/London',
+        'Europe/Paris',
+        'Europe/Berlin',
+        'Europe/Istanbul',
+        'Asia/Dubai',
+        'Asia/Kolkata',
+        'Asia/Shanghai',
+        'Asia/Tokyo',
+        'Asia/Singapore',
+        'Australia/Sydney',
+        'Pacific/Auckland',
+        'Africa/Cairo',
     ],
 
     /*

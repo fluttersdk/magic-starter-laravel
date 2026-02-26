@@ -9,6 +9,7 @@ use FlutterSdk\MagicStarter\Http\Requests\SocialLoginRequest;
 use FlutterSdk\MagicStarter\Http\Requests\SwitchTeamRequest;
 use FlutterSdk\MagicStarter\Http\Resources\UserResource;
 use FlutterSdk\MagicStarter\MagicStarter;
+use FlutterSdk\MagicStarter\Support\RequestLocaleDetector;
 use Illuminate\Auth\Events\Registered;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
@@ -66,15 +67,17 @@ class AuthController
                 'email' => $socialUser->getEmail(),
                 'password' => $password,
                 'password_confirmation' => $password,
-                'locale' => 'en',
-                'timezone' => 'UTC',
+                'locale' => RequestLocaleDetector::detectLocale($request)
+                    ?? config('magic-starter.defaults.locale', 'en'),
+                'timezone' => RequestLocaleDetector::detectTimezone($request)
+                    ?? config('magic-starter.defaults.timezone', 'UTC'),
                 'email_verified_at' => now(),
             ]);
 
             event(new Registered($user));
         }
 
-        return $this->issueTokenResponse($user, $request);
+        return $this->authenticatedResponse($user, $request, $this->createAuthToken($user, $request));
     }
 
     /**
@@ -86,15 +89,13 @@ class AuthController
 
         event(new Registered($user));
 
-        $token = $this->createAuthToken($user, $request);
-
-        return response()->json([
-            'data' => [
-                'user' => new UserResource($user),
-                'token' => $token,
-            ],
-            'message' => 'Registration successful',
-        ], 201);
+        return $this->authenticatedResponse(
+            $user,
+            $request,
+            $this->createAuthToken($user, $request),
+            'Registration successful',
+            201,
+        );
     }
 
     /**
@@ -115,13 +116,7 @@ class AuthController
 
         $token = $this->createAuthToken($user, $request, true);
 
-        return response()->json([
-            'data' => [
-                'user' => new UserResource($user),
-                'token' => $token,
-            ],
-            'message' => 'Login successful',
-        ]);
+        return $this->authenticatedResponse($user, $request, $token, 'Login successful');
     }
 
     /**
@@ -171,17 +166,39 @@ class AuthController
     }
 
     /**
-     * Issue a token response for the given user.
+     * Build an authenticated JSON response with user and token.
+     *
+     * Sets the user resolver on the request so that downstream resources
+     * (e.g. TeamResource) can access the authenticated user via
+     * `$request->user()` — even before Sanctum middleware runs.
+     *
+     * @param  mixed  $user  The authenticated user model.
+     * @param  Request  $request  The current HTTP request.
+     * @param  string  $token  The plain-text Sanctum token.
+     * @param  string  $message  Response message.
+     * @param  int  $status  HTTP status code.
      */
-    protected function issueTokenResponse(mixed $user, Request $request): JsonResponse
-    {
+    protected function authenticatedResponse(
+        mixed $user,
+        Request $request,
+        string $token,
+        string $message = 'Login successful',
+        int $status = 200,
+    ): JsonResponse {
+        // Make $request->user() available for nested resources.
+        // Resource serialization resolves request from the container,
+        // which may differ from the controller-injected $request instance.
+        $resolver = fn () => $user;
+        $request->setUserResolver($resolver);
+        app('request')->setUserResolver($resolver);
+
         return response()->json([
             'data' => [
                 'user' => new UserResource($user),
-                'token' => $this->createAuthToken($user, $request),
+                'token' => $token,
             ],
-            'message' => 'Login successful',
-        ]);
+            'message' => $message,
+        ], $status);
     }
 
     /**

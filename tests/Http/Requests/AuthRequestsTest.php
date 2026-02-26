@@ -39,6 +39,19 @@ final class AuthRequestsTest extends TestCase
             'magic-starter.models.user' => AuthRequestsTestUser::class,
             'magic-starter.models.team' => AuthRequestsTestTeam::class,
         ]);
+        \call_user_func('config', [
+            'magic-starter.supported_locales' => [
+                'en',
+                'tr',
+                'de',
+            ],
+            'magic-starter.supported_timezones' => [
+                'UTC',
+                'Europe/Istanbul',
+                'Europe/London',
+                'America/New_York',
+            ],
+        ]);
 
         \call_user_func([\call_user_func('app', 'db.schema'), 'create'], 'users', function (Blueprint $table): void {
             $table->uuid('id')->primary();
@@ -330,6 +343,56 @@ final class AuthRequestsTest extends TestCase
         $this->actingAs($user)
             ->putJson('/user/current-team', ['team_id' => '00000000-0000-0000-0000-000000000000'])
             ->assertForbidden();
+    }
+
+    public function test_register_rejects_unsupported_locale(): void
+    {
+        $this->postJson('/auth/register', [
+            'name' => 'John Doe',
+            'email' => 'john@example.com',
+            'password' => 'Password123',
+            'password_confirmation' => 'Password123',
+            'locale' => 'xx',
+        ])
+            ->assertUnprocessable()
+            ->assertJsonValidationErrors(['locale']);
+    }
+
+    public function test_register_accepts_supported_locale(): void
+    {
+        $this->postJson('/auth/register', [
+            'name' => 'John Doe',
+            'email' => 'john-locale@example.com',
+            'password' => 'Password123',
+            'password_confirmation' => 'Password123',
+            'locale' => 'tr',
+        ])
+            ->assertCreated();
+    }
+
+    public function test_register_rejects_unsupported_timezone(): void
+    {
+        $this->postJson('/auth/register', [
+            'name' => 'John Doe',
+            'email' => 'john@example.com',
+            'password' => 'Password123',
+            'password_confirmation' => 'Password123',
+            'timezone' => 'Fake/Zone',
+        ])
+            ->assertUnprocessable()
+            ->assertJsonValidationErrors(['timezone']);
+    }
+
+    public function test_register_accepts_supported_timezone(): void
+    {
+        $this->postJson('/auth/register', [
+            'name' => 'John Doe',
+            'email' => 'john-tz@example.com',
+            'password' => 'Password123',
+            'password_confirmation' => 'Password123',
+            'timezone' => 'Europe/Istanbul',
+        ])
+            ->assertCreated();
     }
 }
 
