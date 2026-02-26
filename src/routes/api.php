@@ -99,7 +99,7 @@ Route::prefix((string) config('magic-starter.route_prefix', ''))
 
                 Route::prefix('notification-preferences')->group(function (): void {
                     Route::get('/', [NotificationPreferenceController::class, 'show']);
-                    Route::patch('/', [NotificationPreferenceController::class, 'update']);
+                    Route::put('/', [NotificationPreferenceController::class, 'update']);
                 });
             }
         });

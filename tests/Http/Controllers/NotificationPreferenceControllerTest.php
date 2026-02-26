@@ -67,7 +67,7 @@ final class NotificationPreferenceControllerTest extends TestCase
 
         $router = \call_user_func('app', 'router');
         $router->get('/notification-preferences', [NotificationPreferenceController::class, 'show']);
-        $router->patch('/notification-preferences', [NotificationPreferenceController::class, 'update']);
+        $router->put('/notification-preferences', [NotificationPreferenceController::class, 'update']);
     }
 
     protected function tearDown(): void
@@ -119,7 +119,7 @@ final class NotificationPreferenceControllerTest extends TestCase
         ]);
 
         $this->actingAs($user)
-            ->patchJson('/notification-preferences', [
+            ->putJson('/notification-preferences', [
                 'type' => 'monitor_down',
                 'channel' => 'mail',
                 'is_enabled' => false,
@@ -143,7 +143,7 @@ final class NotificationPreferenceControllerTest extends TestCase
         ]);
 
         $this->actingAs($user)
-            ->patchJson('/notification-preferences', [
+            ->putJson('/notification-preferences', [
                 'preferences' => [
                     [
                         'type' => 'monitor_down',
@@ -177,7 +177,7 @@ final class NotificationPreferenceControllerTest extends TestCase
         ]);
 
         $this->actingAs($user)
-            ->patchJson('/notification-preferences', [
+            ->putJson('/notification-preferences', [
                 'type' => 'unknown',
                 'channel' => 'mail',
                 'is_enabled' => false,
@@ -194,7 +194,7 @@ final class NotificationPreferenceControllerTest extends TestCase
         ]);
 
         $this->actingAs($user)
-            ->patchJson('/notification-preferences', [
+            ->putJson('/notification-preferences', [
                 'type' => 'monitor_down',
                 'channel' => 'slack',
                 'is_enabled' => false,
@@ -211,7 +211,7 @@ final class NotificationPreferenceControllerTest extends TestCase
         ]);
 
         $this->actingAs($user)
-            ->patchJson('/notification-preferences', [
+            ->putJson('/notification-preferences', [
                 'type' => 'monitor_down',
                 'channel' => 'database',
                 'is_enabled' => false,
