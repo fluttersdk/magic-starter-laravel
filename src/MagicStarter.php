@@ -59,6 +59,7 @@ class MagicStarter
 
         return $model;
     }
+
     /**
      * Resolve the configured membership model class name.
      *
@@ -134,6 +135,7 @@ class MagicStarter
 
         return new static;
     }
+
     /**
      * Register a custom membership model class.
      */

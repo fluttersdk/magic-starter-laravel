@@ -5,8 +5,6 @@ declare(strict_types=1);
 namespace FlutterSdk\MagicStarter\Tests\Models;
 
 use FlutterSdk\MagicStarter\Models\Team;
-use FlutterSdk\MagicStarter\Models\TeamInvitation;
-use FlutterSdk\MagicStarter\Models\TeamUser;
 use FlutterSdk\MagicStarter\Tests\TestCase;
 use Illuminate\Database\Eloquent\Model;
 
@@ -19,12 +17,20 @@ class ModelsTest extends TestCase
         config([
             'magic-starter.models.user' => ConfiguredUser::class,
             'magic-starter.models.team' => ConfiguredTeam::class,
+            'magic-starter.models.membership' => ConfiguredMembership::class,
+            'magic-starter.models.team_invitation' => ConfiguredTeamInvitation::class,
         ]);
+
+        \FlutterSdk\MagicStarter\MagicStarter::useUserModel(ConfiguredUser::class);
+        \FlutterSdk\MagicStarter\MagicStarter::useTeamModel(ConfiguredTeam::class);
+        \FlutterSdk\MagicStarter\MagicStarter::useMembershipModel(ConfiguredMembership::class);
+        \FlutterSdk\MagicStarter\MagicStarter::useTeamInvitationModel(ConfiguredTeamInvitation::class);
     }
 
     public function test_team_relationships_resolve_configured_models(): void
     {
-        $team = new Team;
+        $teamClass = \FlutterSdk\MagicStarter\MagicStarter::teamModel();
+        $team = new $teamClass;
 
         $owner = $team->owner();
         $users = $team->users();
@@ -32,8 +38,8 @@ class ModelsTest extends TestCase
 
         $this->assertSame(ConfiguredUser::class, $owner->getRelated()::class);
         $this->assertSame(ConfiguredUser::class, $users->getRelated()::class);
-        $this->assertSame(TeamUser::class, $users->getPivotClass());
-        $this->assertSame(TeamInvitation::class, $invitations->getRelated()::class);
+        $this->assertSame(ConfiguredMembership::class, $users->getPivotClass());
+        $this->assertSame(ConfiguredTeamInvitation::class, $invitations->getRelated()::class);
     }
 
     public function test_team_uses_casts_method_for_personal_team(): void
@@ -51,21 +57,24 @@ class ModelsTest extends TestCase
         $this->assertNotContains('casts', $declaredProperties);
 
         $castsMethod = $reflection->getMethod('casts');
-        $casts = $castsMethod->invoke(new Team);
+        $teamClass = \FlutterSdk\MagicStarter\MagicStarter::teamModel();
+        $casts = $castsMethod->invoke(new $teamClass);
 
         $this->assertSame(['personal_team' => 'boolean'], $casts);
     }
 
     public function test_team_invitation_team_relation_uses_configured_team_model(): void
     {
-        $relation = (new TeamInvitation)->team();
+        $invitationClass = \FlutterSdk\MagicStarter\MagicStarter::teamInvitationModel();
+        $relation = (new $invitationClass)->team();
 
         $this->assertSame(ConfiguredTeam::class, $relation->getRelated()::class);
     }
 
     public function test_team_user_uses_expected_table_and_uuid_key_shape(): void
     {
-        $teamUser = new TeamUser;
+        $membershipClass = \FlutterSdk\MagicStarter\MagicStarter::membershipModel();
+        $teamUser = new $membershipClass;
 
         $this->assertSame('team_user', $teamUser->getTable());
         $this->assertFalse($teamUser->getIncrementing());
@@ -86,6 +95,10 @@ class ModelsTest extends TestCase
     }
 }
 
-class ConfiguredUser extends Model {}
+class ConfiguredUser extends \FlutterSdk\MagicStarter\Tests\Fixtures\ConcreteUser {}
 
-class ConfiguredTeam extends Model {}
+class ConfiguredTeam extends \FlutterSdk\MagicStarter\Tests\Fixtures\ConcreteTeam {}
+
+class ConfiguredMembership extends \FlutterSdk\MagicStarter\Tests\Fixtures\ConcreteTeamUser {}
+
+class ConfiguredTeamInvitation extends \FlutterSdk\MagicStarter\Tests\Fixtures\ConcreteTeamInvitation {}

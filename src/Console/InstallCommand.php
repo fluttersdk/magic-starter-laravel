@@ -56,7 +56,6 @@ class InstallCommand extends Command
             '--tag' => 'magic-starter-models',
         ]);
 
-
         $this->info('Magic Starter installed.');
 
         return 0;

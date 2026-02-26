@@ -5,7 +5,6 @@ declare(strict_types=1);
 namespace FlutterSdk\MagicStarter\Tests;
 
 use FlutterSdk\MagicStarter\Features;
-use FlutterSdk\MagicStarter\Listeners\GateNotificationChannels;
 use FlutterSdk\MagicStarter\MagicStarterServiceProvider;
 use Illuminate\Notifications\Events\NotificationSending;
 use Illuminate\Support\Facades\Event;

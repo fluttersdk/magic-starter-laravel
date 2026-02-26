@@ -2,10 +2,11 @@
 
 namespace FlutterSdk\MagicStarter\Http\Requests;
 
-use Illuminate\Foundation\Http\FormRequest;
 use FlutterSdk\MagicStarter\MagicStarter;
-use Illuminate\Validation\Rule;
+use Illuminate\Foundation\Http\FormRequest;
 use Illuminate\Support\Facades\Gate;
+use Illuminate\Validation\Rule;
+
 class SwitchTeamRequest extends FormRequest
 {
     /**

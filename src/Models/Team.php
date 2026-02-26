@@ -29,8 +29,11 @@ use Illuminate\Support\Facades\Storage;
 abstract class Team extends Model
 {
     use HasUuids;
+
     public $incrementing = false;
+
     protected $keyType = 'string';
+
     protected $appends = [
         'profile_photo_url',
     ];
@@ -64,7 +67,7 @@ abstract class Team extends Model
      */
     public function users(): BelongsToMany
     {
-        return $this->belongsToMany(MagicStarter::userModel())
+        return $this->belongsToMany(MagicStarter::userModel(), 'team_user')
             ->using(MagicStarter::membershipModel())
             ->withPivot('role')
             ->withTimestamps();
