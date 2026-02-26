@@ -6,8 +6,6 @@ use FlutterSdk\MagicStarter\Contracts\InvitesTeamMembers;
 use FlutterSdk\MagicStarter\Http\Requests\StoreTeamInvitationRequest;
 use FlutterSdk\MagicStarter\Http\Resources\TeamInvitationResource;
 use FlutterSdk\MagicStarter\MagicStarter;
-use FlutterSdk\MagicStarter\Models\TeamInvitation;
-use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Resources\Json\AnonymousResourceCollection;
 use Illuminate\Support\Facades\Gate;
 
@@ -36,7 +34,11 @@ class TeamInvitationController
         if ($teamModel->invitations()->where('email', $validated['email'])->exists()) {
             return response()->json([
                 'message' => 'An invitation has already been sent to this email.',
-                'errors' => ['email' => ['An invitation has already been sent to this email.']],
+                'errors' => [
+                    'email' => [
+                        'An invitation has already been sent to this email.',
+                    ],
+                ],
             ], 422);
         }
 
@@ -66,8 +68,8 @@ class TeamInvitationController
         $user = request()->user();
         Gate::forUser($user)->authorize('manageInvitations', $teamModel);
 
-        $invitationModel = TeamInvitation::query()->findOrFail($invitation);
-
+        $invitationModelClass = MagicStarter::teamInvitationModel();
+        $invitationModel = $invitationModelClass::query()->findOrFail($invitation);
         if ((string) $invitationModel->team_id !== (string) $teamModel->getKey()) {
             abort(404);
         }
@@ -82,8 +84,8 @@ class TeamInvitationController
 
     public function accept(string $token): JsonResponse
     {
-        $invitation = TeamInvitation::query()->where('token', $token)->firstOrFail();
-
+        $invitationModelClass = MagicStarter::teamInvitationModel();
+        $invitation = $invitationModelClass::query()->where('token', $token)->firstOrFail();
         $user = request()->user();
 
         if (mb_strtolower($invitation->email) !== mb_strtolower($user->email)) {

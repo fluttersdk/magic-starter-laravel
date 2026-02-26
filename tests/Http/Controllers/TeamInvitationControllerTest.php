@@ -7,7 +7,6 @@ namespace FlutterSdk\MagicStarter\Tests\Http\Controllers;
 use FlutterSdk\MagicStarter\Contracts\InvitesTeamMembers;
 use FlutterSdk\MagicStarter\Http\Controllers\TeamInvitationController;
 use FlutterSdk\MagicStarter\MagicStarter;
-use FlutterSdk\MagicStarter\Models\TeamInvitation;
 use FlutterSdk\MagicStarter\Tests\TestCase;
 use Illuminate\Auth\Authenticatable as AuthenticatableTrait;
 use Illuminate\Contracts\Auth\Authenticatable as AuthenticatableContract;
@@ -144,7 +143,8 @@ final class TeamInvitationControllerTest extends TestCase
             ->assertOk()
             ->assertJsonPath('message', 'Invitation canceled successfully.');
 
-        $this->assertNull(TeamInvitation::query()->find($invitation->id));
+        $invitationModelClass = MagicStarter::teamInvitationModel();
+        $this->assertNull($invitationModelClass::query()->find($invitation->id));
     }
 
     public function test_accept_adds_user_to_team_and_deletes_invitation(): void
@@ -165,7 +165,8 @@ final class TeamInvitationControllerTest extends TestCase
 
         $this->assertTrue($team->fresh()->users()->where('user_id', $invitee->id)->exists());
         $this->assertSame('admin', $team->fresh()->users()->find($invitee->id)?->pivot?->role);
-        $this->assertNull(TeamInvitation::query()->find($invitation->id));
+        $invitationModelClass = MagicStarter::teamInvitationModel();
+        $this->assertNull($invitationModelClass::query()->find($invitation->id));
     }
 
     public function test_accept_rejects_when_email_does_not_match(): void
@@ -204,7 +205,8 @@ final class TeamInvitationControllerTest extends TestCase
             ->assertStatus(410)
             ->assertJsonPath('message', 'This invitation has expired.');
 
-        $this->assertNull(TeamInvitation::query()->find($invitation->id));
+        $invitationModelClass = MagicStarter::teamInvitationModel();
+        $this->assertNull($invitationModelClass::query()->find($invitation->id));
     }
 
     public function test_index_returns_403_for_non_owner(): void
@@ -286,13 +288,13 @@ final class TeamInvitationControllerTestTeam extends \FlutterSdk\MagicStarter\Mo
     public function users(): BelongsToMany
     {
         return $this->belongsToMany(TeamInvitationControllerTestUser::class, 'team_user', 'team_id', 'user_id')
-            ->using(\FlutterSdk\MagicStarter\Models\TeamUser::class)
+            ->using(\FlutterSdk\MagicStarter\MagicStarter::membershipModel())
             ->withPivot('role')
             ->withTimestamps();
     }
 
     public function invitations(): HasMany
     {
-        return $this->hasMany(TeamInvitation::class, 'team_id');
+        return $this->hasMany(\FlutterSdk\MagicStarter\MagicStarter::teamInvitationModel(), 'team_id');
     }
 }

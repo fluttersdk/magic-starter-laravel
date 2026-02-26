@@ -6,7 +6,6 @@ use FlutterSdk\MagicStarter\MagicStarter;
 use Illuminate\Database\Eloquent\Casts\Attribute;
 use Illuminate\Database\Eloquent\Collection;
 use Illuminate\Database\Eloquent\Concerns\HasUuids;
-use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\BelongsToMany;
@@ -27,22 +26,11 @@ use Illuminate\Support\Facades\Storage;
  * @property-read  Collection<int, Model>  $users
  * @property-read  Collection<int, TeamInvitation>  $invitations
  */
-class Team extends Model
+abstract class Team extends Model
 {
-    use HasFactory;
     use HasUuids;
-
     public $incrementing = false;
-
     protected $keyType = 'string';
-
-    protected $fillable = [
-        'user_id',
-        'name',
-        'personal_team',
-        'profile_photo_path',
-    ];
-
     protected $appends = [
         'profile_photo_url',
     ];
@@ -77,7 +65,7 @@ class Team extends Model
     public function users(): BelongsToMany
     {
         return $this->belongsToMany(MagicStarter::userModel())
-            ->using(TeamUser::class)
+            ->using(MagicStarter::membershipModel())
             ->withPivot('role')
             ->withTimestamps();
     }
@@ -89,7 +77,7 @@ class Team extends Model
      */
     public function invitations(): HasMany
     {
-        return $this->hasMany(TeamInvitation::class);
+        return $this->hasMany(MagicStarter::teamInvitationModel());
     }
 
     /**

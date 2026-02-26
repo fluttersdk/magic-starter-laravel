@@ -18,7 +18,7 @@ use Illuminate\Support\Carbon;
  * @property Carbon|null $expires_at
  * @property Carbon|null $created_at
  */
-class TeamInvitation extends Model
+abstract class TeamInvitation extends Model
 {
     use HasUuids;
 

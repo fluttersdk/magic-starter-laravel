@@ -3,7 +3,6 @@
 namespace FlutterSdk\MagicStarter\Traits;
 
 use FlutterSdk\MagicStarter\MagicStarter;
-use FlutterSdk\MagicStarter\Models\TeamUser;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\BelongsToMany;
@@ -29,13 +28,11 @@ trait HasTeams
      */
     public function teams(): BelongsToMany
     {
-        $relationship = $this->belongsToMany(MagicStarter::teamModel(), 'team_user', 'user_id', 'team_id')->withPivot('role');
+        return $this->belongsToMany(MagicStarter::teamModel())
+            ->using(MagicStarter::membershipModel())
+            ->withPivot('role')
+            ->withTimestamps();
 
-        if (class_exists(TeamUser::class)) {
-            $relationship->using(TeamUser::class);
-        }
-
-        return $relationship;
     }
 
     /**

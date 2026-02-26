@@ -3,8 +3,9 @@
 namespace FlutterSdk\MagicStarter\Http\Requests;
 
 use Illuminate\Foundation\Http\FormRequest;
+use FlutterSdk\MagicStarter\MagicStarter;
+use Illuminate\Validation\Rule;
 use Illuminate\Support\Facades\Gate;
-
 class SwitchTeamRequest extends FormRequest
 {
     /**
@@ -12,7 +13,7 @@ class SwitchTeamRequest extends FormRequest
      */
     public function authorize(): bool
     {
-        $teamModel = config('magic-starter.models.team', \FlutterSdk\MagicStarter\Models\Team::class);
+        $teamModel = MagicStarter::teamModel();
         $team = $teamModel::find($this->input('team_id'));
 
         if (! $team) {
@@ -30,7 +31,11 @@ class SwitchTeamRequest extends FormRequest
     public function rules(): array
     {
         return [
-            'team_id' => ['required', 'uuid', 'exists:teams,id'],
+            'team_id' => [
+                'required',
+                'uuid',
+                Rule::exists(MagicStarter::teamModel(), 'id'),
+            ],
         ];
     }
 
