@@ -34,6 +34,8 @@ final class TeamInvitationControllerTest extends TestCase
             ],
             'magic-starter.models.user' => TeamInvitationControllerTestUser::class,
             'magic-starter.models.team' => TeamInvitationControllerTestTeam::class,
+            'magic-starter.models.team_invitation' => TeamInvitationControllerTestInvitation::class,
+            'magic-starter.models.membership' => TeamInvitationControllerTestMembership::class,
         ]);
 
         \call_user_func([\call_user_func('app', 'db.schema'), 'create'], 'users', function (Blueprint $table): void {
@@ -297,4 +299,26 @@ final class TeamInvitationControllerTestTeam extends \FlutterSdk\MagicStarter\Mo
     {
         return $this->hasMany(\FlutterSdk\MagicStarter\MagicStarter::teamInvitationModel(), 'team_id');
     }
+}
+
+final class TeamInvitationControllerTestInvitation extends \FlutterSdk\MagicStarter\Models\TeamInvitation
+{
+    protected $table = 'team_invitations';
+
+    public $incrementing = false;
+
+    protected $keyType = 'string';
+
+    protected $guarded = [];
+}
+
+final class TeamInvitationControllerTestMembership extends \FlutterSdk\MagicStarter\Models\TeamUser
+{
+    protected $table = 'team_user';
+
+    public $incrementing = false;
+
+    protected $keyType = 'string';
+
+    protected $guarded = [];
 }

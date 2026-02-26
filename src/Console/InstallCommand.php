@@ -51,6 +51,11 @@ class InstallCommand extends Command
             ...$publishOptions,
             '--tag' => 'magic-starter-stubs',
         ]);
+        $this->call('vendor:publish', [
+            ...$publishOptions,
+            '--tag' => 'magic-starter-models',
+        ]);
+
 
         $this->info('Magic Starter installed.');
 

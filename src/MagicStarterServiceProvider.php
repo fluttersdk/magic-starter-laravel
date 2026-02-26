@@ -106,6 +106,12 @@ class MagicStarterServiceProvider extends ServiceProvider
             $this->publishes([
                 __DIR__ . '/../stubs/actions' => app_path('Actions/MagicStarter'),
             ], 'magic-starter-stubs');
+            $this->publishes([
+                __DIR__ . '/../stubs/models/Team.php' => app_path('Models/Team.php'),
+                __DIR__ . '/../stubs/models/TeamUser.php' => app_path('Models/TeamUser.php'),
+                __DIR__ . '/../stubs/models/TeamInvitation.php' => app_path('Models/TeamInvitation.php'),
+            ], 'magic-starter-models');
+
         }
     }
 }
