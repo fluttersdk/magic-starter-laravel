@@ -74,6 +74,13 @@ class MagicStarterServiceProvider extends ServiceProvider
                 Listeners\CreatePersonalTeamListener::class,
             );
         }
+        // 3.5. Auto-gate notification channels when notification feature is enabled.
+        if (Features::hasNotificationFeatures()) {
+            Event::listen(
+                \Illuminate\Notifications\Events\NotificationSending::class,
+                Listeners\GateNotificationChannels::class,
+            );
+        }
 
         // 4. Load package routes unless explicitly ignored.
         if (! MagicStarter::shouldIgnoreRoutes()) {

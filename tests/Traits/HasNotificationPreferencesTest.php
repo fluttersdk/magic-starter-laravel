@@ -204,6 +204,115 @@ final class HasNotificationPreferencesTest extends TestCase
         $this->assertCount(1, $user->notificationSettings);
         $this->assertInstanceOf(NotificationSetting::class, $user->notificationSettings->first());
     }
+
+    public function test_prefers_works_with_fqcn_registered_types(): void
+    {
+        // Re-register with FQCN key instead of string slug.
+        NotificationPreferenceRegistry::flush();
+        NotificationPreferenceRegistry::register([
+            'App\\Notifications\\MonitorDownNotification' => [
+                'label' => 'Monitor Down',
+                'channels' => ['database', 'mail', 'push'],
+                'default' => ['database', 'mail'],
+                'locked' => [],
+            ],
+        ]);
+
+        $user = HasNotifPrefsTestUser::query()->create([
+            'name' => 'FQCN User',
+            'email' => 'fqcn@example.test',
+        ]);
+
+        // prefers() called with auto-derived slug should still work.
+        $this->assertTrue($user->prefers('monitor_down', 'database'));
+        $this->assertTrue($user->prefers('monitor_down', 'mail'));
+        $this->assertFalse($user->prefers('monitor_down', 'push'));
+    }
+
+    public function test_prefers_works_with_fqcn_and_explicit_slug(): void
+    {
+        NotificationPreferenceRegistry::flush();
+        NotificationPreferenceRegistry::register([
+            'App\\Notifications\\MonitorDownNotification' => [
+                'slug' => 'mon_down',
+                'label' => 'Monitor Down',
+                'channels' => ['database', 'mail'],
+                'default' => ['database'],
+                'locked' => [],
+            ],
+        ]);
+
+        $user = HasNotifPrefsTestUser::query()->create([
+            'name' => 'Slug User',
+            'email' => 'slug@example.test',
+        ]);
+
+        // prefers() with explicit slug should work.
+        $this->assertTrue($user->prefers('mon_down', 'database'));
+        $this->assertFalse($user->prefers('mon_down', 'mail'));
+    }
+
+    public function test_matrix_uses_slug_keys_when_registered_with_fqcn(): void
+    {
+        NotificationPreferenceRegistry::flush();
+        NotificationPreferenceRegistry::register([
+            'App\\Notifications\\MonitorDownNotification' => [
+                'label' => 'Monitor Down',
+                'channels' => ['database', 'mail'],
+                'default' => ['database', 'mail'],
+                'locked' => [],
+            ],
+        ]);
+
+        $user = HasNotifPrefsTestUser::query()->create([
+            'name' => 'Matrix User',
+            'email' => 'matrix@example.test',
+        ]);
+
+        $user->load('notificationSettings');
+        $matrix = $user->notificationPreferenceMatrix();
+
+        // Matrix key should be auto-derived slug, not FQCN.
+        $this->assertArrayHasKey('monitor_down', $matrix);
+        $this->assertArrayNotHasKey(
+            'App\\Notifications\\MonitorDownNotification',
+            $matrix,
+        );
+        $this->assertSame('Monitor Down', $matrix['monitor_down']['label']);
+    }
+
+    public function test_matrix_with_fqcn_reflects_db_overrides_by_slug(): void
+    {
+        NotificationPreferenceRegistry::flush();
+        NotificationPreferenceRegistry::register([
+            'App\\Notifications\\MonitorDownNotification' => [
+                'label' => 'Monitor Down',
+                'channels' => ['database', 'mail'],
+                'default' => ['database', 'mail'],
+                'locked' => [],
+            ],
+        ]);
+
+        $user = HasNotifPrefsTestUser::query()->create([
+            'name' => 'Override User',
+            'email' => 'override@example.test',
+        ]);
+
+        // DB stores slug, not FQCN.
+        NotificationSetting::query()->create([
+            'notifiable_id' => $user->getKey(),
+            'notifiable_type' => HasNotifPrefsTestUser::class,
+            'type' => 'monitor_down',
+            'channel' => 'mail',
+            'is_enabled' => false,
+        ]);
+
+        $user->load('notificationSettings');
+        $matrix = $user->notificationPreferenceMatrix();
+
+        $this->assertFalse($matrix['monitor_down']['channels']['mail']['enabled']);
+        $this->assertTrue($matrix['monitor_down']['channels']['database']['enabled']);
+    }
 }
 
 /**

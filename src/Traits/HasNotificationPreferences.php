@@ -42,6 +42,9 @@ trait HasNotificationPreferences
     /**
      * Get the full matrix of notification preferences across all registered types and channels.
      *
+     * Returns slug-based keys for the matrix, even when the registry uses FQCN keys.
+     * This ensures the API response shape is consistent regardless of the registry key format.
+     *
      * @return array<string, array{label: string, channels: array<string, array{enabled: bool, locked: bool}>}>
      */
     public function notificationPreferenceMatrix(): array
@@ -50,28 +53,41 @@ trait HasNotificationPreferences
         $settings = $this->notificationSettings->groupBy('type');
         $types = NotificationPreferenceRegistry::all();
 
-        foreach ($types as $typeSlug => $definition) {
-            $typeSettings = $settings->get($typeSlug, collect())->keyBy('channel');
+        foreach ($types as $registryKey => $definition) {
+            // 1. Resolve slug from the registry key (FQCN or legacy string).
+            $slug = NotificationPreferenceRegistry::resolveSlug($registryKey) ?? $registryKey;
+
+            // 2. Look up DB overrides by slug (DB stores slugs, not FQCNs).
+            $typeSettings = $settings->get($slug, collect())->keyBy('channel');
             $channels = [];
 
             foreach ($definition['channels'] as $channelSlug) {
                 $override = $typeSettings->get($channelSlug);
-                $isLocked = in_array($channelSlug, $definition['locked'] ?? [], true);
+                $isLocked = in_array(
+                    $channelSlug,
+                    $definition['locked'] ?? [],
+                    true,
+                );
 
                 $channels[$channelSlug] = [
                     'enabled' => $override !== null
                         ? $override->is_enabled
-                        : in_array($channelSlug, $definition['default'] ?? [], true),
+                        : in_array(
+                            $channelSlug,
+                            $definition['default'] ?? [],
+                            true,
+                        ),
                     'locked' => $isLocked,
                 ];
             }
 
-            $matrix[$typeSlug] = [
+            // 3. Use slug as the matrix key (not FQCN) for consistent API shape.
+            $matrix[$slug] = [
                 'label' => $definition['label'],
                 'channels' => $channels,
             ];
         }
 
         return $matrix;
-    }
+}
 }
