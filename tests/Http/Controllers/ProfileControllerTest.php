@@ -32,6 +32,19 @@ final class ProfileControllerTest extends TestCase
             'magic-starter.models.user' => ProfileControllerTestUser::class,
             'magic-starter.models.team' => ProfileControllerTestTeam::class,
         ]);
+        \call_user_func('config', [
+            'magic-starter.supported_locales' => [
+                'en',
+                'tr',
+                'de',
+            ],
+            'magic-starter.supported_timezones' => [
+                'UTC',
+                'Europe/Istanbul',
+                'Europe/London',
+                'America/New_York',
+            ],
+        ]);
 
         \call_user_func([\call_user_func('app', 'db.schema'), 'create'], 'users', function ($table): void {
             $table->uuid('id')->primary();
@@ -99,7 +112,7 @@ final class ProfileControllerTest extends TestCase
         $user = ProfileControllerTestUser::query()->create([
             'name' => 'Old Name',
             'email' => 'user@example.test',
-            'phone' => '111',
+            'phone' => '+11234567890',
             'timezone' => 'UTC',
             'language' => 'en',
             'password' => \password_hash('secret123', PASSWORD_BCRYPT),
@@ -108,7 +121,7 @@ final class ProfileControllerTest extends TestCase
         $this->actingAs($user)
             ->putJson('/user/profile', [
                 'name' => 'New Name',
-                'phone' => '555-1000',
+                'phone' => '+15551000000',
                 'timezone' => 'Europe/Istanbul',
                 'language' => 'tr',
             ])
@@ -118,7 +131,7 @@ final class ProfileControllerTest extends TestCase
             ->assertJsonPath('data.language', 'tr');
 
         $this->assertSame('New Name', $user->fresh()->name);
-        $this->assertSame('555-1000', $user->fresh()->phone);
+        $this->assertSame('+15551000000', $user->fresh()->phone);
     }
 
     public function test_update_password_updates_password_and_returns_expected_message(): void

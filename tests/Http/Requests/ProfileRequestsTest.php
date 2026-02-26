@@ -38,6 +38,34 @@ final class ProfileRequestsTest extends TestCase
             'magic-starter.profile_photo_disk' => 'public',
         ]);
 
+        \call_user_func('config', [
+            'magic-starter.supported_locales' => [
+                'en',
+                'tr',
+                'de',
+            ],
+            'magic-starter.supported_timezones' => [
+                'UTC',
+                'Europe/Istanbul',
+                'Europe/London',
+                'America/New_York',
+            ],
+        ]);
+
+        \call_user_func('config', [
+            'magic-starter.supported_locales' => [
+                'en',
+                'tr',
+                'de',
+            ],
+            'magic-starter.supported_timezones' => [
+                'UTC',
+                'Europe/Istanbul',
+                'Europe/London',
+                'America/New_York',
+            ],
+        ]);
+
         \call_user_func([\call_user_func('app', 'db.schema'), 'create'], 'users', function ($table): void {
             $table->uuid('id')->primary();
             $table->string('name')->nullable();
@@ -234,6 +262,71 @@ final class ProfileRequestsTest extends TestCase
             ])
             ->assertUnprocessable()
             ->assertJsonValidationErrors(['photo']);
+    }
+
+    public function test_update_profile_rejects_non_e164_phone_formats(): void
+    {
+        $user = $this->createAuthenticatedUser();
+        $invalidPhones = [
+            '555-1234',
+            '(555) 123-4567',
+            '12345',
+            '+0123456789',
+        ];
+        foreach ($invalidPhones as $phone) {
+            $this->actingAs($user)
+                ->putJson('/user/profile', [
+                    'name' => 'Valid Name',
+                    'phone' => $phone,
+                ])
+                ->assertUnprocessable()
+                ->assertJsonValidationErrors(['phone']);
+        }
+    }
+
+    public function test_update_profile_accepts_valid_e164_phone(): void
+    {
+        $user = $this->createAuthenticatedUser();
+        $this->actingAs($user)
+            ->putJson('/user/profile', [
+                'name' => 'Valid Name',
+                'phone' => '+14155552671',
+            ])
+            ->assertOk();
+    }
+
+    public function test_update_profile_rejects_unsupported_language(): void
+    {
+        $user = $this->createAuthenticatedUser();
+        $this->actingAs($user)
+            ->putJson('/user/profile', [
+                'name' => 'Valid Name',
+                'language' => 'xx',
+            ])
+            ->assertUnprocessable()
+            ->assertJsonValidationErrors(['language']);
+    }
+
+    public function test_update_profile_accepts_supported_language(): void
+    {
+        $user = $this->createAuthenticatedUser();
+        $this->actingAs($user)
+            ->putJson('/user/profile', [
+                'name' => 'Valid Name',
+                'language' => 'tr',
+            ])
+            ->assertOk();
+    }
+
+    public function test_update_profile_accepts_supported_timezone(): void
+    {
+        $user = $this->createAuthenticatedUser();
+        $this->actingAs($user)
+            ->putJson('/user/profile', [
+                'name' => 'Valid Name',
+                'timezone' => 'Europe/Istanbul',
+            ])
+            ->assertOk();
     }
 }
 

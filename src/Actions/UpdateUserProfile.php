@@ -4,10 +4,13 @@ declare(strict_types=1);
 
 namespace FlutterSdk\MagicStarter\Actions;
 
+use DateTimeZone;
 use FlutterSdk\MagicStarter\Contracts\UpdatesUserProfiles;
 use FlutterSdk\MagicStarter\Features;
+use FlutterSdk\MagicStarter\Rules\E164Phone;
 use Illuminate\Contracts\Auth\Authenticatable;
 use Illuminate\Support\Facades\Validator;
+use Illuminate\Validation\Rule;
 
 /**
  * Default profile update action with optional extended fields.
@@ -31,9 +34,32 @@ class UpdateUserProfile implements UpdatesUserProfiles
         ];
 
         if (Features::hasExtendedProfileFeatures()) {
-            $rules['phone'] = ['nullable', 'string', 'max:20'];
-            $rules['timezone'] = ['nullable', 'string', 'timezone'];
-            $rules['language'] = ['nullable', 'string', 'max:10'];
+            $rules['phone'] = [
+                'nullable',
+                'string',
+                'max:20',
+                new E164Phone,
+            ];
+            $rules['timezone'] = [
+                'nullable',
+                'string',
+                Rule::in(
+                    config(
+                        'magic-starter.supported_timezones',
+                        DateTimeZone::listIdentifiers(),
+                    ),
+                ),
+            ];
+            $rules['language'] = [
+                'nullable',
+                'string',
+                Rule::in(
+                    config(
+                        'magic-starter.supported_locales',
+                        ['en'],
+                    ),
+                ),
+            ];
         }
 
         $validated = Validator::make($input, $rules)->validate();
