@@ -38,6 +38,7 @@ final class AuthRequestsTest extends TestCase
             'auth.providers.users.model' => AuthRequestsTestUser::class,
             'magic-starter.models.user' => AuthRequestsTestUser::class,
             'magic-starter.models.team' => AuthRequestsTestTeam::class,
+            'magic-starter.models.membership' => \FlutterSdk\MagicStarter\Tests\Fixtures\ConcreteTeamUser::class,
         ]);
         \call_user_func('config', [
             'magic-starter.supported_locales' => [
@@ -452,7 +453,7 @@ final class AuthRequestsTestTeam extends \FlutterSdk\MagicStarter\Models\Team
     public function users(): BelongsToMany
     {
         return $this->belongsToMany(AuthRequestsTestUser::class, 'team_user', 'team_id', 'user_id')
-            ->using(\FlutterSdk\MagicStarter\Models\TeamUser::class)
+            ->using(\FlutterSdk\MagicStarter\MagicStarter::membershipModel())
             ->withPivot('role')
             ->withTimestamps();
     }

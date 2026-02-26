@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace FlutterSdk\MagicStarter\Tests\Traits;
 
+use FlutterSdk\MagicStarter\MagicStarter;
 use FlutterSdk\MagicStarter\Tests\TestCase;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Schema\Blueprint;
@@ -14,6 +15,9 @@ final class HasTeamsTest extends TestCase
     protected function setUp(): void
     {
         parent::setUp();
+
+        // Reset $using so config-based resolution works in this test class.
+        MagicStarter::reset();
 
         config(['database.default' => 'testing']);
         config(['database.connections.testing' => [
@@ -45,7 +49,10 @@ final class HasTeamsTest extends TestCase
             $table->timestamps();
         });
 
-        config(['magic-starter.models.team' => HasTeamsTestTeam::class]);
+        config([
+            'magic-starter.models.team' => HasTeamsTestTeam::class,
+            'magic-starter.models.membership' => \FlutterSdk\MagicStarter\Tests\Fixtures\ConcreteTeamUser::class,
+        ]);
     }
 
     public function test_owned_teams_uses_magic_starter_team_model_resolution(): void

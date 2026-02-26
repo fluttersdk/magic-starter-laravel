@@ -28,11 +28,10 @@ trait HasTeams
      */
     public function teams(): BelongsToMany
     {
-        return $this->belongsToMany(MagicStarter::teamModel())
+        return $this->belongsToMany(MagicStarter::teamModel(), 'team_user', 'user_id', 'team_id')
             ->using(MagicStarter::membershipModel())
             ->withPivot('role')
             ->withTimestamps();
-
     }
 
     /**

@@ -35,6 +35,7 @@ final class TeamControllerTest extends TestCase
             ],
             'magic-starter.models.user' => TeamControllerTestUser::class,
             'magic-starter.models.team' => TeamControllerTestTeam::class,
+            'magic-starter.models.membership' => \FlutterSdk\MagicStarter\Tests\Fixtures\ConcreteTeamUser::class,
         ]);
 
         \call_user_func([\call_user_func('app', 'db.schema'), 'create'], 'users', function (Blueprint $table): void {
@@ -327,7 +328,7 @@ final class TeamControllerTestTeam extends \FlutterSdk\MagicStarter\Models\Team
     public function users(): BelongsToMany
     {
         return $this->belongsToMany(TeamControllerTestUser::class, 'team_user', 'team_id', 'user_id')
-            ->using(\FlutterSdk\MagicStarter\Models\TeamUser::class)
+            ->using(\FlutterSdk\MagicStarter\MagicStarter::membershipModel())
             ->withPivot('role')
             ->withTimestamps();
     }

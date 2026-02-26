@@ -41,6 +41,7 @@ class AuthControllerTest extends TestCase
             'auth.providers.users.model' => AuthControllerTestUser::class,
             'magic-starter.models.user' => AuthControllerTestUser::class,
             'magic-starter.models.team' => AuthControllerTestTeam::class,
+            'magic-starter.models.membership' => \FlutterSdk\MagicStarter\Tests\Fixtures\ConcreteTeamUser::class,
             'auth.guards.web' => [
                 'driver' => 'session',
                 'provider' => 'users',
