@@ -5,6 +5,7 @@ namespace App\Actions\MagicStarter;
 use FlutterSdk\MagicStarter\Contracts\CreatesTeams;
 use Illuminate\Contracts\Auth\Authenticatable;
 use Illuminate\Database\Eloquent\Model;
+use RuntimeException;
 
 /**
  * Handle creation of a new team.
@@ -21,6 +22,6 @@ class CreateTeam implements CreatesTeams
     public function create(Authenticatable $user, array $input): Model
     {
         // TODO: Implement team creation logic.
-        throw new \RuntimeException('CreateTeam action not implemented. Publish and implement this stub.');
+        throw new RuntimeException('CreateTeam action not implemented. Publish and implement this stub.');
     }
 }

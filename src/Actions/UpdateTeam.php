@@ -10,6 +10,7 @@ use Illuminate\Database\Eloquent\Model;
 use Illuminate\Support\Arr;
 use Illuminate\Support\Facades\Storage;
 use Illuminate\Support\Facades\Validator;
+use Illuminate\Validation\ValidationException;
 
 /**
  * Default team update action with optional photo upload.
@@ -22,6 +23,8 @@ class UpdateTeam implements UpdatesTeams
      * @param  Authenticatable  $user  The user performing the update.
      * @param  Model  $team  The team to update.
      * @param  array<string, mixed>  $input  The update data.
+     *
+     * @throws ValidationException
      */
     public function update(Authenticatable $user, Model $team, array $input): void
     {

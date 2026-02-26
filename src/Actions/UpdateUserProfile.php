@@ -11,6 +11,7 @@ use FlutterSdk\MagicStarter\Rules\E164Phone;
 use Illuminate\Contracts\Auth\Authenticatable;
 use Illuminate\Support\Facades\Validator;
 use Illuminate\Validation\Rule;
+use Illuminate\Validation\ValidationException;
 
 /**
  * Default profile update action with optional extended fields.
@@ -25,6 +26,8 @@ class UpdateUserProfile implements UpdatesUserProfiles
      *
      * @param  Authenticatable  $user  The user to update.
      * @param  array<string, mixed>  $input  The profile data.
+     *
+     * @throws ValidationException
      */
     public function update(Authenticatable $user, array $input): void
     {
