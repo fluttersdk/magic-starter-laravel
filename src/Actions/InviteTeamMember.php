@@ -5,7 +5,6 @@ declare(strict_types=1);
 namespace FlutterSdk\MagicStarter\Actions;
 
 use FlutterSdk\MagicStarter\Contracts\InvitesTeamMembers;
-use FlutterSdk\MagicStarter\Models\TeamInvitation;
 use FlutterSdk\MagicStarter\Notifications\TeamInvitationNotification;
 use Illuminate\Contracts\Auth\Authenticatable;
 use Illuminate\Database\Eloquent\Model;
@@ -28,7 +27,7 @@ class InviteTeamMember implements InvitesTeamMembers
      */
     public function invite(Authenticatable $user, Model $team, string $email, string $role): Model
     {
-        
+
         $invitation = $team->invitations()->create([
             'email' => $email,
             'role' => $role,

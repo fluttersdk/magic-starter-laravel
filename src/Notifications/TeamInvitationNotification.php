@@ -53,8 +53,7 @@ class TeamInvitationNotification extends Notification implements ShouldQueue
         $teamName = (string) $this->invitation->team->name;
 
         $acceptUrl = rtrim((string) config('magic-starter.frontend_url'), '/')
-            . '/team-invitations/accept?token='
-            . urlencode($token);
+            . '/invitations/' . urlencode($token) . '/accept';
 
         return (new MailMessage)
             ->subject(Lang::get('Team Invitation'))

@@ -12,6 +12,7 @@ use FlutterSdk\MagicStarter\MagicStarter;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Resources\Json\AnonymousResourceCollection;
 use Illuminate\Support\Facades\Gate;
+use Illuminate\Validation\ValidationException;
 
 /**
  * Handles team CRUD operations with authorization gates.
@@ -86,11 +87,11 @@ class TeamController
         $user = request()->user();
         Gate::forUser($user)->authorize('delete', $teamModel);
 
-        if ($user->allTeams()->count() <= 1) {
-            return response()->json([
-                'data' => null,
-                'message' => 'You cannot delete your last team.',
-            ], 403);
+        // Personal teams cannot be deleted — Jetstream convention.
+        if ($teamModel->personal_team) {
+            throw ValidationException::withMessages([
+                'team' => __('You may not delete your personal team.'),
+            ])->errorBag('deleteTeam');
         }
 
         $teamId = $teamModel->getKey();

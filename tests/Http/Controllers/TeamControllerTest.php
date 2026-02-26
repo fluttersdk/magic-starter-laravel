@@ -237,18 +237,54 @@ final class TeamControllerTest extends TestCase
         $this->assertNotNull(TeamControllerTestTeam::query()->find($team->id));
     }
 
-    public function test_destroy_returns_403_when_deleting_last_team(): void
+    public function test_destroy_returns_422_when_deleting_personal_team(): void
     {
         $owner = TeamControllerTestUser::query()->create(['name' => 'Owner', 'email' => 'owner@test.dev']);
-        $team = TeamControllerTestTeam::query()->create(['user_id' => $owner->id, 'name' => 'Only Team', 'personal_team' => false]);
-        $team->users()->attach($owner->id, ['role' => 'owner']);
+        $personalTeam = TeamControllerTestTeam::query()->create([
+            'user_id' => $owner->id,
+            'name' => 'Personal Team',
+            'personal_team' => true,
+        ]);
+        $otherTeam = TeamControllerTestTeam::query()->create([
+            'user_id' => $owner->id,
+            'name' => 'Work Team',
+            'personal_team' => false,
+        ]);
+        $personalTeam->users()->attach($owner->id, ['role' => 'owner']);
+        $otherTeam->users()->attach($owner->id, ['role' => 'owner']);
 
         $this->actingAs($owner)
-            ->deleteJson('/teams/' . $team->id)
-            ->assertStatus(403)
-            ->assertJsonPath('message', 'You cannot delete your last team.');
+            ->deleteJson('/teams/' . $personalTeam->id)
+            ->assertStatus(422)
+            ->assertJsonPath('message', 'You may not delete your personal team.');
 
-        $this->assertNotNull(TeamControllerTestTeam::query()->find($team->id));
+        $this->assertNotNull(TeamControllerTestTeam::query()->find($personalTeam->id));
+    }
+
+    public function test_destroy_allows_deleting_last_non_personal_team_when_personal_team_exists(): void
+    {
+        $owner = TeamControllerTestUser::query()->create(['name' => 'Owner', 'email' => 'owner@test.dev']);
+        $personalTeam = TeamControllerTestTeam::query()->create([
+            'user_id' => $owner->id,
+            'name' => 'Personal Team',
+            'personal_team' => true,
+        ]);
+        $workTeam = TeamControllerTestTeam::query()->create([
+            'user_id' => $owner->id,
+            'name' => 'Work Team',
+            'personal_team' => false,
+        ]);
+        $personalTeam->users()->attach($owner->id, ['role' => 'owner']);
+        $workTeam->users()->attach($owner->id, ['role' => 'owner']);
+        $owner->update(['current_team_id' => $workTeam->id]);
+
+        $this->actingAs($owner)
+            ->deleteJson('/teams/' . $workTeam->id)
+            ->assertOk()
+            ->assertJsonPath('message', 'Team deleted successfully.');
+
+        $this->assertNull(TeamControllerTestTeam::query()->find($workTeam->id));
+        $this->assertSame($personalTeam->id, $owner->fresh()->current_team_id);
     }
 
     public function test_show_returns_404_for_nonexistent_team(): void
