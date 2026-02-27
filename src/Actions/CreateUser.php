@@ -18,6 +18,7 @@ use Illuminate\Validation\ValidationException;
  *
  * When Features::extendedProfile() is enabled, stores locale and timezone.
  * When Features::newsletterSubscription() is enabled, creates a newsletter subscriber record.
+ * Supports phone-based registration: when `phone` is provided without `email`, email stays null.
  */
 class CreateUser implements CreatesUsers
 {
@@ -32,15 +33,20 @@ class CreateUser implements CreatesUsers
     public function create(array $input): Authenticatable
     {
         // 1. Build validation rules based on enabled features.
+        // Phone-based registration: email is optional when phone is provided.
+        $isPhoneBased = isset($input['phone']) && ! isset($input['email']);
+
         $rules = [
             'name' => ['required', 'string', 'max:255'],
-            'email' => [
-                'required',
-                'string',
-                'email',
-                'max:255',
-                Rule::unique((new (MagicStarter::userModel()))->getTable(), 'email'),
-            ],
+            'email' => $isPhoneBased
+                ? ['nullable', 'string', 'email', 'max:255']
+                : [
+                    'required',
+                    'string',
+                    'email',
+                    'max:255',
+                    Rule::unique((new (MagicStarter::userModel()))->getTable(), 'email'),
+                ],
             'password' => ['required', 'string', 'min:8'],
         ];
 
@@ -59,9 +65,22 @@ class CreateUser implements CreatesUsers
         // 2. Build user attributes.
         $attributes = [
             'name' => $validated['name'],
-            'email' => $validated['email'],
             'password' => $validated['password'],
         ];
+
+        // 2a. Set email only when provided — phone-based users have null email.
+        if (! $isPhoneBased) {
+            $attributes['email'] = $validated['email'];
+        }
+
+        // 2b. Set phone fields when provided.
+        if (isset($input['phone'])) {
+            $attributes['phone'] = $input['phone'];
+        }
+
+        if (isset($input['phone_country'])) {
+            $attributes['phone_country'] = $input['phone_country'];
+        }
 
         if (Features::hasExtendedProfileFeatures()) {
             $defaults = config('magic-starter.defaults', []);
