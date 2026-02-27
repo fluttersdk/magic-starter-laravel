@@ -33,6 +33,7 @@ A modular Laravel backend package providing authentication, team management, pro
   - [Profile Photo](#profile-photo)
   - [Team Photo](#team-photo)
   - [Session Management](#session-management)
+  - [Two-Factor Authentication](#two-factor-authentication)
   - [Notifications](#notifications)
   - [Newsletter Subscription](#newsletter-subscription)
 - [API Reference](#api-reference)
@@ -112,7 +113,7 @@ php artisan magic-starter:install --all --uuid --route-prefix=api/v1 --frontend-
 | `--frontend-url=` | Frontend application URL used in email links |
 | `--force` | Overwrite existing published files |
 
-The `--features` option accepts: `teams`, `profile-photos`, `sessions`, `social-login`, `newsletter-subscription`, `extended-profile`, `notifications`. When `--all` is passed, omitting `--features` enables everything.
+The `--features` option accepts: `teams`, `profile-photos`, `sessions`, `social-login`, `newsletter-subscription`, `extended-profile`, `notifications`, `two-factor-authentication`. When `--all` is passed, omitting `--features` enables everything.
 
 > [!NOTE]
 > When neither `--uuid` nor `--no-uuid` is provided, the installer auto-detects your existing `users` table schema. If no `users` table exists (fresh install), UUID is used by default.
@@ -138,18 +139,22 @@ php artisan vendor:publish --tag=magic-starter-models
 <a name="user-model-setup"></a>
 ### User Model Setup
 
-Add the relevant traits to your `User` model. At a minimum, add `HasTeams` and `HasProfilePhoto`:
+Add the relevant traits to your `User` model. `HasApiTokens` (from Sanctum) is required for token authentication. Add `HasTeams`, `HasProfilePhoto`, and optionally `HasNotifications` and `TwoFactorAuthenticatable`:
 
 ```php
 use FlutterSdk\MagicStarter\Traits\HasTeams;
 use FlutterSdk\MagicStarter\Traits\HasProfilePhoto;
 use FlutterSdk\MagicStarter\Traits\HasNotifications;
+use FlutterSdk\MagicStarter\Traits\TwoFactorAuthenticatable;
+use Laravel\Sanctum\HasApiTokens;
 
 class User extends Authenticatable
 {
+    use HasApiTokens;
     use HasTeams;
     use HasProfilePhoto;
     use HasNotifications;
+    use TwoFactorAuthenticatable;
 
     protected $appends = [
         'profile_photo_url',
@@ -215,6 +220,7 @@ Features follow Jetstream's toggle pattern. Enable features by adding them to th
     \FlutterSdk\MagicStarter\Features::newsletterSubscription(),
     \FlutterSdk\MagicStarter\Features::extendedProfile(),
     \FlutterSdk\MagicStarter\Features::notifications(),
+    \FlutterSdk\MagicStarter\Features::twoFactorAuthentication(),
 ],
 ```
 
@@ -233,9 +239,10 @@ Features::hasSocialLoginFeatures();                  // bool
 Features::hasNewsletterSubscriptionFeatures();       // bool
 Features::hasExtendedProfileFeatures();              // bool
 Features::hasNotificationFeatures();                 // bool
+Features::hasTwoFactorAuthenticationFeatures();      // bool
 ```
 
-**All 7 features and their toggle methods:**
+**All 8 features and their toggle methods:**
 
 | Feature Key | Enable Method | Check Method |
 |:------------|:--------------|:-------------|
@@ -246,6 +253,7 @@ Features::hasNotificationFeatures();                 // bool
 | `newsletter-subscription` | `Features::newsletterSubscription()` | `Features::hasNewsletterSubscriptionFeatures()` |
 | `extended-profile` | `Features::extendedProfile()` | `Features::hasExtendedProfileFeatures()` |
 | `notifications` | `Features::notifications()` | `Features::hasNotificationFeatures()` |
+| `two-factor-authentication` | `Features::twoFactorAuthentication()` | `Features::hasTwoFactorAuthenticationFeatures()` |
 
 <a name="all-config-keys"></a>
 ### All Config Keys
@@ -271,6 +279,10 @@ Features::hasNotificationFeatures();                 // bool
 | `route_prefix` | `''` | Global prefix applied to all package routes |
 | `invitation_expiry_days` | `7` | Days until a team invitation token expires |
 | `token_expiration_minutes` | `null` | Sanctum personal access token TTL in minutes; `null` means no expiry |
+| `two_factor.company_name` | `env('APP_NAME', 'Laravel')` | Company name displayed in authenticator apps |
+| `two_factor.recovery_codes_count` | `8` | Number of recovery codes generated when 2FA is enabled |
+| `two_factor.geoip_db_path` | `null` | Path to MaxMind GeoIP2 database for location resolution |
+| `two_factor.challenge_token_ttl` | `5` | Minutes until a 2FA challenge token expires |
 
 Override model classes via environment variables:
 
@@ -319,14 +331,16 @@ magic-starter-laravel/
 ├── config/
 │   └── magic-starter.php                  # Package configuration
 ├── database/
-│   └── migrations/                        # 15 publishable migration stubs
+│   └── migrations/                        # 16 publishable migration stubs
 ├── src/
+│   ├── Actions/                          # 15 action classes (11 core + 4 two-factor)
 │   ├── Console/
 │   │   └── InstallCommand.php             # magic-starter:install
-│   ├── Contracts/                         # 11 action interfaces
+│   ├── Contracts/                         # 15 contracts (11 core + 4 two-factor)
+│   ├── Enums/                            # Role enum
 │   ├── Http/
-│   │   ├── Controllers/                   # 11 API controllers
-│   │   ├── Requests/                      # 16 form requests
+│   │   ├── Controllers/                   # 14 API controllers
+│   │   ├── Requests/                      # 20 form requests
 │   │   └── Resources/                     # 6 API resources
 │   ├── Listeners/
 │   │   ├── CreatePersonalTeamListener.php # Fires on Registered event
@@ -334,8 +348,11 @@ magic-starter-laravel/
 │   ├── Models/                            # Team, TeamInvitation, TeamUser,
 │   │   │                                  #   PersonalAccessToken, NotificationSetting,
 │   │   │                                  #   NewsletterSubscriber
+│   ├── Notifications/                    # TeamInvitationNotification
 │   ├── NotificationPreferenceRegistry.php  # Notification type/channel matrix
-│   ├── Traits/                            # HasTeams, HasProfilePhoto, HasNotifications
+│   ├── Rules/                            # E164Phone validation rule
+│   ├── Support/                          # Helper classes (MigrationHelper, SessionAgent, etc.)
+│   ├── Traits/                            # HasTeams, HasProfilePhoto, HasNotifications, TwoFactorAuthenticatable
 │   ├── routes/
 │   │   └── api.php                        # Conditional route registration
 │   ├── Features.php                       # Feature toggle class
@@ -353,10 +370,11 @@ magic-starter-laravel/
 `MagicStarterServiceProvider` handles the full bootstrap lifecycle:
 
 - Merges the package config with any application overrides.
-- Binds all 11 action contracts to their default stub implementations in the IoC container.
+- Binds all 15 action contracts to their default stub implementations in the IoC container.
 - Sets the Sanctum `PersonalAccessToken` model to the package's extended version (adds `ip_address` and `user_agent`).
 - Configures the password reset URL to point at the configured `frontend_url`.
 - Registers event listeners (`CreatePersonalTeamListener`, `GateNotificationChannels`).
+- Registers the `TwoFactorAuthenticationProvider` for TOTP code generation and verification.
 - Loads routes conditionally based on enabled features, unless `ignoreRoutes()` has been called.
 - Registers the four publishing groups and the `magic-starter:install` Artisan command.
 
@@ -567,6 +585,89 @@ The package treats each Sanctum personal access token as a "session". The extend
 - **Revoke One**: Deletes a specific token by its ID.
 - **Revoke Others**: Deletes all tokens except the currently active one.
 
+<a name="two-factor-authentication"></a>
+### Two-Factor Authentication
+
+> Requires `Features::twoFactorAuthentication()` enabled.
+
+TOTP-based two-factor authentication. When enabled, users must provide a 6-digit code from their authenticator app (Google Authenticator, Authy, or any TOTP-compatible app) to complete the login process.
+
+**Enabling 2FA**
+
+A user enables 2FA by calling the store endpoint. The response includes a QR code SVG, the raw secret URL, and a set of one-time recovery codes. The user must then confirm the setup by submitting a valid TOTP code — 2FA is not active until confirmed.
+
+```shell
+POST two-factor-authentication
+Authorization: Bearer {token}
+```
+
+```json
+{
+    "data": {
+        "secret": "...",
+        "qr_url": "...",
+        "qr_svg": "...",
+        "recovery_codes": ["..."]
+    },
+    "message": "Two-factor authentication enabled. Please confirm with your authenticator app."
+}
+```
+
+After scanning the QR code, the user confirms it:
+
+```shell
+POST two-factor-authentication/confirm
+Authorization: Bearer {token}
+
+{"code": "123456"}
+```
+
+**Logging in with 2FA**
+
+When a user with confirmed 2FA logs in, the login endpoint returns a challenge response instead of a Sanctum token:
+
+```json
+{
+    "two_factor": true,
+    "two_factor_token": "eyJpdiI6..."
+}
+```
+
+The user submits this token with their TOTP code (or a recovery code) to the public challenge endpoint. On success, they receive the normal authenticated response:
+
+```shell
+POST auth/two-factor-challenge
+
+{
+    "two_factor_token": "eyJpdiI6...",
+    "code": "123456"
+}
+```
+
+The challenge token expires after `config('magic-starter.two_factor.challenge_token_ttl')` minutes (default: 5).
+
+**Recovery codes**
+
+Users can view their current recovery codes or regenerate a fresh set:
+
+```shell
+GET  two-factor-recovery-codes    # list current codes
+POST two-factor-recovery-codes    # regenerate all codes
+```
+
+Each recovery code can only be used once. Using a code during the challenge flow automatically replaces it with a new one via `TwoFactorAuthenticatable::replaceRecoveryCode()`.
+
+**Disabling 2FA**
+
+Users disable 2FA by providing their current password:
+
+```shell
+DELETE two-factor-authentication
+Authorization: Bearer {token}
+
+{"password": "current-password"}
+```
+
 <a name="notifications"></a>
 ### Notifications
 
@@ -607,6 +708,7 @@ Rate-limited at `throttle:5,1` (5 requests per minute):
 | POST | `auth/social/{provider}` | `AuthController@socialLogin` | `SocialLoginRequest` |
 | POST | `auth/forgot-password` | `PasswordResetController@sendResetLinkEmail` | `ForgotPasswordRequest` |
 | POST | `auth/reset-password` | `PasswordResetController@reset` | `ResetPasswordRequest` |
+| POST | `auth/two-factor-challenge` | `TwoFactorChallengeController@store` | `TwoFactorChallengeRequest` — requires `Features::twoFactorAuthentication()` |
 
 <a name="protected-routes"></a>
 ### Protected Routes
@@ -679,6 +781,16 @@ All require `auth:sanctum` middleware.
 | GET | `sessions` | `SessionController@index` |
 | DELETE | `sessions/other` | `SessionController@destroyOther` |
 | DELETE | `sessions/{token}` | `SessionController@destroy` |
+
+**Two-Factor Authentication** (`Features::twoFactorAuthentication()`):
+
+| Method | URI | Controller@Method |
+|:-------|:----|:------------------|
+| POST | `two-factor-authentication` | `TwoFactorAuthenticationController@store` |
+| POST | `two-factor-authentication/confirm` | `TwoFactorAuthenticationController@confirm` |
+| DELETE | `two-factor-authentication` | `TwoFactorAuthenticationController@destroy` |
+| GET | `two-factor-recovery-codes` | `TwoFactorRecoveryCodeController@index` |
+| POST | `two-factor-recovery-codes` | `TwoFactorRecoveryCodeController@store` |
 
 **Notifications** (`Features::notifications()`):
 
@@ -793,10 +905,19 @@ All require `auth:sanctum` middleware.
 }
 ```
 
+**Two-factor challenge response** (login when 2FA is enabled):
+
+```json
+{
+    "two_factor": true,
+    "two_factor_token": "eyJpdiI6..."
+}
+```
+
 <a name="action-contracts-reference"></a>
 ## Action Contracts
 
-All 11 contracts live in `FlutterSdk\MagicStarter\Contracts`. The service provider binds each to its default stub implementation, which you replace with your own logic after publishing.
+All 15 contracts live in `FlutterSdk\MagicStarter\Contracts`. The service provider binds each to its default stub implementation, which you replace with your own logic after publishing.
 
 | Contract | Method Signature | Published Stub |
 |:---------|:-----------------|:---------------|
@@ -811,6 +932,10 @@ All 11 contracts live in `FlutterSdk\MagicStarter\Contracts`. The service provid
 | `InvitesTeamMembers` | `invite(Authenticatable $user, Model $team, string $email, string $role): Model` | `InviteTeamMember.php` |
 | `RemovesTeamMembers` | `remove(Authenticatable $user, Model $team, Model $teamMember): void` | `RemoveTeamMember.php` |
 | `UpdatesTeamMemberRoles` | `update(Authenticatable $user, Model $team, Model $teamMember, string $role): void` | `UpdateTeamMemberRole.php` |
+| `EnablesTwoFactorAuthentication` | `__invoke(Authenticatable $user): array` | N/A (internal) |
+| `ConfirmsTwoFactorAuthentication` | `__invoke(Authenticatable $user, string $code): void` | N/A (internal) |
+| `DisablesTwoFactorAuthentication` | `__invoke(Authenticatable $user): void` | N/A (internal) |
+| `GeneratesNewRecoveryCodes` | `__invoke(Authenticatable $user): array` | N/A (internal) |
 
 <a name="models-reference"></a>
 ## Models
@@ -886,10 +1011,19 @@ The package ships with 6 Eloquent models. `Team`, `TeamInvitation`, and `TeamUse
 | `notificationPreferenceMatrix()` | array | Full matrix of registered types and channels with user overrides applied |
 | `routeNotificationForOneSignal()` | array | Returns `['include_external_user_ids' => ['user_' . $this->id]]` for OneSignal routing |
 
+**`TwoFactorAuthenticatable`** — `FlutterSdk\MagicStarter\Traits\TwoFactorAuthenticatable`
+
+| Method | Returns | Description |
+|:-------|:--------|:------------|
+| `twoFactorSecret()` | string | Decrypted TOTP secret |
+| `recoveryCodes()` | array | Decrypted recovery codes |
+| `hasTwoFactorEnabled()` | bool | Whether 2FA is confirmed and active |
+| `replaceRecoveryCode(string $code)` | void | Replace a used recovery code with a new one |
+
 <a name="form-requests"></a>
 ## Form Requests
 
-The package includes 16 form requests. All validation rules are array-style (never pipe-delimited).
+The package includes 20 form requests. All validation rules are array-style (never pipe-delimited).
 
 | Request | Validation Rules |
 |:--------|:-----------------|
@@ -909,11 +1043,15 @@ The package includes 16 form requests. All validation rules are array-style (nev
 | `UpdateTeamMemberRequest` | `role`: required, string, in:admin,editor,member. |
 | `UpdateTeamPhotoRequest` | `photo`: required, image, max:2048 (KB). |
 | `UpdateNotificationPreferenceRequest` | Single: `type` (string), `channel` (string), `is_enabled` (boolean). Bulk: `preferences` array where each item has the same three fields. |
+| `ConfirmTwoFactorRequest` | `code`: required, string. |
+| `DisableTwoFactorRequest` | `password`: required, string (must match current password). |
+| `TwoFactorChallengeRequest` | `two_factor_token`: required, string. `code`: required_without:recovery_code. `recovery_code`: required_without:code. |
+| `DestroyOtherSessionsRequest` | `password`: required, string (must match current password). |
 
 <a name="publishable-migrations"></a>
 ## Publishable Migrations
 
-15 migration stubs are published with timestamps applied at install time. They are never auto-loaded by the package — you control when they run.
+16 migration stubs are published with timestamps applied at install time. They are never auto-loaded by the package — you control when they run.
 
 All `create_*` migrations use `Schema::hasTable()` guards — they safely skip table creation if the table already exists. All column types (primary keys, foreign keys) automatically respect the `use_uuids` config setting via `MigrationHelper`.
 
@@ -927,7 +1065,7 @@ The package uses PHPUnit with Orchestra Testbench.
 
 ```shell
 composer install
-composer test        # Run PHPUnit (273 tests, 729 assertions)
+composer test        # Run PHPUnit (292 tests, 784 assertions)
 composer lint        # Check code style with Pint
 composer lint:fix    # Auto-fix code style violations
 composer analyse     # Run PHPStan
@@ -940,91 +1078,9 @@ Test coverage includes:
 - Service provider boot and config merge (`ServiceProviderTest`)
 - Conditional route registration (`RouteRegistrationTest`)
 - Install command — interactive and non-interactive modes, UUID/integer key strategy (`InstallCommandTest`)
-- All 11 controllers with full HTTP tests, including 403, 404, and 422 negative cases
+- All 14 controllers with full HTTP tests, including 403, 404, and 422 negative cases
 - Model relationships, casts, and scopes (`ModelsTest`)
 - User traits — `HasTeamsTest`, `HasProfilePhotoTest`, `HasNotificationsTest`
-- All 16 form request validation rules
+- All 20 form request validation rules
 - Action stub contracts (`ActionStubsTest`)
-
-
-## Two-Factor Authentication
-
-Magic Starter provides complete support for TOTP-based two-factor authentication (2FA). When enabled, users must provide a 6-digit code from their authenticator app (like Google Authenticator or Authy) to complete the login process.
-
-### Enabling Two-Factor Authentication
-
-To enable 2FA for a user, they must call the store endpoint. The response will include a QR code SVG, URL, and recovery codes. The user must then confirm the setup by providing a valid code.
-
-```http
-POST /api/auth/two-factor-authentication
-Authorization: Bearer {token}
-```
-
-```json
-{
-    "data": {
-        "secret": "...",
-        "qr_url": "...",
-        "qr_svg": "...",
-        "recovery_codes": [...]
-    },
-    "message": "Two-factor authentication enabled. Please confirm with your authenticator app."
-}
-```
-
-After scanning the QR code, the user must confirm it:
-
-```http
-POST /api/auth/two-factor-authentication/confirm
-Authorization: Bearer {token}
-
-{
-    "code": "123456"
-}
-```
-
-### Logging in with Two-Factor Authentication
-
-When a user with 2FA enabled logs in, they will receive a `two_factor` challenge response instead of a Sanctum token.
-
-```json
-{
-    "two_factor": true,
-    "two_factor_token": "eyJpdiI6..."
-}
-```
-
-The user must then submit this token along with their TOTP code (or a recovery code) to the challenge endpoint:
-
-```http
-POST /api/auth/two-factor-challenge
-
-{
-    "two_factor_token": "eyJpdiI6...",
-    "code": "123456"
-}
-```
-
-If successful, they will receive the normal authenticated response with their Sanctum token.
-
-### Managing Recovery Codes
-
-Users can view and regenerate their recovery codes:
-
-```http
-GET /api/auth/two-factor-recovery-codes
-POST /api/auth/two-factor-recovery-codes
-```
-
-### Disabling Two-Factor Authentication
-
-Users can disable 2FA by providing their current password:
-
-```http
-DELETE /api/auth/two-factor-authentication
-Authorization: Bearer {token}
-
-{
-    "password": "current-password"
-}
-```
+- Two-factor authentication — trait, actions, controllers, challenge flow (`TwoFactorAuthenticatableTest`, `TwoFactorActionsTest`, `TwoFactorAuthenticationControllerTest`, `TwoFactorChallengeControllerTest`, `TwoFactorRecoveryCodeControllerTest`, `AuthControllerTwoFactorLoginTest`)

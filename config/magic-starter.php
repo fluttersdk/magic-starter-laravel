@@ -34,6 +34,7 @@ return [
     */
 
     'features' => [
+        // \FlutterSdk\MagicStarter\Features::twoFactorAuthentication(),
         // \FlutterSdk\MagicStarter\Features::teams(),
         // \FlutterSdk\MagicStarter\Features::profilePhotos(),
         // \FlutterSdk\MagicStarter\Features::sessions(),
