@@ -42,6 +42,9 @@ return [
         // \FlutterSdk\MagicStarter\Features::newsletterSubscription(),
         // \FlutterSdk\MagicStarter\Features::extendedProfile(),
         // \FlutterSdk\MagicStarter\Features::notifications(),
+        // \FlutterSdk\MagicStarter\Features::guestAuth(),
+        // \FlutterSdk\MagicStarter\Features::phoneAuth(),
+        // \FlutterSdk\MagicStarter\Features::phoneOtp(),
     ],
 
     /*

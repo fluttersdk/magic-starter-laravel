@@ -52,6 +52,9 @@ class InstallCommand extends Command
         'newsletter-subscription' => 'Newsletter subscription',
         'extended-profile' => 'Extended profile (phone, timezone, language)',
         'notifications' => 'Notification preferences',
+        'guest-auth' => 'Guest authentication (anonymous users)',
+        'phone-auth' => 'Phone authentication (register/login with phone)',
+        'phone-otp' => 'Phone OTP verification (requires phone-auth)',
     ];
 
     /** @var array<string, string> Feature key → Features class method name. */
@@ -64,6 +67,9 @@ class InstallCommand extends Command
         'newsletter-subscription' => 'newsletterSubscription',
         'extended-profile' => 'extendedProfile',
         'notifications' => 'notifications',
+        'guest-auth' => 'guestAuth',
+        'phone-auth' => 'phoneAuth',
+        'phone-otp' => 'phoneOtp',
     ];
 
     /** @var list<string> Migrations always published regardless of feature selection. */

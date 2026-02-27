@@ -383,7 +383,61 @@ final class InstallCommandTest extends TestCase
         $this->assertStringContainsString("'use_uuids' => true,", $config);
     }
 
-    // -------------------------------------------------------------------------
+    public function test_install_all_includes_new_features(): void
+    {
+        $this->artisan('magic-starter:install', ['--all' => true])->assertExitCode(0);
+
+        $config = File::get(config_path('magic-starter.php'));
+
+        $this->assertStringContainsString(
+            '\\FlutterSdk\\MagicStarter\\Features::guestAuth(),',
+            $config,
+        );
+        $this->assertStringContainsString(
+            '\\FlutterSdk\\MagicStarter\\Features::phoneAuth(),',
+            $config,
+        );
+        $this->assertStringContainsString(
+            '\\FlutterSdk\\MagicStarter\\Features::phoneOtp(),',
+            $config,
+        );
+    }
+
+    public function test_install_guest_auth_only(): void
+    {
+        $this->artisan('magic-starter:install', [
+            '--features' => ['guest-auth'],
+        ])->assertExitCode(0);
+
+        $config = File::get(config_path('magic-starter.php'));
+
+        $this->assertStringContainsString(
+            '\\FlutterSdk\\MagicStarter\\Features::guestAuth(),',
+            $config,
+        );
+        $this->assertStringContainsString(
+            '// \\FlutterSdk\\MagicStarter\\Features::phoneAuth(),',
+            $config,
+        );
+    }
+
+    public function test_phone_otp_auto_enables_phone_auth(): void
+    {
+        $this->artisan('magic-starter:install', [
+            '--features' => ['phone-otp'],
+        ])->assertExitCode(0);
+
+        $config = File::get(config_path('magic-starter.php'));
+
+        $this->assertStringContainsString(
+            '\\FlutterSdk\\MagicStarter\\Features::phoneOtp(),',
+            $config,
+        );
+        $this->assertStringContainsString(
+            '\\FlutterSdk\\MagicStarter\\Features::phoneAuth(),',
+            $config,
+        );
+    }
     // Helpers
     // -------------------------------------------------------------------------
 
