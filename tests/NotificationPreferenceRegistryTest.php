@@ -1,7 +1,5 @@
 <?php
 
-declare(strict_types=1);
-
 namespace FlutterSdk\MagicStarter\Tests;
 
 use FlutterSdk\MagicStarter\NotificationPreferenceRegistry;
@@ -160,6 +158,7 @@ class NotificationPreferenceRegistryTest extends TestCase
         $this->assertFalse(NotificationPreferenceRegistry::has('monitor_down'));
         $this->assertEmpty(NotificationPreferenceRegistry::all());
     }
+
     public function test_channel_aliases_registers_aliases(): void
     {
         NotificationPreferenceRegistry::channelAliases([

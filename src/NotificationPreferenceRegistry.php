@@ -33,9 +33,6 @@ class NotificationPreferenceRegistry
 
     /**
      * Resolve the slug for a notification class.
-     *
-     * @param  string  $notificationClass
-     * @return string|null
      */
     public static function resolveSlug(string $notificationClass): ?string
     {
@@ -59,9 +56,6 @@ class NotificationPreferenceRegistry
 
     /**
      * Reverse-map driver channel to logical name.
-     *
-     * @param  string  $driverChannel
-     * @return string
      */
     public static function resolveLogicalChannel(string $driverChannel): string
     {
@@ -72,9 +66,6 @@ class NotificationPreferenceRegistry
 
     /**
      * Forward-map logical name to driver channel.
-     *
-     * @param  string  $logicalChannel
-     * @return string
      */
     public static function resolveDriverChannel(string $logicalChannel): string
     {
@@ -84,7 +75,6 @@ class NotificationPreferenceRegistry
     /**
      * Get all driver-mapped channels for a notification class.
      *
-     * @param  string  $notificationClass
      * @return array<string>
      */
     public static function driverChannelsFor(string $notificationClass): array
@@ -143,6 +133,7 @@ class NotificationPreferenceRegistry
 
         return null;
     }
+
     /**
      * Register new notification types.
      *
@@ -184,7 +175,6 @@ class NotificationPreferenceRegistry
     /**
      * Get the available channels for a specific notification type.
      *
-     * @param  string  $type
      * @return array<string>
      */
     public static function channels(string $type): array
@@ -195,7 +185,6 @@ class NotificationPreferenceRegistry
     /**
      * Get the default-enabled channels for a specific notification type.
      *
-     * @param  string  $type
      * @return array<string>
      */
     public static function defaults(string $type): array
@@ -206,7 +195,6 @@ class NotificationPreferenceRegistry
     /**
      * Get the locked channels for a specific notification type.
      *
-     * @param  string  $type
      * @return array<string>
      */
     public static function locked(string $type): array

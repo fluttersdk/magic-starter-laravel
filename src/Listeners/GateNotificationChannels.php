@@ -19,9 +19,6 @@ class GateNotificationChannels
      *
      * Returns false to cancel the notification for this specific channel,
      * or true to allow delivery.
-     *
-     * @param  NotificationSending  $event
-     * @return bool
      */
     public function handle(NotificationSending $event): bool
     {

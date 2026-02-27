@@ -1,14 +1,12 @@
 <?php
 
-declare(strict_types=1);
-
 namespace FlutterSdk\MagicStarter\Tests\Http\Controllers;
 
 use FlutterSdk\MagicStarter\Http\Controllers\NotificationPreferenceController;
 use FlutterSdk\MagicStarter\MagicStarter;
 use FlutterSdk\MagicStarter\NotificationPreferenceRegistry;
 use FlutterSdk\MagicStarter\Tests\TestCase;
-use FlutterSdk\MagicStarter\Traits\HasNotificationPreferences;
+use FlutterSdk\MagicStarter\Traits\HasNotifications;
 use Illuminate\Database\Eloquent\Concerns\HasUuids;
 use Illuminate\Foundation\Auth\User as Authenticatable;
 
@@ -226,7 +224,7 @@ final class NotificationPreferenceControllerTest extends TestCase
  */
 final class NotifPrefControllerTestUser extends Authenticatable
 {
-    use HasNotificationPreferences;
+    use HasNotifications;
     use HasUuids;
 
     protected $table = 'users';

@@ -23,9 +23,9 @@ class GateNotificationChannelsTest extends TestCase
 
     public function test_allows_unregistered_notification_classes(): void
     {
-        $listener = new GateNotificationChannels();
-        $notifiable = new GateTestNotifiable();
-        $notification = new GateTestUnregisteredNotification();
+        $listener = new GateNotificationChannels;
+        $notifiable = new GateTestNotifiable;
+        $notification = new GateTestUnregisteredNotification;
         $event = new NotificationSending($notifiable, $notification, 'mail');
 
         $this->assertTrue($listener->handle($event));
@@ -42,9 +42,9 @@ class GateNotificationChannelsTest extends TestCase
             ],
         ]);
 
-        $listener = new GateNotificationChannels();
-        $notifiable = new GateTestNotifiableWithoutPrefers();
-        $notification = new GateTestNotification();
+        $listener = new GateNotificationChannels;
+        $notifiable = new GateTestNotifiableWithoutPrefers;
+        $notification = new GateTestNotification;
         $event = new NotificationSending($notifiable, $notification, 'mail');
 
         $this->assertTrue($listener->handle($event));
@@ -61,9 +61,9 @@ class GateNotificationChannelsTest extends TestCase
             ],
         ]);
 
-        $listener = new GateNotificationChannels();
-        $notifiable = new GateTestNotifiable();
-        $notification = new GateTestNotification();
+        $listener = new GateNotificationChannels;
+        $notifiable = new GateTestNotifiable;
+        $notification = new GateTestNotification;
         $event = new NotificationSending($notifiable, $notification, 'mail');
 
         $this->assertTrue($listener->handle($event));
@@ -80,10 +80,10 @@ class GateNotificationChannelsTest extends TestCase
             ],
         ]);
 
-        $listener = new GateNotificationChannels();
-        $notifiable = new GateTestNotifiable();
+        $listener = new GateNotificationChannels;
+        $notifiable = new GateTestNotifiable;
         $notifiable->disabledPreferences = [['gate_test', 'mail']];
-        $notification = new GateTestNotification();
+        $notification = new GateTestNotification;
         $event = new NotificationSending($notifiable, $notification, 'mail');
 
         $this->assertFalse($listener->handle($event));
@@ -100,10 +100,10 @@ class GateNotificationChannelsTest extends TestCase
             ],
         ]);
 
-        $listener = new GateNotificationChannels();
-        $notifiable = new GateTestNotifiable();
+        $listener = new GateNotificationChannels;
+        $notifiable = new GateTestNotifiable;
         $notifiable->disabledPreferences = [['gate_test', 'database']];
-        $notification = new GateTestNotification();
+        $notification = new GateTestNotification;
         $event = new NotificationSending($notifiable, $notification, 'database');
 
         $this->assertTrue($listener->handle($event));
@@ -124,10 +124,10 @@ class GateNotificationChannelsTest extends TestCase
             ],
         ]);
 
-        $listener = new GateNotificationChannels();
-        $notifiable = new GateTestNotifiable();
+        $listener = new GateNotificationChannels;
+        $notifiable = new GateTestNotifiable;
         $notifiable->disabledPreferences = [['gate_test', 'push']];
-        $notification = new GateTestNotification();
+        $notification = new GateTestNotification;
         $event = new NotificationSending($notifiable, $notification, 'SomeVendor\\PushChannel');
 
         $this->assertFalse($listener->handle($event));
@@ -144,9 +144,9 @@ class GateNotificationChannelsTest extends TestCase
             ],
         ]);
 
-        $listener = new GateNotificationChannels();
-        $notifiable = new GateTestNotifiable();
-        $notification = new GateTestNotification();
+        $listener = new GateNotificationChannels;
+        $notifiable = new GateTestNotifiable;
+        $notification = new GateTestNotification;
         $event = new NotificationSending($notifiable, $notification, 'sms');
 
         $this->assertTrue($listener->handle($event));
@@ -164,10 +164,10 @@ class GateNotificationChannelsTest extends TestCase
             ],
         ]);
 
-        $listener = new GateNotificationChannels();
-        $notifiable = new GateTestNotifiable();
+        $listener = new GateNotificationChannels;
+        $notifiable = new GateTestNotifiable;
         $notifiable->disabledPreferences = [['custom_slug', 'mail']];
-        $notification = new GateTestNotification();
+        $notification = new GateTestNotification;
         $event = new NotificationSending($notifiable, $notification, 'mail');
 
         $this->assertFalse($listener->handle($event));
@@ -184,11 +184,11 @@ class GateNotificationChannelsTest extends TestCase
             ],
         ]);
 
-        $listener = new GateNotificationChannels();
-        $notifiable = new GateTestNotifiable();
+        $listener = new GateNotificationChannels;
+        $notifiable = new GateTestNotifiable;
         // Auto-derived: GateTestNotification -> gate_test
         $notifiable->disabledPreferences = [['gate_test', 'mail']];
-        $notification = new GateTestNotification();
+        $notification = new GateTestNotification;
         $event = new NotificationSending($notifiable, $notification, 'mail');
 
         $this->assertFalse($listener->handle($event));
