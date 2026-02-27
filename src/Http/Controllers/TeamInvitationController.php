@@ -6,6 +6,7 @@ use FlutterSdk\MagicStarter\Contracts\InvitesTeamMembers;
 use FlutterSdk\MagicStarter\Http\Requests\StoreTeamInvitationRequest;
 use FlutterSdk\MagicStarter\Http\Resources\TeamInvitationResource;
 use FlutterSdk\MagicStarter\MagicStarter;
+use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Resources\Json\AnonymousResourceCollection;
 use Illuminate\Support\Facades\Gate;
 
