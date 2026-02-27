@@ -4,6 +4,7 @@ namespace FlutterSdk\MagicStarter\Http\Controllers;
 
 use FlutterSdk\MagicStarter\Contracts\CreatesUsers;
 use FlutterSdk\MagicStarter\Features;
+use FlutterSdk\MagicStarter\Http\Controllers\Concerns\AuthenticatesUsers;
 use FlutterSdk\MagicStarter\Http\Requests\LoginRequest;
 use FlutterSdk\MagicStarter\Http\Requests\RegisterRequest;
 use FlutterSdk\MagicStarter\Http\Requests\SocialLoginRequest;
@@ -24,6 +25,8 @@ use Throwable;
  */
 class AuthController
 {
+    use AuthenticatesUsers;
+
     /**
      * Handle a social login request.
      */
@@ -186,67 +189,4 @@ class AuthController
         ]);
     }
 
-    /**
-     * Build an authenticated JSON response with user and token.
-     *
-     * Sets the user resolver on the request so that downstream resources
-     * (e.g. TeamResource) can access the authenticated user via
-     * `$request->user()` — even before Sanctum middleware runs.
-     *
-     * @param  mixed  $user  The authenticated user model.
-     * @param  Request  $request  The current HTTP request.
-     * @param  string  $token  The plain-text Sanctum token.
-     * @param  string  $message  Response message.
-     * @param  int  $status  HTTP status code.
-     */
-    protected function authenticatedResponse(
-        mixed $user,
-        Request $request,
-        string $token,
-        string $message = 'Login successful',
-        int $status = 200,
-    ): JsonResponse {
-        // Make $request->user() available for nested resources.
-        // Resource serialization resolves request from the container,
-        // which may differ from the controller-injected $request instance.
-        $resolver = fn () => $user;
-        $request->setUserResolver($resolver);
-        app('request')->setUserResolver($resolver);
-
-        return response()->json([
-            'data' => [
-                'user' => new UserResource($user),
-                'token' => $token,
-            ],
-            'message' => $message,
-        ], $status);
-    }
-
-    /**
-     * Create an authentication token for the given user.
-     */
-    protected function createAuthToken(mixed $user, Request $request, bool $storeDeviceInfo = false): string
-    {
-        if (! method_exists($user, 'createToken')) {
-            return Str::random(80);
-        }
-
-        $tokenResult = $user->createToken('auth_token');
-        $plainTextToken = $tokenResult->plainTextToken ?? Str::random(80);
-
-        $accessToken = $tokenResult->accessToken ?? null;
-
-        if ($storeDeviceInfo && $accessToken && method_exists($accessToken, 'forceFill')) {
-            $accessToken->forceFill([
-                'ip_address' => $request->ip(),
-                'user_agent' => $request->userAgent(),
-            ]);
-
-            if (method_exists($accessToken, 'save')) {
-                $accessToken->save();
-            }
-        }
-
-        return (string) $plainTextToken;
-    }
 }
