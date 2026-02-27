@@ -19,6 +19,8 @@ class UserResource extends JsonResource
             'name' => $this->name,
             'email' => $this->email,
             'phone' => $this->phone,
+            'is_guest' => (bool) $this->is_guest,
+            'phone_country' => $this->phone_country,
             'email_verified_at' => $this->email_verified_at,
             'locale' => $this->locale,
             'timezone' => $this->timezone,
