@@ -66,6 +66,14 @@ class Features
     }
 
     /**
+     * Enable the two-factor authentication feature.
+     */
+    public static function twoFactorAuthentication(): string
+    {
+        return 'two-factor-authentication';
+    }
+
+    /**
      * Determine whether the given feature is enabled.
      */
     public static function enabled(string $feature): bool
@@ -127,5 +135,13 @@ class Features
     public static function hasNotificationFeatures(): bool
     {
         return static::enabled(static::notifications());
+    }
+
+    /**
+     * Determine whether the two-factor authentication feature is enabled.
+     */
+    public static function hasTwoFactorAuthenticationFeatures(): bool
+    {
+        return static::enabled(static::twoFactorAuthentication());
     }
 }

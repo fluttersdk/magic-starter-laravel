@@ -3,7 +3,7 @@
 namespace FlutterSdk\MagicStarter\Models;
 
 use FlutterSdk\MagicStarter\Database\Factories\PersonalAccessTokenFactory;
-use Illuminate\Database\Eloquent\Concerns\HasUuids;
+use FlutterSdk\MagicStarter\Support\ConditionallyUsesUuids;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Support\Carbon;
 use Laravel\Sanctum\PersonalAccessToken as SanctumPersonalAccessToken;
@@ -24,12 +24,8 @@ use Laravel\Sanctum\PersonalAccessToken as SanctumPersonalAccessToken;
  */
 class PersonalAccessToken extends SanctumPersonalAccessToken
 {
+    use ConditionallyUsesUuids;
     use HasFactory;
-    use HasUuids;
-
-    public $incrementing = false;
-
-    protected $keyType = 'string';
 
     /**
      * Create a new factory instance for the model.

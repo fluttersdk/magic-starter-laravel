@@ -97,7 +97,7 @@ php artisan magic-starter:install
 **Non-interactive mode** — pass flags to skip all prompts. Useful in CI/CD pipelines:
 
 ```shell
-php artisan magic-starter:install --all --route-prefix=api/v1 --frontend-url=https://app.example.com
+php artisan magic-starter:install --all --uuid --route-prefix=api/v1 --frontend-url=https://app.example.com
 ```
 
 **Available options:**
@@ -106,11 +106,16 @@ php artisan magic-starter:install --all --route-prefix=api/v1 --frontend-url=htt
 |:-------|:------------|
 | `--all` | Install all features without prompting |
 | `--features=*` | Comma-separated list of features to install |
+| `--uuid` | Use UUID primary keys (default for fresh installs) |
+| `--no-uuid` | Use auto-incrementing integer primary keys |
 | `--route-prefix=` | Route prefix for package routes |
 | `--frontend-url=` | Frontend application URL used in email links |
 | `--force` | Overwrite existing published files |
 
 The `--features` option accepts: `teams`, `profile-photos`, `sessions`, `social-login`, `newsletter-subscription`, `extended-profile`, `notifications`. When `--all` is passed, omitting `--features` enables everything.
+
+> [!NOTE]
+> When neither `--uuid` nor `--no-uuid` is provided, the installer auto-detects your existing `users` table schema. If no `users` table exists (fresh install), UUID is used by default.
 
 The command publishes the following assets, each with its own tag for granular control:
 
@@ -247,6 +252,7 @@ Features::hasNotificationFeatures();                 // bool
 
 | Key | Default | Description |
 |:----|:--------|:------------|
+| `use_uuids` | `true` | When `true`, all package migrations use UUID primary keys; when `false`, auto-incrementing integers |
 | `features` | `[]` | Array of enabled feature strings |
 | `frontend_url` | `env('MAGIC_STARTER_FRONTEND_URL')` | Base URL for the frontend application, used in email links |
 | `models.user` | `env('MAGIC_STARTER_USER_MODEL')` | Custom User model class; falls back to `auth.providers.users.model` |
@@ -909,63 +915,10 @@ The package includes 16 form requests. All validation rules are array-style (nev
 
 15 migration stubs are published with timestamps applied at install time. They are never auto-loaded by the package — you control when they run.
 
-**Core (always published):**
+All `create_*` migrations use `Schema::hasTable()` guards — they safely skip table creation if the table already exists. All column types (primary keys, foreign keys) automatically respect the `use_uuids` config setting via `MigrationHelper`.
 
-| Migration | Description |
-|:----------|:------------|
-| `create_users_table` | Base users table |
-| `create_personal_access_tokens_table` | Sanctum tokens table |
-
-**`teams` feature:**
-
-| Migration | Description |
-|:----------|:------------|
-| `create_teams_table` | Teams with `user_id` and `personal_team` |
-| `create_team_user_table` | Pivot table with `role` column |
-| `create_team_invitations_table` | Invitations with `email`, `role`, `token` |
-| `add_current_team_id_to_users_table` | Adds `current_team_id` foreign key to users |
-| `add_expires_at_to_team_invitations_table` | Adds `expires_at` to invitations |
-
-**`profile-photos` feature:**
-
-| Migration | Description |
-|:----------|:------------|
-| `add_profile_photo_path_to_users_table` | Adds `profile_photo_path` to users |
-
-**`sessions` feature:**
-
-| Migration | Description |
-|:----------|:------------|
-| `add_device_info_to_personal_access_tokens_table` | Adds `ip_address` and `user_agent` to tokens |
-
-**`extended-profile` feature:**
-
-| Migration | Description |
-|:----------|:------------|
-| `add_localization_fields_to_users_table` | Adds `locale`, `timezone`, `language` to users |
-| `add_profile_fields_to_users_table` | Adds `phone` and additional profile fields to users |
-
-**`notifications` feature:**
-
-| Migration | Description |
-|:----------|:------------|
-| `create_notifications_table` | Laravel database notifications table |
-| `create_notification_settings_table` | User notification preference overrides |
-
-**`newsletter-subscription` feature:**
-
-| Migration | Description |
-|:----------|:------------|
-| `create_newsletter_subscribers_table` | Newsletter subscriber records |
-
-**Conditional (requires both `profile-photos` and `teams`):**
-
-| Migration | Description |
-|:----------|:------------|
-| `add_profile_photo_path_to_teams_table` | Adds `profile_photo_path` to teams |
-
-> [!WARNING]
-> If your application already has a `users` table or `personal_access_tokens` table, do not run the `create_*` migrations again. Publish only the `add_*` migrations you need and apply them individually.
+> [!NOTE]
+> You can safely run these migrations against an existing database. Core migrations (`create_users_table`, `create_personal_access_tokens_table`) will skip if the tables already exist. Feature migrations use `add_*` column changes that are idempotent.
 
 <a name="testing"></a>
 ## Testing
@@ -974,7 +927,7 @@ The package uses PHPUnit with Orchestra Testbench.
 
 ```shell
 composer install
-composer test        # Run PHPUnit (267 tests, 719 assertions)
+composer test        # Run PHPUnit (273 tests, 729 assertions)
 composer lint        # Check code style with Pint
 composer lint:fix    # Auto-fix code style violations
 composer analyse     # Run PHPStan
@@ -986,7 +939,7 @@ Test coverage includes:
 - Model resolution and route control (`MagicStarterTest`)
 - Service provider boot and config merge (`ServiceProviderTest`)
 - Conditional route registration (`RouteRegistrationTest`)
-- Install command — interactive and non-interactive modes (`InstallCommandTest`)
+- Install command — interactive and non-interactive modes, UUID/integer key strategy (`InstallCommandTest`)
 - All 11 controllers with full HTTP tests, including 403, 404, and 422 negative cases
 - Model relationships, casts, and scopes (`ModelsTest`)
 - User traits — `HasTeamsTest`, `HasProfilePhotoTest`, `HasNotificationsTest`

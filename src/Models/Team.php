@@ -3,9 +3,9 @@
 namespace FlutterSdk\MagicStarter\Models;
 
 use FlutterSdk\MagicStarter\MagicStarter;
+use FlutterSdk\MagicStarter\Support\ConditionallyUsesUuids;
 use Illuminate\Database\Eloquent\Casts\Attribute;
 use Illuminate\Database\Eloquent\Collection;
-use Illuminate\Database\Eloquent\Concerns\HasUuids;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\BelongsToMany;
@@ -28,11 +28,7 @@ use Illuminate\Support\Facades\Storage;
  */
 abstract class Team extends Model
 {
-    use HasUuids;
-
-    public $incrementing = false;
-
-    protected $keyType = 'string';
+    use ConditionallyUsesUuids;
 
     protected $appends = [
         'profile_photo_url',

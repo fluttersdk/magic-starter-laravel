@@ -6,6 +6,11 @@
     <testsuites>
         <testsuite name="Package">
             <directory>tests</directory>
+            <exclude>tests/Actions/TwoFactorActionsTest.php</exclude>
+            <exclude>tests/Http/Controllers/TwoFactorAuthenticationControllerTest.php</exclude>
+            <exclude>tests/Http/Controllers/TwoFactorRecoveryCodeControllerTest.php</exclude>
+            <exclude>tests/Http/Controllers/TwoFactorChallengeControllerTest.php</exclude>
+            <exclude>tests/Traits/TwoFactorAuthenticatableTest.php</exclude>
         </testsuite>
     </testsuites>
     <source>

@@ -344,6 +344,46 @@ final class InstallCommandTest extends TestCase
     }
 
     // -------------------------------------------------------------------------
+    // UUID / Integer Primary Key Tests
+    // -------------------------------------------------------------------------
+
+    public function test_uuid_flag_sets_use_uuids_to_true_in_config(): void
+    {
+        $this->artisan('magic-starter:install', [
+            '--features' => ['sessions'],
+            '--uuid' => true,
+        ])->assertExitCode(0);
+
+        $config = File::get(config_path('magic-starter.php'));
+
+        $this->assertStringContainsString("'use_uuids' => true,", $config);
+    }
+
+    public function test_no_uuid_flag_sets_use_uuids_to_false_in_config(): void
+    {
+        $this->artisan('magic-starter:install', [
+            '--features' => ['sessions'],
+            '--no-uuid' => true,
+        ])->assertExitCode(0);
+
+        $config = File::get(config_path('magic-starter.php'));
+
+        $this->assertStringContainsString("'use_uuids' => false,", $config);
+    }
+
+    public function test_default_install_uses_uuid_primary_keys(): void
+    {
+        $this->artisan('magic-starter:install', [
+            '--features' => ['sessions'],
+        ])->assertExitCode(0);
+
+        $config = File::get(config_path('magic-starter.php'));
+
+        // Default (no existing users table) should be UUID.
+        $this->assertStringContainsString("'use_uuids' => true,", $config);
+    }
+
+    // -------------------------------------------------------------------------
     // Helpers
     // -------------------------------------------------------------------------
 

@@ -2,7 +2,7 @@
 
 namespace FlutterSdk\MagicStarter\Models;
 
-use Illuminate\Database\Eloquent\Concerns\HasUuids;
+use FlutterSdk\MagicStarter\Support\ConditionallyUsesUuids;
 use Illuminate\Database\Eloquent\Relations\Pivot;
 use Illuminate\Support\Carbon;
 
@@ -16,11 +16,7 @@ use Illuminate\Support\Carbon;
  */
 abstract class TeamUser extends Pivot
 {
-    use HasUuids;
-
-    public $incrementing = false;
-
-    protected $keyType = 'string';
+    use ConditionallyUsesUuids;
 
     protected $table = 'team_user';
 }

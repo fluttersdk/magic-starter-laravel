@@ -2,7 +2,7 @@
 
 namespace FlutterSdk\MagicStarter\Models;
 
-use Illuminate\Database\Eloquent\Concerns\HasUuids;
+use FlutterSdk\MagicStarter\Support\ConditionallyUsesUuids;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\MorphTo;
@@ -23,12 +23,8 @@ use Illuminate\Support\Carbon;
  */
 class NotificationSetting extends Model
 {
+    use ConditionallyUsesUuids;
     use HasFactory;
-    use HasUuids;
-
-    public $incrementing = false;
-
-    protected $keyType = 'string';
 
     protected $fillable = [
         'notifiable_id',

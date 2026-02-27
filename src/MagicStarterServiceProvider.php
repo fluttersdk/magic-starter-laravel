@@ -29,6 +29,11 @@ class MagicStarterServiceProvider extends ServiceProvider
             'magic-starter',
         );
 
+        // Prevent Sanctum from auto-loading its own migrations — we provide a custom version.
+        if (class_exists(Sanctum::class) && method_exists(Sanctum::class, 'ignoreMigrations')) {
+            Sanctum::ignoreMigrations();
+        }
+
         // Bind all action contracts to package default implementations.
         // Consuming apps can override any of these with singleton() in their AppServiceProvider.
         $this->app->bind(Contracts\CreatesUsers::class, Actions\CreateUser::class);

@@ -5,6 +5,22 @@ use FlutterSdk\MagicStarter\Models\TeamInvitation;
 use FlutterSdk\MagicStarter\Models\TeamUser;
 
 return [
+    /*
+    |--------------------------------------------------------------------------
+    | Primary Key Strategy
+    |--------------------------------------------------------------------------
+    |
+    | Determines whether the package uses UUID primary keys or standard
+    | auto-incrementing integer IDs. When true, all package migrations
+    | use uuid() columns and foreignUuid() references. When false,
+    | standard id() and foreignId() are used instead.
+    |
+    | This is set automatically during installation based on your
+    | existing database schema, but can be changed manually.
+    |
+    */
+
+    'use_uuids' => true,
 
     /*
     |--------------------------------------------------------------------------

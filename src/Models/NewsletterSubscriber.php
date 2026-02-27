@@ -2,7 +2,7 @@
 
 namespace FlutterSdk\MagicStarter\Models;
 
-use Illuminate\Database\Eloquent\Concerns\HasUuids;
+use FlutterSdk\MagicStarter\Support\ConditionallyUsesUuids;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Support\Carbon;
 
@@ -18,11 +18,7 @@ use Illuminate\Support\Carbon;
  */
 class NewsletterSubscriber extends Model
 {
-    use HasUuids;
-
-    public $incrementing = false;
-
-    protected $keyType = 'string';
+    use ConditionallyUsesUuids;
 
     /** @var list<string> */
     protected $fillable = [

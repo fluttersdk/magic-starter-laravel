@@ -29,6 +29,8 @@ class InstallCommand extends Command
     protected $signature = 'magic-starter:install
         {--all : Install all features without prompting}
         {--features=* : Features to install (teams, profile-photos, sessions, social-login, newsletter-subscription, extended-profile, notifications)}
+        {--uuid : Use UUID primary keys}
+        {--no-uuid : Use auto-incrementing integer primary keys}
         {--route-prefix= : Route prefix for package routes}
         {--frontend-url= : Frontend application URL for email links}
         {--force : Overwrite existing files}';
@@ -139,34 +141,37 @@ class InstallCommand extends Command
         $this->components->info('Installing Magic Starter...');
         $this->newLine();
 
-        // 2. Resolve which features to enable.
+        // 2. Resolve primary key strategy (UUID vs integer).
+        $useUuids = $this->resolveUuids();
+
+        // 3. Resolve which features to enable.
         $features = $this->resolveFeatures();
 
-        // 3. Resolve route prefix for package routes.
+        // 4. Resolve route prefix for package routes.
         $routePrefix = $this->resolveRoutePrefix();
 
-        // 4. Resolve frontend URL for email links.
+        // 5. Resolve frontend URL for email links.
         $frontendUrl = $this->resolveFrontendUrl();
 
-        // 5. Publish and configure the config file.
-        $this->publishConfig($features, $routePrefix, $frontendUrl);
+        // 6. Publish and configure the config file.
+        $this->publishConfig($features, $routePrefix, $frontendUrl, $useUuids);
         $this->components->twoColumnDetail('Publishing configuration', '<fg=green;options=bold>DONE</>');
 
-        // 6. Publish feature-relevant migrations.
+        // 7. Publish feature-relevant migrations.
         $migrationCount = $this->publishMigrations($features);
         $this->components->twoColumnDetail(
             "Publishing migrations ({$migrationCount} files)",
             '<fg=green;options=bold>DONE</>',
         );
 
-        // 7. Publish action stubs.
+        // 8. Publish action stubs.
         $actionCount = $this->publishActions($features);
         $this->components->twoColumnDetail(
             "Publishing actions ({$actionCount} files)",
             '<fg=green;options=bold>DONE</>',
         );
 
-        // 8. Publish TeamPolicy when teams is selected.
+        // 9. Publish TeamPolicy when teams is selected.
         $policyCount = $this->publishPolicy($features);
         if ($policyCount > 0) {
             $this->components->twoColumnDetail(
@@ -175,7 +180,7 @@ class InstallCommand extends Command
             );
         }
 
-        // 9. Publish model stubs when teams is selected.
+        // 10. Publish model stubs when teams is selected.
         $modelCount = $this->publishModels($features);
         if ($modelCount > 0) {
             $this->components->twoColumnDetail(
@@ -186,14 +191,15 @@ class InstallCommand extends Command
 
         $this->newLine();
 
-        // 10. Optionally run database migrations.
+        // 11. Optionally run database migrations.
         $this->promptToRunMigrations();
 
-        // 11. Display installation summary.
+        // 12. Display installation summary.
         $this->displaySummary(
             $features,
             $routePrefix,
             $frontendUrl,
+            $useUuids,
             $migrationCount,
             $actionCount,
             $policyCount,
@@ -238,6 +244,49 @@ class InstallCommand extends Command
 
         // Non-interactive fallback: enable all features (backward compatible).
         return array_keys(self::FEATURE_LABELS);
+    }
+
+    /**
+     * Resolve the primary key strategy via CLI option, interactive prompt, or auto-detection.
+     *
+     * When no CLI flag is provided, auto-detects by checking if the `users` table
+     * already exists with a UUID-compatible primary key. Falls back to UUID (true)
+     * when no table exists (fresh install).
+     */
+    private function resolveUuids(): bool
+    {
+        // Explicit CLI flags take precedence.
+        if ((bool) $this->option('uuid')) {
+            return true;
+        }
+
+        if ((bool) $this->option('no-uuid')) {
+            return false;
+        }
+
+        // Auto-detect from existing schema when no flag provided.
+        try {
+            $schema = $this->laravel['db']->getSchemaBuilder();
+
+            if ($schema->hasTable('users')) {
+                $columns = $schema->getColumns('users');
+
+                foreach ($columns as $column) {
+                    if ($column['name'] === 'id') {
+                        // UUID columns are typically char(36) or uuid type.
+                        $isUuid = in_array($column['type_name'], ['uuid', 'char', 'varchar'], true)
+                            && ($column['type_name'] === 'uuid' || (isset($column['length']) && $column['length'] >= 36));
+
+                        return $isUuid;
+                    }
+                }
+            }
+        } catch (\Throwable) {
+            // Schema introspection may fail in tests or without DB — default to UUID.
+        }
+
+        // Default: UUID for fresh installs.
+        return true;
     }
 
     /**
@@ -294,11 +343,13 @@ class InstallCommand extends Command
      * @param  list<string>  $features  Selected feature keys.
      * @param  string  $routePrefix  The route prefix to set.
      * @param  string|null  $frontendUrl  The frontend URL to set.
+     * @param  bool  $useUuids  Whether to use UUID primary keys.
      */
     private function publishConfig(
         array $features,
         string $routePrefix,
         ?string $frontendUrl,
+        bool $useUuids,
     ): void {
         $publishOptions = [
             '--provider' => MagicStarterServiceProvider::class,
@@ -342,6 +393,15 @@ class InstallCommand extends Command
             $this->replaceInFile(
                 "'frontend_url' => env('MAGIC_STARTER_FRONTEND_URL'),",
                 "'frontend_url' => env('MAGIC_STARTER_FRONTEND_URL', '{$frontendUrl}'),",
+                $configPath,
+            );
+        }
+
+        // Set UUID strategy in the published config.
+        if (! $useUuids) {
+            $this->replaceInFile(
+                "'use_uuids' => true,",
+                "'use_uuids' => false,",
                 $configPath,
             );
         }
@@ -484,6 +544,7 @@ class InstallCommand extends Command
      * @param  list<string>  $features  Selected feature keys.
      * @param  string  $routePrefix  The configured route prefix.
      * @param  string|null  $frontendUrl  The configured frontend URL.
+     * @param  bool  $useUuids  Whether UUID primary keys are used.
      * @param  int  $migrationCount  Number of migrations published.
      * @param  int  $actionCount  Number of actions published.
      * @param  int  $policyCount  Number of policies published.
@@ -493,6 +554,7 @@ class InstallCommand extends Command
         array $features,
         string $routePrefix,
         ?string $frontendUrl,
+        bool $useUuids,
         int $migrationCount,
         int $actionCount,
         int $policyCount,
@@ -500,6 +562,11 @@ class InstallCommand extends Command
     ): void {
         $this->components->info('Magic Starter installed successfully.');
         $this->newLine();
+
+        $this->components->twoColumnDetail(
+            '<fg=gray>Primary keys</>',
+            $useUuids ? 'UUID' : 'Auto-incrementing integer',
+        );
 
         $this->components->twoColumnDetail(
             '<fg=gray>Features</>',
