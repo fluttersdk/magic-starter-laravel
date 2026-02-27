@@ -74,6 +74,30 @@ class Features
     }
 
     /**
+     * Enable the guest authentication feature.
+     */
+    public static function guestAuth(): string
+    {
+        return 'guest-auth';
+    }
+
+    /**
+     * Enable the phone authentication feature.
+     */
+    public static function phoneAuth(): string
+    {
+        return 'phone-auth';
+    }
+
+    /**
+     * Enable the phone OTP feature.
+     */
+    public static function phoneOtp(): string
+    {
+        return 'phone-otp';
+    }
+
+    /**
      * Determine whether the given feature is enabled.
      */
     public static function enabled(string $feature): bool
@@ -143,5 +167,29 @@ class Features
     public static function hasTwoFactorAuthenticationFeatures(): bool
     {
         return static::enabled(static::twoFactorAuthentication());
+    }
+
+    /**
+     * Determine whether the guest authentication feature is enabled.
+     */
+    public static function hasGuestAuthFeatures(): bool
+    {
+        return static::enabled(static::guestAuth());
+    }
+
+    /**
+     * Determine whether the phone authentication feature is enabled.
+     */
+    public static function hasPhoneAuthFeatures(): bool
+    {
+        return static::enabled(static::phoneAuth());
+    }
+
+    /**
+     * Determine whether the phone OTP feature is enabled.
+     */
+    public static function hasPhoneOtpFeatures(): bool
+    {
+        return static::enabled(static::phoneOtp());
     }
 }

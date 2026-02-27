@@ -81,6 +81,7 @@ class InstallCommand extends Command
             'create_team_invitations_table.php',
             'add_current_team_id_to_users_table.php',
             'add_expires_at_to_team_invitations_table.php',
+            'add_guest_and_phone_fields_to_users_table.php',
         ],
         'profile-photos' => [
             'add_profile_photo_path_to_users_table.php',

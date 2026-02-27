@@ -13,22 +13,22 @@ return new class extends Migration
     public function up(): void
     {
         $userModel = MagicStarter::userModel();
-        $table = (new $userModel)->getTable();
+        $tableName = (new $userModel)->getTable();
 
-        Schema::table($table, function (Blueprint $table) use ($table) {
-            if (! Schema::hasColumn($table, 'two_factor_secret')) {
+        Schema::table($tableName, function (Blueprint $table) use ($tableName) {
+            if (! Schema::hasColumn($tableName, 'two_factor_secret')) {
                 $table->text('two_factor_secret')
                     ->after('password')
                     ->nullable();
             }
 
-            if (! Schema::hasColumn($table, 'two_factor_recovery_codes')) {
+            if (! Schema::hasColumn($tableName, 'two_factor_recovery_codes')) {
                 $table->text('two_factor_recovery_codes')
                     ->after('two_factor_secret')
                     ->nullable();
             }
 
-            if (! Schema::hasColumn($table, 'two_factor_confirmed_at')) {
+            if (! Schema::hasColumn($tableName, 'two_factor_confirmed_at')) {
                 $table->timestamp('two_factor_confirmed_at')
                     ->after('two_factor_recovery_codes')
                     ->nullable();
@@ -42,20 +42,20 @@ return new class extends Migration
     public function down(): void
     {
         $userModel = MagicStarter::userModel();
-        $table = (new $userModel)->getTable();
+        $tableName = (new $userModel)->getTable();
 
-        Schema::table($table, function (Blueprint $table) use ($table) {
+        Schema::table($tableName, function (Blueprint $table) use ($tableName) {
             $columnsToDrop = [];
 
-            if (Schema::hasColumn($table, 'two_factor_secret')) {
+            if (Schema::hasColumn($tableName, 'two_factor_secret')) {
                 $columnsToDrop[] = 'two_factor_secret';
             }
 
-            if (Schema::hasColumn($table, 'two_factor_recovery_codes')) {
+            if (Schema::hasColumn($tableName, 'two_factor_recovery_codes')) {
                 $columnsToDrop[] = 'two_factor_recovery_codes';
             }
 
-            if (Schema::hasColumn($table, 'two_factor_confirmed_at')) {
+            if (Schema::hasColumn($tableName, 'two_factor_confirmed_at')) {
                 $columnsToDrop[] = 'two_factor_confirmed_at';
             }
 
