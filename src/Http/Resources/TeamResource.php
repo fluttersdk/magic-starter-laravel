@@ -31,7 +31,7 @@ class TeamResource extends JsonResource
      * Resolve the authenticated user's role within this team.
      *
      * @param  mixed  $user  The authenticated user (nullable).
-     * @return string|null  The role value (owner, admin, editor, member) or null.
+     * @return string|null The role value (owner, admin, editor, member) or null.
      */
     protected function resolveUserRole(mixed $user): ?string
     {

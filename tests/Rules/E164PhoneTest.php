@@ -1,7 +1,5 @@
 <?php
 
-declare(strict_types=1);
-
 namespace FlutterSdk\MagicStarter\Tests\Rules;
 
 use FlutterSdk\MagicStarter\Rules\E164Phone;

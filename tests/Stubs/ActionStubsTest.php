@@ -1,7 +1,5 @@
 <?php
 
-declare(strict_types=1);
-
 namespace FlutterSdk\MagicStarter\Tests\Stubs;
 
 use FlutterSdk\MagicStarter\Tests\TestCase;

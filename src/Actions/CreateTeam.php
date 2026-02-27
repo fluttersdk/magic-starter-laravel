@@ -1,7 +1,5 @@
 <?php
 
-declare(strict_types=1);
-
 namespace FlutterSdk\MagicStarter\Actions;
 
 use FlutterSdk\MagicStarter\Contracts\CreatesTeams;
@@ -22,6 +20,7 @@ class CreateTeam implements CreatesTeams
      * @param  Authenticatable  $user  The user creating the team.
      * @param  array<string, mixed>  $input  The team data.
      * @return Model The created team instance.
+     *
      * @throws ValidationException
      */
     public function create(Authenticatable $user, array $input): Model

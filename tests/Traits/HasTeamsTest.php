@@ -1,7 +1,5 @@
 <?php
 
-declare(strict_types=1);
-
 namespace FlutterSdk\MagicStarter\Tests\Traits;
 
 use FlutterSdk\MagicStarter\MagicStarter;

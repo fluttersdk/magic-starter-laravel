@@ -1,7 +1,5 @@
 <?php
 
-declare(strict_types=1);
-
 namespace FlutterSdk\MagicStarter\Tests\Http\Requests;
 
 use FlutterSdk\MagicStarter\Contracts\DeletesUsers;

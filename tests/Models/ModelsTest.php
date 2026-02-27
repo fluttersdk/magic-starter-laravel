@@ -1,7 +1,5 @@
 <?php
 
-declare(strict_types=1);
-
 namespace FlutterSdk\MagicStarter\Tests\Models;
 
 use FlutterSdk\MagicStarter\Models\Team;

@@ -1,7 +1,5 @@
 <?php
 
-declare(strict_types=1);
-
 namespace FlutterSdk\MagicStarter\Actions;
 
 use FlutterSdk\MagicStarter\Contracts\CreatesUsers;
@@ -28,6 +26,7 @@ class CreateUser implements CreatesUsers
      *
      * @param  array<string, mixed>  $input  The registration data.
      * @return Authenticatable The created user instance.
+     *
      * @throws ValidationException
      */
     public function create(array $input): Authenticatable
