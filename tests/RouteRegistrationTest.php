@@ -144,6 +144,49 @@ final class RouteRegistrationTest extends TestCase
         $this->assertRouteMissing('PUT', '/user/profile');
     }
 
+    public function test_guest_auth_routes_registered_conditionally(): void
+    {
+        $this->bootRoutesWithConfig([
+            'guest-auth',
+        ]);
+
+        $this->assertRouteExists('POST', '/auth/guest');
+
+        $this->bootRoutesWithConfig([]);
+
+        $this->assertRouteMissing('POST', '/auth/guest');
+    }
+
+    public function test_phone_auth_routes_registered_conditionally(): void
+    {
+        $this->bootRoutesWithConfig([
+            'phone-auth',
+        ]);
+
+        $this->assertRouteExists('POST', '/auth/phone/register');
+        $this->assertRouteExists('POST', '/auth/phone/login');
+
+        $this->bootRoutesWithConfig([]);
+
+        $this->assertRouteMissing('POST', '/auth/phone/register');
+        $this->assertRouteMissing('POST', '/auth/phone/login');
+    }
+
+    public function test_phone_otp_routes_registered_conditionally(): void
+    {
+        $this->bootRoutesWithConfig([
+            'phone-otp',
+        ]);
+
+        $this->assertRouteExists('POST', '/auth/otp/send');
+        $this->assertRouteExists('POST', '/auth/otp/verify');
+
+        $this->bootRoutesWithConfig([]);
+
+        $this->assertRouteMissing('POST', '/auth/otp/send');
+        $this->assertRouteMissing('POST', '/auth/otp/verify');
+    }
+
     private function bootRoutesWithConfig(array $features, string $prefix = ''): void
     {
         config([

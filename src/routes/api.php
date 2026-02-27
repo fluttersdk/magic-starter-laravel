@@ -10,6 +10,9 @@
 
 use FlutterSdk\MagicStarter\Features;
 use FlutterSdk\MagicStarter\Http\Controllers\AuthController;
+use FlutterSdk\MagicStarter\Http\Controllers\GuestAuthController;
+use FlutterSdk\MagicStarter\Http\Controllers\OtpController;
+use FlutterSdk\MagicStarter\Http\Controllers\PhoneAuthController;
 use FlutterSdk\MagicStarter\Http\Controllers\NotificationController;
 use FlutterSdk\MagicStarter\Http\Controllers\NotificationPreferenceController;
 use FlutterSdk\MagicStarter\Http\Controllers\PasswordResetController;
@@ -37,6 +40,20 @@ Route::prefix((string) config('magic-starter.route_prefix', ''))
 
             if (Features::enabled(Features::twoFactorAuthentication())) {
                 Route::post('two-factor-challenge', [TwoFactorChallengeController::class, 'store']);
+            }
+
+            if (Features::hasGuestAuthFeatures()) {
+                Route::post('guest', [GuestAuthController::class, 'login']);
+            }
+
+            if (Features::hasPhoneAuthFeatures()) {
+                Route::post('phone/register', [PhoneAuthController::class, 'register']);
+                Route::post('phone/login', [PhoneAuthController::class, 'login']);
+            }
+
+            if (Features::hasPhoneOtpFeatures()) {
+                Route::post('otp/send', [OtpController::class, 'send']);
+                Route::post('otp/verify', [OtpController::class, 'verify']);
             }
         });
 

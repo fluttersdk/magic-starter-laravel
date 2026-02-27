@@ -75,10 +75,8 @@ class CreateGuestUserTest extends TestCase
         config(['magic-starter.supported_locales' => ['en', 'tr']]);
         config(['magic-starter.supported_timezones' => ['UTC', 'Europe/Istanbul']]);
 
-        $this->withHeaders([
-            'Accept-Language' => 'tr',
-            'X-Timezone' => 'Europe/Istanbul',
-        ]);
+        request()->headers->set('Accept-Language', 'tr');
+        request()->headers->set('X-Timezone', 'Europe/Istanbul');
 
         $action = new CreateGuestUser;
 

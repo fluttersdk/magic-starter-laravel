@@ -47,7 +47,9 @@ class MagicStarterServiceProvider extends ServiceProvider
         $this->app->bind(Contracts\RemovesTeamMembers::class, Actions\RemoveTeamMember::class);
         $this->app->bind(Contracts\InvitesTeamMembers::class, Actions\InviteTeamMember::class);
         $this->app->bind(Contracts\UpdatesTeamMemberRoles::class, Actions\UpdateTeamMemberRole::class);
-
+        $this->app->bind(Contracts\CreatesGuestUsers::class, Actions\CreateGuestUser::class);
+        $this->app->bind(Contracts\SendsOtpCodes::class, Actions\LogOtpProvider::class);
+        $this->app->bind(Contracts\VerifiesOtpCodes::class, Actions\CacheOtpVerifier::class);
         $this->app->singleton(Support\TwoFactorAuthenticationProvider::class);
         $this->app->bind(Contracts\EnablesTwoFactorAuthentication::class, Actions\EnableTwoFactorAuthentication::class);
         $this->app->bind(Contracts\ConfirmsTwoFactorAuthentication::class, Actions\ConfirmTwoFactorAuthentication::class);
