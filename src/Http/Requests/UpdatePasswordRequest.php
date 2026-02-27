@@ -24,13 +24,20 @@ class UpdatePasswordRequest extends FormRequest
      */
     public function rules(): array
     {
+        $user = $this->user();
+        $isGuestWithoutPassword = $user && (bool) ($user->is_guest ?? false) && empty($user->password);
+
         return [
-            'current_password' => ['required', 'string'],
+            'current_password' => $isGuestWithoutPassword ? ['sometimes', 'string'] : ['required', 'string'],
             'password' => [
                 'required',
                 'string',
                 Password::min(8)->letters()->numbers()->mixedCase(),
                 'confirmed',
+            ],
+            'password_confirmation' => [
+                'required',
+                'string',
             ],
         ];
     }
@@ -41,8 +48,11 @@ class UpdatePasswordRequest extends FormRequest
     public function withValidator(Validator $validator): void
     {
         $validator->after(function (Validator $validator) {
-            if (! Hash::check((string) $this->input('current_password'), (string) $this->user()?->getAuthPassword())) {
-                $validator->errors()->add('current_password', 'The current password is incorrect.');
+            $user = $this->user();
+            $isGuestWithoutPassword = $user && (bool) ($user->is_guest ?? false) && empty($user->password);
+
+            if (! $isGuestWithoutPassword && ! Hash::check((string) $this->input('current_password'), (string) $user?->getAuthPassword())) {
+                $validator->errors()->add('current_password', __('The current password is incorrect.'));
             }
         });
     }

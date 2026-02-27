@@ -5,6 +5,7 @@ namespace FlutterSdk\MagicStarter\Actions;
 use DateTimeZone;
 use FlutterSdk\MagicStarter\Contracts\UpdatesUserProfiles;
 use FlutterSdk\MagicStarter\Features;
+use FlutterSdk\MagicStarter\MagicStarter;
 use FlutterSdk\MagicStarter\Rules\E164Phone;
 use Illuminate\Contracts\Auth\Authenticatable;
 use Illuminate\Support\Facades\Validator;
@@ -30,16 +31,33 @@ class UpdateUserProfile implements UpdatesUserProfiles
     public function update(Authenticatable $user, array $input): void
     {
         // 1. Build validation rules based on enabled features.
+        $isGuest = (bool) ($user->is_guest ?? false);
+        $userTable = (new (MagicStarter::userModel()))->getTable();
         $rules = [
-            'name' => ['required', 'string', 'min:2', 'max:255'],
+            'name' => [
+                $isGuest ? 'nullable' : 'required',
+                'string',
+                'min:2',
+                'max:255',
+            ],
+            'email' => [
+                'nullable',
+                'email',
+                'max:255',
+                Rule::unique($userTable, 'email')->ignore($user->getAuthIdentifier()),
+            ],
         ];
-
         if (Features::hasExtendedProfileFeatures()) {
             $rules['phone'] = [
                 'nullable',
                 'string',
                 'max:20',
                 new E164Phone,
+            ];
+            $rules['phone_country'] = [
+                'nullable',
+                'string',
+                'size:2',
             ];
             $rules['timezone'] = [
                 'nullable',
@@ -67,5 +85,20 @@ class UpdateUserProfile implements UpdatesUserProfiles
 
         // 2. Update the user with validated attributes.
         $user->update($validated);
+
+        // 3. Check if guest user now qualifies for conversion.
+        $fresh = $user->fresh();
+
+        if ($fresh && (bool) $fresh->is_guest) {
+            $hasEmail = ! empty($fresh->email);
+            $hasPhone = ! empty($fresh->phone);
+            $hasPassword = ! empty($fresh->password);
+
+            if (($hasEmail || $hasPhone) && $hasPassword) {
+                $fresh->update([
+                    'is_guest' => false,
+                ]);
+            }
+        }
     }
 }

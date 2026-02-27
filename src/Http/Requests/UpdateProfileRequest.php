@@ -24,12 +24,27 @@ class UpdateProfileRequest extends FormRequest
      */
     public function rules(): array
     {
+        $user = $this->user();
+        $isGuest = $user && (bool) ($user->is_guest ?? false);
+        $userTable = (new (\FlutterSdk\MagicStarter\MagicStarter::userModel()))->getTable();
+
         return [
             'name' => [
-                'required',
+                $isGuest ? 'nullable' : 'required',
                 'string',
                 'min:2',
                 'max:255',
+            ],
+            'email' => [
+                'nullable',
+                'email',
+                'max:255',
+                Rule::unique($userTable, 'email')->ignore($user?->id),
+            ],
+            'phone_country' => [
+                'nullable',
+                'string',
+                'size:2',
             ],
             'phone' => [
                 'nullable',

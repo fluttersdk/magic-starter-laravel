@@ -20,20 +20,40 @@ class UpdateUserPassword implements UpdatesUserPasswords
      */
     public function update(Authenticatable $user, array $input): void
     {
-        Validator::make($input, [
-            'current_password' => ['required', 'string'],
-            'password' => ['required', 'string', 'min:8'],
-        ])->after(function ($validator) use ($user, $input): void {
-            if (! Hash::check((string) $input['current_password'], (string) $user->password)) {
+        $isGuestWithoutPassword = (bool) ($user->is_guest ?? false) && empty($user->password);
+
+        $rules = [
+            'password' => ['required', 'string', 'min:8', 'confirmed'],
+        ];
+
+        if (! $isGuestWithoutPassword) {
+            $rules['current_password'] = ['required', 'string'];
+        }
+
+        Validator::make($input, $rules)->after(function ($validator) use ($user, $input, $isGuestWithoutPassword): void {
+            if (! $isGuestWithoutPassword && ! Hash::check((string) $input['current_password'], (string) $user->password)) {
                 $validator->errors()->add(
                     'current_password',
-                    'The current password is incorrect.',
+                    __('The current password is incorrect.'),
                 );
             }
         })->validate();
 
         $user->update([
-            'password' => $input['password'],
+            'password' => Hash::make($input['password']),
         ]);
+
+        $fresh = $user->fresh();
+
+        if ($fresh && (bool) $fresh->is_guest) {
+            $hasEmail = ! empty($fresh->email);
+            $hasPhone = ! empty($fresh->phone);
+
+            if ($hasEmail || $hasPhone) {
+                $fresh->update([
+                    'is_guest' => false,
+                ]);
+            }
+        }
     }
 }
