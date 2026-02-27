@@ -95,6 +95,7 @@ class FeaturesTest extends TestCase
         $this->assertFalse(Features::hasProfilePhotoFeatures());
         $this->assertTrue(Features::hasSessionFeatures());
         $this->assertFalse(Features::hasSocialLoginFeatures());
+        $this->assertFalse(Features::hasTwoFactorAuthenticationFeatures());
     }
 
     public function test_feature_constants_return_expected_strings(): void
@@ -165,5 +166,24 @@ class FeaturesTest extends TestCase
         config(['magic-starter.features' => [Features::notifications()]]);
 
         $this->assertTrue(Features::hasNotificationFeatures());
+    }
+
+    public function test_two_factor_authentication_feature_constant(): void
+    {
+        $this->assertSame('two-factor-authentication', Features::twoFactorAuthentication());
+    }
+
+    public function test_has_two_factor_authentication_features_returns_false_by_default(): void
+    {
+        config(['magic-starter.features' => []]);
+
+        $this->assertFalse(Features::hasTwoFactorAuthenticationFeatures());
+    }
+
+    public function test_has_two_factor_authentication_features_returns_true_when_enabled(): void
+    {
+        config(['magic-starter.features' => [Features::twoFactorAuthentication()]]);
+
+        $this->assertTrue(Features::hasTwoFactorAuthenticationFeatures());
     }
 }

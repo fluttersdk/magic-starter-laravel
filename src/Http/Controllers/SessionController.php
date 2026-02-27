@@ -2,6 +2,8 @@
 
 namespace FlutterSdk\MagicStarter\Http\Controllers;
 
+use FlutterSdk\MagicStarter\Http\Requests\DestroyAllSessionsRequest;
+use FlutterSdk\MagicStarter\Http\Requests\DestroyOtherSessionsRequest;
 use FlutterSdk\MagicStarter\Http\Resources\SessionResource;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Resources\Json\AnonymousResourceCollection;
@@ -43,10 +45,12 @@ class SessionController
 
     /**
      * Revoke all other sessions.
+     *
+     * Requires password confirmation to prevent unauthorized bulk revocation.
      */
-    public function destroyOther(): JsonResponse
+    public function destroyOther(DestroyOtherSessionsRequest $request): JsonResponse
     {
-        $user = request()->user();
+        $user = $request->user();
         $currentId = $user->currentAccessToken()->id;
 
         $user->tokens()
@@ -56,6 +60,22 @@ class SessionController
         return response()->json([
             'data' => null,
             'message' => 'Other sessions revoked successfully.',
+        ]);
+    }
+
+    /**
+     * Revoke all sessions including the current one.
+     *
+     * Requires password confirmation. After this call, the user is
+     * logged out from all devices and must re-authenticate.
+     */
+    public function destroyAll(DestroyAllSessionsRequest $request): JsonResponse
+    {
+        $request->user()->tokens()->delete();
+
+        return response()->json([
+            'data' => null,
+            'message' => 'All sessions revoked successfully.',
         ]);
     }
 }

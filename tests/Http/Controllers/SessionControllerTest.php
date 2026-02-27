@@ -32,6 +32,7 @@ final class SessionControllerTest extends TestCase
             $table->uuid('id')->primary();
             $table->string('name')->nullable();
             $table->string('email')->nullable();
+            $table->string('password')->nullable();
             $table->string('locale')->nullable();
             $table->string('timezone')->nullable();
             $table->string('language')->nullable();
@@ -64,6 +65,7 @@ final class SessionControllerTest extends TestCase
         $user = SessionControllerTestUser::query()->create([
             'name' => 'Session User',
             'email' => 'session@example.test',
+            'password' => \Illuminate\Support\Facades\Hash::make('password'),
         ]);
 
         $tokenA = SessionControllerTestToken::query()->create([
@@ -99,6 +101,7 @@ final class SessionControllerTest extends TestCase
         $user = SessionControllerTestUser::query()->create([
             'name' => 'Session User',
             'email' => 'session@example.test',
+            'password' => \Illuminate\Support\Facades\Hash::make('password'),
         ]);
 
         $token = SessionControllerTestToken::query()->create([
@@ -123,6 +126,7 @@ final class SessionControllerTest extends TestCase
         $user = SessionControllerTestUser::query()->create([
             'name' => 'Session User',
             'email' => 'session@example.test',
+            'password' => \Illuminate\Support\Facades\Hash::make('password'),
         ]);
 
         $currentToken = SessionControllerTestToken::query()->create([
@@ -142,7 +146,7 @@ final class SessionControllerTest extends TestCase
         $user->setCurrentAccessToken($currentToken);
 
         $this->actingAs($user)
-            ->deleteJson('/sessions/other')
+            ->deleteJson('/sessions/other', ['password' => 'password'])
             ->assertOk()
             ->assertJson([
                 'message' => 'Other sessions revoked successfully.',
@@ -157,6 +161,7 @@ final class SessionControllerTest extends TestCase
         $user = SessionControllerTestUser::query()->create([
             'name' => 'Session User',
             'email' => 'session@example.test',
+            'password' => \Illuminate\Support\Facades\Hash::make('password'),
         ]);
         $this->actingAs($user)
             ->deleteJson('/sessions/00000000-0000-0000-0000-000000000000')
