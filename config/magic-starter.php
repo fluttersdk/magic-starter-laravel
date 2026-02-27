@@ -194,4 +194,65 @@ return [
     */
 
     'token_expiration_minutes' => env('MAGIC_STARTER_TOKEN_EXPIRATION', null),
+    /*
+    |--------------------------------------------------------------------------
+    | Two-Factor Authentication
+    |--------------------------------------------------------------------------
+    |
+    | Configure the settings for Two-Factor Authentication (2FA). This includes
+    | the company name displayed in authenticator apps, the number of recovery
+    | codes to generate, and the TTL for the challenge token.
+    |
+    */
+
+    'two_factor' => [
+        /*
+        |--------------------------------------------------------------------------
+        | Company Name
+        |--------------------------------------------------------------------------
+        |
+        | The name of your company or application as it will appear in the
+        | user's authenticator app (e.g., Google Authenticator, Authy).
+        |
+        */
+
+        'company_name' => env('APP_NAME', 'Laravel'),
+
+        /*
+        |--------------------------------------------------------------------------
+        | Recovery Codes Count
+        |--------------------------------------------------------------------------
+        |
+        | The number of multi-use recovery codes that should be generated for
+        | the user when they enable two-factor authentication.
+        |
+        */
+
+        'recovery_codes_count' => 8,
+
+        /*
+        |--------------------------------------------------------------------------
+        | GeoIP Database Path
+        |--------------------------------------------------------------------------
+        |
+        | The absolute path to the MaxMind GeoIP2 database file (.mmdb) used to
+        | resolve location data for 2FA challenge attempts. Set to null to
+        | disable location resolution.
+        |
+        */
+
+        'geoip_db_path' => null,
+
+        /*
+        |--------------------------------------------------------------------------
+        | Challenge Token TTL
+        |--------------------------------------------------------------------------
+        |
+        | The number of minutes a two-factor authentication challenge token is
+        | valid for. Users must complete the challenge within this window.
+        |
+        */
+
+        'challenge_token_ttl' => 5,
+    ],
 ];
