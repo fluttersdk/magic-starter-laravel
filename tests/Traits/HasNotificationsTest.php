@@ -1,18 +1,16 @@
 <?php
 
-declare(strict_types=1);
-
 namespace FlutterSdk\MagicStarter\Tests\Traits;
 
 use FlutterSdk\MagicStarter\MagicStarter;
 use FlutterSdk\MagicStarter\Models\NotificationSetting;
 use FlutterSdk\MagicStarter\NotificationPreferenceRegistry;
 use FlutterSdk\MagicStarter\Tests\TestCase;
-use FlutterSdk\MagicStarter\Traits\HasNotificationPreferences;
+use FlutterSdk\MagicStarter\Traits\HasNotifications;
 use Illuminate\Database\Eloquent\Concerns\HasUuids;
 use Illuminate\Foundation\Auth\User as Authenticatable;
 
-final class HasNotificationPreferencesTest extends TestCase
+final class HasNotificationsTest extends TestCase
 {
     protected function setUp(): void
     {
@@ -313,6 +311,33 @@ final class HasNotificationPreferencesTest extends TestCase
         $this->assertFalse($matrix['monitor_down']['channels']['mail']['enabled']);
         $this->assertTrue($matrix['monitor_down']['channels']['database']['enabled']);
     }
+
+    public function test_route_notification_for_onesignal_returns_external_user_ids(): void
+    {
+        $user = HasNotifPrefsTestUser::query()->create([
+            'name' => 'OneSignal User',
+            'email' => 'onesignal@example.test',
+        ]);
+
+        $routing = $user->routeNotificationForOneSignal();
+
+        $this->assertIsArray($routing);
+        $this->assertArrayHasKey('include_external_user_ids', $routing);
+        $this->assertEquals(['user_' . $user->id], $routing['include_external_user_ids']);
+    }
+
+    public function test_route_notification_for_onesignal_returns_prefixed_string_id(): void
+    {
+        $user = HasNotifPrefsTestUser::query()->create([
+            'name' => 'Prefix User',
+            'email' => 'prefix@example.test',
+        ]);
+
+        $routing = $user->routeNotificationForOneSignal();
+
+        $this->assertIsString($routing['include_external_user_ids'][0]);
+        $this->assertStringStartsWith('user_', $routing['include_external_user_ids'][0]);
+    }
 }
 
 /**
@@ -320,7 +345,7 @@ final class HasNotificationPreferencesTest extends TestCase
  */
 final class HasNotifPrefsTestUser extends Authenticatable
 {
-    use HasNotificationPreferences;
+    use HasNotifications;
     use HasUuids;
 
     protected $table = 'users';

@@ -6,12 +6,29 @@ use FlutterSdk\MagicStarter\Models\NotificationSetting;
 use FlutterSdk\MagicStarter\NotificationPreferenceRegistry;
 use Illuminate\Database\Eloquent\Relations\MorphMany;
 
-trait HasNotificationPreferences
+/**
+ * Notification management trait for user models.
+ *
+ * Provides notification preference management (per-type channel toggles)
+ * and push notification routing (OneSignal external ID resolution).
+ *
+ * Add to your User model:
+ *
+ * ```php
+ * use FlutterSdk\MagicStarter\Traits\HasNotifications;
+ *
+ * class User extends Authenticatable
+ * {
+ *     use HasNotifications;
+ * }
+ * ```
+ */
+trait HasNotifications
 {
     /**
      * Get the notification settings overrides for the user.
      *
-     * @return \Illuminate\Database\Eloquent\Relations\MorphMany<\FlutterSdk\MagicStarter\Models\NotificationSetting, $this>
+     * @return MorphMany<NotificationSetting, $this>
      */
     public function notificationSettings(): MorphMany
     {
@@ -89,5 +106,26 @@ trait HasNotificationPreferences
         }
 
         return $matrix;
-}
+    }
+
+    /**
+     * Route notifications for the OneSignal channel.
+     *
+     * Returns the external user ID that OneSignal uses to target this user.
+     * The `user_` prefix is required because OneSignal blocks simple values
+     * like '0', '1', '-1' as external_id.
+     *
+     * The format must match what the Flutter app sets when calling
+     * `Notify.initializePush('user_' + user.id)`.
+     *
+     * Override this method in your User model if you need a different format.
+     *
+     * @return array<string, mixed>
+     */
+    public function routeNotificationForOneSignal(): array
+    {
+        return [
+            'include_external_user_ids' => ['user_' . $this->id],
+        ];
+    }
 }
