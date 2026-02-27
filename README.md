@@ -47,7 +47,6 @@ A modular Laravel backend package providing authentication, team management, pro
 - [Publishable Migrations](#publishable-migrations)
 - [Testing](#testing)
 
-<a name="requirements"></a>
 ## Requirements
 
 | Dependency | Version |
@@ -57,10 +56,8 @@ A modular Laravel backend package providing authentication, team management, pro
 | Laravel Sanctum | ^4.0 |
 | Laravel Socialite | ^5.0 (bundled) |
 
-<a name="installation"></a>
 ## Installation
 
-<a name="composer-setup"></a>
 ### Composer Setup
 
 Add the package as a path repository in your application's `composer.json`:
@@ -84,7 +81,6 @@ composer require fluttersdk/magic-starter-laravel-back-end:@dev
 
 The service provider is auto-discovered via `extra.laravel.providers` in the package's `composer.json`.
 
-<a name="running-the-install-command"></a>
 ### Running the Install Command
 
 The install command publishes config, migrations, action stubs, and model stubs in one step:
@@ -136,7 +132,6 @@ php artisan vendor:publish --tag=magic-starter-stubs
 php artisan vendor:publish --tag=magic-starter-models
 ```
 
-<a name="user-model-setup"></a>
 ### User Model Setup
 
 Add the relevant traits to your `User` model. `HasApiTokens` (from Sanctum) is required for token authentication. Add `HasTeams`, `HasProfilePhoto`, and optionally `HasNotifications` and `TwoFactorAuthenticatable`:
@@ -164,7 +159,6 @@ class User extends Authenticatable
 
 Only add `HasNotifications` when the `notifications` feature is enabled. The other two traits are safe to include regardless of enabled features.
 
-<a name="binding-action-contracts"></a>
 ### Binding Action Contracts
 
 After publishing the action stubs, bind each contract to its concrete implementation in your `AppServiceProvider`:
@@ -201,12 +195,10 @@ public function register(): void
 > [!NOTE]
 > Published action stubs throw `RuntimeException` by default. You must implement the business logic in each action class before deploying.
 
-<a name="configuration"></a>
 ## Configuration
 
 The configuration file is at `config/magic-starter.php`.
 
-<a name="feature-toggles"></a>
 ### Feature Toggles
 
 Features follow Jetstream's toggle pattern. Enable features by adding them to the `features` array:
@@ -255,7 +247,6 @@ Features::hasTwoFactorAuthenticationFeatures();      // bool
 | `notifications` | `Features::notifications()` | `Features::hasNotificationFeatures()` |
 | `two-factor-authentication` | `Features::twoFactorAuthentication()` | `Features::hasTwoFactorAuthenticationFeatures()` |
 
-<a name="all-config-keys"></a>
 ### All Config Keys
 
 | Key | Default | Description |
@@ -291,7 +282,6 @@ MAGIC_STARTER_USER_MODEL=App\Models\User
 MAGIC_STARTER_FRONTEND_URL=https://app.example.com
 ```
 
-<a name="route-prefix"></a>
 ### Route Prefix
 
 Prefix all package routes to avoid collisions with your application's existing routes:
@@ -304,7 +294,6 @@ Prefix all package routes to avoid collisions with your application's existing r
 MAGIC_STARTER_ROUTE_PREFIX=api/v1
 ```
 
-<a name="storage-disks"></a>
 ### Storage Disks
 
 Configure separate disks and path prefixes for user and team photos:
@@ -320,10 +309,8 @@ Configure separate disks and path prefixes for user and team photos:
 MAGIC_STARTER_PROFILE_PHOTO_DISK=s3
 ```
 
-<a name="architecture"></a>
 ## Architecture
 
-<a name="directory-structure"></a>
 ### Directory Structure
 
 ```
@@ -364,7 +351,6 @@ magic-starter-laravel/
 └── tests/                                 # PHPUnit + Orchestra Testbench
 ```
 
-<a name="service-provider"></a>
 ### Service Provider
 
 `MagicStarterServiceProvider` handles the full bootstrap lifecycle:
@@ -378,7 +364,6 @@ magic-starter-laravel/
 - Loads routes conditionally based on enabled features, unless `ignoreRoutes()` has been called.
 - Registers the four publishing groups and the `magic-starter:install` Artisan command.
 
-<a name="magicstarter-class"></a>
 ### MagicStarter Class
 
 The `MagicStarter` class acts as the central configuration point, providing static methods for model resolution and route control:
@@ -394,7 +379,6 @@ The `MagicStarter` class acts as the central configuration point, providing stat
 | `useTeamModel(string $model)` | Sets a runtime team model override |
 | `reset()` | Clears all runtime overrides (useful in tests) |
 
-<a name="action-contract-pattern"></a>
 ### Action Contract Pattern
 
 Business logic is never hardcoded in controllers. Controllers resolve action contracts from the IoC container, and your application provides the implementations:
@@ -413,7 +397,6 @@ Business logic is never hardcoded in controllers. Controllers resolve action con
 
 The package owns the interfaces (`src/Contracts/`). Your application owns the implementations (`app/Actions/MagicStarter/`).
 
-<a name="dynamic-model-resolution"></a>
 ### Dynamic Model Resolution
 
 The package never hardcodes `App\Models\User`. All model references go through the `MagicStarter` class:
@@ -425,7 +408,6 @@ MagicStarter::membershipModel();      // string — configured pivot model class
 MagicStarter::teamInvitationModel();  // string — configured invitation model class
 ```
 
-<a name="event-listeners"></a>
 ### Event Listeners
 
 The service provider registers two event listeners automatically.
@@ -438,7 +420,6 @@ Active when the `teams` feature is enabled. After a user registers, this listene
 
 Active when the `notifications` feature is enabled. Before a notification is delivered, this listener checks the `NotificationPreferenceRegistry` to see if the type and channel are registered, then calls `prefers()` on the notifiable model. If the user has disabled that channel for that notification type, the listener blocks delivery by returning `false`.
 
-<a name="notification-preference-registry"></a>
 ### Notification Preference Registry
 
 `NotificationPreferenceRegistry` is a static registry where you declare what notification types exist and which channels they support. Register your types in a service provider:
@@ -467,7 +448,6 @@ NotificationPreferenceRegistry::channelAliases([
 
 The registry exposes resolution helpers for lookup by slug or fully-qualified class name. The `GateNotificationChannels` listener uses these internally.
 
-<a name="route-control"></a>
 ### Route Control
 
 To completely disable package route loading and define your own:
@@ -478,10 +458,8 @@ To completely disable package route loading and define your own:
 \FlutterSdk\MagicStarter\MagicStarter::ignoreRoutes();
 ```
 
-<a name="features"></a>
 ## Features
 
-<a name="authentication"></a>
 ### Authentication
 
 Provides registration, login, logout, current user retrieval, and team switching via Sanctum token authentication. These routes are always registered regardless of which optional features are enabled.
@@ -492,14 +470,12 @@ Provides registration, login, logout, current user retrieval, and team switching
 - **Current User**: Returns the authenticated user with current team and all teams.
 - **Switch Team**: Updates `current_team_id` on the user record. Requires `teams` feature.
 
-<a name="social-login"></a>
 ### Social Login
 
 > Requires `Features::socialLogin()` to be useful. The route is always registered, but OAuth providers must be configured separately via Socialite.
 
 Accepts either an `access_token` (for mobile OAuth flows) or an `authorization_code` (for server-side flows). If the authenticated social account's email already exists in the database, the user is logged in. Otherwise, a new user is created via the `CreatesUsers` contract.
 
-<a name="password-reset"></a>
 ### Password Reset
 
 Standard Laravel password reset flow, always active:
@@ -507,7 +483,6 @@ Standard Laravel password reset flow, always active:
 - **Forgot Password**: Calls `Password::sendResetLink()`. The reset link points to `config('magic-starter.frontend_url')`.
 - **Reset Password**: Validates the token, resets the password, fires the `PasswordReset` event.
 
-<a name="teams"></a>
 ### Teams
 
 > Requires `Features::teams()` enabled.
@@ -521,7 +496,6 @@ Full team CRUD with authorization gates:
 - **Delete**: Via `DeletesTeams` contract, protected by the `delete` gate. Prevents deleting the personal team or the last team. Auto-switches `current_team_id` to the next available team.
 - **Switch Team**: Updates `current_team_id`. The target team must exist and the user must belong to it.
 
-<a name="team-members"></a>
 ### Team Members
 
 > Requires `Features::teams()` enabled.
@@ -531,7 +505,6 @@ Full team CRUD with authorization gates:
 - **Remove**: Via `RemovesTeamMembers` contract. Cannot remove the owner.
 - **Leave**: Member voluntarily leaves the team. The owner cannot leave — they must transfer ownership or delete the team. Auto-switches `current_team_id` after leaving.
 
-<a name="team-invitations"></a>
 ### Team Invitations
 
 > Requires `Features::teams()` enabled.
@@ -545,7 +518,6 @@ Token-based invitation system with configurable expiry:
 
 Invitations expire after `config('magic-starter.invitation_expiry_days')` days (default: 7).
 
-<a name="profile-management"></a>
 ### Profile Management
 
 Always active. These routes require `auth:sanctum`:
@@ -554,7 +526,6 @@ Always active. These routes require `auth:sanctum`:
 - **Update Password**: Via `UpdatesUserPasswords` contract. Requires current password verification.
 - **Delete Account**: Via `DeletesUsers` contract. Requires password confirmation.
 
-<a name="profile-photo"></a>
 ### Profile Photo
 
 > Requires `Features::profilePhotos()` enabled.
@@ -564,7 +535,6 @@ Always active. These routes require `auth:sanctum`:
 
 When no photo is set, `getProfilePhotoUrlAttribute()` generates a fallback avatar via the configured `ui_avatars_url` using the user's name initials.
 
-<a name="team-photo"></a>
 ### Team Photo
 
 > Requires both `Features::profilePhotos()` and `Features::teams()` enabled.
@@ -574,7 +544,6 @@ When no photo is set, `getProfilePhotoUrlAttribute()` generates a fallback avata
 
 Fallback avatar generation works the same way as user photos, using the team name.
 
-<a name="session-management"></a>
 ### Session Management
 
 > Requires `Features::sessions()` enabled.
@@ -585,7 +554,6 @@ The package treats each Sanctum personal access token as a "session". The extend
 - **Revoke One**: Deletes a specific token by its ID.
 - **Revoke Others**: Deletes all tokens except the currently active one.
 
-<a name="two-factor-authentication"></a>
 ### Two-Factor Authentication
 
 > Requires `Features::twoFactorAuthentication()` enabled.
@@ -668,7 +636,6 @@ Authorization: Bearer {token}
 {"password": "current-password"}
 ```
 
-<a name="notifications"></a>
 ### Notifications
 
 > Requires `Features::notifications()` enabled.
@@ -684,19 +651,16 @@ Provides a channel-based notification preference registry and a full API for man
 - **Mark All as Read**: Marks all unread notifications as read.
 - **Delete**: Deletes a single notification.
 
-<a name="newsletter-subscription"></a>
 ### Newsletter Subscription
 
 > Requires `Features::newsletterSubscription()` enabled.
 
 Adds a `subscribe_newsletter` boolean field to the registration payload. When `true`, the `CreatesUsers` action (or the listener) creates a `NewsletterSubscriber` record tied to the new user's email with `source` set to `register`.
 
-<a name="api-reference"></a>
 ## API Reference
 
 All routes are prefixed by `config('magic-starter.route_prefix')`. The examples below assume no prefix is configured.
 
-<a name="public-routes"></a>
 ### Public Routes
 
 Rate-limited at `throttle:5,1` (5 requests per minute):
@@ -710,7 +674,6 @@ Rate-limited at `throttle:5,1` (5 requests per minute):
 | POST | `auth/reset-password` | `PasswordResetController@reset` | `ResetPasswordRequest` |
 | POST | `auth/two-factor-challenge` | `TwoFactorChallengeController@store` | `TwoFactorChallengeRequest` — requires `Features::twoFactorAuthentication()` |
 
-<a name="protected-routes"></a>
 ### Protected Routes
 
 All require `auth:sanctum` middleware.
@@ -804,7 +767,6 @@ All require `auth:sanctum` middleware.
 | GET | `notification-preferences` | `NotificationPreferenceController@show` |
 | PUT | `notification-preferences` | `NotificationPreferenceController@update` |
 
-<a name="response-shapes"></a>
 ### Response Shapes
 
 **UserResource:**
@@ -914,7 +876,6 @@ All require `auth:sanctum` middleware.
 }
 ```
 
-<a name="action-contracts-reference"></a>
 ## Action Contracts
 
 All 15 contracts live in `FlutterSdk\MagicStarter\Contracts`. The service provider binds each to its default stub implementation, which you replace with your own logic after publishing.
@@ -937,7 +898,6 @@ All 15 contracts live in `FlutterSdk\MagicStarter\Contracts`. The service provid
 | `DisablesTwoFactorAuthentication` | `__invoke(Authenticatable $user): void` | N/A (internal) |
 | `GeneratesNewRecoveryCodes` | `__invoke(Authenticatable $user): array` | N/A (internal) |
 
-<a name="models-reference"></a>
 ## Models
 
 The package ships with 6 Eloquent models. `Team`, `TeamInvitation`, and `TeamUser` are abstract — you extend them via the published model stubs in `app/Models/`.
@@ -980,10 +940,8 @@ The package ships with 6 Eloquent models. `Team`, `TeamInvitation`, and `TeamUse
 - Casts: `is_active` → `boolean`
 - Created automatically during registration when the `newsletter-subscription` feature is enabled and the user opts in
 
-<a name="user-traits"></a>
 ## User Traits
 
-<a name="has-teams"></a>
 **`HasTeams`** — `FlutterSdk\MagicStarter\Traits\HasTeams`
 
 | Method | Returns | Description |
@@ -1020,7 +978,6 @@ The package ships with 6 Eloquent models. `Team`, `TeamInvitation`, and `TeamUse
 | `hasTwoFactorEnabled()` | bool | Whether 2FA is confirmed and active |
 | `replaceRecoveryCode(string $code)` | void | Replace a used recovery code with a new one |
 
-<a name="form-requests"></a>
 ## Form Requests
 
 The package includes 20 form requests. All validation rules are array-style (never pipe-delimited).
@@ -1048,7 +1005,6 @@ The package includes 20 form requests. All validation rules are array-style (nev
 | `TwoFactorChallengeRequest` | `two_factor_token`: required, string. `code`: required_without:recovery_code. `recovery_code`: required_without:code. |
 | `DestroyOtherSessionsRequest` | `password`: required, string (must match current password). |
 
-<a name="publishable-migrations"></a>
 ## Publishable Migrations
 
 16 migration stubs are published with timestamps applied at install time. They are never auto-loaded by the package — you control when they run.
@@ -1058,7 +1014,6 @@ All `create_*` migrations use `Schema::hasTable()` guards — they safely skip t
 > [!NOTE]
 > You can safely run these migrations against an existing database. Core migrations (`create_users_table`, `create_personal_access_tokens_table`) will skip if the tables already exist. Feature migrations use `add_*` column changes that are idempotent.
 
-<a name="testing"></a>
 ## Testing
 
 The package uses PHPUnit with Orchestra Testbench.
