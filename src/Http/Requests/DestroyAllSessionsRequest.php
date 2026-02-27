@@ -37,7 +37,7 @@ class DestroyAllSessionsRequest extends FormRequest
     public function withValidator(Validator $validator): void
     {
         $validator->after(function (Validator $validator) {
-            if (! Hash::check($this->password, $this->user()->password)) {
+            if (! Hash::check((string) $this->input('password'), (string) $this->user()?->getAuthPassword())) {
                 $validator->errors()->add('password', 'The password is incorrect.');
             }
         });

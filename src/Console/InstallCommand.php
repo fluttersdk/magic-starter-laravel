@@ -44,6 +44,7 @@ class InstallCommand extends Command
 
     /** @var array<string, string> Feature key → human-readable label for multiselect. */
     private const FEATURE_LABELS = [
+        'two-factor-authentication' => 'Two factor authentication',
         'teams' => 'Team management',
         'profile-photos' => 'Profile & team photos',
         'sessions' => 'Session management (device tracking)',
@@ -55,6 +56,7 @@ class InstallCommand extends Command
 
     /** @var array<string, string> Feature key → Features class method name. */
     private const FEATURE_CONFIG_MAP = [
+        'two-factor-authentication' => 'twoFactorAuthentication',
         'teams' => 'teams',
         'profile-photos' => 'profilePhotos',
         'sessions' => 'sessions',
@@ -226,9 +228,10 @@ class InstallCommand extends Command
 
         // Explicit --features provided via CLI.
         if (! empty($optionFeatures)) {
-            return array_values(
-                array_intersect($optionFeatures, array_keys(self::FEATURE_LABELS)),
-            );
+            /** @var array<int, string> $filtered */
+            $filtered = array_intersect((array) $optionFeatures, array_keys(self::FEATURE_LABELS));
+
+            return array_values($filtered);
         }
 
         // Interactive mode: prompt user with multiselect.

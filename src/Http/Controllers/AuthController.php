@@ -3,6 +3,7 @@
 namespace FlutterSdk\MagicStarter\Http\Controllers;
 
 use FlutterSdk\MagicStarter\Contracts\CreatesUsers;
+use FlutterSdk\MagicStarter\Features;
 use FlutterSdk\MagicStarter\Http\Requests\LoginRequest;
 use FlutterSdk\MagicStarter\Http\Requests\RegisterRequest;
 use FlutterSdk\MagicStarter\Http\Requests\SocialLoginRequest;
@@ -113,6 +114,25 @@ class AuthController
             return response()->json([
                 'message' => 'Invalid credentials',
             ], 401);
+        }
+
+        /** @var \Illuminate\Database\Eloquent\Model $user */
+        if (
+            Features::hasTwoFactorAuthenticationFeatures() &&
+            method_exists($user, 'hasEnabledTwoFactorAuthentication') &&
+            $user->hasEnabledTwoFactorAuthentication()
+        ) {
+            $challengeToken = encrypt(json_encode([
+                'user_id' => $user->getKey(),
+                'expires_at' => now()->addMinutes(
+                    (int) config('magic-starter.two_factor.challenge_token_ttl', 5),
+                )->timestamp,
+            ]));
+
+            return response()->json([
+                'two_factor' => true,
+                'two_factor_token' => $challengeToken,
+            ]);
         }
 
         $token = $this->createAuthToken($user, $request, true);

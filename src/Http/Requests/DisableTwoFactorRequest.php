@@ -6,10 +6,7 @@ use Illuminate\Foundation\Http\FormRequest;
 use Illuminate\Support\Facades\Hash;
 use Illuminate\Validation\Validator;
 
-/**
- * Validates the password before revoking all other sessions.
- */
-class DestroyOtherSessionsRequest extends FormRequest
+class DisableTwoFactorRequest extends FormRequest
 {
     /**
      * Determine if the user is authorized to make this request.
@@ -22,7 +19,7 @@ class DestroyOtherSessionsRequest extends FormRequest
     /**
      * Get the validation rules that apply to the request.
      *
-     * @return array<string, mixed>
+     * @return array<string, array<int, string>>
      */
     public function rules(): array
     {
@@ -36,9 +33,9 @@ class DestroyOtherSessionsRequest extends FormRequest
      */
     public function withValidator(Validator $validator): void
     {
-        $validator->after(function (Validator $validator) {
+        $validator->after(function ($validator) {
             if (! Hash::check((string) $this->input('password'), (string) $this->user()?->getAuthPassword())) {
-                $validator->errors()->add('password', 'The password is incorrect.');
+                $validator->errors()->add('password', 'The provided password does not match your current password.');
             }
         });
     }

@@ -41,7 +41,7 @@ class UpdatePasswordRequest extends FormRequest
     public function withValidator(Validator $validator): void
     {
         $validator->after(function (Validator $validator) {
-            if (! Hash::check($this->current_password, $this->user()->password)) {
+            if (! Hash::check((string) $this->input('current_password'), (string) $this->user()?->getAuthPassword())) {
                 $validator->errors()->add('current_password', 'The current password is incorrect.');
             }
         });

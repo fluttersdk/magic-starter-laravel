@@ -20,6 +20,9 @@ use FlutterSdk\MagicStarter\Http\Controllers\TeamController;
 use FlutterSdk\MagicStarter\Http\Controllers\TeamInvitationController;
 use FlutterSdk\MagicStarter\Http\Controllers\TeamMemberController;
 use FlutterSdk\MagicStarter\Http\Controllers\TeamPhotoController;
+use FlutterSdk\MagicStarter\Http\Controllers\TwoFactorAuthenticationController;
+use FlutterSdk\MagicStarter\Http\Controllers\TwoFactorChallengeController;
+use FlutterSdk\MagicStarter\Http\Controllers\TwoFactorRecoveryCodeController;
 use Illuminate\Support\Facades\Route;
 
 Route::prefix((string) config('magic-starter.route_prefix', ''))
@@ -31,6 +34,10 @@ Route::prefix((string) config('magic-starter.route_prefix', ''))
 
             Route::post('forgot-password', [PasswordResetController::class, 'sendResetLinkEmail']);
             Route::post('reset-password', [PasswordResetController::class, 'reset']);
+
+            if (Features::enabled(Features::twoFactorAuthentication())) {
+                Route::post('two-factor-challenge', [TwoFactorChallengeController::class, 'store']);
+            }
         });
 
         // To require email verification on protected routes, add the 'verified'
@@ -101,6 +108,15 @@ Route::prefix((string) config('magic-starter.route_prefix', ''))
                     Route::get('/', [NotificationPreferenceController::class, 'show']);
                     Route::put('/', [NotificationPreferenceController::class, 'update']);
                 });
+            }
+
+            if (Features::enabled(Features::twoFactorAuthentication())) {
+                Route::post('two-factor-authentication', [TwoFactorAuthenticationController::class, 'store']);
+                Route::post('two-factor-authentication/confirm', [TwoFactorAuthenticationController::class, 'confirm']);
+                Route::delete('two-factor-authentication', [TwoFactorAuthenticationController::class, 'destroy']);
+
+                Route::get('two-factor-recovery-codes', [TwoFactorRecoveryCodeController::class, 'index']);
+                Route::post('two-factor-recovery-codes', [TwoFactorRecoveryCodeController::class, 'store']);
             }
         });
     });

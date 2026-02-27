@@ -945,3 +945,86 @@ Test coverage includes:
 - User traits — `HasTeamsTest`, `HasProfilePhotoTest`, `HasNotificationsTest`
 - All 16 form request validation rules
 - Action stub contracts (`ActionStubsTest`)
+
+
+## Two-Factor Authentication
+
+Magic Starter provides complete support for TOTP-based two-factor authentication (2FA). When enabled, users must provide a 6-digit code from their authenticator app (like Google Authenticator or Authy) to complete the login process.
+
+### Enabling Two-Factor Authentication
+
+To enable 2FA for a user, they must call the store endpoint. The response will include a QR code SVG, URL, and recovery codes. The user must then confirm the setup by providing a valid code.
+
+```http
+POST /api/auth/two-factor-authentication
+Authorization: Bearer {token}
+```
+
+```json
+{
+    "data": {
+        "secret": "...",
+        "qr_url": "...",
+        "qr_svg": "...",
+        "recovery_codes": [...]
+    },
+    "message": "Two-factor authentication enabled. Please confirm with your authenticator app."
+}
+```
+
+After scanning the QR code, the user must confirm it:
+
+```http
+POST /api/auth/two-factor-authentication/confirm
+Authorization: Bearer {token}
+
+{
+    "code": "123456"
+}
+```
+
+### Logging in with Two-Factor Authentication
+
+When a user with 2FA enabled logs in, they will receive a `two_factor` challenge response instead of a Sanctum token.
+
+```json
+{
+    "two_factor": true,
+    "two_factor_token": "eyJpdiI6..."
+}
+```
+
+The user must then submit this token along with their TOTP code (or a recovery code) to the challenge endpoint:
+
+```http
+POST /api/auth/two-factor-challenge
+
+{
+    "two_factor_token": "eyJpdiI6...",
+    "code": "123456"
+}
+```
+
+If successful, they will receive the normal authenticated response with their Sanctum token.
+
+### Managing Recovery Codes
+
+Users can view and regenerate their recovery codes:
+
+```http
+GET /api/auth/two-factor-recovery-codes
+POST /api/auth/two-factor-recovery-codes
+```
+
+### Disabling Two-Factor Authentication
+
+Users can disable 2FA by providing their current password:
+
+```http
+DELETE /api/auth/two-factor-authentication
+Authorization: Bearer {token}
+
+{
+    "password": "current-password"
+}
+```
