@@ -27,6 +27,11 @@ final class HasTeamsTest extends TestCase
         Schema::create('users', function (Blueprint $table): void {
             $table->string('id')->primary();
             $table->string('name')->nullable();
+            $table->string('email')->nullable();
+            $table->string('password')->nullable();
+            $table->boolean('is_guest')->default(false);
+            $table->string('device_id')->unique()->nullable();
+            $table->char('phone_country', 2)->nullable();
             $table->string('current_team_id')->nullable();
             $table->timestamps();
         });

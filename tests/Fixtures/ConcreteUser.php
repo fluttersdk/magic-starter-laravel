@@ -16,6 +16,7 @@ class ConcreteUser extends Model implements AuthenticatableContract
     use \FlutterSdk\MagicStarter\Traits\HasNotifications;
     use \FlutterSdk\MagicStarter\Traits\HasProfilePhoto;
     use \FlutterSdk\MagicStarter\Traits\HasTeams;
+    use \FlutterSdk\MagicStarter\Traits\HasGuestSupport;
 
     protected $table = 'users';
 

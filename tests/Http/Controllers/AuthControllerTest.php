@@ -70,10 +70,13 @@ class AuthControllerTest extends TestCase
         Schema::create('users', function (Blueprint $table): void {
             $table->uuid('id')->primary();
             $table->string('name');
-            $table->string('email')->unique();
+            $table->string('email')->nullable()->unique();
             $table->timestamp('email_verified_at')->nullable();
-            $table->string('password');
+            $table->string('password')->nullable();
             $table->rememberToken();
+            $table->boolean('is_guest')->default(false);
+            $table->string('device_id')->unique()->nullable();
+            $table->char('phone_country', 2)->nullable();
             $table->string('locale')->default('en');
             $table->string('timezone')->default('UTC');
             $table->string('language')->nullable();
@@ -348,6 +351,8 @@ class AuthControllerTest extends TestCase
                     'id',
                     'name',
                     'email',
+                    'is_guest',
+                    'phone_country',
                     'locale',
                     'timezone',
                     'profile_photo_url',
