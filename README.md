@@ -109,7 +109,7 @@ php artisan magic-starter:install --all --uuid --route-prefix=api/v1 --frontend-
 | `--frontend-url=` | Frontend application URL used in email links |
 | `--force` | Overwrite existing published files |
 
-The `--features` option accepts: `teams`, `profile-photos`, `sessions`, `social-login`, `newsletter-subscription`, `extended-profile`, `notifications`, `two-factor-authentication`. When `--all` is passed, omitting `--features` enables everything.
+The `--features` option accepts: `teams`, `profile-photos`, `sessions`, `social-login`, `newsletter-subscription`, `extended-profile`, `notifications`, `two-factor-authentication`, `guest-auth`, `phone-otp`. When `--all` is passed, omitting `--features` enables everything.
 
 > [!NOTE]
 > When neither `--uuid` nor `--no-uuid` is provided, the installer auto-detects your existing `users` table schema. If no `users` table exists (fresh install), UUID is used by default.
@@ -141,6 +141,7 @@ use FlutterSdk\MagicStarter\Traits\HasTeams;
 use FlutterSdk\MagicStarter\Traits\HasProfilePhoto;
 use FlutterSdk\MagicStarter\Traits\HasNotifications;
 use FlutterSdk\MagicStarter\Traits\TwoFactorAuthenticatable;
+use FlutterSdk\MagicStarter\Traits\HasGuestSupport;
 use Illuminate\Database\Eloquent\Concerns\HasUuids;
 use Laravel\Sanctum\HasApiTokens;
 
@@ -152,6 +153,7 @@ class User extends Authenticatable
     use HasProfilePhoto;
     use HasNotifications;
     use TwoFactorAuthenticatable;
+    use HasGuestSupport; // optional — when guest-auth feature is enabled
 
     protected $appends = [
         'profile_photo_url',
@@ -162,7 +164,7 @@ class User extends Authenticatable
 > [!IMPORTANT]
 > When `use_uuids` is `true` (the default for fresh installs), you **must** add the `HasUuids` trait to your User model. Without it, user creation will fail with a `NOT NULL constraint` error on the `id` column. If you opted for auto-incrementing integers (`--no-uuid`), omit `HasUuids`.
 
-Only add `HasNotifications` when the `notifications` feature is enabled. The other traits are safe to include regardless of enabled features.
+Only add `HasNotifications` when the `notifications` feature is enabled. Add `HasGuestSupport` only when the `guest-auth` feature is enabled. The other traits are safe to include regardless of enabled features.
 
 ### Binding Action Contracts
 
@@ -218,6 +220,8 @@ Features follow Jetstream's toggle pattern. Enable features by adding them to th
     \FlutterSdk\MagicStarter\Features::extendedProfile(),
     \FlutterSdk\MagicStarter\Features::notifications(),
     \FlutterSdk\MagicStarter\Features::twoFactorAuthentication(),
+    // \FlutterSdk\MagicStarter\Features::guestAuth(),
+    // \FlutterSdk\MagicStarter\Features::phoneOtp(),
 ],
 ```
 
@@ -237,9 +241,11 @@ Features::hasNewsletterSubscriptionFeatures();       // bool
 Features::hasExtendedProfileFeatures();              // bool
 Features::hasNotificationFeatures();                 // bool
 Features::hasTwoFactorAuthenticationFeatures();      // bool
+Features::hasGuestAuthFeatures();                    // bool
+Features::hasPhoneOtpFeatures();                     // bool
 ```
 
-**All 8 features and their toggle methods:**
+**All 10 features and their toggle methods:**
 
 | Feature Key | Enable Method | Check Method |
 |:------------|:--------------|:-------------|
@@ -251,6 +257,8 @@ Features::hasTwoFactorAuthenticationFeatures();      // bool
 | `extended-profile` | `Features::extendedProfile()` | `Features::hasExtendedProfileFeatures()` |
 | `notifications` | `Features::notifications()` | `Features::hasNotificationFeatures()` |
 | `two-factor-authentication` | `Features::twoFactorAuthentication()` | `Features::hasTwoFactorAuthenticationFeatures()` |
+| `guest-auth` | `Features::guestAuth()` | `Features::hasGuestAuthFeatures()` |
+| `phone-otp` | `Features::phoneOtp()` | `Features::hasPhoneOtpFeatures()` |
 
 ### All Config Keys
 
@@ -275,6 +283,8 @@ Features::hasTwoFactorAuthenticationFeatures();      // bool
 | `route_prefix` | `''` | Global prefix applied to all package routes |
 | `invitation_expiry_days` | `7` | Days until a team invitation token expires |
 | `token_expiration_minutes` | `null` | Sanctum personal access token TTL in minutes; `null` means no expiry |
+| `auth.email` | `true` | Whether to allow email-based authentication for login/register |
+| `auth.phone` | `false` | Whether to allow phone-based authentication for login/register |
 | `two_factor.company_name` | `env('APP_NAME', 'Laravel')` | Company name displayed in authenticator apps |
 | `two_factor.recovery_codes_count` | `8` | Number of recovery codes generated when 2FA is enabled |
 | `two_factor.geoip_db_path` | `null` | Path to MaxMind GeoIP2 database for location resolution |
@@ -285,6 +295,8 @@ Override model classes via environment variables:
 ```env
 MAGIC_STARTER_USER_MODEL=App\Models\User
 MAGIC_STARTER_FRONTEND_URL=https://app.example.com
+MAGIC_STARTER_AUTH_EMAIL=true
+MAGIC_STARTER_AUTH_PHONE=false
 ```
 
 ### Route Prefix
@@ -298,6 +310,31 @@ Prefix all package routes to avoid collisions with your application's existing r
 ```env
 MAGIC_STARTER_ROUTE_PREFIX=api/v1
 ```
+
+### Authentication Identity
+
+The package supports email and phone as separate, independent identity mechanisms. Both can be active simultaneously — a user may authenticate with either their email or their phone number depending on what they provided at registration.
+
+Control which identity methods are accepted via the `auth` config keys:
+
+```php
+'auth' => [
+    'email' => true,   // allow email-based login/register
+    'phone' => false,  // allow phone-based login/register
+],
+```
+
+Check identity status programmatically:
+
+```php
+use FlutterSdk\MagicStarter\Features;
+
+Features::emailIdentity();   // bool — whether email identity is enabled
+Features::phoneIdentity();   // bool — whether phone identity is enabled
+```
+
+> [!NOTE]
+> These are independent of the `phone-otp` feature. `auth.phone` controls whether phone is accepted as a login credential; `phone-otp` adds the OTP-based verification flow on top.
 
 ### Storage Disks
 
@@ -323,16 +360,16 @@ magic-starter-laravel/
 ├── config/
 │   └── magic-starter.php                  # Package configuration
 ├── database/
-│   └── migrations/                        # 16 publishable migration stubs
+│   └── migrations/                        # 17 publishable migration stubs
 ├── src/
-│   ├── Actions/                          # 15 action classes (11 core + 4 two-factor)
+│   ├── Actions/                          # 18 action classes (11 core + 4 two-factor + 3 auth)
 │   ├── Console/
 │   │   └── InstallCommand.php             # magic-starter:install
-│   ├── Contracts/                         # 15 contracts (11 core + 4 two-factor)
+│   ├── Contracts/                         # 18 contracts (11 core + 4 two-factor + 3 auth)
 │   ├── Enums/                            # Role enum
 │   ├── Http/
-│   │   ├── Controllers/                   # 14 API controllers
-│   │   ├── Requests/                      # 20 form requests
+│   │   ├── Controllers/                   # 16 API controllers
+│   │   ├── Requests/                      # 23 form requests
 │   │   └── Resources/                     # 6 API resources
 │   ├── Listeners/
 │   │   ├── CreatePersonalTeamListener.php # Fires on Registered event
@@ -344,7 +381,7 @@ magic-starter-laravel/
 │   ├── NotificationPreferenceRegistry.php  # Notification type/channel matrix
 │   ├── Rules/                            # E164Phone validation rule
 │   ├── Support/                          # Helper classes (MigrationHelper, SessionAgent, etc.)
-│   ├── Traits/                            # HasTeams, HasProfilePhoto, HasNotifications, TwoFactorAuthenticatable
+│   ├── Traits/                            # HasTeams, HasProfilePhoto, HasNotifications, TwoFactorAuthenticatable, HasGuestSupport
 │   ├── routes/
 │   │   └── api.php                        # Conditional route registration
 │   ├── Features.php                       # Feature toggle class
@@ -361,7 +398,7 @@ magic-starter-laravel/
 `MagicStarterServiceProvider` handles the full bootstrap lifecycle:
 
 - Merges the package config with any application overrides.
-- Binds all 15 action contracts to their default stub implementations in the IoC container.
+- Binds all 18 action contracts to their default stub implementations in the IoC container.
 - Sets the Sanctum `PersonalAccessToken` model to the package's extended version (adds `ip_address` and `user_agent`).
 - Configures the password reset URL to point at the configured `frontend_url`.
 - Registers event listeners (`CreatePersonalTeamListener`, `GateNotificationChannels`).
@@ -662,6 +699,29 @@ Provides a channel-based notification preference registry and a full API for man
 
 Adds a `subscribe_newsletter` boolean field to the registration payload. When `true`, the `CreatesUsers` action (or the listener) creates a `NewsletterSubscriber` record tied to the new user's email with `source` set to `register`.
 
+### Guest Authentication
+
+> Requires `Features::guestAuth()` enabled.
+
+Allows unauthenticated users to obtain a guest token by providing only a `device_id`. This is useful for mobile apps that need to track state before a user registers.
+
+- **Route**: `POST auth/guest` (public, rate-limited)
+- **Request**: `GuestLoginRequest` — requires `device_id` (string, max:255).
+- **Behaviour**: Looks up an existing guest user by `device_id`. If none exists, creates a new one with `is_guest = true` and returns HTTP 201. Subsequent logins for the same `device_id` return HTTP 200.
+- **Contract**: Delegates to the `CreatesGuestUsers` contract.
+- **Trait**: Add `HasGuestSupport` to your User model to access `isGuest()` and `isRegistered()` helpers.
+
+### Phone OTP
+
+> Requires `Features::phoneOtp()` enabled.
+
+Provides a two-step OTP login flow over phone numbers in E.164 format.
+
+- **Send route**: `POST auth/otp/send` (public, rate-limited) — generates a 6-digit code, caches it for 5 minutes, and delegates delivery to the `SendsOtpCodes` contract.
+- **Verify route**: `POST auth/otp/verify` (public, rate-limited) — validates the submitted code via the `VerifiesOtpCodes` contract, finds the user by phone number, and returns a Sanctum token on success.
+- **Phone format**: All phone values must be in E.164 format (e.g. `+14155552671`).
+- **Code TTL**: 5 minutes from send time. Codes are single-use.
+
 ## API Reference
 
 All routes are prefixed by `config('magic-starter.route_prefix')`. The examples below assume no prefix is configured.
@@ -678,6 +738,9 @@ Rate-limited at `throttle:5,1` (5 requests per minute):
 | POST | `auth/forgot-password` | `PasswordResetController@sendResetLinkEmail` | `ForgotPasswordRequest` |
 | POST | `auth/reset-password` | `PasswordResetController@reset` | `ResetPasswordRequest` |
 | POST | `auth/two-factor-challenge` | `TwoFactorChallengeController@store` | `TwoFactorChallengeRequest` — requires `Features::twoFactorAuthentication()` |
+| POST | `auth/guest` | `GuestAuthController@login` | `GuestLoginRequest` — requires `Features::guestAuth()` |
+| POST | `auth/otp/send` | `OtpController@send` | `SendOtpRequest` — requires `Features::phoneOtp()` |
+| POST | `auth/otp/verify` | `OtpController@verify` | `VerifyOtpRequest` — requires `Features::phoneOtp()` |
 
 ### Protected Routes
 
@@ -883,7 +946,7 @@ All require `auth:sanctum` middleware.
 
 ## Action Contracts
 
-All 15 contracts live in `FlutterSdk\MagicStarter\Contracts`. The service provider binds each to its default stub implementation, which you replace with your own logic after publishing.
+All 18 contracts live in `FlutterSdk\MagicStarter\Contracts`. The service provider binds each to its default stub implementation, which you replace with your own logic after publishing.
 
 | Contract | Method Signature | Published Stub |
 |:---------|:-----------------|:---------------|
@@ -902,6 +965,9 @@ All 15 contracts live in `FlutterSdk\MagicStarter\Contracts`. The service provid
 | `ConfirmsTwoFactorAuthentication` | `__invoke(Authenticatable $user, string $code): void` | N/A (internal) |
 | `DisablesTwoFactorAuthentication` | `__invoke(Authenticatable $user): void` | N/A (internal) |
 | `GeneratesNewRecoveryCodes` | `__invoke(Authenticatable $user): array` | N/A (internal) |
+| `CreatesGuestUsers` | `create(array $input): Authenticatable` | N/A (internal) |
+| `SendsOtpCodes` | `send(string $phone, string $code): void` | N/A (internal) |
+| `VerifiesOtpCodes` | `verify(string $phone, string $code): bool` | N/A (internal) |
 
 ## Models
 
@@ -957,6 +1023,9 @@ The package ships with 6 Eloquent models. `Team`, `TeamInvitation`, and `TeamUse
 | `currentTeam()` | BelongsTo | Team referenced by `current_team_id` |
 | `allTeams()` | Collection | Merged and deduplicated owned and member teams |
 | `getCurrentTeamOrPersonal()` | ?Model | Active current team, falling back to the personal team |
+| `belongsToTeam(Model $team)` | bool | Whether the user belongs to the given team (owned or as a member) |
+| `ownsTeam(Model $team)` | bool | Whether the user owns the given team |
+| `hasTeamRole(Model $team, string $role)` | bool | Whether the user has the given role on the given team |
 
 **`HasProfilePhoto`** — `FlutterSdk\MagicStarter\Traits\HasProfilePhoto`
 
@@ -983,9 +1052,16 @@ The package ships with 6 Eloquent models. `Team`, `TeamInvitation`, and `TeamUse
 | `hasTwoFactorEnabled()` | bool | Whether 2FA is confirmed and active |
 | `replaceRecoveryCode(string $code)` | void | Replace a used recovery code with a new one |
 
+**`HasGuestSupport`** — `FlutterSdk\MagicStarter\Traits\HasGuestSupport`
+
+| Method | Returns | Description |
+|:-------|:--------|:------------|
+| `isGuest()` | bool | Whether the user is a guest (has `is_guest` flag set to `true`) |
+| `isRegistered()` | bool | Whether the user has credentials (email+password or phone+password) |
+
 ## Form Requests
 
-The package includes 20 form requests. All validation rules are array-style (never pipe-delimited).
+The package includes 23 form requests. All validation rules are array-style (never pipe-delimited).
 
 | Request | Validation Rules |
 |:--------|:-----------------|
@@ -1009,10 +1085,13 @@ The package includes 20 form requests. All validation rules are array-style (nev
 | `DisableTwoFactorRequest` | `password`: required, string (must match current password). |
 | `TwoFactorChallengeRequest` | `two_factor_token`: required, string. `code`: required_without:recovery_code. `recovery_code`: required_without:code. |
 | `DestroyOtherSessionsRequest` | `password`: required, string (must match current password). |
+| `GuestLoginRequest` | `device_id`: required, string, max:255. |
+| `SendOtpRequest` | `phone`: required, string, E164 format. |
+| `VerifyOtpRequest` | `phone`: required, string, E164 format. `code`: required, string, size:6. |
 
 ## Publishable Migrations
 
-16 migration stubs are published with timestamps applied at install time. They are never auto-loaded by the package — you control when they run.
+17 migration stubs are published with timestamps applied at install time. They are never auto-loaded by the package — you control when they run.
 
 All `create_*` migrations use `Schema::hasTable()` guards — they safely skip table creation if the table already exists. All column types (primary keys, foreign keys) automatically respect the `use_uuids` config setting via `MigrationHelper`.
 
@@ -1025,7 +1104,7 @@ The package uses PHPUnit with Orchestra Testbench.
 
 ```shell
 composer install
-composer test        # Run PHPUnit (352 tests, 953 assertions)
+composer test        # Run PHPUnit (362 tests, 955 assertions)
 composer lint        # Check code style with Pint
 composer lint:fix    # Auto-fix code style violations
 composer analyse     # Run PHPStan
@@ -1041,6 +1120,6 @@ Test coverage includes:
 - All 16 controllers with full HTTP tests, including 403, 404, and 422 negative cases
 - Model relationships, casts, and scopes (`ModelsTest`)
 - User traits — `HasTeamsTest`, `HasProfilePhotoTest`, `HasNotificationsTest`
-- All 20 form request validation rules
+- All 23 form request validation rules
 - Action stub contracts (`ActionStubsTest`)
 - Two-factor authentication — trait, actions, controllers, challenge flow (`TwoFactorAuthenticatableTest`, `TwoFactorActionsTest`, `TwoFactorAuthenticationControllerTest`, `TwoFactorChallengeControllerTest`, `TwoFactorRecoveryCodeControllerTest`, `AuthControllerTwoFactorLoginTest`)
