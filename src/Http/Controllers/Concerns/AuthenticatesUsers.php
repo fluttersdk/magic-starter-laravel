@@ -28,6 +28,7 @@ trait AuthenticatesUsers
      * @param  string  $token  The plain-text Sanctum token.
      * @param  string  $message  Response message.
      * @param  int  $status  HTTP status code.
+     * @return JsonResponse The JSON response containing user data and token.
      */
     protected function authenticatedResponse(
         mixed $user,

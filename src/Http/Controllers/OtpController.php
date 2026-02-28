@@ -21,6 +21,9 @@ class OtpController extends Controller
 
     /**
      * Send an OTP code to the provided phone number.
+     *
+     * @param  SendOtpRequest  $request  The validated OTP send request.
+     * @return JsonResponse 200 with success message.
      */
     public function send(SendOtpRequest $request): JsonResponse
     {
@@ -37,7 +40,10 @@ class OtpController extends Controller
     }
 
     /**
-     * Verify the provided OTP code.
+     * Verify the provided OTP code and authenticate the user.
+     *
+     * @param  VerifyOtpRequest  $request  The validated OTP verify request.
+     * @return JsonResponse 200 with user and token, 401 on invalid OTP, 404 if user not found.
      */
     public function verify(VerifyOtpRequest $request): JsonResponse
     {

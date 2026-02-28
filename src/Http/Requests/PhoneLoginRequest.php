@@ -29,8 +29,15 @@ class PhoneLoginRequest extends FormRequest
     public function rules(): array
     {
         return [
-            'phone' => ['required', 'string', new E164Phone],
-            'password' => ['required', 'string'],
+            'phone' => [
+                'required',
+                'string',
+                new E164Phone,
+            ],
+            'password' => [
+                'required',
+                'string',
+            ],
         ];
     }
 }

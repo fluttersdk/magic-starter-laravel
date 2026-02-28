@@ -34,7 +34,11 @@ class PhoneRegisterRequest extends FormRequest
     public function rules(): array
     {
         return [
-            'name' => ['required', 'string', 'max:255'],
+            'name' => [
+                'required',
+                'string',
+                'max:255',
+            ],
             'phone' => [
                 'required',
                 'string',
@@ -42,7 +46,11 @@ class PhoneRegisterRequest extends FormRequest
                 new E164Phone,
                 Rule::unique((new (MagicStarter::userModel()))->getTable(), 'phone'),
             ],
-            'phone_country' => ['required', 'string', 'size:2'],
+            'phone_country' => [
+                'required',
+                'string',
+                'size:2',
+            ],
             'password' => [
                 'required',
                 'string',
