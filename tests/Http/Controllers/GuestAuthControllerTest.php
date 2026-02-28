@@ -87,8 +87,7 @@ class GuestAuthControllerTest extends TestCase
     }
 
     /**
-     * Test 1: Valid device_id creates a guest user and returns 200 with data.user + data.token.
-     */
+     * Test 1: Valid device_id creates a guest user and returns 201 Created.
     public function test_guest_login_creates_user_and_returns_token(): void
     {
         $response = $this->postJson('/auth/guest', [
@@ -96,7 +95,7 @@ class GuestAuthControllerTest extends TestCase
         ]);
 
         $response
-            ->assertOk()
+            ->assertStatus(201)
             ->assertJsonStructure([
                 'data' => [
                     'user',
@@ -127,7 +126,7 @@ class GuestAuthControllerTest extends TestCase
             'device_id' => 'idempotent-device-xyz',
         ]);
 
-        $first->assertOk();
+        $first->assertStatus(201);
         $second->assertOk();
 
         $firstUserId = $first->json('data.user.id');
@@ -174,7 +173,7 @@ class GuestAuthControllerTest extends TestCase
     {
         $this->postJson('/auth/guest', [
             'device_id' => 'null-credentials-device',
-        ])->assertOk();
+        ])->assertStatus(201);
 
         $user = ConcreteUser::query()
             ->where('device_id', 'null-credentials-device')

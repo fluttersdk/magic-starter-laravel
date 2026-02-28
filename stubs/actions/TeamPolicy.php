@@ -1,6 +1,6 @@
 <?php
 
-namespace App\Actions\MagicStarter;
+namespace App\Policies;
 
 use Illuminate\Auth\Access\HandlesAuthorization;
 

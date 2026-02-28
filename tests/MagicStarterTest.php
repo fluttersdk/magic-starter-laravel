@@ -101,4 +101,39 @@ class MagicStarterTest extends TestCase
         $this->assertFalse(MagicStarter::shouldIgnoreRoutes());
         $this->assertNull(MagicStarter::getUsing('user'));
     }
+
+    public function test_team_model_resolves_concrete_when_abstract_configured(): void
+    {
+        // When config points to the abstract package Team class,
+        // resolveConcreteModel should return App\Models\Team if it exists.
+        config(['magic-starter.models.team' => \FlutterSdk\MagicStarter\Models\Team::class]);
+
+        $result = MagicStarter::teamModel();
+
+        // If App\Models\Team exists, it should return that.
+        // If not, it returns the abstract class as-is.
+        if (class_exists('App\\Models\\Team')) {
+            $this->assertSame('App\\Models\\Team', $result);
+        } else {
+            $this->assertSame(\FlutterSdk\MagicStarter\Models\Team::class, $result);
+        }
+    }
+
+    public function test_team_model_uses_custom_class_when_configured(): void
+    {
+        // Custom concrete class should be returned as-is, no resolution needed.
+        config(['magic-starter.models.team' => 'App\\Models\\CustomTeam']);
+
+        $this->assertSame('App\\Models\\CustomTeam', MagicStarter::teamModel());
+    }
+
+    public function test_runtime_override_takes_precedence_over_abstract_resolution(): void
+    {
+        config(['magic-starter.models.team' => \FlutterSdk\MagicStarter\Models\Team::class]);
+        MagicStarter::useTeamModel('App\\Models\\MyCustomTeam');
+
+        // Runtime override is NOT subject to abstract resolution —
+        // it's already user-provided.
+        $this->assertSame('App\\Models\\MyCustomTeam', MagicStarter::teamModel());
+    }
 }

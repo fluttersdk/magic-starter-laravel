@@ -69,4 +69,46 @@ trait HasTeams
     {
         return $this->currentTeam ?? $this->personalTeam();
     }
+
+    /**
+     * Determine if the user belongs to the given team.
+     *
+     * Checks both owned teams and member teams.
+     *
+     * @param  Model  $team  The team to check membership for.
+     */
+    public function belongsToTeam(Model $team): bool
+    {
+        return $this->allTeams()->contains(fn (Model $t): bool => $t->getKey() === $team->getKey());
+    }
+
+    /**
+     * Determine if the user owns the given team.
+     *
+     * @param  Model  $team  The team to check ownership for.
+     */
+    public function ownsTeam(Model $team): bool
+    {
+        return $this->getKey() === $team->getAttribute('user_id');
+    }
+
+    /**
+     * Determine if the user has the given role on the given team.
+     *
+     * Owners are not checked here — use ownsTeam() separately.
+     *
+     * @param  Model  $team  The team to check the role on.
+     * @param  string  $role  The role to check for.
+     */
+    public function hasTeamRole(Model $team, string $role): bool
+    {
+        $membership = $this->teams
+            ->first(fn (Model $t): bool => $t->getKey() === $team->getKey());
+
+        if ($membership === null) {
+            return false;
+        }
+
+        return $membership->pivot?->role === $role;
+    }
 }

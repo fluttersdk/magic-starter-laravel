@@ -2,6 +2,7 @@
 
 use Illuminate\Database\Migrations\Migration;
 use Illuminate\Database\Schema\Blueprint;
+use Illuminate\Support\Facades\Config;
 use Illuminate\Support\Facades\Schema;
 
 return new class extends Migration
@@ -15,18 +16,24 @@ return new class extends Migration
             $table->string('email')->nullable()->change();
             $table->string('password')->nullable()->change();
 
-            $table->boolean('is_guest')
-                ->default(false)
-                ->after('password');
+            if (! Schema::hasColumn('users', 'is_guest')) {
+                $table->boolean('is_guest')
+                    ->default(false)
+                    ->after('password');
+            }
 
-            $table->string('device_id', 255)
-                ->nullable()
-                ->unique()
-                ->after('is_guest');
+            if (! Schema::hasColumn('users', 'device_id')) {
+                $table->string('device_id', 255)
+                    ->nullable()
+                    ->unique()
+                    ->after('is_guest');
+            }
 
-            $table->char('phone_country', 2)
-                ->nullable()
-                ->after('phone');
+            if (! Schema::hasColumn('users', 'phone_country')) {
+                $table->char('phone_country', 2)
+                    ->nullable()
+                    ->after('phone');
+            }
         });
     }
 
@@ -39,15 +46,21 @@ return new class extends Migration
             $table->string('email')->nullable(false)->change();
             $table->string('password')->nullable(false)->change();
 
-            if (Illuminate\Support\Facades\Config::get('database.default') !== 'sqlite') {
-                $table->dropUnique(['device_id']);
+            if (Config::get('database.default') !== 'sqlite') {
+                if (Schema::hasColumn('users', 'device_id')) {
+                    $table->dropUnique(['device_id']);
+                }
             }
 
-            $table->dropColumn([
-                'is_guest',
-                'device_id',
-                'phone_country',
+            $columnsToDrop = array_filter([
+                Schema::hasColumn('users', 'is_guest') ? 'is_guest' : null,
+                Schema::hasColumn('users', 'device_id') ? 'device_id' : null,
+                Schema::hasColumn('users', 'phone_country') ? 'phone_country' : null,
             ]);
+
+            if (count($columnsToDrop) > 0) {
+                $table->dropColumn($columnsToDrop);
+            }
         });
     }
 };

@@ -34,7 +34,7 @@ class PasswordResetControllerTest extends TestCase
         parent::tearDown();
     }
 
-    public function test_send_reset_link_email_returns_ok_when_broker_succeeds(): void
+    public function test_send_reset_link_email_always_returns_ok_to_prevent_enumeration(): void
     {
         Password::shouldReceive('sendResetLink')
             ->once()
@@ -47,10 +47,10 @@ class PasswordResetControllerTest extends TestCase
 
         $response
             ->assertOk()
-            ->assertJsonPath('message', __((string) Password::RESET_LINK_SENT));
+            ->assertJsonPath('message', 'If an account with that email exists, a password reset link has been sent.');
     }
 
-    public function test_send_reset_link_email_returns_bad_request_when_broker_fails(): void
+    public function test_send_reset_link_email_returns_ok_even_when_user_not_found(): void
     {
         Password::shouldReceive('sendResetLink')
             ->once()
@@ -61,9 +61,10 @@ class PasswordResetControllerTest extends TestCase
             'email' => 'missing@example.com',
         ]);
 
+        // Always returns 200 to prevent email enumeration.
         $response
-            ->assertStatus(400)
-            ->assertJsonPath('message', __((string) Password::INVALID_USER));
+            ->assertOk()
+            ->assertJsonPath('message', 'If an account with that email exists, a password reset link has been sent.');
     }
 
     public function test_reset_returns_ok_when_password_is_reset(): void
@@ -109,7 +110,7 @@ class PasswordResetControllerTest extends TestCase
         ]);
 
         $response
-            ->assertStatus(400)
+            ->assertStatus(422)
             ->assertJsonPath('message', __((string) Password::INVALID_TOKEN));
     }
 }

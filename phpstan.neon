@@ -50,10 +50,6 @@ parameters:
             path: src/Listeners/*
 
 
-        # Eloquent generic type resolution (belongsTo, belongsToMany with dynamic models)
-        -
-            identifier: argument.templateType
-            path: src/Models/*
         -
             identifier: return.type
             path: src/Models/*

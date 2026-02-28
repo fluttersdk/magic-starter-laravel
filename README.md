@@ -134,18 +134,20 @@ php artisan vendor:publish --tag=magic-starter-models
 
 ### User Model Setup
 
-Add the relevant traits to your `User` model. `HasApiTokens` (from Sanctum) is required for token authentication. Add `HasTeams`, `HasProfilePhoto`, and optionally `HasNotifications` and `TwoFactorAuthenticatable`:
+Add the relevant traits to your `User` model. `HasApiTokens` (from Sanctum) is required for token authentication. When using UUID primary keys (the default), also add `HasUuids`. Add `HasTeams`, `HasProfilePhoto`, and optionally `HasNotifications` and `TwoFactorAuthenticatable`:
 
 ```php
 use FlutterSdk\MagicStarter\Traits\HasTeams;
 use FlutterSdk\MagicStarter\Traits\HasProfilePhoto;
 use FlutterSdk\MagicStarter\Traits\HasNotifications;
 use FlutterSdk\MagicStarter\Traits\TwoFactorAuthenticatable;
+use Illuminate\Database\Eloquent\Concerns\HasUuids;
 use Laravel\Sanctum\HasApiTokens;
 
 class User extends Authenticatable
 {
     use HasApiTokens;
+    use HasUuids;
     use HasTeams;
     use HasProfilePhoto;
     use HasNotifications;
@@ -157,7 +159,10 @@ class User extends Authenticatable
 }
 ```
 
-Only add `HasNotifications` when the `notifications` feature is enabled. The other two traits are safe to include regardless of enabled features.
+> [!IMPORTANT]
+> When `use_uuids` is `true` (the default for fresh installs), you **must** add the `HasUuids` trait to your User model. Without it, user creation will fail with a `NOT NULL constraint` error on the `id` column. If you opted for auto-incrementing integers (`--no-uuid`), omit `HasUuids`.
+
+Only add `HasNotifications` when the `notifications` feature is enabled. The other traits are safe to include regardless of enabled features.
 
 ### Binding Action Contracts
 

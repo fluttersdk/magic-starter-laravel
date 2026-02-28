@@ -118,6 +118,113 @@ final class HasTeamsTest extends TestCase
         $this->assertSame('t-10', $userWithoutCurrent->fresh()->getCurrentTeamOrPersonal()?->getKey());
         $this->assertNotSame($personal->getKey(), $userWithoutCurrent->fresh()->getCurrentTeamOrPersonal()?->getKey());
     }
+
+    public function test_belongs_to_team_returns_true_for_owned_team(): void
+    {
+        $user = HasTeamsTestUser::query()->create(['id' => 'u-bt1', 'name' => 'Grace']);
+        HasTeamsTestTeam::query()->create([
+            'id' => 't-bt1',
+            'user_id' => 'u-bt1',
+            'name' => 'Owned',
+            'personal_team' => false,
+        ]);
+
+        $this->assertTrue($user->fresh()->belongsToTeam(HasTeamsTestTeam::find('t-bt1')));
+    }
+
+    public function test_belongs_to_team_returns_true_for_member_team(): void
+    {
+        $user = HasTeamsTestUser::query()->create(['id' => 'u-bt2', 'name' => 'Heidi']);
+        $team = HasTeamsTestTeam::query()->create([
+            'id' => 't-bt2',
+            'user_id' => 'u-other',
+            'name' => 'Member',
+            'personal_team' => false,
+        ]);
+        $user->teams()->attach($team->getKey(), ['role' => 'editor']);
+
+        $this->assertTrue($user->fresh()->belongsToTeam($team));
+    }
+
+    public function test_belongs_to_team_returns_false_for_unrelated_team(): void
+    {
+        $user = HasTeamsTestUser::query()->create(['id' => 'u-bt3', 'name' => 'Ivan']);
+        $team = HasTeamsTestTeam::query()->create([
+            'id' => 't-bt3',
+            'user_id' => 'u-stranger',
+            'name' => 'Stranger',
+            'personal_team' => false,
+        ]);
+
+        $this->assertFalse($user->fresh()->belongsToTeam($team));
+    }
+
+    public function test_owns_team_returns_true_for_owner(): void
+    {
+        $user = HasTeamsTestUser::query()->create(['id' => 'u-ot1', 'name' => 'Judy']);
+        $team = HasTeamsTestTeam::query()->create([
+            'id' => 't-ot1',
+            'user_id' => 'u-ot1',
+            'name' => 'Owned',
+            'personal_team' => false,
+        ]);
+
+        $this->assertTrue($user->ownsTeam($team));
+    }
+
+    public function test_owns_team_returns_false_for_non_owner(): void
+    {
+        $user = HasTeamsTestUser::query()->create(['id' => 'u-ot2', 'name' => 'Karl']);
+        $team = HasTeamsTestTeam::query()->create([
+            'id' => 't-ot2',
+            'user_id' => 'u-someone-else',
+            'name' => 'Not Mine',
+            'personal_team' => false,
+        ]);
+
+        $this->assertFalse($user->ownsTeam($team));
+    }
+
+    public function test_has_team_role_returns_true_when_user_has_matching_role(): void
+    {
+        $user = HasTeamsTestUser::query()->create(['id' => 'u-hr1', 'name' => 'Liam']);
+        $team = HasTeamsTestTeam::query()->create([
+            'id' => 't-hr1',
+            'user_id' => 'u-other',
+            'name' => 'Role Team',
+            'personal_team' => false,
+        ]);
+        $user->teams()->attach($team->getKey(), ['role' => 'admin']);
+
+        $this->assertTrue($user->fresh()->hasTeamRole($team, 'admin'));
+    }
+
+    public function test_has_team_role_returns_false_when_user_has_different_role(): void
+    {
+        $user = HasTeamsTestUser::query()->create(['id' => 'u-hr2', 'name' => 'Mia']);
+        $team = HasTeamsTestTeam::query()->create([
+            'id' => 't-hr2',
+            'user_id' => 'u-other',
+            'name' => 'Role Team',
+            'personal_team' => false,
+        ]);
+        $user->teams()->attach($team->getKey(), ['role' => 'member']);
+
+        $this->assertFalse($user->fresh()->hasTeamRole($team, 'admin'));
+    }
+
+    public function test_has_team_role_returns_false_when_not_a_member(): void
+    {
+        $user = HasTeamsTestUser::query()->create(['id' => 'u-hr3', 'name' => 'Noah']);
+        $team = HasTeamsTestTeam::query()->create([
+            'id' => 't-hr3',
+            'user_id' => 'u-other',
+            'name' => 'No Membership',
+            'personal_team' => false,
+        ]);
+
+        $this->assertFalse($user->fresh()->hasTeamRole($team, 'admin'));
+    }
 }
 
 final class HasTeamsTestUser extends Model

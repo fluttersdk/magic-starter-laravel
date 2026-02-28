@@ -2,8 +2,16 @@
 
 namespace FlutterSdk\MagicStarter;
 
+use FlutterSdk\MagicStarter\Models\Team;
+use FlutterSdk\MagicStarter\Models\TeamInvitation;
+use FlutterSdk\MagicStarter\Models\TeamUser;
+use RuntimeException;
+
 /**
  * Main entry point for Magic Starter configuration and model resolution.
+ *
+ * Provides static methods for resolving configured model classes,
+ * controlling route registration, and setting runtime overrides.
  */
 class MagicStarter
 {
@@ -20,10 +28,23 @@ class MagicStarter
     protected static array $using = [];
 
     /**
+     * Abstract package model classes that should be auto-resolved
+     * to their concrete App\Models equivalents.
+     *
+     * @var array<class-string, string>
+     */
+    protected static array $abstractModelMap = [
+        Team::class => 'App\\Models\\Team',
+        TeamUser::class => 'App\\Models\\TeamUser',
+        TeamInvitation::class => 'App\\Models\\TeamInvitation',
+    ];
+
+    /**
      * Resolve the configured user model class name.
      *
+     * @return class-string
      *
-     * @throws \RuntimeException
+     * @throws RuntimeException
      */
     public static function userModel(): string
     {
@@ -32,7 +53,7 @@ class MagicStarter
             ?? config('auth.providers.users.model');
 
         if ($model === null || $model === '') {
-            throw new \RuntimeException(
+            throw new RuntimeException(
                 'User model not configured. Set magic-starter.models.user or auth.providers.users.model.',
             );
         }
@@ -43,8 +64,12 @@ class MagicStarter
     /**
      * Resolve the configured team model class name.
      *
+     * When the config points to the abstract package class, this method
+     * auto-resolves to the concrete App\Models equivalent if it exists.
      *
-     * @throws \RuntimeException
+     * @return class-string
+     *
+     * @throws RuntimeException
      */
     public static function teamModel(): string
     {
@@ -52,18 +77,20 @@ class MagicStarter
             ?? config('magic-starter.models.team');
 
         if ($model === null || $model === '') {
-            throw new \RuntimeException(
+            throw new RuntimeException(
                 'Team model not configured. Set magic-starter.models.team.',
             );
         }
 
-        return $model;
+        return static::resolveConcreteModel($model);
     }
 
     /**
      * Resolve the configured membership model class name.
      *
-     * @throws \RuntimeException
+     * @return class-string
+     *
+     * @throws RuntimeException
      */
     public static function membershipModel(): string
     {
@@ -71,18 +98,20 @@ class MagicStarter
             ?? config('magic-starter.models.membership');
 
         if ($model === null || $model === '') {
-            throw new \RuntimeException(
+            throw new RuntimeException(
                 'Membership model not configured. Set magic-starter.models.membership.',
             );
         }
 
-        return $model;
+        return static::resolveConcreteModel($model);
     }
 
     /**
      * Resolve the configured team invitation model class name.
      *
-     * @throws \RuntimeException
+     * @return class-string
+     *
+     * @throws RuntimeException
      */
     public static function teamInvitationModel(): string
     {
@@ -90,11 +119,41 @@ class MagicStarter
             ?? config('magic-starter.models.team_invitation');
 
         if ($model === null || $model === '') {
-            throw new \RuntimeException(
+            throw new RuntimeException(
                 'TeamInvitation model not configured. Set magic-starter.models.team_invitation.',
             );
         }
 
+        return static::resolveConcreteModel($model);
+    }
+
+    /**
+     * Resolve an abstract package model to its concrete App\Models equivalent.
+     *
+     * When the configured class is one of the package's abstract models,
+     * this method checks if a concrete class exists in the application's
+     * App\Models namespace and returns it instead. This prevents
+     * "cannot instantiate abstract class" errors when the consumer
+     * has published model stubs but hasn't updated the config.
+     *
+     * @param  class-string  $model  The configured model class.
+     * @return class-string The resolved concrete class.
+     */
+    protected static function resolveConcreteModel(string $model): string
+    {
+        // 1. If the class is not abstract, return as-is.
+        if (! isset(static::$abstractModelMap[$model])) {
+            return $model;
+        }
+
+        // 2. Check if the App\Models concrete class exists.
+        $concrete = static::$abstractModelMap[$model];
+
+        if (class_exists($concrete)) {
+            return $concrete;
+        }
+
+        // 3. No concrete found — return original (will fail at instantiation with a clear error).
         return $model;
     }
 

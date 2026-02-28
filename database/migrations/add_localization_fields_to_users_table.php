@@ -9,15 +9,27 @@ return new class extends Migration
     public function up(): void
     {
         Schema::table('users', function (Blueprint $table) {
-            $table->string('locale')->default('en')->after('remember_token');
-            $table->string('timezone')->default('UTC')->after('locale');
+            if (! Schema::hasColumn('users', 'locale')) {
+                $table->string('locale')->default('en')->after('remember_token');
+            }
+
+            if (! Schema::hasColumn('users', 'timezone')) {
+                $table->string('timezone')->default('UTC')->after('locale');
+            }
         });
     }
 
     public function down(): void
     {
         Schema::table('users', function (Blueprint $table) {
-            $table->dropColumn(['locale', 'timezone']);
+            $columnsToDrop = array_filter([
+                Schema::hasColumn('users', 'locale') ? 'locale' : null,
+                Schema::hasColumn('users', 'timezone') ? 'timezone' : null,
+            ]);
+
+            if (count($columnsToDrop) > 0) {
+                $table->dropColumn($columnsToDrop);
+            }
         });
     }
 };

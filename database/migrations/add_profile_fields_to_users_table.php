@@ -9,15 +9,27 @@ return new class extends Migration
     public function up(): void
     {
         Schema::table('users', function (Blueprint $table) {
-            $table->string('phone')->nullable()->after('email');
-            $table->string('language', 10)->nullable()->after('timezone');
+            if (! Schema::hasColumn('users', 'phone')) {
+                $table->string('phone')->nullable()->after('email');
+            }
+
+            if (! Schema::hasColumn('users', 'language')) {
+                $table->string('language', 10)->nullable()->after('timezone');
+            }
         });
     }
 
     public function down(): void
     {
         Schema::table('users', function (Blueprint $table) {
-            $table->dropColumn(['phone', 'language']);
+            $columnsToDrop = array_filter([
+                Schema::hasColumn('users', 'phone') ? 'phone' : null,
+                Schema::hasColumn('users', 'language') ? 'language' : null,
+            ]);
+
+            if (count($columnsToDrop) > 0) {
+                $table->dropColumn($columnsToDrop);
+            }
         });
     }
 };

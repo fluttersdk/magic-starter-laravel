@@ -8,15 +8,19 @@ return new class extends Migration
 {
     public function up(): void
     {
-        Schema::table('teams', function (Blueprint $table) {
-            $table->string('profile_photo_path', 2048)->nullable()->after('personal_team');
-        });
+        if (! Schema::hasColumn('teams', 'profile_photo_path')) {
+            Schema::table('teams', function (Blueprint $table) {
+                $table->string('profile_photo_path', 2048)->nullable()->after('personal_team');
+            });
+        }
     }
 
     public function down(): void
     {
-        Schema::table('teams', function (Blueprint $table) {
-            $table->dropColumn('profile_photo_path');
-        });
+        if (Schema::hasColumn('teams', 'profile_photo_path')) {
+            Schema::table('teams', function (Blueprint $table) {
+                $table->dropColumn('profile_photo_path');
+            });
+        }
     }
 };

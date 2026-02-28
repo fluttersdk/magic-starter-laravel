@@ -17,14 +17,19 @@ class PasswordResetController
 {
     /**
      * Send a password reset link to the given user.
+     *
+     * Always returns 200 OK regardless of whether the email exists,
+     * to prevent user enumeration attacks.
      */
     public function sendResetLinkEmail(ForgotPasswordRequest $request): JsonResponse
     {
-        $status = Password::sendResetLink($request->validated());
+        Password::sendResetLink($request->validated());
 
-        return $status === Password::RESET_LINK_SENT
-            ? response()->json(['data' => null, 'message' => __($status)])
-            : response()->json(['data' => null, 'message' => __($status)], 400);
+        // Always return 200 with a generic message to prevent email enumeration.
+        return response()->json([
+            'data' => null,
+            'message' => __('If an account with that email exists, a password reset link has been sent.'),
+        ]);
     }
 
     /**
@@ -47,6 +52,6 @@ class PasswordResetController
 
         return $status === Password::PASSWORD_RESET
             ? response()->json(['data' => null, 'message' => __($status)])
-            : response()->json(['data' => null, 'message' => __($status)], 400);
+            : response()->json(['data' => null, 'message' => __($status)], 422);
     }
 }
