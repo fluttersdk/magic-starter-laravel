@@ -105,20 +105,36 @@ class AuthController
 
     /**
      * Handle a login request.
+     *
+     * Resolves the user by whichever identifier (email or phone) is
+     * provided in the request. When 2FA is enabled for the user,
+     * returns a challenge token instead of the auth response.
      */
     public function login(LoginRequest $request): JsonResponse
     {
         $userModel = MagicStarter::userModel();
-        $user = $userModel::query()
-            ->where('email', $request->validated('email'))
-            ->first();
 
+        // 1. Resolve user by the provided identifier (email or phone).
+        $user = null;
+
+        if ($request->filled('email')) {
+            $user = $userModel::query()
+                ->where('email', $request->validated('email'))
+                ->first();
+        } elseif ($request->filled('phone')) {
+            $user = $userModel::query()
+                ->where('phone', $request->validated('phone'))
+                ->first();
+        }
+
+        // 2. Verify password.
         if (! $user || ! Hash::check((string) $request->validated('password'), (string) $user->password)) {
             return response()->json([
                 'message' => 'Invalid credentials',
             ], 401);
         }
 
+        // 3. Issue a 2FA challenge when the user has it enabled.
         /** @var \Illuminate\Database\Eloquent\Model $user */
         if (
             Features::hasTwoFactorAuthenticationFeatures() &&
@@ -138,6 +154,7 @@ class AuthController
             ]);
         }
 
+        // 4. Issue a full auth token and return the authenticated response.
         $token = $this->createAuthToken($user, $request, true);
 
         return $this->authenticatedResponse($user, $request, $token, 'Login successful');

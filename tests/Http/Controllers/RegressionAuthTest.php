@@ -26,7 +26,7 @@ use Mockery;
 
 /**
  * Regression tests proving all email/password auth flows remain completely
- * unbroken after adding guest-auth, phone-auth, phone-otp, and 2FA features.
+ * unbroken after adding guest-auth, phone-otp, and 2FA features.
  *
  * These tests use ALL features enabled simultaneously to prove no conflicts exist.
  */
@@ -52,7 +52,6 @@ class RegressionAuthTest extends TestCase
             // All new features enabled simultaneously — the core of regression testing.
             'magic-starter.features' => [
                 'guest-auth',
-                'phone-auth',
                 'phone-otp',
                 'extended-profile',
             ],
@@ -202,7 +201,7 @@ class RegressionAuthTest extends TestCase
     }
 
     /**
-     * Test 3: Social login still works when guest-auth and phone-auth are also enabled.
+     * Test 3: Social login still works when guest-auth is also enabled.
      */
     public function test_social_login_still_works(): void
     {
@@ -346,7 +345,7 @@ class RegressionAuthTest extends TestCase
     /**
      * Test 8: Standard email registration works correctly when all new features are enabled simultaneously.
      *
-     * Simulates a production scenario where guest-auth + phone-auth + phone-otp and
+     * Simulates a production scenario where guest-auth + phone-otp and
      * the original email auth coexist without conflicts in configuration or routing.
      */
     public function test_multiple_features_enabled_simultaneously_no_conflicts(): void
@@ -355,7 +354,6 @@ class RegressionAuthTest extends TestCase
         config([
             'magic-starter.features' => [
                 'guest-auth',
-                'phone-auth',
                 'phone-otp',
                 'extended-profile',
             ],

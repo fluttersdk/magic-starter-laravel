@@ -157,21 +157,6 @@ final class RouteRegistrationTest extends TestCase
         $this->assertRouteMissing('POST', '/auth/guest');
     }
 
-    public function test_phone_auth_routes_registered_conditionally(): void
-    {
-        $this->bootRoutesWithConfig([
-            'phone-auth',
-        ]);
-
-        $this->assertRouteExists('POST', '/auth/phone/register');
-        $this->assertRouteExists('POST', '/auth/phone/login');
-
-        $this->bootRoutesWithConfig([]);
-
-        $this->assertRouteMissing('POST', '/auth/phone/register');
-        $this->assertRouteMissing('POST', '/auth/phone/login');
-    }
-
     public function test_phone_otp_routes_registered_conditionally(): void
     {
         $this->bootRoutesWithConfig([

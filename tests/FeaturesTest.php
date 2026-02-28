@@ -206,25 +206,6 @@ class FeaturesTest extends TestCase
         $this->assertTrue(Features::hasGuestAuthFeatures());
     }
 
-    public function test_phone_auth_feature_constant(): void
-    {
-        $this->assertSame('phone-auth', Features::phoneAuth());
-    }
-
-    public function test_has_phone_auth_features_returns_false_by_default(): void
-    {
-        config(['magic-starter.features' => []]);
-
-        $this->assertFalse(Features::hasPhoneAuthFeatures());
-    }
-
-    public function test_has_phone_auth_features_returns_true_when_enabled(): void
-    {
-        config(['magic-starter.features' => [Features::phoneAuth()]]);
-
-        $this->assertTrue(Features::hasPhoneAuthFeatures());
-    }
-
     public function test_phone_otp_feature_constant(): void
     {
         $this->assertSame('phone-otp', Features::phoneOtp());
@@ -242,5 +223,29 @@ class FeaturesTest extends TestCase
         config(['magic-starter.features' => [Features::phoneOtp()]]);
 
         $this->assertTrue(Features::hasPhoneOtpFeatures());
+    }
+
+    public function test_email_identity_returns_true_by_default(): void
+    {
+        $this->assertTrue(Features::emailIdentity());
+    }
+
+    public function test_email_identity_returns_false_when_disabled(): void
+    {
+        config(['magic-starter.auth.email' => false]);
+
+        $this->assertFalse(Features::emailIdentity());
+    }
+
+    public function test_phone_identity_returns_false_by_default(): void
+    {
+        $this->assertFalse(Features::phoneIdentity());
+    }
+
+    public function test_phone_identity_returns_true_when_enabled(): void
+    {
+        config(['magic-starter.auth.phone' => true]);
+
+        $this->assertTrue(Features::phoneIdentity());
     }
 }

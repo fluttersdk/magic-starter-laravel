@@ -394,10 +394,6 @@ final class InstallCommandTest extends TestCase
             $config,
         );
         $this->assertStringContainsString(
-            '\\FlutterSdk\\MagicStarter\\Features::phoneAuth(),',
-            $config,
-        );
-        $this->assertStringContainsString(
             '\\FlutterSdk\\MagicStarter\\Features::phoneOtp(),',
             $config,
         );
@@ -415,29 +411,8 @@ final class InstallCommandTest extends TestCase
             '\\FlutterSdk\\MagicStarter\\Features::guestAuth(),',
             $config,
         );
-        $this->assertStringContainsString(
-            '// \\FlutterSdk\\MagicStarter\\Features::phoneAuth(),',
-            $config,
-        );
     }
 
-    public function test_phone_otp_auto_enables_phone_auth(): void
-    {
-        $this->artisan('magic-starter:install', [
-            '--features' => ['phone-otp'],
-        ])->assertExitCode(0);
-
-        $config = File::get(config_path('magic-starter.php'));
-
-        $this->assertStringContainsString(
-            '\\FlutterSdk\\MagicStarter\\Features::phoneOtp(),',
-            $config,
-        );
-        $this->assertStringContainsString(
-            '\\FlutterSdk\\MagicStarter\\Features::phoneAuth(),',
-            $config,
-        );
-    }
     // Helpers
     // -------------------------------------------------------------------------
 

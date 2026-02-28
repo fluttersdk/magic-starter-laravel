@@ -43,7 +43,6 @@ return [
         // \FlutterSdk\MagicStarter\Features::extendedProfile(),
         // \FlutterSdk\MagicStarter\Features::notifications(),
         // \FlutterSdk\MagicStarter\Features::guestAuth(),
-        // \FlutterSdk\MagicStarter\Features::phoneAuth(),
         // \FlutterSdk\MagicStarter\Features::phoneOtp(),
     ],
 
@@ -198,6 +197,29 @@ return [
     */
 
     'token_expiration_minutes' => env('MAGIC_STARTER_TOKEN_EXPIRATION', null),
+
+    /*
+    |--------------------------------------------------------------------------
+    | Authentication Identity
+    |--------------------------------------------------------------------------
+    |
+    | Configure which identity fields are accepted during registration and
+    | login. Both can be enabled simultaneously — in that case, at least one
+    | identifier is required.
+    |
+    | - email: true  → users may register/login with an email address
+    | - phone: true  → users may register/login with a phone number
+    |
+    | When both are true, the register and login forms accept either or both.
+    | When only one is true, that identifier becomes required.
+    |
+    */
+
+    'auth' => [
+        'email' => (bool) env('MAGIC_STARTER_AUTH_EMAIL', true),
+        'phone' => (bool) env('MAGIC_STARTER_AUTH_PHONE', false),
+    ],
+
     /*
     |--------------------------------------------------------------------------
     | Two-Factor Authentication

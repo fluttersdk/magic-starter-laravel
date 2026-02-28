@@ -82,14 +82,6 @@ class Features
     }
 
     /**
-     * Enable the phone authentication feature.
-     */
-    public static function phoneAuth(): string
-    {
-        return 'phone-auth';
-    }
-
-    /**
      * Enable the phone OTP feature.
      */
     public static function phoneOtp(): string
@@ -178,18 +170,26 @@ class Features
     }
 
     /**
-     * Determine whether the phone authentication feature is enabled.
-     */
-    public static function hasPhoneAuthFeatures(): bool
-    {
-        return static::enabled(static::phoneAuth());
-    }
-
-    /**
      * Determine whether the phone OTP feature is enabled.
      */
     public static function hasPhoneOtpFeatures(): bool
     {
         return static::enabled(static::phoneOtp());
+    }
+
+    /**
+     * Determine whether email is accepted as an identity for login/register.
+     */
+    public static function emailIdentity(): bool
+    {
+        return (bool) Config::get('magic-starter.auth.email', true);
+    }
+
+    /**
+     * Determine whether phone is accepted as an identity for login/register.
+     */
+    public static function phoneIdentity(): bool
+    {
+        return (bool) Config::get('magic-starter.auth.phone', false);
     }
 }

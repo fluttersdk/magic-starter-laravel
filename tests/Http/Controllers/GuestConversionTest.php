@@ -34,7 +34,7 @@ class GuestConversionTest extends TestCase
             'magic-starter.models.user' => ConcreteUser::class,
             'magic-starter.models.team' => ConcreteTeam::class,
             'magic-starter.models.membership' => ConcreteTeamUser::class,
-            'magic-starter.features' => ['guest-auth', 'phone-auth', 'extended-profile'],
+            'magic-starter.features' => ['guest-auth', 'extended-profile'],
         ]);
 
         \call_user_func([\call_user_func('app', 'db.schema'), 'create'], 'users', function (Blueprint $table): void {

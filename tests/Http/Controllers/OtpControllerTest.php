@@ -32,7 +32,7 @@ class OtpControllerTest extends TestCase
             'magic-starter.models.user' => ConcreteUser::class,
             'magic-starter.models.team' => ConcreteTeam::class,
             'magic-starter.models.membership' => ConcreteTeamUser::class,
-            'magic-starter.features' => ['phone-otp', 'phone-auth'],
+            'magic-starter.features' => ['phone-otp'],
         ]);
 
         Schema::create('users', function (Blueprint $table): void {

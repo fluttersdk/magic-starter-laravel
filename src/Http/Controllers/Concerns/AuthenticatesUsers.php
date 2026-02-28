@@ -10,9 +10,8 @@ use Illuminate\Support\Str;
 /**
  * Provides shared authentication helpers for controllers.
  *
- * Extracted from AuthController so that GuestAuthController,
- * PhoneAuthController, and any future auth controllers can reuse the same
- * token-creation and response-building logic without duplication.
+ * Extracted from AuthController so that GuestAuthController
+ * and any future auth controllers can reuse the same
  */
 trait AuthenticatesUsers
 {

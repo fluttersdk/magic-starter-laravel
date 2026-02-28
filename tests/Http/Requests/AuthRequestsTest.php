@@ -55,7 +55,7 @@ final class AuthRequestsTest extends TestCase
         \call_user_func([\call_user_func('app', 'db.schema'), 'create'], 'users', function (Blueprint $table): void {
             $table->uuid('id')->primary();
             $table->string('name');
-            $table->string('email')->unique();
+            $table->string('email')->unique()->nullable();
             $table->string('password')->nullable();
             $table->string('locale')->default('en');
             $table->string('timezone')->default('UTC');
@@ -65,6 +65,8 @@ final class AuthRequestsTest extends TestCase
             $table->timestamp('email_verified_at')->nullable();
             $table->rememberToken();
             $table->timestamps();
+            $table->string('phone')->unique()->nullable();
+            $table->char('phone_country', 2)->nullable();
         });
 
         \call_user_func([\call_user_func('app', 'db.schema'), 'create'], 'teams', function (Blueprint $table): void {
@@ -108,7 +110,9 @@ final class AuthRequestsTest extends TestCase
                     return $model::query()->create([
                         'id' => (string) Str::uuid(),
                         'name' => $input['name'],
-                        'email' => $input['email'],
+                        'email' => $input['email'] ?? null,
+                        'phone' => $input['phone'] ?? null,
+                        'phone_country' => $input['phone_country'] ?? null,
                         'password' => Hash::make((string) $input['password']),
                         'locale' => $input['locale'] ?? 'en',
                         'timezone' => $input['timezone'] ?? 'UTC',
@@ -392,6 +396,171 @@ final class AuthRequestsTest extends TestCase
             'timezone' => 'Europe/Istanbul',
         ])
             ->assertCreated();
+    }
+
+    // -------------------------------------------------------------------------
+    // Unified Identity Strategy tests
+    // -------------------------------------------------------------------------
+
+    public function test_login_with_phone_only_strategy_requires_phone(): void
+    {
+        config([
+            'magic-starter.auth.email' => false,
+            'magic-starter.auth.phone' => true,
+        ]);
+
+        AuthRequestsTestUser::query()->create([
+            'name' => 'Phone User',
+            'phone' => '+905551234567',
+            'phone_country' => 'TR',
+            'password' => Hash::make('Password123'),
+        ]);
+
+        $this->postJson('/auth/login', [
+            'phone' => '+905551234567',
+            'password' => 'Password123',
+        ])
+            ->assertOk()
+            ->assertJsonPath('message', 'Login successful');
+    }
+
+    public function test_login_with_phone_only_strategy_rejects_email(): void
+    {
+        config([
+            'magic-starter.auth.email' => false,
+            'magic-starter.auth.phone' => true,
+        ]);
+
+        $this->postJson('/auth/login', [
+            'email' => 'john@example.com',
+            'password' => 'Password123',
+        ])
+            ->assertUnprocessable()
+            ->assertJsonValidationErrors(['phone']);
+    }
+
+    public function test_login_with_both_strategy_accepts_email(): void
+    {
+        config([
+            'magic-starter.auth.email' => true,
+            'magic-starter.auth.phone' => true,
+        ]);
+
+        AuthRequestsTestUser::query()->create([
+            'name' => 'Both User',
+            'email' => 'both@example.com',
+            'password' => Hash::make('Password123'),
+        ]);
+
+        $this->postJson('/auth/login', [
+            'email' => 'both@example.com',
+            'password' => 'Password123',
+        ])
+            ->assertOk()
+            ->assertJsonPath('message', 'Login successful');
+    }
+
+    public function test_login_with_both_strategy_accepts_phone(): void
+    {
+        config([
+            'magic-starter.auth.email' => true,
+            'magic-starter.auth.phone' => true,
+        ]);
+
+        AuthRequestsTestUser::query()->create([
+            'name' => 'Phone Both',
+            'phone' => '+905559876543',
+            'phone_country' => 'TR',
+            'password' => Hash::make('Password123'),
+        ]);
+
+        $this->postJson('/auth/login', [
+            'phone' => '+905559876543',
+            'password' => 'Password123',
+        ])
+            ->assertOk()
+            ->assertJsonPath('message', 'Login successful');
+    }
+
+    public function test_login_with_both_strategy_rejects_neither(): void
+    {
+        config([
+            'magic-starter.auth.email' => true,
+            'magic-starter.auth.phone' => true,
+        ]);
+
+        $this->postJson('/auth/login', [
+            'password' => 'Password123',
+        ])
+            ->assertUnprocessable()
+            ->assertJsonValidationErrors(['email', 'phone']);
+    }
+
+    public function test_register_with_phone_only_strategy(): void
+    {
+        config([
+            'magic-starter.auth.email' => false,
+            'magic-starter.auth.phone' => true,
+        ]);
+
+        $this->postJson('/auth/register', [
+            'name' => 'Phone Reg',
+            'phone' => '+905551234567',
+            'phone_country' => 'TR',
+            'password' => 'Password123',
+            'password_confirmation' => 'Password123',
+        ])
+            ->assertCreated()
+            ->assertJsonPath('message', 'Registration successful');
+    }
+
+    public function test_register_with_both_strategy_accepts_email_only(): void
+    {
+        config([
+            'magic-starter.auth.email' => true,
+            'magic-starter.auth.phone' => true,
+        ]);
+
+        $this->postJson('/auth/register', [
+            'name' => 'Email Both',
+            'email' => 'emailboth@example.com',
+            'password' => 'Password123',
+            'password_confirmation' => 'Password123',
+        ])
+            ->assertCreated();
+    }
+
+    public function test_register_with_both_strategy_accepts_phone_only(): void
+    {
+        config([
+            'magic-starter.auth.email' => true,
+            'magic-starter.auth.phone' => true,
+        ]);
+
+        $this->postJson('/auth/register', [
+            'name' => 'Phone Both',
+            'phone' => '+905551112233',
+            'phone_country' => 'TR',
+            'password' => 'Password123',
+            'password_confirmation' => 'Password123',
+        ])
+            ->assertCreated();
+    }
+
+    public function test_register_with_both_strategy_rejects_neither(): void
+    {
+        config([
+            'magic-starter.auth.email' => true,
+            'magic-starter.auth.phone' => true,
+        ]);
+
+        $this->postJson('/auth/register', [
+            'name' => 'No Identity',
+            'password' => 'Password123',
+            'password_confirmation' => 'Password123',
+        ])
+            ->assertUnprocessable()
+            ->assertJsonValidationErrors(['email', 'phone']);
     }
 }
 

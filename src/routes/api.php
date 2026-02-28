@@ -15,7 +15,6 @@ use FlutterSdk\MagicStarter\Http\Controllers\NotificationController;
 use FlutterSdk\MagicStarter\Http\Controllers\NotificationPreferenceController;
 use FlutterSdk\MagicStarter\Http\Controllers\OtpController;
 use FlutterSdk\MagicStarter\Http\Controllers\PasswordResetController;
-use FlutterSdk\MagicStarter\Http\Controllers\PhoneAuthController;
 use FlutterSdk\MagicStarter\Http\Controllers\ProfileController;
 use FlutterSdk\MagicStarter\Http\Controllers\ProfilePhotoController;
 use FlutterSdk\MagicStarter\Http\Controllers\SessionController;
@@ -44,11 +43,6 @@ Route::prefix((string) config('magic-starter.route_prefix', ''))
 
             if (Features::hasGuestAuthFeatures()) {
                 Route::post('guest', [GuestAuthController::class, 'login']);
-            }
-
-            if (Features::hasPhoneAuthFeatures()) {
-                Route::post('phone/register', [PhoneAuthController::class, 'register']);
-                Route::post('phone/login', [PhoneAuthController::class, 'login']);
             }
 
             if (Features::hasPhoneOtpFeatures()) {
