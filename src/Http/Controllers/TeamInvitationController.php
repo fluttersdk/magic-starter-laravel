@@ -7,6 +7,7 @@ use FlutterSdk\MagicStarter\Http\Requests\StoreTeamInvitationRequest;
 use FlutterSdk\MagicStarter\Http\Resources\TeamInvitationResource;
 use FlutterSdk\MagicStarter\MagicStarter;
 use Illuminate\Http\JsonResponse;
+use Illuminate\Http\Request;
 use Illuminate\Http\Resources\Json\AnonymousResourceCollection;
 use Illuminate\Support\Facades\Gate;
 
@@ -15,10 +16,13 @@ use Illuminate\Support\Facades\Gate;
  */
 class TeamInvitationController
 {
-    public function index(string $team): AnonymousResourceCollection
+    /**
+     * List all pending invitations for the specified team.
+     */
+    public function index(Request $request, string $team): AnonymousResourceCollection
     {
         $teamModel = $this->findTeam($team);
-        $user = request()->user();
+        $user = $request->user();
         Gate::forUser($user)->authorize('manageInvitations', $teamModel);
 
         return TeamInvitationResource::collection($teamModel->invitations);
@@ -63,10 +67,13 @@ class TeamInvitationController
         return new TeamInvitationResource($invitation);
     }
 
-    public function destroy(string $team, string $invitation): JsonResponse
+    /**
+     * Cancel a team invitation.
+     */
+    public function destroy(Request $request, string $team, string $invitation): JsonResponse
     {
         $teamModel = $this->findTeam($team);
-        $user = request()->user();
+        $user = $request->user();
         Gate::forUser($user)->authorize('manageInvitations', $teamModel);
 
         $invitationModelClass = MagicStarter::teamInvitationModel();
@@ -83,11 +90,14 @@ class TeamInvitationController
         ]);
     }
 
-    public function accept(string $token): JsonResponse
+    /**
+     * Accept a team invitation via token.
+     */
+    public function accept(Request $request, string $token): JsonResponse
     {
         $invitationModelClass = MagicStarter::teamInvitationModel();
         $invitation = $invitationModelClass::query()->where('token', $token)->firstOrFail();
-        $user = request()->user();
+        $user = $request->user();
 
         if (mb_strtolower($invitation->email) !== mb_strtolower($user->email)) {
             return response()->json([

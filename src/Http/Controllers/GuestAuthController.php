@@ -6,7 +6,6 @@ use FlutterSdk\MagicStarter\Contracts\CreatesGuestUsers;
 use FlutterSdk\MagicStarter\Http\Controllers\Concerns\AuthenticatesUsers;
 use FlutterSdk\MagicStarter\Http\Requests\GuestLoginRequest;
 use Illuminate\Http\JsonResponse;
-use Illuminate\Routing\Controller;
 
 /**
  * Handles guest authentication by device ID.
@@ -14,7 +13,7 @@ use Illuminate\Routing\Controller;
  * Creates or retrieves an existing guest user for the given device,
  * then issues a Sanctum token for the session.
  */
-class GuestAuthController extends Controller
+class GuestAuthController
 {
     use AuthenticatesUsers;
 

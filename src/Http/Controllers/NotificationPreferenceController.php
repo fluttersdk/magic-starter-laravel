@@ -5,6 +5,7 @@ namespace FlutterSdk\MagicStarter\Http\Controllers;
 use FlutterSdk\MagicStarter\Http\Requests\UpdateNotificationPreferenceRequest;
 use FlutterSdk\MagicStarter\Models\NotificationSetting;
 use Illuminate\Http\JsonResponse;
+use Illuminate\Http\Request;
 
 /**
  * Manages notification preference settings for the authenticated user.
@@ -16,9 +17,9 @@ class NotificationPreferenceController
     /**
      * Show the full notification preference matrix for the authenticated user.
      */
-    public function show(): JsonResponse
+    public function show(Request $request): JsonResponse
     {
-        $user = request()->user();
+        $user = $request->user();
         $user->load('notificationSettings');
 
         return response()->json([

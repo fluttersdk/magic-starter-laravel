@@ -4,6 +4,7 @@ namespace FlutterSdk\MagicStarter\Http\Controllers;
 
 use FlutterSdk\MagicStarter\Http\Resources\NotificationResource;
 use Illuminate\Http\JsonResponse;
+use Illuminate\Http\Request;
 use Illuminate\Http\Resources\Json\AnonymousResourceCollection;
 
 /**
@@ -14,21 +15,21 @@ class NotificationController
     /**
      * Retrieve a paginated list of user notifications.
      */
-    public function index(): AnonymousResourceCollection
+    public function index(Request $request): AnonymousResourceCollection
     {
-        $perPage = request()->input('per_page', 15);
+        $perPage = $request->input('per_page', 15);
 
         return NotificationResource::collection(
-            request()->user()->notifications()->paginate($perPage),
+            $request->user()->notifications()->paginate($perPage),
         );
     }
 
     /**
      * Get the count of unread notifications.
      */
-    public function unreadCount(): JsonResponse
+    public function unreadCount(Request $request): JsonResponse
     {
-        $count = request()->user()->unreadNotifications()->count();
+        $count = $request->user()->unreadNotifications()->count();
 
         return response()->json([
             'data' => [
@@ -40,9 +41,9 @@ class NotificationController
     /**
      * Mark a specific notification as read.
      */
-    public function markAsRead(string $id): JsonResponse
+    public function markAsRead(Request $request, string $id): JsonResponse
     {
-        $notification = request()->user()->notifications()->findOrFail($id);
+        $notification = $request->user()->notifications()->findOrFail($id);
 
         $notification->markAsRead();
 
@@ -55,9 +56,9 @@ class NotificationController
     /**
      * Mark all notifications as read.
      */
-    public function markAllAsRead(): JsonResponse
+    public function markAllAsRead(Request $request): JsonResponse
     {
-        request()->user()
+        $request->user()
             ->unreadNotifications()
             ->update(['read_at' => now()]);
 
@@ -70,9 +71,9 @@ class NotificationController
     /**
      * Delete a specific notification.
      */
-    public function destroy(string $id): JsonResponse
+    public function destroy(Request $request, string $id): JsonResponse
     {
-        $notification = request()->user()->notifications()->findOrFail($id);
+        $notification = $request->user()->notifications()->findOrFail($id);
 
         $notification->delete();
 

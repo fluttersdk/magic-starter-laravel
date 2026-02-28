@@ -26,8 +26,7 @@ class HasGuestSupportTest extends TestCase
         });
     }
 
-    /** @test */
-    public function it_can_determine_if_user_is_guest(): void
+    public function test_it_can_determine_if_user_is_guest(): void
     {
         $guest = new ConcreteUser(['is_guest' => true]);
         $registered = new ConcreteUser(['is_guest' => false]);
@@ -36,8 +35,7 @@ class HasGuestSupportTest extends TestCase
         $this->assertFalse($registered->isGuest());
     }
 
-    /** @test */
-    public function it_can_determine_if_user_is_registered_via_email(): void
+    public function test_it_can_determine_if_user_is_registered_via_email(): void
     {
         $registered = new ConcreteUser([
             'is_guest' => false,
@@ -57,8 +55,7 @@ class HasGuestSupportTest extends TestCase
         $this->assertFalse($noPassword->isRegistered());
     }
 
-    /** @test */
-    public function it_can_determine_if_user_is_registered_via_phone(): void
+    public function test_it_can_determine_if_user_is_registered_via_phone(): void
     {
         $registered = new ConcreteUser([
             'is_guest' => false,

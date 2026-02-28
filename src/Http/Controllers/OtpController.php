@@ -9,13 +9,12 @@ use FlutterSdk\MagicStarter\Http\Requests\SendOtpRequest;
 use FlutterSdk\MagicStarter\Http\Requests\VerifyOtpRequest;
 use FlutterSdk\MagicStarter\MagicStarter;
 use Illuminate\Http\JsonResponse;
-use Illuminate\Routing\Controller;
 use Illuminate\Support\Facades\Cache;
 
 /**
  * Handle OTP send and verify operations.
  */
-class OtpController extends Controller
+class OtpController
 {
     use AuthenticatesUsers;
 

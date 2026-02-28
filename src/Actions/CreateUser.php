@@ -9,6 +9,7 @@ use FlutterSdk\MagicStarter\Models\NewsletterSubscriber;
 use FlutterSdk\MagicStarter\Support\RequestLocaleDetector;
 use Illuminate\Contracts\Auth\Authenticatable;
 use Illuminate\Support\Arr;
+use Illuminate\Support\Facades\Hash;
 use Illuminate\Support\Facades\Validator;
 use Illuminate\Validation\Rule;
 use Illuminate\Validation\ValidationException;
@@ -65,7 +66,7 @@ class CreateUser implements CreatesUsers
         // 2. Build user attributes.
         $attributes = [
             'name' => $validated['name'],
-            'password' => $validated['password'],
+            'password' => Hash::make($validated['password']),
         ];
 
         // 2a. Set email only when provided — phone-based users have null email.
@@ -110,6 +111,7 @@ class CreateUser implements CreatesUsers
         // 4. Handle newsletter subscription when feature is enabled.
         if (Features::hasNewsletterSubscriptionFeatures()
             && Arr::get($validated, 'subscribe_newsletter', false)
+            && $user->email !== null
         ) {
             NewsletterSubscriber::query()->firstOrCreate(
                 ['email' => $user->email],

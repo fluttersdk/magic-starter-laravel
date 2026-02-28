@@ -10,6 +10,7 @@ use FlutterSdk\MagicStarter\Http\Requests\UpdateTeamRequest;
 use FlutterSdk\MagicStarter\Http\Resources\TeamResource;
 use FlutterSdk\MagicStarter\MagicStarter;
 use Illuminate\Http\JsonResponse;
+use Illuminate\Http\Request;
 use Illuminate\Http\Resources\Json\AnonymousResourceCollection;
 use Illuminate\Support\Facades\Gate;
 use Illuminate\Validation\ValidationException;
@@ -22,9 +23,9 @@ class TeamController
     /**
      * List all teams for the authenticated user.
      */
-    public function index(): AnonymousResourceCollection
+    public function index(Request $request): AnonymousResourceCollection
     {
-        return TeamResource::collection(request()->user()->allTeams());
+        return TeamResource::collection($request->user()->allTeams());
     }
 
     /**
@@ -45,10 +46,10 @@ class TeamController
     /**
      * Display the specified team.
      */
-    public function show(string $team): TeamResource
+    public function show(Request $request, string $team): TeamResource
     {
         $teamModel = $this->findTeam($team);
-        $user = request()->user();
+        $user = $request->user();
         Gate::forUser($user)->authorize('view', $teamModel);
 
         return new TeamResource($teamModel);
@@ -80,11 +81,11 @@ class TeamController
     /**
      * Delete the specified team.
      */
-    public function destroy(string $team): JsonResponse
+    public function destroy(Request $request, string $team): JsonResponse
     {
         $deleter = app(DeletesTeams::class);
         $teamModel = $this->findTeam($team);
-        $user = request()->user();
+        $user = $request->user();
         Gate::forUser($user)->authorize('delete', $teamModel);
 
         // Personal teams cannot be deleted — Jetstream convention.

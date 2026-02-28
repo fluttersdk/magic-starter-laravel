@@ -2,6 +2,7 @@
 
 namespace FlutterSdk\MagicStarter\Http\Controllers;
 
+use FlutterSdk\MagicStarter\Http\Controllers\Concerns\AuthenticatesUsers;
 use FlutterSdk\MagicStarter\Http\Requests\TwoFactorChallengeRequest;
 use FlutterSdk\MagicStarter\MagicStarter;
 use FlutterSdk\MagicStarter\Support\TwoFactorAuthenticationProvider;
@@ -9,8 +10,10 @@ use Illuminate\Contracts\Encryption\DecryptException;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Validation\ValidationException;
 
-class TwoFactorChallengeController extends AuthController
+class TwoFactorChallengeController
 {
+    use AuthenticatesUsers;
+
     /**
      * Process the two factor challenge.
      */

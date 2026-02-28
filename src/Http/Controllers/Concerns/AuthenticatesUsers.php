@@ -12,6 +12,7 @@ use Illuminate\Support\Str;
  *
  * Extracted from AuthController so that GuestAuthController
  * and any future auth controllers can reuse the same
+ * token generation and response logic.
  */
 trait AuthenticatesUsers
 {

@@ -5,6 +5,7 @@ namespace FlutterSdk\MagicStarter\Http\Controllers;
 use FlutterSdk\MagicStarter\Http\Requests\DestroyOtherSessionsRequest;
 use FlutterSdk\MagicStarter\Http\Resources\SessionResource;
 use Illuminate\Http\JsonResponse;
+use Illuminate\Http\Request;
 use Illuminate\Http\Resources\Json\AnonymousResourceCollection;
 
 /**
@@ -15,17 +16,17 @@ class SessionController
     /**
      * Retrieve all active sessions.
      */
-    public function index(): AnonymousResourceCollection
+    public function index(Request $request): AnonymousResourceCollection
     {
-        return SessionResource::collection(request()->user()->tokens);
+        return SessionResource::collection($request->user()->tokens);
     }
 
     /**
      * Revoke a specific session.
      */
-    public function destroy(string $tokenId): JsonResponse
+    public function destroy(Request $request, string $tokenId): JsonResponse
     {
-        $token = request()->user()
+        $token = $request->user()
             ->tokens()
             ->where('id', $tokenId)
             ->first();

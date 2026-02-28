@@ -1020,7 +1020,7 @@ The package uses PHPUnit with Orchestra Testbench.
 
 ```shell
 composer install
-composer test        # Run PHPUnit (292 tests, 784 assertions)
+composer test        # Run PHPUnit (352 tests, 953 assertions)
 composer lint        # Check code style with Pint
 composer lint:fix    # Auto-fix code style violations
 composer analyse     # Run PHPStan
@@ -1033,7 +1033,7 @@ Test coverage includes:
 - Service provider boot and config merge (`ServiceProviderTest`)
 - Conditional route registration (`RouteRegistrationTest`)
 - Install command — interactive and non-interactive modes, UUID/integer key strategy (`InstallCommandTest`)
-- All 14 controllers with full HTTP tests, including 403, 404, and 422 negative cases
+- All 16 controllers with full HTTP tests, including 403, 404, and 422 negative cases
 - Model relationships, casts, and scopes (`ModelsTest`)
 - User traits — `HasTeamsTest`, `HasProfilePhotoTest`, `HasNotificationsTest`
 - All 20 form request validation rules
