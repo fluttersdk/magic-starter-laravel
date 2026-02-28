@@ -13,10 +13,10 @@ class ConcreteUser extends Model implements AuthenticatableContract
     use AuthenticatableTrait;
     use Authorizable;
     use ConditionallyUsesUuids;
+    use \FlutterSdk\MagicStarter\Traits\HasGuestSupport;
     use \FlutterSdk\MagicStarter\Traits\HasNotifications;
     use \FlutterSdk\MagicStarter\Traits\HasProfilePhoto;
     use \FlutterSdk\MagicStarter\Traits\HasTeams;
-    use \FlutterSdk\MagicStarter\Traits\HasGuestSupport;
 
     protected $table = 'users';
 

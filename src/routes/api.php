@@ -11,11 +11,11 @@
 use FlutterSdk\MagicStarter\Features;
 use FlutterSdk\MagicStarter\Http\Controllers\AuthController;
 use FlutterSdk\MagicStarter\Http\Controllers\GuestAuthController;
-use FlutterSdk\MagicStarter\Http\Controllers\OtpController;
-use FlutterSdk\MagicStarter\Http\Controllers\PhoneAuthController;
 use FlutterSdk\MagicStarter\Http\Controllers\NotificationController;
 use FlutterSdk\MagicStarter\Http\Controllers\NotificationPreferenceController;
+use FlutterSdk\MagicStarter\Http\Controllers\OtpController;
 use FlutterSdk\MagicStarter\Http\Controllers\PasswordResetController;
+use FlutterSdk\MagicStarter\Http\Controllers\PhoneAuthController;
 use FlutterSdk\MagicStarter\Http\Controllers\ProfileController;
 use FlutterSdk\MagicStarter\Http\Controllers\ProfilePhotoController;
 use FlutterSdk\MagicStarter\Http\Controllers\SessionController;

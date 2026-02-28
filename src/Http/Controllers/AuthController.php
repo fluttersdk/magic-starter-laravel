@@ -188,5 +188,4 @@ class AuthController
             'message' => 'Team switched successfully',
         ]);
     }
-
 }
