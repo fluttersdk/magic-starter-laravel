@@ -5,17 +5,17 @@ namespace FlutterSdk\MagicStarter\Tests\Http\Controllers;
 use FlutterSdk\MagicStarter\Actions\CreateUser;
 use FlutterSdk\MagicStarter\Contracts\CreatesUsers;
 use FlutterSdk\MagicStarter\Features;
-use FlutterSdk\MagicStarter\Tests\Fixtures\ConcreteTeam;
-use FlutterSdk\MagicStarter\Tests\Fixtures\ConcreteTeamUser;
-use FlutterSdk\MagicStarter\Traits\HasProfilePhoto;
-use FlutterSdk\MagicStarter\Traits\HasTeams;
-use Illuminate\Database\Eloquent\Concerns\HasUuids;
 use FlutterSdk\MagicStarter\Http\Controllers\PhoneAuthController;
 use FlutterSdk\MagicStarter\MagicStarter;
+use FlutterSdk\MagicStarter\Tests\Fixtures\ConcreteTeam;
+use FlutterSdk\MagicStarter\Tests\Fixtures\ConcreteTeamUser;
 use FlutterSdk\MagicStarter\Tests\TestCase;
+use FlutterSdk\MagicStarter\Traits\HasProfilePhoto;
+use FlutterSdk\MagicStarter\Traits\HasTeams;
 use Illuminate\Auth\Authenticatable as AuthenticatableTrait;
 use Illuminate\Auth\Events\Registered;
 use Illuminate\Contracts\Auth\Authenticatable as AuthenticatableContract;
+use Illuminate\Database\Eloquent\Concerns\HasUuids;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Schema\Blueprint;
 use Illuminate\Foundation\Auth\Access\Authorizable;
@@ -93,7 +93,6 @@ class PhoneAuthControllerTest extends TestCase
             $table->string('role')->nullable();
             $table->timestamps();
         });
-
 
         Schema::create('personal_access_tokens', function (Blueprint $table): void {
             $table->uuid('id')->primary();
