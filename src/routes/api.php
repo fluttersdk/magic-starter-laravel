@@ -25,6 +25,7 @@ use FlutterSdk\MagicStarter\Http\Controllers\TeamPhotoController;
 use FlutterSdk\MagicStarter\Http\Controllers\TwoFactorAuthenticationController;
 use FlutterSdk\MagicStarter\Http\Controllers\TwoFactorChallengeController;
 use FlutterSdk\MagicStarter\Http\Controllers\TwoFactorRecoveryCodeController;
+use FlutterSdk\MagicStarter\Http\Controllers\EmailVerificationController;
 use Illuminate\Support\Facades\Route;
 
 Route::prefix((string) config('magic-starter.route_prefix', ''))
@@ -130,4 +131,17 @@ Route::prefix((string) config('magic-starter.route_prefix', ''))
                 Route::post('two-factor-recovery-codes', [TwoFactorRecoveryCodeController::class, 'store']);
             }
         });
+
+        if (Features::hasEmailVerificationFeatures()) {
+            // Public route — signed URL acts as authentication.
+            Route::get('email/verify/{id}/{hash}', [EmailVerificationController::class, 'verify'])
+                ->middleware('signed')
+                ->name('verification.verify');
+
+            // Protected route — requires Sanctum authentication and is rate-limited.
+            Route::middleware(['auth:sanctum', 'throttle:6,1'])->group(function (): void {
+                Route::post('email/verification-notification', [EmailVerificationController::class, 'sendVerificationNotification'])
+                    ->name('verification.send');
+            });
+        }
     });
