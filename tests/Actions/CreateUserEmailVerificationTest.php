@@ -13,8 +13,8 @@ use Illuminate\Contracts\Auth\MustVerifyEmail as MustVerifyEmailContract;
 use Illuminate\Database\Eloquent\Concerns\HasUuids;
 use Illuminate\Database\Schema\Blueprint;
 use Illuminate\Foundation\Auth\User as Authenticatable;
-use Illuminate\Support\Facades\Notification;
 use Illuminate\Notifications\Notifiable;
+use Illuminate\Support\Facades\Notification;
 
 /**
  * Integration tests for email verification triggered by CreateUser action.
@@ -163,8 +163,8 @@ final class CreateUserEmailVerificationTest extends TestCase
 final class CreateUserVerificationTestUser extends Authenticatable implements AuthenticatableContract, MustVerifyEmailContract
 {
     use HasUuids;
-    use Notifiable;
     use MustVerifyEmail;
+    use Notifiable;
 
     protected $table = 'users';
 

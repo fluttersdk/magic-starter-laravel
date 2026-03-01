@@ -18,7 +18,6 @@ class EmailVerificationController
      * Send an email verification notification to the authenticated user.
      *
      * @param  Request  $request  The incoming HTTP request.
-     * @return JsonResponse
      */
     public function sendVerificationNotification(Request $request): JsonResponse
     {
@@ -48,7 +47,6 @@ class EmailVerificationController
      * @param  Request  $request  The incoming HTTP request.
      * @param  string  $id  The user's primary key.
      * @param  string  $hash  The SHA-1 hash of the user's email address.
-     * @return JsonResponse
      */
     public function verify(Request $request, string $id, string $hash): JsonResponse
     {

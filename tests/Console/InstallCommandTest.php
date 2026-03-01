@@ -454,7 +454,6 @@ final class InstallCommandTest extends TestCase
         );
     }
 
-
     // Helpers
     // -------------------------------------------------------------------------
 

@@ -10,7 +10,9 @@
 
 use FlutterSdk\MagicStarter\Features;
 use FlutterSdk\MagicStarter\Http\Controllers\AuthController;
+use FlutterSdk\MagicStarter\Http\Controllers\EmailVerificationController;
 use FlutterSdk\MagicStarter\Http\Controllers\GuestAuthController;
+use FlutterSdk\MagicStarter\Http\Controllers\NewsletterController;
 use FlutterSdk\MagicStarter\Http\Controllers\NotificationController;
 use FlutterSdk\MagicStarter\Http\Controllers\NotificationPreferenceController;
 use FlutterSdk\MagicStarter\Http\Controllers\OtpController;
@@ -18,6 +20,7 @@ use FlutterSdk\MagicStarter\Http\Controllers\PasswordResetController;
 use FlutterSdk\MagicStarter\Http\Controllers\ProfileController;
 use FlutterSdk\MagicStarter\Http\Controllers\ProfilePhotoController;
 use FlutterSdk\MagicStarter\Http\Controllers\SessionController;
+use FlutterSdk\MagicStarter\Http\Controllers\SettingsController;
 use FlutterSdk\MagicStarter\Http\Controllers\TeamController;
 use FlutterSdk\MagicStarter\Http\Controllers\TeamInvitationController;
 use FlutterSdk\MagicStarter\Http\Controllers\TeamMemberController;
@@ -25,9 +28,6 @@ use FlutterSdk\MagicStarter\Http\Controllers\TeamPhotoController;
 use FlutterSdk\MagicStarter\Http\Controllers\TwoFactorAuthenticationController;
 use FlutterSdk\MagicStarter\Http\Controllers\TwoFactorChallengeController;
 use FlutterSdk\MagicStarter\Http\Controllers\TwoFactorRecoveryCodeController;
-use FlutterSdk\MagicStarter\Http\Controllers\EmailVerificationController;
-use FlutterSdk\MagicStarter\Http\Controllers\NewsletterController;
-use FlutterSdk\MagicStarter\Http\Controllers\SettingsController;
 use Illuminate\Support\Facades\Route;
 
 Route::prefix((string) config('magic-starter.route_prefix', ''))

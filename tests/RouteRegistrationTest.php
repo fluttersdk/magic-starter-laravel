@@ -215,7 +215,6 @@ final class RouteRegistrationTest extends TestCase
         $this->assertRouteMissing('PUT', '/user/newsletter');
     }
 
-
     private function bootRoutesWithConfig(array $features, string $prefix = ''): void
     {
         config([
