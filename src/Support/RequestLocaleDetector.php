@@ -66,8 +66,7 @@ class RequestLocaleDetector
     /**
      * Detect timezone from the X-Timezone header.
      *
-     * Validates the header value against the configured
-     * supported_timezones list.
+     * Validates the header value against the full IANA timezone list.
      *
      * @param  Request  $request  The incoming HTTP request.
      * @return string|null The detected timezone, or null if no match.
@@ -81,15 +80,8 @@ class RequestLocaleDetector
             return null;
         }
 
-        // 2. Get supported list from config or system.
-        $supported = config('magic-starter.supported_timezones');
-
-        if (empty($supported)) {
-            $supported = DateTimeZone::listIdentifiers();
-        }
-
-        // 3. Check if header value is in the supported list (exact match).
-        if (in_array($header, (array) $supported, true)) {
+        // 2. Validate against full IANA timezone list.
+        if (in_array($header, DateTimeZone::listIdentifiers(), true)) {
             return $header;
         }
 

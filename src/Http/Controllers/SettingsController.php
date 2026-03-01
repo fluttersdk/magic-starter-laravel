@@ -24,7 +24,6 @@ class SettingsController
     public function index(Request $request): JsonResponse
     {
         return response()->json([
-            'supported_timezones' => Config::get('magic-starter.supported_timezones', []),
             'supported_locales' => Config::get('magic-starter.supported_locales', []),
             'features' => [
                 'registration' => true,
@@ -39,6 +38,7 @@ class SettingsController
                 'sessions' => Features::hasSessionFeatures(),
                 'profile_photos' => Features::hasProfilePhotoFeatures(),
                 'notifications' => Features::hasNotificationFeatures(),
+                'timezones' => Features::hasTimezoneFeatures(),
             ],
             'auth' => [
                 'email' => Features::emailIdentity(),

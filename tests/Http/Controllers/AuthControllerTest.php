@@ -52,12 +52,6 @@ class AuthControllerTest extends TestCase
                 'tr',
                 'de',
             ],
-            'magic-starter.supported_timezones' => [
-                'UTC',
-                'Europe/Istanbul',
-                'Europe/London',
-                'America/New_York',
-            ],
             'magic-starter.features' => [
                 'extended-profile',
             ],

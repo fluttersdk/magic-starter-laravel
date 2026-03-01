@@ -55,6 +55,7 @@ class InstallCommand extends Command
         'guest-auth' => 'Guest authentication (anonymous users)',
         'phone-otp' => 'Phone OTP verification',
         'email-verification' => 'Email verification (send/verify email address)',
+        'timezones' => 'Timezone list (paginated, searchable)',
     ];
 
     /** @var array<string, string> Feature key → Features class method name. */
@@ -70,6 +71,7 @@ class InstallCommand extends Command
         'guest-auth' => 'guestAuth',
         'phone-otp' => 'phoneOtp',
         'email-verification' => 'emailVerification',
+        'timezones' => 'timezones',
     ];
 
     /** @var list<string> Migrations always published regardless of feature selection. */
@@ -105,6 +107,9 @@ class InstallCommand extends Command
         ],
         'newsletter-subscription' => [
             'create_newsletter_subscribers_table.php',
+        ],
+        'timezones' => [
+            'add_timezone_to_users_table.php',
         ],
     ];
 

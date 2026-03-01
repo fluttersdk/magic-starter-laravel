@@ -35,19 +35,27 @@ class CreateGuestUser implements CreatesGuestUsers
             'password' => null,
         ];
 
-        // 3. Handle extended profile features (locale/timezone) if enabled.
+        // 3. Handle extended profile features (locale) if enabled.
         if (Features::hasExtendedProfileFeatures()) {
             $defaults = config('magic-starter.defaults', []);
             $request = request();
 
             $detectedLocale = $request ? RequestLocaleDetector::detectLocale($request) : null;
-            $detectedTimezone = $request ? RequestLocaleDetector::detectTimezone($request) : null;
 
             $attributes['locale'] = $detectedLocale ?? ($defaults['locale'] ?? 'en');
+        }
+
+        // 4. Handle timezone if either timezones or extended-profile feature is enabled.
+        if (Features::hasTimezoneOrExtendedProfileFeatures()) {
+            $defaults ??= config('magic-starter.defaults', []);
+            $request ??= request();
+
+            $detectedTimezone = $request ? RequestLocaleDetector::detectTimezone($request) : null;
+
             $attributes['timezone'] = $detectedTimezone ?? ($defaults['timezone'] ?? 'UTC');
         }
 
-        // 4. Find existing guest or create a new one using firstOrCreate.
+        // 5. Find existing guest or create a new one using firstOrCreate.
         $userModel = MagicStarter::userModel();
 
         return $userModel::query()->firstOrCreate(

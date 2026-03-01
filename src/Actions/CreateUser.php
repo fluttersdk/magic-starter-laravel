@@ -54,8 +54,11 @@ class CreateUser implements CreatesUsers
 
         if (Features::hasExtendedProfileFeatures()) {
             $rules['locale'] = ['nullable', 'string', 'max:5'];
-            $rules['timezone'] = ['nullable', 'string', 'timezone'];
             $rules['email_verified_at'] = ['nullable', 'date'];
+        }
+
+        if (Features::hasTimezoneOrExtendedProfileFeatures()) {
+            $rules['timezone'] = ['nullable', 'string', 'timezone'];
         }
 
         if (Features::hasNewsletterSubscriptionFeatures()) {
@@ -88,21 +91,29 @@ class CreateUser implements CreatesUsers
             $defaults = config('magic-starter.defaults', []);
             $request = request();
 
-            // 2a. Auto-detect from request headers, falling back to config defaults.
+            // 2c. Auto-detect locale from request headers, falling back to config defaults.
             $detectedLocale = $request
                 ? RequestLocaleDetector::detectLocale($request)
-                : null;
-            $detectedTimezone = $request
-                ? RequestLocaleDetector::detectTimezone($request)
                 : null;
 
             $attributes['locale'] = Arr::get($validated, 'locale')
                 ?? $detectedLocale
                 ?? ($defaults['locale'] ?? 'en');
+            $attributes['email_verified_at'] = Arr::get($validated, 'email_verified_at');
+        }
+
+        if (Features::hasTimezoneOrExtendedProfileFeatures()) {
+            $defaults ??= config('magic-starter.defaults', []);
+            $request ??= request();
+
+            // 2d. Auto-detect timezone from request headers, falling back to config defaults.
+            $detectedTimezone = $request
+                ? RequestLocaleDetector::detectTimezone($request)
+                : null;
+
             $attributes['timezone'] = Arr::get($validated, 'timezone')
                 ?? $detectedTimezone
                 ?? ($defaults['timezone'] ?? 'UTC');
-            $attributes['email_verified_at'] = Arr::get($validated, 'email_verified_at');
         }
 
         // 3. Create the user via dynamic model resolution.

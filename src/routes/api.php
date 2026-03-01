@@ -25,6 +25,7 @@ use FlutterSdk\MagicStarter\Http\Controllers\TeamController;
 use FlutterSdk\MagicStarter\Http\Controllers\TeamInvitationController;
 use FlutterSdk\MagicStarter\Http\Controllers\TeamMemberController;
 use FlutterSdk\MagicStarter\Http\Controllers\TeamPhotoController;
+use FlutterSdk\MagicStarter\Http\Controllers\TimezoneController;
 use FlutterSdk\MagicStarter\Http\Controllers\TwoFactorAuthenticationController;
 use FlutterSdk\MagicStarter\Http\Controllers\TwoFactorChallengeController;
 use FlutterSdk\MagicStarter\Http\Controllers\TwoFactorRecoveryCodeController;
@@ -55,6 +56,10 @@ Route::prefix((string) config('magic-starter.route_prefix', ''))
         });
 
         Route::middleware('throttle:5,1')->get('settings', [SettingsController::class, 'index']);
+
+        if (Features::hasTimezoneFeatures()) {
+            Route::middleware('throttle:5,1')->get('timezones', [TimezoneController::class, 'index']);
+        }
 
         // To require email verification on protected routes, add the 'verified'
         // middleware: Route::middleware(['auth:sanctum', 'verified'])->group(...)

@@ -21,13 +21,6 @@ final class RequestLocaleDetectorTest extends TestCase
                 'tr',
                 'de',
             ],
-            'magic-starter.supported_timezones' => [
-                'UTC',
-                'Europe/Istanbul',
-                'Europe/London',
-                'Europe/Berlin',
-                'America/New_York',
-            ],
         ]);
     }
 
@@ -150,9 +143,9 @@ final class RequestLocaleDetectorTest extends TestCase
     }
 
     /**
-     * Test that it returns null when timezone is not in supported list.
+     * Test that valid IANA timezones are accepted (full IANA list, not curated).
      */
-    public function test_returns_null_when_timezone_not_in_supported_list(): void
+    public function test_accepts_valid_iana_timezone(): void
     {
         $request = Request::create(
             '/',
@@ -162,6 +155,25 @@ final class RequestLocaleDetectorTest extends TestCase
             [],
             [
                 'HTTP_X_TIMEZONE' => 'Asia/Kolkata',
+            ],
+        );
+
+        $this->assertEquals('Asia/Kolkata', RequestLocaleDetector::detectTimezone($request));
+    }
+
+    /**
+     * Test that it returns null when timezone is not a valid IANA identifier.
+     */
+    public function test_returns_null_when_timezone_not_a_valid_iana_identifier(): void
+    {
+        $request = Request::create(
+            '/',
+            'GET',
+            [],
+            [],
+            [],
+            [
+                'HTTP_X_TIMEZONE' => 'Fake/Nowhere',
             ],
         );
 

@@ -45,6 +45,7 @@ return [
         // \FlutterSdk\MagicStarter\Features::guestAuth(),
         // \FlutterSdk\MagicStarter\Features::phoneOtp(),
         // \FlutterSdk\MagicStarter\Features::emailVerification(),
+        // \FlutterSdk\MagicStarter\Features::timezones(),
     ],
 
     /*
@@ -109,43 +110,6 @@ return [
     'supported_locales' => [
         'en',
         'tr',
-    ],
-
-    /*
-    |--------------------------------------------------------------------------
-    | Supported Timezones
-    |--------------------------------------------------------------------------
-    |
-    | The list of IANA timezone identifiers your application supports. Used
-    | for validation during registration and profile updates, and for
-    | auto-detection from the X-Timezone header. When empty or null, falls
-    | back to the full PHP DateTimeZone::listIdentifiers() list.
-    |
-    | This default list is aligned with the TimezoneController's curated set.
-    |
-    */
-
-    'supported_timezones' => [
-        'UTC',
-        'America/New_York',
-        'America/Chicago',
-        'America/Denver',
-        'America/Los_Angeles',
-        'America/Sao_Paulo',
-        'America/Mexico_City',
-        'Canada/Eastern',
-        'Europe/London',
-        'Europe/Paris',
-        'Europe/Berlin',
-        'Europe/Istanbul',
-        'Asia/Dubai',
-        'Asia/Kolkata',
-        'Asia/Shanghai',
-        'Asia/Tokyo',
-        'Asia/Singapore',
-        'Australia/Sydney',
-        'Pacific/Auckland',
-        'Africa/Cairo',
     ],
 
     /*

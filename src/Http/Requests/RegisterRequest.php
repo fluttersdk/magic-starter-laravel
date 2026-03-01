@@ -59,12 +59,7 @@ class RegisterRequest extends FormRequest
             'timezone' => [
                 'nullable',
                 'string',
-                Rule::in(
-                    config(
-                        'magic-starter.supported_timezones',
-                        DateTimeZone::listIdentifiers(),
-                    ),
-                ),
+                Rule::in(DateTimeZone::listIdentifiers()),
             ],
             'subscribe_newsletter' => [
                 'nullable',

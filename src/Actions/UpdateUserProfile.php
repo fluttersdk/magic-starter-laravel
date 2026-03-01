@@ -60,16 +60,6 @@ class UpdateUserProfile implements UpdatesUserProfiles
                 'string',
                 'size:2',
             ];
-            $rules['timezone'] = [
-                'nullable',
-                'string',
-                Rule::in(
-                    config(
-                        'magic-starter.supported_timezones',
-                        DateTimeZone::listIdentifiers(),
-                    ),
-                ),
-            ];
             $rules['language'] = [
                 'nullable',
                 'string',
@@ -79,6 +69,14 @@ class UpdateUserProfile implements UpdatesUserProfiles
                         ['en'],
                     ),
                 ),
+            ];
+        }
+
+        if (Features::hasTimezoneOrExtendedProfileFeatures()) {
+            $rules['timezone'] = [
+                'nullable',
+                'string',
+                Rule::in(DateTimeZone::listIdentifiers()),
             ];
         }
 

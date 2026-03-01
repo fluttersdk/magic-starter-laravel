@@ -59,10 +59,6 @@ class RegressionAuthTest extends TestCase
                 'en',
                 'tr',
             ],
-            'magic-starter.supported_timezones' => [
-                'UTC',
-                'Europe/Istanbul',
-            ],
         ]);
 
         // Full schema including ALL columns added by guest/phone/2FA migrations.

@@ -98,6 +98,14 @@ class Features
     }
 
     /**
+     * Enable the timezone list feature.
+     */
+    public static function timezones(): string
+    {
+        return 'timezones';
+    }
+
+    /**
      * Determine whether the given feature is enabled.
      */
     public static function enabled(string $feature): bool
@@ -191,6 +199,25 @@ class Features
     public static function hasEmailVerificationFeatures(): bool
     {
         return static::enabled(static::emailVerification());
+    }
+
+    /**
+     * Determine whether the timezone list feature is enabled.
+     */
+    public static function hasTimezoneFeatures(): bool
+    {
+        return static::enabled(static::timezones());
+    }
+
+    /**
+     * Determine whether timezone fields should be active.
+     *
+     * Returns true when either the dedicated timezones feature
+     * or the extended-profile feature (which includes timezone) is enabled.
+     */
+    public static function hasTimezoneOrExtendedProfileFeatures(): bool
+    {
+        return static::hasTimezoneFeatures() || static::hasExtendedProfileFeatures();
     }
 
     /**

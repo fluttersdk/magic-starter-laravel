@@ -36,12 +36,6 @@ final class ProfileControllerTest extends TestCase
                 'tr',
                 'de',
             ],
-            'magic-starter.supported_timezones' => [
-                'UTC',
-                'Europe/Istanbul',
-                'Europe/London',
-                'America/New_York',
-            ],
         ]);
 
         \call_user_func([\call_user_func('app', 'db.schema'), 'create'], 'users', function ($table): void {

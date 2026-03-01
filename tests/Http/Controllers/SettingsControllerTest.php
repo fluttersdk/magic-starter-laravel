@@ -21,12 +21,6 @@ class SettingsControllerTest extends TestCase
                 'en',
                 'tr',
             ],
-            'magic-starter.supported_timezones' => [
-                'UTC',
-                'Europe/Istanbul',
-                'Europe/London',
-                'America/New_York',
-            ],
             'magic-starter.defaults.locale' => 'en',
             'magic-starter.defaults.timezone' => 'UTC',
             'magic-starter.features' => [],
@@ -59,14 +53,12 @@ class SettingsControllerTest extends TestCase
         $response = $this->getJson('/settings');
 
         $response->assertOk()->assertJsonStructure([
-            'supported_timezones',
             'supported_locales',
             'features',
             'auth',
             'defaults',
         ]);
 
-        $this->assertIsArray($response->json('supported_timezones'));
         $this->assertIsArray($response->json('supported_locales'));
         $this->assertIsArray($response->json('features'));
         $this->assertIsArray($response->json('auth'));
@@ -115,19 +107,15 @@ class SettingsControllerTest extends TestCase
     }
 
     /**
-     * The supported_timezones list must be a non-empty array from config.
+     * The features map must include a timezones boolean flag.
      */
-    public function test_settings_returns_supported_timezones(): void
+    public function test_settings_returns_timezones_feature_flag(): void
     {
         $response = $this->getJson('/settings');
 
         $response->assertOk();
-
-        $timezones = $response->json('supported_timezones');
-
-        $this->assertIsArray($timezones);
-        $this->assertNotEmpty($timezones);
-        $this->assertContains('UTC', $timezones);
+        $this->assertArrayHasKey('timezones', $response->json('features'));
+        $this->assertIsBool($response->json('features.timezones'));
     }
 
     /**

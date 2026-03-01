@@ -73,7 +73,6 @@ class CreateGuestUserTest extends TestCase
     {
         config(['magic-starter.features' => ['extended-profile']]);
         config(['magic-starter.supported_locales' => ['en', 'tr']]);
-        config(['magic-starter.supported_timezones' => ['UTC', 'Europe/Istanbul']]);
 
         request()->headers->set('Accept-Language', 'tr');
         request()->headers->set('X-Timezone', 'Europe/Istanbul');
