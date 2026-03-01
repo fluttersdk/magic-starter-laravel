@@ -84,9 +84,6 @@ class Features
     /**
      * Enable the phone OTP feature.
      */
-    /**
-     * Enable the phone OTP feature.
-     */
     public static function phoneOtp(): string
     {
         return 'phone-otp';
@@ -180,9 +177,6 @@ class Features
         return static::enabled(static::guestAuth());
     }
 
-    /**
-     * Determine whether the phone OTP feature is enabled.
-     */
     /**
      * Determine whether the phone OTP feature is enabled.
      */
