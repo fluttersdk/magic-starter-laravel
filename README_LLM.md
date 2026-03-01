@@ -103,10 +103,25 @@ app/
 │       ├── DeleteUser.php
 │       ├── InviteTeamMember.php
 │       ├── RemoveTeamMember.php
-│       ├── TeamPolicy.php
+│   ├── Http/
+│   │   ├── Controllers/                   # 19 API controllers
+│   │   ├── Requests/                      # 23 form requests
+│   │   └── Resources/                     # 6 API resources
+│   ├── Listeners/
+│   │   ├── CreatePersonalTeamListener.php # Fires on Registered event
+│   │   └── GateNotificationChannels.php   # Fires on NotificationSending event
+│   ├── Models/                            # Team, TeamInvitation, TeamUser,
+│   │   │                                  #   PersonalAccessToken, NotificationSetting,
+│   │   │                                  #   NewsletterSubscriber
+│   ├── Notifications/                    # TeamInvitationNotification, VerifyEmailNotification
+│   ├── NotificationPreferenceRegistry.php  # Notification type/channel matrix
+│   ├── Rules/                            # E164Phone validation rule
+│   ├── Support/                          # Helper classes (MigrationHelper, SessionAgent, etc.)
+│   ├── Traits/                            # HasTeams, HasProfilePhoto, HasNotifications, TwoFactorAuthenticatable, HasGuestSupport, MustVerifyEmail
 │       ├── UpdateTeam.php
 │       ├── UpdateTeamMemberRole.php
-│       ├── UpdateUserPassword.php
+│       ├── UpdateUserProfile.php
+│       └── UpdateUserPassword.php
 │       └── UpdateUserProfile.php
 ├── Models/
 │   ├── Team.php
@@ -123,7 +138,7 @@ database/
     ├── *_create_teams_table.php
     ├── *_create_team_user_table.php
     ├── *_create_team_invitations_table.php
-    ├── *_create_notifications_table.php
+    │   ├── Notifications/                    # TeamInvitationNotification, VerifyEmailNotification
     ├── *_create_notification_settings_table.php
     ├── *_create_newsletter_subscribers_table.php
     ├── *_add_current_team_id_to_users_table.php
@@ -134,7 +149,8 @@ database/
     ├── *_add_profile_fields_to_users_table.php
     ├── *_add_guest_and_phone_fields_to_users_table.php
     ├── *_add_device_info_to_personal_access_tokens_table.php
-    └── *_add_expires_at_to_team_invitations_table.php
+    ├── *_add_expires_at_to_team_invitations_table.php
+    ├── *_add_email_verified_at_to_users_table.php
 ```
 
 To publish individual asset groups later:
@@ -162,6 +178,13 @@ use FlutterSdk\MagicStarter\Traits\HasGuestSupport;
 use FlutterSdk\MagicStarter\Traits\HasNotifications;
 use FlutterSdk\MagicStarter\Traits\HasProfilePhoto;
 use FlutterSdk\MagicStarter\Traits\HasTeams;
+use FlutterSdk\MagicStarter\Traits\MustVerifyEmail;
+use FlutterSdk\MagicStarter\Traits\TwoFactorAuthenticatable;
+use Illuminate\Contracts\Auth\MustVerifyEmail as MustVerifyEmailContract;
+use Illuminate\Database\Eloquent\Concerns\HasUuids;
+use FlutterSdk\MagicStarter\Traits\HasNotifications;
+use FlutterSdk\MagicStarter\Traits\HasProfilePhoto;
+use FlutterSdk\MagicStarter\Traits\HasTeams;
 use FlutterSdk\MagicStarter\Traits\TwoFactorAuthenticatable;
 use Illuminate\Database\Eloquent\Concerns\HasUuids;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
@@ -169,7 +192,18 @@ use Illuminate\Foundation\Auth\User as Authenticatable;
 use Illuminate\Notifications\Notifiable;
 use Laravel\Sanctum\HasApiTokens;
 
-class User extends Authenticatable
+class User extends Authenticatable implements MustVerifyEmailContract
+{
+    use HasApiTokens;
+    use HasFactory;
+    use HasGuestSupport;
+    use HasNotifications;
+    use HasProfilePhoto;
+    use HasTeams;
+    use HasUuids;
+    use MustVerifyEmail;
+    use Notifiable;
+    use TwoFactorAuthenticatable;
 {
     use HasApiTokens;
     use HasFactory;
@@ -259,6 +293,7 @@ class User extends Authenticatable
 | `HasNotifications` | Notification preferences and `prefers()` method |
 | `TwoFactorAuthenticatable` | TOTP secret storage and recovery code management |
 | `HasGuestSupport` | `isGuest()` and `isRegistered()` helper methods |
+| `MustVerifyEmail` | Email verification flow and trait methods |
 
 Only `HasApiTokens` and `HasUuids` are always required. The rest are needed when the corresponding
 feature is enabled. Including all of them is safe — unused traits add no overhead.
@@ -430,6 +465,8 @@ Open `config/magic-starter.php` and uncomment the features you want. The full se
     \FlutterSdk\MagicStarter\Features::newsletterSubscription(),
     \FlutterSdk\MagicStarter\Features::extendedProfile(),
     \FlutterSdk\MagicStarter\Features::notifications(),
+    \FlutterSdk\MagicStarter\Features::emailVerification(),
+    \FlutterSdk\MagicStarter\Features::guestAuth(),
     \FlutterSdk\MagicStarter\Features::guestAuth(),
     \FlutterSdk\MagicStarter\Features::phoneOtp(),
 ],
@@ -447,6 +484,8 @@ Open `config/magic-starter.php` and uncomment the features you want. The full se
 | `extendedProfile()` | Extended profile fields (phone, language, timezone) |
 | `notifications()` | Database notifications list, unread count, preferences matrix |
 | `twoFactorAuthentication()` | TOTP-based 2FA enable/confirm/disable and challenge flow |
+| `emailVerification()` | Two-step email ownership confirmation flow |
+| `guestAuth()` | Anonymous guest sessions tied to `device_id` |
 | `guestAuth()` | Anonymous guest sessions tied to `device_id` |
 | `phoneOtp()` | Phone-based OTP send and verify for passwordless login |
 
@@ -571,6 +610,10 @@ prefix is `api/v1`. Public auth routes are rate-limited at `throttle:5,1` (5 req
 | POST | `/api/v1/auth/social/{provider}` | No | `social-login` | `access_token` OR `authorization_code` |
 | POST | `/api/v1/auth/forgot-password` | No | Always | `email` |
 | POST | `/api/v1/auth/reset-password` | No | Always | `token`, `email`, `password`, `password_confirmation` |
+| GET | `/api/v1/settings` | No | Always | (none) |
+| GET | `/api/v1/email/verify/{id}/{hash}` | No | `email-verification` | (none) |
+| POST | `/api/v1/email/verification-notification` | Yes | `email-verification` | (none) |
+| POST | `/api/v1/auth/two-factor-challenge` | No | `two-factor-authentication` | `two_factor_token`, `code` OR `recovery_code` |
 | POST | `/api/v1/auth/two-factor-challenge` | No | `two-factor-authentication` | `two_factor_token`, `code` OR `recovery_code` |
 | POST | `/api/v1/auth/guest` | No | `guest-auth` | `device_id` |
 | POST | `/api/v1/auth/otp/send` | No | `phone-otp` | `phone` |
@@ -614,6 +657,8 @@ prefix is `api/v1`. Public auth routes are rate-limited at `throttle:5,1` (5 req
 | PUT | `/api/v1/teams/{team}/members/{user}` | Yes | `teams` | `role` |
 | DELETE | `/api/v1/teams/{team}/members/{user}` | Yes | `teams` | (none) |
 | DELETE | `/api/v1/teams/{team}/leave` | Yes | `teams` | (none) |
+| GET | `/api/v1/user/newsletter` | Yes | `newsletter-subscription` | (none) |
+| PUT | `/api/v1/user/newsletter` | Yes | `newsletter-subscription` | `subscribe` |
 
 ### Team Invitation Routes
 

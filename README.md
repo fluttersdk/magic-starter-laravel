@@ -35,6 +35,10 @@ A modular Laravel backend package providing authentication, team management, pro
   - [Session Management](#session-management)
   - [Two-Factor Authentication](#two-factor-authentication)
   - [Notifications](#notifications)
+  - [Email Verification](#email-verification)
+  - [Settings API](#settings-api)
+  - [Newsletter Subscription](#newsletter-subscription)
+  - [Notifications](#notifications)
   - [Newsletter Subscription](#newsletter-subscription)
 - [API Reference](#api-reference)
   - [Public Routes](#public-routes)
@@ -220,6 +224,8 @@ Features follow Jetstream's toggle pattern. Enable features by adding them to th
     \FlutterSdk\MagicStarter\Features::extendedProfile(),
     \FlutterSdk\MagicStarter\Features::notifications(),
     \FlutterSdk\MagicStarter\Features::twoFactorAuthentication(),
+    // \FlutterSdk\MagicStarter\Features::emailVerification(),
+    // \FlutterSdk\MagicStarter\Features::guestAuth(),
     // \FlutterSdk\MagicStarter\Features::guestAuth(),
     // \FlutterSdk\MagicStarter\Features::phoneOtp(),
 ],
@@ -241,6 +247,8 @@ Features::hasNewsletterSubscriptionFeatures();       // bool
 Features::hasExtendedProfileFeatures();              // bool
 Features::hasNotificationFeatures();                 // bool
 Features::hasTwoFactorAuthenticationFeatures();      // bool
+Features::hasEmailVerificationFeatures();           // bool
+Features::hasGuestAuthFeatures();                    // bool
 Features::hasGuestAuthFeatures();                    // bool
 Features::hasPhoneOtpFeatures();                     // bool
 ```
@@ -257,6 +265,8 @@ Features::hasPhoneOtpFeatures();                     // bool
 | `extended-profile` | `Features::extendedProfile()` | `Features::hasExtendedProfileFeatures()` |
 | `notifications` | `Features::notifications()` | `Features::hasNotificationFeatures()` |
 | `two-factor-authentication` | `Features::twoFactorAuthentication()` | `Features::hasTwoFactorAuthenticationFeatures()` |
+| `email-verification` | `Features::emailVerification()` | `Features::hasEmailVerificationFeatures()` |
+| `guest-auth` | `Features::guestAuth()` | `Features::hasGuestAuthFeatures()` |
 | `guest-auth` | `Features::guestAuth()` | `Features::hasGuestAuthFeatures()` |
 | `phone-otp` | `Features::phoneOtp()` | `Features::hasPhoneOtpFeatures()` |
 
@@ -368,7 +378,7 @@ magic-starter-laravel/
 │   ├── Contracts/                         # 18 contracts (11 core + 4 two-factor + 3 auth)
 │   ├── Enums/                            # Role enum
 │   ├── Http/
-│   │   ├── Controllers/                   # 16 API controllers
+│   │   ├── Controllers/                   # 19 API controllers
 │   │   ├── Requests/                      # 23 form requests
 │   │   └── Resources/                     # 6 API resources
 │   ├── Listeners/
@@ -377,11 +387,11 @@ magic-starter-laravel/
 │   ├── Models/                            # Team, TeamInvitation, TeamUser,
 │   │   │                                  #   PersonalAccessToken, NotificationSetting,
 │   │   │                                  #   NewsletterSubscriber
-│   ├── Notifications/                    # TeamInvitationNotification
+│   ├── Notifications/                    # TeamInvitationNotification, VerifyEmailNotification
 │   ├── NotificationPreferenceRegistry.php  # Notification type/channel matrix
 │   ├── Rules/                            # E164Phone validation rule
 │   ├── Support/                          # Helper classes (MigrationHelper, SessionAgent, etc.)
-│   ├── Traits/                            # HasTeams, HasProfilePhoto, HasNotifications, TwoFactorAuthenticatable, HasGuestSupport
+│   ├── Traits/                            # HasTeams, HasProfilePhoto, HasNotifications, TwoFactorAuthenticatable, HasGuestSupport, MustVerifyEmail
 │   ├── routes/
 │   │   └── api.php                        # Conditional route registration
 │   ├── Features.php                       # Feature toggle class
@@ -685,6 +695,15 @@ Authorization: Bearer {token}
 Provides a channel-based notification preference registry and a full API for managing user preferences and database notifications.
 
 - **Registry**: Declare notification types and supported channels via `NotificationPreferenceRegistry::register()`. Each type has a slug, label, default enabled state, locked flag, and channel list.
+
+- **Preference Matrix**: Returns the full matrix of registered types and channels merged with the user's stored overrides.
+,
+
+> Requires `Features::notifications()` enabled.
+
+Provides a channel-based notification preference registry and a full API for managing user preferences and database notifications.
+
+- **Registry**: Declare notification types and supported channels via `NotificationPreferenceRegistry::register()`. Each type has a slug, label, default enabled state, locked flag, and channel list.
 - **Preference Matrix**: Returns the full matrix of registered types and channels merged with the user's stored overrides.
 - **Update Preferences**: Accepts either a single `{type, channel, is_enabled}` object or a `preferences` array for bulk updates.
 - **Notification List**: Paginated list of the user's database notifications.
@@ -693,7 +712,88 @@ Provides a channel-based notification preference registry and a full API for man
 - **Mark All as Read**: Marks all unread notifications as read.
 - **Delete**: Deletes a single notification.
 
+### Email Verification
+
+> Requires `Features::emailVerification()` enabled.
+,
+Provides a two-step email address ownership confirmation flow. When enabled, new user registration sends a verification notification, and users can request a new verification link at any time.
+,
+- **Send Notification**: `POST email/verification-notification` (authenticated) — sends a fresh verification link. Returns 200 if already verified, 400 if no email, 202 on dispatch.
+,
+- **Verify Email**: `GET email/verify/{id}/{hash}` (signed URL) — validates the signed URL and marks the email as verified. The verification URL uses `frontend_url` for mobile deep-link support.
+,
+Add `MustVerifyEmail` to your User model to participate in the verification flow:
+,
+```php
+use FlutterSdk\MagicStarter\Traits\MustVerifyEmail;
+use Illuminate\Contracts\Auth\MustVerifyEmail as MustVerifyEmailContract;
+
+class User extends Authenticatable implements MustVerifyEmailContract
+{
+    use MustVerifyEmail;
+}
+```
+
+Apply `verified` middleware to routes that require a verified email:
+,
+```php
+Route::middleware(['auth:sanctum', 'verified'])->group(function () {
+    // protected routes
+});
+```
+
+### Settings API
+
+Always active. No authentication required.
+,
+Returns a strictly allowlisted configuration payload for frontend apps to bootstrap without hardcoded values.
+,
+```shell
+GET /settings
+```
+
+Response:
+,
+```json
+{
+    "supported_timezones": ["UTC", "America/New_York", "..."],
+    "supported_locales": ["en", "tr"],
+    "features": {
+        "registration": true,
+        "teams": false,
+        "social_login": false,
+        "email_verification": false,
+        "two_factor_authentication": false,
+        "sessions": false,
+        "profile_photos": false,
+        "notifications": false,
+        "newsletter": false,
+        "extended_profile": false,
+        "guest_auth": false,
+        "phone_otp": false
+    },
+    "auth": {
+        "email": true,
+        "phone": false
+    },
+    "defaults": {
+        "locale": "en",
+        "timezone": "UTC"
+    }
+}
+```
+
 ### Newsletter Subscription
+
+> Requires `Features::newsletterSubscription()` enabled.
+,
+Adds a `subscribe_newsletter` boolean field to the registration payload. When `true`, the `CreatesUsers` action (or the listener) creates a `NewsletterSubscriber` record tied to the new user's email with `source` set to `register`.
+,
+Authenticated users can check and toggle their newsletter subscription status via:
+,
+- **Show**: `GET /user/newsletter` (authenticated) — returns `{subscribed, source, subscribed_at}` or `{subscribed: false}` if not subscribed.
+,
+- **Update**: `PUT /user/newsletter` (authenticated) — request body `{subscribe: boolean}`. Returns the updated status shape.
 
 > Requires `Features::newsletterSubscription()` enabled.
 
@@ -732,7 +832,8 @@ Rate-limited at `throttle:5,1` (5 requests per minute):
 
 | Method | URI | Controller@Method | Request |
 |:-------|:----|:------------------|:--------|
-| POST | `auth/register` | `AuthController@register` | `RegisterRequest` |
+| GET | `settings` | `SettingsController@index` | (none — public) |
+| POST | `auth/register` | `AuthController@register` | `RegisterRequest` |],op:
 | POST | `auth/login` | `AuthController@login` | `LoginRequest` |
 | POST | `auth/social/{provider}` | `AuthController@socialLogin` | `SocialLoginRequest` |
 | POST | `auth/forgot-password` | `PasswordResetController@sendResetLinkEmail` | `ForgotPasswordRequest` |
@@ -823,6 +924,18 @@ All require `auth:sanctum` middleware.
 | GET | `two-factor-recovery-codes` | `TwoFactorRecoveryCodeController@index` |
 | POST | `two-factor-recovery-codes` | `TwoFactorRecoveryCodeController@store` |
 
+**Email Verification** (`Features::emailVerification()`):
+
+| Method | URI | Controller@Method |
+|:-------|:----|:------------------|
+| GET | `email/verify/{id}/{hash}` | `EmailVerificationController@verify` |
+
+**Email Verification (Authenticated)** (`Features::emailVerification()`):
+
+| Method | URI | Controller@Method |
+|:-------|:----|:------------------|
+| POST | `email/verification-notification` | `EmailVerificationController@sendVerificationNotification` |
+
 **Notifications** (`Features::notifications()`):
 
 | Method | URI | Controller@Method |
@@ -834,6 +947,13 @@ All require `auth:sanctum` middleware.
 | DELETE | `notifications/{id}` | `NotificationController@destroy` |
 | GET | `notification-preferences` | `NotificationPreferenceController@show` |
 | PUT | `notification-preferences` | `NotificationPreferenceController@update` |
+
+**Newsletter Management** (`Features::newsletterSubscription()`):
+
+| Method | URI | Controller@Method |
+|:-------|:----|:------------------|
+| GET | `user/newsletter` | `NewsletterController@show` |
+| PUT | `user/newsletter` | `NewsletterController@update` |
 
 ### Response Shapes
 
@@ -1055,6 +1175,22 @@ The package ships with 6 Eloquent models. `Team`, `TeamInvitation`, and `TeamUse
 **`HasGuestSupport`** — `FlutterSdk\MagicStarter\Traits\HasGuestSupport`
 
 | Method | Returns | Description |
+|:-------|:----|:--------|:------------|
+| `isGuest()` | bool | Whether the user is a guest (has `is_guest` flag set to `true`) |
+| `isRegistered()` | bool | Whether the user has credentials (email+password or phone+password) |
+
+**`MustVerifyEmail`** — `FlutterSdk\MagicStarter\Traits\MustVerifyEmail`
+
+| Method | Returns | Description |
+|:-------|:----|:--------|:------------|
+| `hasVerifiedEmail()` | bool | Whether email_verified_at is set |
+| `markEmailAsVerified()` | bool | Sets email_verified_at to now(), fires Verified event, returns true |
+| `sendEmailVerificationNotification()` | void | Dispatches VerifyEmailNotification |
+| `getEmailForVerification()` | string | Returns the user's email |
+
+## Form Requests
+
+| Method | Returns | Description |
 |:-------|:--------|:------------|
 | `isGuest()` | bool | Whether the user is a guest (has `is_guest` flag set to `true`) |
 | `isRegistered()` | bool | Whether the user has credentials (email+password or phone+password) |
@@ -1104,7 +1240,7 @@ The package uses PHPUnit with Orchestra Testbench.
 
 ```shell
 composer install
-composer test        # Run PHPUnit (362 tests, 955 assertions)
+composer test        # Run PHPUnit (421 tests, 1089 assertions)
 composer lint        # Check code style with Pint
 composer lint:fix    # Auto-fix code style violations
 composer analyse     # Run PHPStan
