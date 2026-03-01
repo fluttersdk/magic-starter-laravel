@@ -26,6 +26,7 @@ use FlutterSdk\MagicStarter\Http\Controllers\TwoFactorAuthenticationController;
 use FlutterSdk\MagicStarter\Http\Controllers\TwoFactorChallengeController;
 use FlutterSdk\MagicStarter\Http\Controllers\TwoFactorRecoveryCodeController;
 use FlutterSdk\MagicStarter\Http\Controllers\EmailVerificationController;
+use FlutterSdk\MagicStarter\Http\Controllers\NewsletterController;
 use FlutterSdk\MagicStarter\Http\Controllers\SettingsController;
 use Illuminate\Support\Facades\Route;
 
@@ -132,6 +133,11 @@ Route::prefix((string) config('magic-starter.route_prefix', ''))
 
                 Route::get('two-factor-recovery-codes', [TwoFactorRecoveryCodeController::class, 'index']);
                 Route::post('two-factor-recovery-codes', [TwoFactorRecoveryCodeController::class, 'store']);
+            }
+
+            if (Features::hasNewsletterSubscriptionFeatures()) {
+                Route::get('user/newsletter', [NewsletterController::class, 'show']);
+                Route::put('user/newsletter', [NewsletterController::class, 'update']);
             }
         });
 
