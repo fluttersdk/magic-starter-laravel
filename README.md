@@ -833,7 +833,7 @@ Rate-limited at `throttle:5,1` (5 requests per minute):
 | Method | URI | Controller@Method | Request |
 |:-------|:----|:------------------|:--------|
 | GET | `settings` | `SettingsController@index` | (none — public) |
-| POST | `auth/register` | `AuthController@register` | `RegisterRequest` |],op:
+| POST | `auth/register` | `AuthController@register` | `RegisterRequest` |
 | POST | `auth/login` | `AuthController@login` | `LoginRequest` |
 | POST | `auth/social/{provider}` | `AuthController@socialLogin` | `SocialLoginRequest` |
 | POST | `auth/forgot-password` | `PasswordResetController@sendResetLinkEmail` | `ForgotPasswordRequest` |
