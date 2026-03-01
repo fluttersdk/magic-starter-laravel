@@ -44,6 +44,7 @@ return [
         // \FlutterSdk\MagicStarter\Features::notifications(),
         // \FlutterSdk\MagicStarter\Features::guestAuth(),
         // \FlutterSdk\MagicStarter\Features::phoneOtp(),
+        // \FlutterSdk\MagicStarter\Features::emailVerification(),
     ],
 
     /*

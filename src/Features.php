@@ -84,9 +84,20 @@ class Features
     /**
      * Enable the phone OTP feature.
      */
+    /**
+     * Enable the phone OTP feature.
+     */
     public static function phoneOtp(): string
     {
         return 'phone-otp';
+    }
+
+    /**
+     * Enable the email verification feature.
+     */
+    public static function emailVerification(): string
+    {
+        return 'email-verification';
     }
 
     /**
@@ -172,9 +183,20 @@ class Features
     /**
      * Determine whether the phone OTP feature is enabled.
      */
+    /**
+     * Determine whether the phone OTP feature is enabled.
+     */
     public static function hasPhoneOtpFeatures(): bool
     {
         return static::enabled(static::phoneOtp());
+    }
+
+    /**
+     * Determine whether the email verification feature is enabled.
+     */
+    public static function hasEmailVerificationFeatures(): bool
+    {
+        return static::enabled(static::emailVerification());
     }
 
     /**

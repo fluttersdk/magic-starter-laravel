@@ -248,4 +248,23 @@ class FeaturesTest extends TestCase
 
         $this->assertTrue(Features::phoneIdentity());
     }
+
+    public function test_email_verification_feature_constant(): void
+    {
+        $this->assertSame('email-verification', Features::emailVerification());
+    }
+
+    public function test_has_email_verification_features_returns_false_by_default(): void
+    {
+        config(['magic-starter.features' => []]);
+
+        $this->assertFalse(Features::hasEmailVerificationFeatures());
+    }
+
+    public function test_has_email_verification_features_returns_true_when_enabled(): void
+    {
+        config(['magic-starter.features' => [Features::emailVerification()]]);
+
+        $this->assertTrue(Features::hasEmailVerificationFeatures());
+    }
 }
