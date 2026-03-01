@@ -66,6 +66,6 @@ class OtpController
             ], 404);
         }
 
-        return $this->authenticatedResponse($user, $request, $this->createAuthToken($user, $request));
+        return $this->authenticatedResponse($user, $request, $this->createAuthToken($user, $request, storeDeviceInfo: true));
     }
 }

@@ -82,7 +82,7 @@ class AuthController
             event(new Registered($user));
         }
 
-        return $this->authenticatedResponse($user, $request, $this->createAuthToken($user, $request));
+        return $this->authenticatedResponse($user, $request, $this->createAuthToken($user, $request, storeDeviceInfo: true));
     }
 
     /**
@@ -97,7 +97,7 @@ class AuthController
         return $this->authenticatedResponse(
             $user,
             $request,
-            $this->createAuthToken($user, $request),
+            $this->createAuthToken($user, $request, storeDeviceInfo: true),
             'Registration successful',
             201,
         );

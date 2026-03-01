@@ -34,10 +34,16 @@ class GuestAuthController
             ? $user->wasRecentlyCreated
             : false;
 
+        // 1. Revoke all existing tokens for returning guests to prevent session buildup.
+        if (! $wasCreated && method_exists($user, 'tokens')) {
+            $user->tokens()->delete();
+        }
+
+        // 2. Create a fresh token with device info (ip_address, user_agent).
         return $this->authenticatedResponse(
             $user,
             $request,
-            $this->createAuthToken($user, $request),
+            $this->createAuthToken($user, $request, storeDeviceInfo: true),
             'Guest session started',
             $wasCreated ? 201 : 200,
         );

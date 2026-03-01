@@ -61,7 +61,7 @@ trait AuthenticatesUsers
      * @param  bool  $storeDeviceInfo  Whether to persist ip/user_agent on the token.
      * @return string The plain-text token string.
      */
-    protected function createAuthToken(mixed $user, Request $request, bool $storeDeviceInfo = false): string
+    protected function createAuthToken(mixed $user, Request $request, bool $storeDeviceInfo = true): string
     {
         if (! method_exists($user, 'createToken')) {
             return Str::random(80);

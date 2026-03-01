@@ -55,7 +55,7 @@ class TwoFactorChallengeController
         }
 
         // 5. Generate authenticated response via AuthController parent method.
-        $token = $this->createAuthToken($user, $request);
+        $token = $this->createAuthToken($user, $request, storeDeviceInfo: true);
 
         return $this->authenticatedResponse($user, $request, $token);
     }
