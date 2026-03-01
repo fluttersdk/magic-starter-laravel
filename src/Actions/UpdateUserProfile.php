@@ -92,7 +92,6 @@ class UpdateUserProfile implements UpdatesUserProfiles
         //     This re-queues the user for verification without breaking unrelated updates.
         if (Features::hasEmailVerificationFeatures()
             && isset($validated['email'])
-            && $validated['email'] !== null
             && $validated['email'] !== $originalEmail
             && $user instanceof MustVerifyEmail
         ) {

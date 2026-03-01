@@ -1,6 +1,6 @@
 # Magic Starter Laravel
 
-A modular Laravel backend package providing authentication, team management, profile settings, session management, and social login — inspired by [Laravel Jetstream](https://jetstream.laravel.com)'s architecture with feature toggles, action contracts, and publishable assets.
+A modular Laravel backend package providing authentication, team management, profile settings, session management, and social login — inspired by [Laravel Jetstream](https://jetstream.laravel.com)'s architecture with feature toggles, action contracts, and sensible defaults that work out of the box.
 
 - [Requirements](#requirements)
 - [Installation](#installation)
@@ -38,8 +38,9 @@ A modular Laravel backend package providing authentication, team management, pro
   - [Email Verification](#email-verification)
   - [Settings API](#settings-api)
   - [Newsletter Subscription](#newsletter-subscription)
-  - [Notifications](#notifications)
-  - [Newsletter Subscription](#newsletter-subscription)
+  - [Timezone List](#timezone-list)
+  - [Guest Authentication](#guest-authentication)
+  - [Phone OTP](#phone-otp)
 - [API Reference](#api-reference)
   - [Public Routes](#public-routes)
   - [Protected Routes](#protected-routes)
@@ -87,7 +88,7 @@ The service provider is auto-discovered via `extra.laravel.providers` in the pac
 
 ### Running the Install Command
 
-The install command publishes config, migrations, action stubs, and model stubs in one step:
+The install command publishes configuration and feature-relevant migrations:
 
 ```shell
 php artisan magic-starter:install
@@ -113,25 +114,26 @@ php artisan magic-starter:install --all --uuid --route-prefix=api/v1 --frontend-
 | `--frontend-url=` | Frontend application URL used in email links |
 | `--force` | Overwrite existing published files |
 
-The `--features` option accepts: `teams`, `profile-photos`, `sessions`, `social-login`, `newsletter-subscription`, `extended-profile`, `notifications`, `two-factor-authentication`, `guest-auth`, `phone-otp`. When `--all` is passed, omitting `--features` enables everything.
+The `--features` option accepts: `teams`, `profile-photos`, `sessions`, `social-login`, `newsletter-subscription`, `extended-profile`, `notifications`, `two-factor-authentication`, `guest-auth`, `phone-otp`, `email-verification`, `timezones`. When `--all` is passed, omitting `--features` enables everything.
 
 > [!NOTE]
 > When neither `--uuid` nor `--no-uuid` is provided, the installer auto-detects your existing `users` table schema. If no `users` table exists (fresh install), UUID is used by default.
 
-The command publishes the following assets, each with its own tag for granular control:
+The install command publishes configuration and migrations. Action stubs and model stubs are **not** published by default — the plugin ships with sensible default implementations that work out of the box.
 
 | Asset | Destination | Publish Tag |
 |:------|:------------|:------------|
 | Config | `config/magic-starter.php` | `magic-starter-config` |
 | Migrations | `database/migrations/` | `magic-starter-migrations` |
+
+To customize the default action or model implementations, publish the stubs manually:
+
+| Asset | Destination | Publish Tag |
+|:------|:------------|:------------|
 | Action Stubs | `app/Actions/MagicStarter/` | `magic-starter-stubs` |
 | Model Stubs | `app/Models/` | `magic-starter-models` |
 
-You can publish assets individually at any time:
-
 ```shell
-php artisan vendor:publish --tag=magic-starter-config
-php artisan vendor:publish --tag=magic-starter-migrations
 php artisan vendor:publish --tag=magic-starter-stubs
 php artisan vendor:publish --tag=magic-starter-models
 ```
@@ -172,7 +174,13 @@ Only add `HasNotifications` when the `notifications` feature is enabled. Add `Ha
 
 ### Binding Action Contracts
 
-After publishing the action stubs, bind each contract to its concrete implementation in your `AppServiceProvider`:
+The package binds all action contracts to default implementations in its service provider — **no manual binding is required** for the plugin to work out of the box.
+
+To customize behavior, publish the action stubs and override the bindings in your `AppServiceProvider`:
+
+```shell
+php artisan vendor:publish --tag=magic-starter-stubs
+```
 
 ```php
 use FlutterSdk\MagicStarter\Contracts\CreatesUsers;
@@ -226,8 +234,8 @@ Features follow Jetstream's toggle pattern. Enable features by adding them to th
     \FlutterSdk\MagicStarter\Features::twoFactorAuthentication(),
     // \FlutterSdk\MagicStarter\Features::emailVerification(),
     // \FlutterSdk\MagicStarter\Features::guestAuth(),
-    // \FlutterSdk\MagicStarter\Features::guestAuth(),
     // \FlutterSdk\MagicStarter\Features::phoneOtp(),
+    // \FlutterSdk\MagicStarter\Features::timezones(),
 ],
 ```
 
@@ -247,13 +255,14 @@ Features::hasNewsletterSubscriptionFeatures();       // bool
 Features::hasExtendedProfileFeatures();              // bool
 Features::hasNotificationFeatures();                 // bool
 Features::hasTwoFactorAuthenticationFeatures();      // bool
-Features::hasEmailVerificationFeatures();           // bool
-Features::hasGuestAuthFeatures();                    // bool
+Features::hasEmailVerificationFeatures();            // bool
 Features::hasGuestAuthFeatures();                    // bool
 Features::hasPhoneOtpFeatures();                     // bool
+Features::hasTimezoneFeatures();                     // bool
+Features::hasTimezoneOrExtendedProfileFeatures();    // bool — true when either is enabled
 ```
 
-**All 10 features and their toggle methods:**
+**All 12 features and their toggle methods:**
 
 | Feature Key | Enable Method | Check Method |
 |:------------|:--------------|:-------------|
@@ -267,8 +276,8 @@ Features::hasPhoneOtpFeatures();                     // bool
 | `two-factor-authentication` | `Features::twoFactorAuthentication()` | `Features::hasTwoFactorAuthenticationFeatures()` |
 | `email-verification` | `Features::emailVerification()` | `Features::hasEmailVerificationFeatures()` |
 | `guest-auth` | `Features::guestAuth()` | `Features::hasGuestAuthFeatures()` |
-| `guest-auth` | `Features::guestAuth()` | `Features::hasGuestAuthFeatures()` |
 | `phone-otp` | `Features::phoneOtp()` | `Features::hasPhoneOtpFeatures()` |
+| `timezones` | `Features::timezones()` | `Features::hasTimezoneFeatures()` |
 
 ### All Config Keys
 
@@ -284,13 +293,12 @@ Features::hasPhoneOtpFeatures();                     // bool
 | `defaults.locale` | `'en'` | Default locale assigned to new users |
 | `defaults.timezone` | `'UTC'` | Default timezone assigned to new users |
 | `supported_locales` | `['en', 'tr']` | Locales accepted by locale/language validation rules |
-| `supported_timezones` | Curated IANA identifiers | Timezones accepted by timezone validation rules |
 | `profile_photo_disk` | `'public'` | Storage disk for user profile photos |
 | `team_photo_disk` | `'public'` | Storage disk for team photos |
 | `profile_photo_path` | `'profile-photos'` | Directory within disk for user profile photos |
 | `team_photo_path` | `'team-photos'` | Directory within disk for team photos |
 | `ui_avatars_url` | `'https://ui-avatars.com/api/'` | Fallback avatar generation service URL |
-| `route_prefix` | `''` | Global prefix applied to all package routes |
+| `route_prefix` | `'api/v1'` | Global prefix applied to all package routes |
 | `invitation_expiry_days` | `7` | Days until a team invitation token expires |
 | `token_expiration_minutes` | `null` | Sanctum personal access token TTL in minutes; `null` means no expiry |
 | `auth.email` | `true` | Whether to allow email-based authentication for login/register |
@@ -370,7 +378,7 @@ magic-starter-laravel/
 ├── config/
 │   └── magic-starter.php                  # Package configuration
 ├── database/
-│   └── migrations/                        # 17 publishable migration stubs
+│   └── migrations/                        # 18 publishable migration stubs
 ├── src/
 │   ├── Actions/                          # 18 action classes (11 core + 4 two-factor + 3 auth)
 │   ├── Console/
@@ -378,9 +386,9 @@ magic-starter-laravel/
 │   ├── Contracts/                         # 18 contracts (11 core + 4 two-factor + 3 auth)
 │   ├── Enums/                            # Role enum
 │   ├── Http/
-│   │   ├── Controllers/                   # 19 API controllers
+│   │   ├── Controllers/                   # 20 API controllers
 │   │   ├── Requests/                      # 23 form requests
-│   │   └── Resources/                     # 6 API resources
+│   │   └── Resources/                     # 7 API resources
 │   ├── Listeners/
 │   │   ├── CreatePersonalTeamListener.php # Fires on Registered event
 │   │   └── GateNotificationChannels.php   # Fires on NotificationSending event
@@ -408,7 +416,7 @@ magic-starter-laravel/
 `MagicStarterServiceProvider` handles the full bootstrap lifecycle:
 
 - Merges the package config with any application overrides.
-- Binds all 18 action contracts to their default stub implementations in the IoC container.
+- Binds all 18 action contracts to their default implementations in the IoC container.
 - Sets the Sanctum `PersonalAccessToken` model to the package's extended version (adds `ip_address` and `user_agent`).
 - Configures the password reset URL to point at the configured `frontend_url`.
 - Registers event listeners (`CreatePersonalTeamListener`, `GateNotificationChannels`).
@@ -574,7 +582,7 @@ Invitations expire after `config('magic-starter.invitation_expiry_days')` days (
 
 Always active. These routes require `auth:sanctum`:
 
-- **Update Profile**: Via `UpdatesUserProfiles` contract. Accepted fields: `name`, `phone` (E.164 format), `timezone` (from supported list), `language` (from supported locales).
+- **Update Profile**: Via `UpdatesUserProfiles` contract. Accepted fields: `name`, `phone` (E.164 format), `timezone` (any valid IANA timezone), `language` (from supported locales).
 - **Update Password**: Via `UpdatesUserPasswords` contract. Requires current password verification.
 - **Delete Account**: Via `DeletesUsers` contract. Requires password confirmation.
 
@@ -695,15 +703,6 @@ Authorization: Bearer {token}
 Provides a channel-based notification preference registry and a full API for managing user preferences and database notifications.
 
 - **Registry**: Declare notification types and supported channels via `NotificationPreferenceRegistry::register()`. Each type has a slug, label, default enabled state, locked flag, and channel list.
-
-- **Preference Matrix**: Returns the full matrix of registered types and channels merged with the user's stored overrides.
-,
-
-> Requires `Features::notifications()` enabled.
-
-Provides a channel-based notification preference registry and a full API for managing user preferences and database notifications.
-
-- **Registry**: Declare notification types and supported channels via `NotificationPreferenceRegistry::register()`. Each type has a slug, label, default enabled state, locked flag, and channel list.
 - **Preference Matrix**: Returns the full matrix of registered types and channels merged with the user's stored overrides.
 - **Update Preferences**: Accepts either a single `{type, channel, is_enabled}` object or a `preferences` array for bulk updates.
 - **Notification List**: Paginated list of the user's database notifications.
@@ -712,18 +711,16 @@ Provides a channel-based notification preference registry and a full API for man
 - **Mark All as Read**: Marks all unread notifications as read.
 - **Delete**: Deletes a single notification.
 
-### Email Verification
-
 > Requires `Features::emailVerification()` enabled.
-,
+
 Provides a two-step email address ownership confirmation flow. When enabled, new user registration sends a verification notification, and users can request a new verification link at any time.
-,
+
 - **Send Notification**: `POST email/verification-notification` (authenticated) — sends a fresh verification link. Returns 200 if already verified, 400 if no email, 202 on dispatch.
-,
+
 - **Verify Email**: `GET email/verify/{id}/{hash}` (signed URL) — validates the signed URL and marks the email as verified. The verification URL uses `frontend_url` for mobile deep-link support.
-,
+
 Add `MustVerifyEmail` to your User model to participate in the verification flow:
-,
+
 ```php
 use FlutterSdk\MagicStarter\Traits\MustVerifyEmail;
 use Illuminate\Contracts\Auth\MustVerifyEmail as MustVerifyEmailContract;
@@ -735,7 +732,7 @@ class User extends Authenticatable implements MustVerifyEmailContract
 ```
 
 Apply `verified` middleware to routes that require a verified email:
-,
+
 ```php
 Route::middleware(['auth:sanctum', 'verified'])->group(function () {
     // protected routes
@@ -745,32 +742,32 @@ Route::middleware(['auth:sanctum', 'verified'])->group(function () {
 ### Settings API
 
 Always active. No authentication required.
-,
+
 Returns a strictly allowlisted configuration payload for frontend apps to bootstrap without hardcoded values.
-,
+
 ```shell
 GET /settings
 ```
 
 Response:
-,
+
 ```json
 {
-    "supported_timezones": ["UTC", "America/New_York", "..."],
     "supported_locales": ["en", "tr"],
     "features": {
         "registration": true,
         "teams": false,
         "social_login": false,
         "email_verification": false,
+        "guest_auth": false,
+        "phone_otp": false,
+        "newsletter": false,
+        "extended_profile": false,
         "two_factor_authentication": false,
         "sessions": false,
         "profile_photos": false,
         "notifications": false,
-        "newsletter": false,
-        "extended_profile": false,
-        "guest_auth": false,
-        "phone_otp": false
+        "timezones": false
     },
     "auth": {
         "email": true,
@@ -786,18 +783,43 @@ Response:
 ### Newsletter Subscription
 
 > Requires `Features::newsletterSubscription()` enabled.
-,
+
 Adds a `subscribe_newsletter` boolean field to the registration payload. When `true`, the `CreatesUsers` action (or the listener) creates a `NewsletterSubscriber` record tied to the new user's email with `source` set to `register`.
-,
+
 Authenticated users can check and toggle their newsletter subscription status via:
-,
+
 - **Show**: `GET /user/newsletter` (authenticated) — returns `{subscribed, source, subscribed_at}` or `{subscribed: false}` if not subscribed.
-,
+
 - **Update**: `PUT /user/newsletter` (authenticated) — request body `{subscribe: boolean}`. Returns the updated status shape.
 
-> Requires `Features::newsletterSubscription()` enabled.
+### Timezone List
 
-Adds a `subscribe_newsletter` boolean field to the registration payload. When `true`, the `CreatesUsers` action (or the listener) creates a `NewsletterSubscriber` record tied to the new user's email with `source` set to `register`.
+> Requires `Features::timezones()` enabled.
+
+Provides a paginated, searchable list of all IANA timezones sourced from PHP's `DateTimeZone::listIdentifiers()`. Not backed by a database table.
+
+- **Route**: `GET /timezones` (public, rate-limited)
+- **Search**: Case-insensitive partial match on identifier or UTC offset string (e.g., `+03:00`).
+- **Sorting**: Sorted by UTC offset ascending (UTC first, then eastward).
+- **Pagination**: Supports `page` and `per_page` query parameters (default: 15 per page).
+
+Response shape:
+
+```json
+{
+    "data": [
+        {
+            "identifier": "Europe/Istanbul",
+            "label": "(UTC+03:00) Europe/Istanbul",
+            "offset": "+03:00",
+            "offset_minutes": 180,
+            "region": "Europe"
+        }
+    ],
+    "links": { "..." : "pagination links" },
+    "meta": { "..." : "pagination meta" }
+}
+```
 
 ### Guest Authentication
 
@@ -824,7 +846,7 @@ Provides a two-step OTP login flow over phone numbers in E.164 format.
 
 ## API Reference
 
-All routes are prefixed by `config('magic-starter.route_prefix')`. The examples below assume no prefix is configured.
+All routes are prefixed by `config('magic-starter.route_prefix')` (default: `api/v1`). The examples below assume no prefix is configured.
 
 ### Public Routes
 
@@ -833,6 +855,7 @@ Rate-limited at `throttle:5,1` (5 requests per minute):
 | Method | URI | Controller@Method | Request |
 |:-------|:----|:------------------|:--------|
 | GET | `settings` | `SettingsController@index` | (none — public) |
+| GET | `timezones` | `TimezoneController@index` | (none — public) — requires `Features::timezones()` |
 | POST | `auth/register` | `AuthController@register` | `RegisterRequest` |
 | POST | `auth/login` | `AuthController@login` | `LoginRequest` |
 | POST | `auth/social/{provider}` | `AuthController@socialLogin` | `SocialLoginRequest` |
@@ -1066,7 +1089,7 @@ All require `auth:sanctum` middleware.
 
 ## Action Contracts
 
-All 18 contracts live in `FlutterSdk\MagicStarter\Contracts`. The service provider binds each to its default stub implementation, which you replace with your own logic after publishing.
+All 18 contracts live in `FlutterSdk\MagicStarter\Contracts`. The service provider binds each to its default implementation. Override any contract by binding your own class in `AppServiceProvider` after publishing the stubs.
 
 | Contract | Method Signature | Published Stub |
 |:---------|:-----------------|:---------------|
@@ -1091,7 +1114,7 @@ All 18 contracts live in `FlutterSdk\MagicStarter\Contracts`. The service provid
 
 ## Models
 
-The package ships with 6 Eloquent models. `Team`, `TeamInvitation`, and `TeamUser` are abstract — you extend them via the published model stubs in `app/Models/`.
+The package ships with 6 Eloquent models. `Team`, `TeamInvitation`, and `TeamUser` are abstract — extend them by publishing model stubs via `vendor:publish --tag=magic-starter-models`.
 
 **`Team`** — `FlutterSdk\MagicStarter\Models\Team` (abstract)
 
@@ -1175,14 +1198,14 @@ The package ships with 6 Eloquent models. `Team`, `TeamInvitation`, and `TeamUse
 **`HasGuestSupport`** — `FlutterSdk\MagicStarter\Traits\HasGuestSupport`
 
 | Method | Returns | Description |
-|:-------|:----|:--------|:------------|
+|:-------|:--------|:------------|
 | `isGuest()` | bool | Whether the user is a guest (has `is_guest` flag set to `true`) |
 | `isRegistered()` | bool | Whether the user has credentials (email+password or phone+password) |
 
 **`MustVerifyEmail`** — `FlutterSdk\MagicStarter\Traits\MustVerifyEmail`
 
 | Method | Returns | Description |
-|:-------|:----|:--------|:------------|
+|:-------|:--------|:------------|
 | `hasVerifiedEmail()` | bool | Whether email_verified_at is set |
 | `markEmailAsVerified()` | bool | Sets email_verified_at to now(), fires Verified event, returns true |
 | `sendEmailVerificationNotification()` | void | Dispatches VerifyEmailNotification |
@@ -1190,23 +1213,16 @@ The package ships with 6 Eloquent models. `Team`, `TeamInvitation`, and `TeamUse
 
 ## Form Requests
 
-| Method | Returns | Description |
-|:-------|:--------|:------------|
-| `isGuest()` | bool | Whether the user is a guest (has `is_guest` flag set to `true`) |
-| `isRegistered()` | bool | Whether the user has credentials (email+password or phone+password) |
-
-## Form Requests
-
 The package includes 23 form requests. All validation rules are array-style (never pipe-delimited).
 
 | Request | Validation Rules |
 |:--------|:-----------------|
-| `RegisterRequest` | `name`: required, string, max:255. `email`: required, email, max:255, unique:users. `password`: required, min:8, letters, numbers, mixedCase, confirmed. `locale`: nullable, in:supported_locales. `timezone`: nullable, in:supported_timezones. `subscribe_newsletter`: nullable, boolean. |
+| `RegisterRequest` | `name`: required, string, max:255. `email`: required, email, max:255, unique:users. `password`: required, min:8, letters, numbers, mixedCase, confirmed. `locale`: nullable, in:supported_locales. `timezone`: nullable, valid IANA timezone. `subscribe_newsletter`: nullable, boolean. |
 | `LoginRequest` | `email`: required, string, email. `password`: required, string. |
 | `SocialLoginRequest` | `access_token`: required_without:authorization_code, string. `authorization_code`: required_without:access_token, string. |
 | `ForgotPasswordRequest` | `email`: required, email. |
 | `ResetPasswordRequest` | `token`: required. `email`: required, email. `password`: required, confirmed, min:8, letters, numbers, mixedCase. |
-| `UpdateProfileRequest` | `name`: required, string, min:2, max:255. `phone`: nullable, string, max:20, E164 format. `timezone`: nullable, in:supported_timezones. `language`: nullable, in:supported_locales. |
+| `UpdateProfileRequest` | `name`: required, string, min:2, max:255. `phone`: nullable, string, max:20, E164 format. `timezone`: nullable, valid IANA timezone. `language`: nullable, in:supported_locales. |
 | `UpdatePasswordRequest` | `current_password`: required, string (verified against current hash). `password`: required, min:8, letters, numbers, mixedCase, confirmed. |
 | `UpdateProfilePhotoRequest` | `photo`: required, image, max:1024 (KB). |
 | `DeleteAccountRequest` | `password`: required, string (must match current password). |
@@ -1227,7 +1243,7 @@ The package includes 23 form requests. All validation rules are array-style (nev
 
 ## Publishable Migrations
 
-17 migration stubs are published with timestamps applied at install time. They are never auto-loaded by the package — you control when they run.
+18 migration stubs are published with timestamps applied at install time. They are never auto-loaded by the package — you control when they run.
 
 All `create_*` migrations use `Schema::hasTable()` guards — they safely skip table creation if the table already exists. All column types (primary keys, foreign keys) automatically respect the `use_uuids` config setting via `MigrationHelper`.
 
@@ -1240,7 +1256,7 @@ The package uses PHPUnit with Orchestra Testbench.
 
 ```shell
 composer install
-composer test        # Run PHPUnit (421 tests, 1089 assertions)
+composer test        # Run PHPUnit (435 tests, 1175 assertions)
 composer lint        # Check code style with Pint
 composer lint:fix    # Auto-fix code style violations
 composer analyse     # Run PHPStan
@@ -1253,7 +1269,7 @@ Test coverage includes:
 - Service provider boot and config merge (`ServiceProviderTest`)
 - Conditional route registration (`RouteRegistrationTest`)
 - Install command — interactive and non-interactive modes, UUID/integer key strategy (`InstallCommandTest`)
-- All 16 controllers with full HTTP tests, including 403, 404, and 422 negative cases
+- All 20 controllers with full HTTP tests, including 403, 404, and 422 negative cases
 - Model relationships, casts, and scopes (`ModelsTest`)
 - User traits — `HasTeamsTest`, `HasProfilePhotoTest`, `HasNotificationsTest`
 - All 23 form request validation rules

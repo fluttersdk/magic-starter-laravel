@@ -470,26 +470,6 @@ class InstallCommand extends Command
     }
 
     /**
-     * Copy a file from source to destination, respecting the --force flag.
-     *
-     * @param  string  $source  Absolute path to the source file.
-     * @param  string  $destination  Absolute path to the destination.
-     * @return bool True if the file was published, false if skipped.
-     */
-    private function publishFile(string $source, string $destination): bool
-    {
-        if (file_exists($destination) && ! (bool) $this->option('force')) {
-            return false;
-        }
-
-        $filesystem = new Filesystem;
-        $filesystem->ensureDirectoryExists(dirname($destination));
-        $filesystem->copy($source, $destination);
-
-        return true;
-    }
-
-    /**
      * Copy a migration file with a timestamp prefix, checking for existing copies.
      *
      * @param  string  $filename  The migration filename (without timestamp prefix).

@@ -102,9 +102,9 @@ class TimezoneController
     /**
      * Filter timezones by case-insensitive partial match on identifier or offset.
      *
-     * @param  Collection<int, array{identifier: string, offset: string}>  $timezones  The full timezone list.
+     * @param  Collection<int, array{identifier: string, label: string, offset: string, offset_minutes: int, region: string}>  $timezones  The full timezone list.
      * @param  string  $search  The search query string.
-     * @return Collection<int, array>
+     * @return Collection<int, array{identifier: string, label: string, offset: string, offset_minutes: int, region: string}>
      */
     private function filterBySearch(Collection $timezones, string $search): Collection
     {
