@@ -413,6 +413,48 @@ final class InstallCommandTest extends TestCase
         );
     }
 
+    public function test_email_verification_appears_in_feature_options(): void
+    {
+        // FEATURE_LABELS contains email-verification — validate via --all which derives from it.
+        $this->artisan('magic-starter:install', ['--all' => true])->assertExitCode(0);
+
+        $config = File::get(config_path('magic-starter.php'));
+
+        $this->assertStringContainsString(
+            '\\FlutterSdk\\MagicStarter\\Features::emailVerification(),',
+            $config,
+        );
+    }
+
+    public function test_email_verification_can_be_selected_as_feature(): void
+    {
+        $this->artisan('magic-starter:install', [
+            '--features' => ['email-verification'],
+        ])->assertExitCode(0);
+
+        $config = File::get(config_path('magic-starter.php'));
+
+        $this->assertStringContainsString(
+            '\\FlutterSdk\\MagicStarter\\Features::emailVerification(),',
+            $config,
+        );
+    }
+
+    public function test_email_verification_commented_when_not_selected(): void
+    {
+        $this->artisan('magic-starter:install', [
+            '--features' => ['sessions'],
+        ])->assertExitCode(0);
+
+        $config = File::get(config_path('magic-starter.php'));
+
+        $this->assertStringContainsString(
+            '// \\FlutterSdk\\MagicStarter\\Features::emailVerification(),',
+            $config,
+        );
+    }
+
+
     // Helpers
     // -------------------------------------------------------------------------
 

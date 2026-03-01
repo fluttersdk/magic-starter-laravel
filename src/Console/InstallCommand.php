@@ -28,7 +28,7 @@ class InstallCommand extends Command
      */
     protected $signature = 'magic-starter:install
         {--all : Install all features without prompting}
-        {--features=* : Features to install (teams, profile-photos, sessions, social-login, newsletter-subscription, extended-profile, notifications)}
+        {--features=* : Features to install (teams, profile-photos, sessions, social-login, newsletter-subscription, extended-profile, notifications, email-verification)}
         {--uuid : Use UUID primary keys}
         {--no-uuid : Use auto-incrementing integer primary keys}
         {--route-prefix= : Route prefix for package routes}
@@ -54,6 +54,7 @@ class InstallCommand extends Command
         'notifications' => 'Notification preferences',
         'guest-auth' => 'Guest authentication (anonymous users)',
         'phone-otp' => 'Phone OTP verification',
+        'email-verification' => 'Email verification (send/verify email address)',
     ];
 
     /** @var array<string, string> Feature key → Features class method name. */
@@ -68,6 +69,7 @@ class InstallCommand extends Command
         'notifications' => 'notifications',
         'guest-auth' => 'guestAuth',
         'phone-otp' => 'phoneOtp',
+        'email-verification' => 'emailVerification',
     ];
 
     /** @var list<string> Migrations always published regardless of feature selection. */

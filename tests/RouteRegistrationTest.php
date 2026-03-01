@@ -172,6 +172,50 @@ final class RouteRegistrationTest extends TestCase
         $this->assertRouteMissing('POST', '/auth/otp/verify');
     }
 
+    public function test_email_verification_routes_registered_when_feature_enabled(): void
+    {
+        $this->bootRoutesWithConfig([
+            'email-verification',
+        ]);
+
+        $this->assertRouteExists('GET', '/email/verify/some-id/some-hash');
+        $this->assertRouteExists('POST', '/email/verification-notification');
+    }
+
+    public function test_email_verification_routes_not_registered_when_feature_disabled(): void
+    {
+        $this->bootRoutesWithConfig([]);
+
+        $this->assertRouteMissing('GET', '/email/verify/some-id/some-hash');
+        $this->assertRouteMissing('POST', '/email/verification-notification');
+    }
+
+    public function test_settings_route_always_registered(): void
+    {
+        $this->bootRoutesWithConfig([]);
+
+        $this->assertRouteExists('GET', '/settings');
+    }
+
+    public function test_newsletter_routes_registered_when_feature_enabled(): void
+    {
+        $this->bootRoutesWithConfig([
+            'newsletter-subscription',
+        ]);
+
+        $this->assertRouteExists('GET', '/user/newsletter');
+        $this->assertRouteExists('PUT', '/user/newsletter');
+    }
+
+    public function test_newsletter_routes_not_registered_when_feature_disabled(): void
+    {
+        $this->bootRoutesWithConfig([]);
+
+        $this->assertRouteMissing('GET', '/user/newsletter');
+        $this->assertRouteMissing('PUT', '/user/newsletter');
+    }
+
+
     private function bootRoutesWithConfig(array $features, string $prefix = ''): void
     {
         config([
