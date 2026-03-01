@@ -26,6 +26,7 @@ use FlutterSdk\MagicStarter\Http\Controllers\TwoFactorAuthenticationController;
 use FlutterSdk\MagicStarter\Http\Controllers\TwoFactorChallengeController;
 use FlutterSdk\MagicStarter\Http\Controllers\TwoFactorRecoveryCodeController;
 use FlutterSdk\MagicStarter\Http\Controllers\EmailVerificationController;
+use FlutterSdk\MagicStarter\Http\Controllers\SettingsController;
 use Illuminate\Support\Facades\Route;
 
 Route::prefix((string) config('magic-starter.route_prefix', ''))
@@ -51,6 +52,8 @@ Route::prefix((string) config('magic-starter.route_prefix', ''))
                 Route::post('otp/verify', [OtpController::class, 'verify']);
             }
         });
+
+        Route::middleware('throttle:5,1')->get('settings', [SettingsController::class, 'index']);
 
         // To require email verification on protected routes, add the 'verified'
         // middleware: Route::middleware(['auth:sanctum', 'verified'])->group(...)
