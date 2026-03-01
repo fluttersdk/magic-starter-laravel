@@ -6,6 +6,7 @@ use FlutterSdk\MagicStarter\Models\Team;
 use FlutterSdk\MagicStarter\Models\TeamInvitation;
 use FlutterSdk\MagicStarter\Models\TeamUser;
 use RuntimeException;
+use Throwable;
 
 /**
  * Main entry point for Magic Starter configuration and model resolution.
@@ -147,10 +148,18 @@ class MagicStarter
         }
 
         // 2. Check if the App\Models concrete class exists.
+        //    Wrapped in try/catch because Composer's classmap may reference a
+        //    file that no longer exists (e.g. after stubs were deleted without
+        //    running `composer dump-autoload`), which causes class_exists() to
+        //    trigger a fatal include error.
         $concrete = static::$abstractModelMap[$model];
 
-        if (class_exists($concrete)) {
-            return $concrete;
+        try {
+            if (class_exists($concrete)) {
+                return $concrete;
+            }
+        } catch (Throwable) {
+            // Stale classmap or broken autoload — fall through to abstract.
         }
 
         // 3. No concrete found — return original (will fail at instantiation with a clear error).

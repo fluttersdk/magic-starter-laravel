@@ -3,6 +3,7 @@
 namespace FlutterSdk\MagicStarter\Actions;
 
 use FlutterSdk\MagicStarter\Contracts\CreatesGuestUsers;
+use FlutterSdk\MagicStarter\Enums\Role;
 use FlutterSdk\MagicStarter\Features;
 use FlutterSdk\MagicStarter\MagicStarter;
 use FlutterSdk\MagicStarter\Support\RequestLocaleDetector;
@@ -27,25 +28,28 @@ class CreateGuestUser implements CreatesGuestUsers
             'device_id' => ['required', 'string', 'max:255'],
         ])->validate();
 
-        // 2. Prepare default attributes for a guest user.
+        // 2. Detect locale early — needed for both the guest name and team name.
+        $defaults = config('magic-starter.defaults', []);
+        $request = request();
+        $locale = $request ? RequestLocaleDetector::detectLocale($request) : null;
+        $locale = $locale ?? ($defaults['locale'] ?? 'en');
+
+        // 3. Prepare default attributes for a guest user.
+        $guestName = trans('magic-starter::teams.guest_name', [], $locale);
+
         $attributes = [
             'is_guest' => true,
-            'name' => 'Guest',
+            'name' => $guestName,
             'email' => null,
             'password' => null,
         ];
 
-        // 3. Handle extended profile features (locale) if enabled.
+        // 4. Handle extended profile features (locale) if enabled.
         if (Features::hasExtendedProfileFeatures()) {
-            $defaults = config('magic-starter.defaults', []);
-            $request = request();
-
-            $detectedLocale = $request ? RequestLocaleDetector::detectLocale($request) : null;
-
-            $attributes['locale'] = $detectedLocale ?? ($defaults['locale'] ?? 'en');
+            $attributes['locale'] = $locale;
         }
 
-        // 4. Handle timezone if either timezones or extended-profile feature is enabled.
+        // 5. Handle timezone if either timezones or extended-profile feature is enabled.
         if (Features::hasTimezoneOrExtendedProfileFeatures()) {
             $defaults ??= config('magic-starter.defaults', []);
             $request ??= request();
@@ -55,12 +59,54 @@ class CreateGuestUser implements CreatesGuestUsers
             $attributes['timezone'] = $detectedTimezone ?? ($defaults['timezone'] ?? 'UTC');
         }
 
-        // 5. Find existing guest or create a new one using firstOrCreate.
+        // 6. Find existing guest or create a new one using firstOrCreate.
         $userModel = MagicStarter::userModel();
 
-        return $userModel::query()->firstOrCreate(
+        $user = $userModel::query()->firstOrCreate(
             ['device_id' => $validated['device_id']],
             $attributes,
         );
+
+        // 7. Create personal team for newly created guests when teams feature is enabled.
+        if ($user->wasRecentlyCreated && Features::hasTeamFeatures()) {
+            $this->createPersonalTeam($user, $locale);
+        }
+
+        return $user;
+    }
+
+    /**
+     * Create a personal team for the guest user.
+     *
+     * Mirrors CreatePersonalTeamListener logic but uses the guest's locale
+     * for the translated team name.
+     *
+     * @param  Authenticatable  $user  The newly created guest user.
+     * @param  string  $locale  The locale to use for the team name.
+     */
+    private function createPersonalTeam(Authenticatable $user, string $locale): void
+    {
+        $teamModel = MagicStarter::teamModel();
+
+        // 1. Determine the display name for the team.
+        $firstName = explode(' ', $user->name, 2)[0];
+
+        // 2. Create the personal team with a localized name.
+        $team = $teamModel::query()->create([
+            'user_id' => $user->id,
+            'name' => trans(
+                'magic-starter::teams.personal_team_name',
+                ['name' => $firstName],
+                $locale,
+            ),
+            'personal_team' => true,
+        ]);
+
+        // 3. Attach user as team owner.
+        $team->users()->attach($user->id, ['role' => Role::OWNER->value]);
+
+        // 4. Clear cached relations and set as current team.
+        $user->unsetRelation('ownedTeams')->unsetRelation('teams');
+        $user->update(['current_team_id' => $team->id]);
     }
 }

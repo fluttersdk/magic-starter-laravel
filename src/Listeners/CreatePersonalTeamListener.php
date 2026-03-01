@@ -33,10 +33,17 @@ class CreatePersonalTeamListener
             return;
         }
 
-        // 2. Create the personal team.
+        // 2. Create the personal team with a localized name.
+        $firstName = explode(' ', $user->name, 2)[0];
+        $locale = $user->locale ?? app()->getLocale();
+
         $team = $teamModel::query()->create([
             'user_id' => $user->id,
-            'name' => explode(' ', $user->name, 2)[0] . "'s Team",
+            'name' => trans(
+                'magic-starter::teams.personal_team_name',
+                ['name' => $firstName],
+                $locale,
+            ),
             'personal_team' => true,
         ]);
 

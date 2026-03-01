@@ -54,6 +54,7 @@ class AuthControllerTest extends TestCase
             ],
             'magic-starter.features' => [
                 'extended-profile',
+                'teams',
             ],
         ]);
 

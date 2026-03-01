@@ -44,6 +44,7 @@ class GuestAuthControllerTest extends TestCase
             $table->char('phone_country', 2)->nullable();
             $table->string('locale')->default('en');
             $table->string('timezone')->default('UTC');
+            $table->string('current_team_id')->nullable();
             $table->timestamps();
         });
 
@@ -181,5 +182,74 @@ class GuestAuthControllerTest extends TestCase
 
         $this->assertNull($user->email, 'Guest user email must be null.');
         $this->assertNull($user->password, 'Guest user password must be null.');
+    }
+
+    /**
+     * Test 6: Guest login creates a personal team when teams feature is enabled.
+     */
+    public function test_guest_login_creates_personal_team_when_teams_enabled(): void
+    {
+        config(['magic-starter.features' => ['guest-auth', 'teams']]);
+
+        $response = $this->postJson('/auth/guest', [
+            'device_id' => 'team-device-001',
+        ]);
+
+        $response->assertStatus(201);
+
+        $user = ConcreteUser::query()
+            ->where('device_id', 'team-device-001')
+            ->firstOrFail();
+
+        // Personal team was created.
+        $this->assertDatabaseHas('teams', [
+            'user_id' => $user->id,
+            'personal_team' => true,
+        ]);
+
+        // Owner pivot was created.
+        $this->assertDatabaseHas('team_user', [
+            'user_id' => $user->id,
+            'role' => 'owner',
+        ]);
+
+        // current_team_id was set.
+        $user->refresh();
+        $this->assertNotNull($user->current_team_id);
+    }
+
+    /**
+     * Test 7: No team is created for guests when teams feature is disabled.
+     */
+    public function test_guest_login_does_not_create_team_when_teams_disabled(): void
+    {
+        config(['magic-starter.features' => ['guest-auth']]);
+
+        $this->postJson('/auth/guest', [
+            'device_id' => 'no-team-device-002',
+        ])->assertStatus(201);
+
+        $this->assertDatabaseCount('teams', 0);
+    }
+
+    /**
+     * Test 8: Returning guest (same device_id) does not create a duplicate team.
+     */
+    public function test_returning_guest_does_not_create_duplicate_team(): void
+    {
+        config(['magic-starter.features' => ['guest-auth', 'teams']]);
+
+        // First login — creates user + team.
+        $this->postJson('/auth/guest', [
+            'device_id' => 'returning-device-003',
+        ])->assertStatus(201);
+
+        // Second login — same device_id, should NOT create another team.
+        $this->postJson('/auth/guest', [
+            'device_id' => 'returning-device-003',
+        ])->assertOk();
+
+        $this->assertDatabaseCount('teams', 1);
+        $this->assertDatabaseCount('team_user', 1);
     }
 }

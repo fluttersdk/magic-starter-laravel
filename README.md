@@ -125,6 +125,7 @@ The install command publishes configuration and migrations. Action stubs and mod
 |:------|:------------|:------------|
 | Config | `config/magic-starter.php` | `magic-starter-config` |
 | Migrations | `database/migrations/` | `magic-starter-migrations` |
+| Translations | `lang/vendor/magic-starter/` | `magic-starter-lang` |
 
 To customize the default action or model implementations, publish the stubs manually:
 
@@ -379,6 +380,11 @@ magic-starter-laravel/
 │   └── magic-starter.php                  # Package configuration
 ├── database/
 │   └── migrations/                        # 18 publishable migration stubs
+├── lang/
+│   ├── en/
+│   │   └── teams.php                      # English team translations
+│   └── tr/
+│       └── teams.php                      # Turkish team translations
 ├── src/
 │   ├── Actions/                          # 18 action classes (11 core + 4 two-factor + 3 auth)
 │   ├── Console/
@@ -422,7 +428,8 @@ magic-starter-laravel/
 - Registers event listeners (`CreatePersonalTeamListener`, `GateNotificationChannels`).
 - Registers the `TwoFactorAuthenticationProvider` for TOTP code generation and verification.
 - Loads routes conditionally based on enabled features, unless `ignoreRoutes()` has been called.
-- Registers the four publishing groups and the `magic-starter:install` Artisan command.
+- Loads package translations (`lang/`) under the `magic-starter` namespace, publishable via the `magic-starter-lang` tag.
+- Registers the five publishing groups (`config`, `migrations`, `stubs`, `models`, `lang`) and the `magic-starter:install` Artisan command.
 
 ### MagicStarter Class
 
@@ -474,7 +481,7 @@ The service provider registers two event listeners automatically.
 
 **`CreatePersonalTeamListener`** — listens on `Illuminate\Auth\Events\Registered`
 
-Active when the `teams` feature is enabled. After a user registers, this listener creates a personal team, attaches the user as owner, and sets `current_team_id` on the user record.
+Active when the `teams` feature is enabled. After a user registers, this listener creates a personal team with a **localized name** based on the user's `locale` attribute, attaches the user as owner, and sets `current_team_id` on the user record. Team names are translated using the `magic-starter::teams.personal_team_name` translation key (e.g., "John's Team" in English, "John Takımı" in Turkish).
 
 **`GateNotificationChannels`** — listens on `Illuminate\Notifications\Events\NotificationSending`
 
@@ -527,7 +534,7 @@ Provides registration, login, logout, current user retrieval, and team switching
 - **Register**: Creates the user via the `CreatesUsers` contract, fires the `Registered` event (which triggers personal team creation if the `teams` feature is active), and returns a Sanctum token.
 - **Login**: Validates credentials, issues a Sanctum token. The token stores `ip_address` and `user_agent` when the `sessions` feature is enabled.
 - **Logout**: Revokes the current personal access token.
-- **Current User**: Returns the authenticated user with current team and all teams.
+- **Current User**: Returns the authenticated user. When `teams` feature is enabled, includes `current_team` and `all_teams` fields; these are omitted when teams is disabled.
 - **Switch Team**: Updates `current_team_id` on the user record. Requires `teams` feature.
 
 ### Social Login
@@ -830,6 +837,7 @@ Allows unauthenticated users to obtain a guest token by providing only a `device
 - **Route**: `POST auth/guest` (public, rate-limited)
 - **Request**: `GuestLoginRequest` — requires `device_id` (string, max:255).
 - **Behaviour**: Looks up an existing guest user by `device_id`. If none exists, creates a new one with `is_guest = true` and returns HTTP 201. Subsequent logins for the same `device_id` return HTTP 200.
+- **Personal Team**: When both `guest-auth` and `teams` features are enabled, a localized personal team is automatically created for new guest users. The team name uses the `magic-starter::teams.personal_team_name` translation key with the guest's translated name (e.g., "Guest's Team" in English, "Misafir Takımı" in Turkish). Returning guests (same `device_id`) do not receive duplicate teams.
 - **Contract**: Delegates to the `CreatesGuestUsers` contract.
 - **Trait**: Add `HasGuestSupport` to your User model to access `isGuest()` and `isRegistered()` helpers.
 
@@ -999,6 +1007,8 @@ All require `auth:sanctum` middleware.
     "updated_at": "2026-01-01T00:00:00.000000Z"
 }
 ```
+> [!NOTE]
+> The `current_team` and `all_teams` fields are only included when `Features::hasTeamFeatures()` is enabled. When the `teams` feature is disabled, these fields are omitted from the response entirely.
 
 **TeamResource:**
 
@@ -1256,7 +1266,7 @@ The package uses PHPUnit with Orchestra Testbench.
 
 ```shell
 composer install
-composer test        # Run PHPUnit (435 tests, 1175 assertions)
+composer test        # Run PHPUnit (445 tests, 1193 assertions)
 composer lint        # Check code style with Pint
 composer lint:fix    # Auto-fix code style violations
 composer analyse     # Run PHPStan
@@ -1275,3 +1285,6 @@ Test coverage includes:
 - All 23 form request validation rules
 - Action stub contracts (`ActionStubsTest`)
 - Two-factor authentication — trait, actions, controllers, challenge flow (`TwoFactorAuthenticatableTest`, `TwoFactorActionsTest`, `TwoFactorAuthenticationControllerTest`, `TwoFactorChallengeControllerTest`, `TwoFactorRecoveryCodeControllerTest`, `AuthControllerTwoFactorLoginTest`)
+- Localized personal team creation — `CreatePersonalTeamListenerTest` (English/Turkish team names, idempotency, owner role)
+- Guest personal team creation — `GuestAuthControllerTest` (team creation on first login, skip on returning guest, disabled when teams feature off)
+- UserResource team field gating — `UserResourceTest` (fields present/absent based on team feature toggle)

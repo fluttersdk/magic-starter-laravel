@@ -2,6 +2,7 @@
 
 namespace FlutterSdk\MagicStarter\Http\Resources;
 
+use FlutterSdk\MagicStarter\Features;
 use Illuminate\Http\Request;
 use Illuminate\Http\Resources\Json\JsonResource;
 
@@ -29,10 +30,16 @@ class UserResource extends JsonResource
             'two_factor_enabled' => method_exists($this->resource, 'hasEnabledTwoFactorAuthentication') &&
                 $this->resource->hasEnabledTwoFactorAuthentication(),
             'current_team' => $this->when(
-                $this->getCurrentTeamOrPersonal() !== null,
+                Features::hasTeamFeatures()
+                    && method_exists($this->resource, 'getCurrentTeamOrPersonal')
+                    && $this->getCurrentTeamOrPersonal() !== null,
                 fn () => new TeamResource($this->getCurrentTeamOrPersonal()),
             ),
-            'all_teams' => TeamResource::collection($this->allTeams()),
+            'all_teams' => $this->when(
+                Features::hasTeamFeatures()
+                    && method_exists($this->resource, 'allTeams'),
+                fn () => TeamResource::collection($this->allTeams()),
+            ),
             'created_at' => $this->created_at,
             'updated_at' => $this->updated_at,
         ];

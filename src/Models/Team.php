@@ -63,7 +63,7 @@ abstract class Team extends Model
      */
     public function users(): BelongsToMany
     {
-        return $this->belongsToMany(MagicStarter::userModel(), 'team_user')
+        return $this->belongsToMany(MagicStarter::userModel(), 'team_user', 'team_id', 'user_id')
             ->using(MagicStarter::membershipModel())
             ->withPivot('role')
             ->withTimestamps();

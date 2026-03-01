@@ -97,6 +97,9 @@ class MagicStarterServiceProvider extends ServiceProvider
             );
         }
 
+        // 3.7. Register package translations.
+        $this->loadTranslationsFrom(__DIR__ . '/../lang', 'magic-starter');
+
         // 4. Load package routes unless explicitly ignored.
         if (! MagicStarter::shouldIgnoreRoutes()) {
             $this->loadRoutesFrom(__DIR__ . '/routes/api.php');
@@ -124,6 +127,9 @@ class MagicStarterServiceProvider extends ServiceProvider
                 __DIR__ . '/../stubs/models/TeamUser.php' => app_path('Models/TeamUser.php'),
                 __DIR__ . '/../stubs/models/TeamInvitation.php' => app_path('Models/TeamInvitation.php'),
             ], 'magic-starter-models');
+            $this->publishes([
+                __DIR__ . '/../lang' => $this->app->langPath('vendor/magic-starter'),
+            ], 'magic-starter-lang');
 
         }
     }
