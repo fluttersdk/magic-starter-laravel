@@ -33,7 +33,7 @@ final class InstallCommandTest extends TestCase
     // Backward Compatibility Tests (existing behavior)
     // -------------------------------------------------------------------------
 
-    public function test_install_command_publishes_config_migrations_and_actions(): void
+    public function test_install_command_publishes_config_and_migrations(): void
     {
         $this->artisan('magic-starter:install')->assertExitCode(0);
 
@@ -45,47 +45,6 @@ final class InstallCommandTest extends TestCase
                 sprintf('Expected migration [%s] to be published.', $migrationFile),
             );
         }
-
-        $expectedActionFiles = [
-            'AddTeamMember.php',
-            'CreateTeam.php',
-            'CreateUser.php',
-            'DeleteTeam.php',
-            'DeleteUser.php',
-            'InviteTeamMember.php',
-            'RemoveTeamMember.php',
-            'UpdateTeam.php',
-            'UpdateTeamMemberRole.php',
-            'UpdateUserPassword.php',
-            'UpdateUserProfile.php',
-        ];
-
-        foreach ($expectedActionFiles as $file) {
-            $this->assertFileExists(app_path('Actions/MagicStarter/' . $file));
-        }
-    }
-
-    public function test_install_command_does_not_overwrite_actions_without_force(): void
-    {
-        File::ensureDirectoryExists(app_path('Actions/MagicStarter'));
-        File::put(app_path('Actions/MagicStarter/CreateUser.php'), 'custom-content');
-
-        $this->artisan('magic-starter:install')->assertExitCode(0);
-
-        $this->assertSame('custom-content', File::get(app_path('Actions/MagicStarter/CreateUser.php')));
-    }
-
-    public function test_install_command_overwrites_actions_with_force(): void
-    {
-        File::ensureDirectoryExists(app_path('Actions/MagicStarter'));
-        File::put(app_path('Actions/MagicStarter/CreateUser.php'), 'custom-content');
-
-        $this->artisan('magic-starter:install', ['--force' => true])->assertExitCode(0);
-
-        $this->assertStringContainsString(
-            'CreateUser action not implemented',
-            File::get(app_path('Actions/MagicStarter/CreateUser.php')),
-        );
     }
 
     public function test_install_command_does_not_run_migrations_or_modify_user_model(): void
@@ -111,7 +70,7 @@ final class InstallCommandTest extends TestCase
     // Feature Selection Tests
     // -------------------------------------------------------------------------
 
-    public function test_teams_feature_publishes_team_migrations_actions_and_models(): void
+    public function test_teams_feature_publishes_team_migrations(): void
     {
         $this->artisan('magic-starter:install', [
             '--features' => ['teams'],
@@ -132,32 +91,9 @@ final class InstallCommandTest extends TestCase
                 sprintf('Expected team migration [%s] to be published.', $migration),
             );
         }
-
-        // Team actions should be published.
-        $teamActions = [
-            'AddTeamMember.php',
-            'CreateTeam.php',
-            'DeleteTeam.php',
-            'InviteTeamMember.php',
-            'RemoveTeamMember.php',
-            'UpdateTeam.php',
-            'UpdateTeamMemberRole.php',
-        ];
-
-        foreach ($teamActions as $action) {
-            $this->assertFileExists(app_path('Actions/MagicStarter/' . $action));
-        }
-
-        // Team models should be published.
-        $this->assertFileExists(app_path('Models/Team.php'));
-        $this->assertFileExists(app_path('Models/TeamUser.php'));
-        $this->assertFileExists(app_path('Models/TeamInvitation.php'));
-
-        // TeamPolicy should be published to Policies directory.
-        $this->assertFileExists(app_path('Policies/TeamPolicy.php'));
     }
 
-    public function test_without_teams_skips_team_assets(): void
+    public function test_without_teams_skips_team_migrations(): void
     {
         $this->artisan('magic-starter:install', [
             '--features' => ['sessions'],
@@ -177,22 +113,6 @@ final class InstallCommandTest extends TestCase
         $this->assertEmpty(
             glob(database_path('migrations/*_create_teams_table.php')) ?: [],
         );
-
-        // Team actions should NOT be published.
-        $this->assertFileDoesNotExist(app_path('Actions/MagicStarter/CreateTeam.php'));
-        $this->assertFileDoesNotExist(app_path('Actions/MagicStarter/AddTeamMember.php'));
-
-        // Team models should NOT be published.
-        $this->assertFileDoesNotExist(app_path('Models/Team.php'));
-        $this->assertFileDoesNotExist(app_path('Models/TeamUser.php'));
-        $this->assertFileDoesNotExist(app_path('Models/TeamInvitation.php'));
-
-        // TeamPolicy should NOT be published.
-        $this->assertFileDoesNotExist(app_path('Policies/TeamPolicy.php'));
-
-        // Core actions should still be published.
-        $this->assertFileExists(app_path('Actions/MagicStarter/CreateUser.php'));
-        $this->assertFileExists(app_path('Actions/MagicStarter/UpdateUserProfile.php'));
     }
 
     public function test_config_has_selected_features_uncommented(): void
@@ -274,7 +194,7 @@ final class InstallCommandTest extends TestCase
         $this->assertStringContainsString("'http://localhost:3000'", $config);
     }
 
-    public function test_no_features_selected_publishes_only_core_assets(): void
+    public function test_no_features_selected_publishes_only_core_migrations(): void
     {
         $this->artisan('magic-starter:install', [
             '--features' => ['social-login'],
@@ -288,59 +208,10 @@ final class InstallCommandTest extends TestCase
             glob(database_path('migrations/*_create_personal_access_tokens_table.php')) ?: [],
         );
 
-        // Core actions should be published.
-        $this->assertFileExists(app_path('Actions/MagicStarter/CreateUser.php'));
-        $this->assertFileExists(app_path('Actions/MagicStarter/DeleteUser.php'));
-        $this->assertFileExists(app_path('Actions/MagicStarter/UpdateUserProfile.php'));
-        $this->assertFileExists(app_path('Actions/MagicStarter/UpdateUserPassword.php'));
-
-        // Feature-specific assets should NOT be published (social-login has no migrations/stubs).
+        // Feature-specific migrations should NOT be published (social-login has none).
         $this->assertEmpty(
             glob(database_path('migrations/*_create_teams_table.php')) ?: [],
         );
-        $this->assertFileDoesNotExist(app_path('Actions/MagicStarter/CreateTeam.php'));
-        $this->assertFileDoesNotExist(app_path('Models/Team.php'));
-    }
-
-    public function test_models_published_to_correct_directory(): void
-    {
-        $this->artisan('magic-starter:install', [
-            '--features' => ['teams'],
-        ])->assertExitCode(0);
-
-        $teamModel = File::get(app_path('Models/Team.php'));
-
-        $this->assertStringContainsString('namespace App\Models;', $teamModel);
-        $this->assertStringContainsString('extends MagicStarterTeam', $teamModel);
-    }
-
-    public function test_force_flag_overwrites_models(): void
-    {
-        File::ensureDirectoryExists(app_path('Models'));
-        File::put(app_path('Models/Team.php'), 'custom-team-content');
-
-        $this->artisan('magic-starter:install', [
-            '--features' => ['teams'],
-            '--force' => true,
-        ])->assertExitCode(0);
-
-        $this->assertStringContainsString(
-            'extends MagicStarterTeam',
-            File::get(app_path('Models/Team.php')),
-        );
-    }
-
-    public function test_policy_published_to_policies_directory(): void
-    {
-        $this->artisan('magic-starter:install', [
-            '--features' => ['teams'],
-        ])->assertExitCode(0);
-
-        $this->assertFileExists(app_path('Policies/TeamPolicy.php'));
-
-        $policy = File::get(app_path('Policies/TeamPolicy.php'));
-
-        $this->assertStringContainsString('class TeamPolicy', $policy);
     }
 
     // -------------------------------------------------------------------------
@@ -460,13 +331,6 @@ final class InstallCommandTest extends TestCase
     private function cleanupPublishedArtifacts(): void
     {
         File::delete(config_path('magic-starter.php'));
-        File::deleteDirectory(app_path('Actions/MagicStarter'));
-        File::deleteDirectory(app_path('Policies'));
-
-        // Clean published model stubs.
-        File::delete(app_path('Models/Team.php'));
-        File::delete(app_path('Models/TeamUser.php'));
-        File::delete(app_path('Models/TeamInvitation.php'));
 
         foreach ($this->packageMigrationFiles as $migrationFile) {
             // Match both timestamped (2026_02_27_000001_create_users_table.php)

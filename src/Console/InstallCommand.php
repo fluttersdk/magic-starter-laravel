@@ -14,9 +14,9 @@ use function Laravel\Prompts\text;
 /**
  * Interactive Artisan command to scaffold Magic Starter into a Laravel application.
  *
- * Publishes configuration, migrations, action stubs, model stubs, and policies
- * based on the features selected by the user. Supports both interactive prompts
- * and non-interactive CLI options for CI/CD pipelines.
+ * Publishes configuration and migrations based on the features selected by
+ * the user. Supports both interactive prompts and non-interactive CLI options
+ * for CI/CD pipelines.
  */
 #[AsCommand(name: 'magic-starter:install')]
 class InstallCommand extends Command
@@ -40,7 +40,7 @@ class InstallCommand extends Command
      *
      * @var string
      */
-    protected $description = 'Install Magic Starter configuration, migrations, and action stubs';
+    protected $description = 'Install Magic Starter configuration and migrations';
 
     /** @var array<string, string> Feature key → human-readable label for multiselect. */
     private const FEATURE_LABELS = [
@@ -121,32 +121,6 @@ class InstallCommand extends Command
         ],
     ];
 
-    /** @var list<string> Action stubs always published. */
-    private const CORE_ACTIONS = [
-        'CreateUser.php',
-        'UpdateUserProfile.php',
-        'UpdateUserPassword.php',
-        'DeleteUser.php',
-    ];
-
-    /** @var list<string> Action stubs published only when teams feature is selected. */
-    private const TEAM_ACTIONS = [
-        'AddTeamMember.php',
-        'CreateTeam.php',
-        'DeleteTeam.php',
-        'InviteTeamMember.php',
-        'RemoveTeamMember.php',
-        'UpdateTeam.php',
-        'UpdateTeamMemberRole.php',
-    ];
-
-    /** @var list<string> Model stubs published only when teams feature is selected. */
-    private const TEAM_MODELS = [
-        'Team.php',
-        'TeamUser.php',
-        'TeamInvitation.php',
-    ];
-
     /**
      * Execute the console command.
      */
@@ -179,46 +153,18 @@ class InstallCommand extends Command
             '<fg=green;options=bold>DONE</>',
         );
 
-        // 8. Publish action stubs.
-        $actionCount = $this->publishActions($features);
-        $this->components->twoColumnDetail(
-            "Publishing actions ({$actionCount} files)",
-            '<fg=green;options=bold>DONE</>',
-        );
-
-        // 9. Publish TeamPolicy when teams is selected.
-        $policyCount = $this->publishPolicy($features);
-        if ($policyCount > 0) {
-            $this->components->twoColumnDetail(
-                'Publishing policy',
-                '<fg=green;options=bold>DONE</>',
-            );
-        }
-
-        // 10. Publish model stubs when teams is selected.
-        $modelCount = $this->publishModels($features);
-        if ($modelCount > 0) {
-            $this->components->twoColumnDetail(
-                "Publishing models ({$modelCount} files)",
-                '<fg=green;options=bold>DONE</>',
-            );
-        }
-
         $this->newLine();
 
-        // 11. Optionally run database migrations.
+        // 8. Optionally run database migrations.
         $this->promptToRunMigrations();
 
-        // 12. Display installation summary.
+        // 9. Display installation summary.
         $this->displaySummary(
             $features,
             $routePrefix,
             $frontendUrl,
             $useUuids,
             $migrationCount,
-            $actionCount,
-            $policyCount,
-            $modelCount,
         );
 
         return 0;
@@ -462,84 +408,6 @@ class InstallCommand extends Command
     }
 
     /**
-     * Publish action stubs relevant to the selected features.
-     *
-     * @param  list<string>  $features  Selected feature keys.
-     * @return int Number of action files published.
-     */
-    private function publishActions(array $features): int
-    {
-        $filesystem = new Filesystem;
-        $filesystem->ensureDirectoryExists(app_path('Actions/MagicStarter'));
-
-        $actions = self::CORE_ACTIONS;
-
-        if (in_array('teams', $features, true)) {
-            $actions = array_merge($actions, self::TEAM_ACTIONS);
-        }
-
-        $published = 0;
-
-        foreach ($actions as $filename) {
-            $source = $this->stubSourcePath() . "/actions/{$filename}";
-            $destination = app_path("Actions/MagicStarter/{$filename}");
-
-            if ($this->publishFile($source, $destination)) {
-                $published++;
-            }
-        }
-
-        return $published;
-    }
-
-    /**
-     * Publish the TeamPolicy when teams feature is selected.
-     *
-     * @param  list<string>  $features  Selected feature keys.
-     * @return int Number of policy files published (0 or 1).
-     */
-    private function publishPolicy(array $features): int
-    {
-        if (! in_array('teams', $features, true)) {
-            return 0;
-        }
-
-        $filesystem = new Filesystem;
-        $filesystem->ensureDirectoryExists(app_path('Policies'));
-
-        $source = $this->stubSourcePath() . '/actions/TeamPolicy.php';
-        $destination = app_path('Policies/TeamPolicy.php');
-
-        return $this->publishFile($source, $destination) ? 1 : 0;
-    }
-
-    /**
-     * Publish model stubs when teams feature is selected.
-     *
-     * @param  list<string>  $features  Selected feature keys.
-     * @return int Number of model files published.
-     */
-    private function publishModels(array $features): int
-    {
-        if (! in_array('teams', $features, true)) {
-            return 0;
-        }
-
-        $published = 0;
-
-        foreach (self::TEAM_MODELS as $filename) {
-            $source = $this->stubSourcePath() . "/models/{$filename}";
-            $destination = app_path("Models/{$filename}");
-
-            if ($this->publishFile($source, $destination)) {
-                $published++;
-            }
-        }
-
-        return $published;
-    }
-
-    /**
      * Prompt the user to run database migrations after publishing.
      */
     private function promptToRunMigrations(): void
@@ -562,9 +430,6 @@ class InstallCommand extends Command
      * @param  string|null  $frontendUrl  The configured frontend URL.
      * @param  bool  $useUuids  Whether UUID primary keys are used.
      * @param  int  $migrationCount  Number of migrations published.
-     * @param  int  $actionCount  Number of actions published.
-     * @param  int  $policyCount  Number of policies published.
-     * @param  int  $modelCount  Number of models published.
      */
     private function displaySummary(
         array $features,
@@ -572,9 +437,6 @@ class InstallCommand extends Command
         ?string $frontendUrl,
         bool $useUuids,
         int $migrationCount,
-        int $actionCount,
-        int $policyCount,
-        int $modelCount,
     ): void {
         $this->components->info('Magic Starter installed successfully.');
         $this->newLine();
@@ -603,25 +465,6 @@ class InstallCommand extends Command
             '<fg=gray>Migrations</>',
             "{$migrationCount} files",
         );
-
-        $this->components->twoColumnDetail(
-            '<fg=gray>Actions</>',
-            "{$actionCount} files",
-        );
-
-        if ($policyCount > 0) {
-            $this->components->twoColumnDetail(
-                '<fg=gray>Policy</>',
-                'TeamPolicy.php',
-            );
-        }
-
-        if ($modelCount > 0) {
-            $this->components->twoColumnDetail(
-                '<fg=gray>Models</>',
-                "{$modelCount} files",
-            );
-        }
 
         $this->newLine();
     }
@@ -724,13 +567,5 @@ class InstallCommand extends Command
     private function migrationSourcePath(): string
     {
         return __DIR__ . '/../../database/migrations';
-    }
-
-    /**
-     * Get the path to the package's stub source directory.
-     */
-    private function stubSourcePath(): string
-    {
-        return __DIR__ . '/../../stubs';
     }
 }
