@@ -10,29 +10,32 @@ use Illuminate\Support\Facades\URL;
 
 class VerifyEmailNotification extends Notification
 {
+    /**
+     * Get the notification's delivery channels.
+     *
+     * @return array<int, string>
+     */
     public function via(object $notifiable): array
     {
-        if ($notifiable instanceof object) {
-            return [
-                'mail',
-            ];
-        }
-
-        return [
-            'mail',
-        ];
+        return ['mail'];
     }
 
+    /**
+     * Get the mail representation of the notification.
+     */
     public function toMail(object $notifiable): MailMessage
     {
         $verificationUrl = $this->resolveVerificationUrl($notifiable);
 
         return (new MailMessage)
             ->subject(Lang::get('Verify Email Address'))
-            ->line(Lang::get('Verify Email Address'))
+            ->line(Lang::get('Please click the button below to verify your email address.'))
             ->action(Lang::get('Verify Email'), $verificationUrl);
     }
 
+    /**
+     * Build the signed verification URL, replacing the backend base with the configured frontend URL.
+     */
     protected function resolveVerificationUrl(object $notifiable): string
     {
         $signedUrl = URL::temporarySignedRoute(
