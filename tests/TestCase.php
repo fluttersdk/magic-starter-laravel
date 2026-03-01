@@ -23,4 +23,16 @@ class TestCase extends OrchestraTestCase
             MagicStarterServiceProvider::class,
         ];
     }
+
+    /**
+     * Define environment setup.
+     *
+     * Plugin tests always run without a route prefix so that hardcoded
+     * paths like '/auth/login' resolve correctly regardless of the
+     * default shipped in the published config.
+     */
+    protected function defineEnvironment($app): void
+    {
+        $app['config']->set('magic-starter.route_prefix', '');
+    }
 }

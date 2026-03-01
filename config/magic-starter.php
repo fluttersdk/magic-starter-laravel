@@ -173,7 +173,7 @@ return [
     |
     */
 
-    'route_prefix' => env('MAGIC_STARTER_ROUTE_PREFIX', ''),
+    'route_prefix' => env('MAGIC_STARTER_ROUTE_PREFIX', 'api/v1'),
 
     /*
     |--------------------------------------------------------------------------
