@@ -104,14 +104,14 @@ class MagicStarterTest extends TestCase
 
     public function test_team_model_resolves_concrete_when_abstract_configured(): void
     {
-        // When config points to the abstract package Team class,
-        // resolveConcreteModel should return App\Models\Team if it exists.
+        // When config points to the built-in package Team class,
+        // resolveConcreteModel should return App\Models\Team if published.
         config(['magic-starter.models.team' => \FlutterSdk\MagicStarter\Models\Team::class]);
 
         $result = MagicStarter::teamModel();
 
-        // If App\Models\Team exists, it should return that.
-        // If not, it returns the abstract class as-is.
+        // If App\Models\Team exists (published stub), it should return that.
+        // If not, it returns the built-in package class.
         if (class_exists('App\\Models\\Team')) {
             $this->assertSame('App\\Models\\Team', $result);
         } else {

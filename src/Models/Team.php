@@ -26,9 +26,21 @@ use Illuminate\Support\Facades\Storage;
  * @property-read  Collection<int, Model>  $users
  * @property-read  Collection<int, TeamInvitation>  $invitations
  */
-abstract class Team extends Model
+class Team extends Model
 {
     use ConditionallyUsesUuids;
+
+    /**
+     * The attributes that are mass assignable.
+     *
+     * @var list<string>
+     */
+    protected $fillable = [
+        'user_id',
+        'name',
+        'personal_team',
+        'profile_photo_path',
+    ];
 
     protected $appends = [
         'profile_photo_url',

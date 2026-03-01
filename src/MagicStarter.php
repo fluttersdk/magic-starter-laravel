@@ -29,12 +29,14 @@ class MagicStarter
     protected static array $using = [];
 
     /**
-     * Abstract package model classes that should be auto-resolved
-     * to their concrete App\Models equivalents.
+     * Package model classes mapped to their App\Models equivalents.
+     *
+     * When the consumer publishes model stubs, this map allows the package
+     * to auto-resolve the published App\Models class instead of the built-in one.
      *
      * @var array<class-string, string>
      */
-    protected static array $abstractModelMap = [
+    protected static array $appModelOverrides = [
         Team::class => 'App\\Models\\Team',
         TeamUser::class => 'App\\Models\\TeamUser',
         TeamInvitation::class => 'App\\Models\\TeamInvitation',
@@ -65,8 +67,8 @@ class MagicStarter
     /**
      * Resolve the configured team model class name.
      *
-     * When the config points to the abstract package class, this method
-     * auto-resolves to the concrete App\Models equivalent if it exists.
+     * When the config points to the package's built-in class, this method
+     * auto-resolves to the App\Models equivalent if published by the consumer.
      *
      * @return class-string
      *
@@ -129,40 +131,39 @@ class MagicStarter
     }
 
     /**
-     * Resolve an abstract package model to its concrete App\Models equivalent.
+     * Resolve a package model to its App\Models equivalent if published.
      *
-     * When the configured class is one of the package's abstract models,
+     * When the configured class is one of the package's built-in models,
      * this method checks if a concrete class exists in the application's
-     * App\Models namespace and returns it instead. This prevents
-     * "cannot instantiate abstract class" errors when the consumer
-     * has published model stubs but hasn't updated the config.
+     * App\Models namespace and returns it instead. This allows consumers
+     * to extend and customize models by publishing stubs.
      *
      * @param  class-string  $model  The configured model class.
-     * @return class-string The resolved concrete class.
+     * @return class-string The resolved model class.
      */
     protected static function resolveConcreteModel(string $model): string
     {
-        // 1. If the class is not abstract, return as-is.
-        if (! isset(static::$abstractModelMap[$model])) {
+        // 1. If the class is not in our override map, return as-is.
+        if (! isset(static::$appModelOverrides[$model])) {
             return $model;
         }
 
-        // 2. Check if the App\Models concrete class exists.
+        // 2. Check if the consumer has published an App\Models override.
         //    Wrapped in try/catch because Composer's classmap may reference a
         //    file that no longer exists (e.g. after stubs were deleted without
         //    running `composer dump-autoload`), which causes class_exists() to
         //    trigger a fatal include error.
-        $concrete = static::$abstractModelMap[$model];
+        $concrete = static::$appModelOverrides[$model];
 
         try {
             if (class_exists($concrete)) {
                 return $concrete;
             }
         } catch (Throwable) {
-            // Stale classmap or broken autoload — fall through to abstract.
+            // Stale classmap or broken autoload — fall through to built-in.
         }
 
-        // 3. No concrete found — return original (will fail at instantiation with a clear error).
+        // 3. No override found — return built-in package model.
         return $model;
     }
 

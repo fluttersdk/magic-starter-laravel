@@ -153,12 +153,18 @@ class InstallCommand extends Command
             '<fg=green;options=bold>DONE</>',
         );
 
+        // 8. Publish model stubs when teams feature is selected.
+        if (in_array('teams', $features, true)) {
+            $this->publishModelStubs();
+            $this->components->twoColumnDetail('Publishing model stubs', '<fg=green;options=bold>DONE</>');
+        }
+
         $this->newLine();
 
-        // 8. Optionally run database migrations.
+        // 9. Optionally run database migrations.
         $this->promptToRunMigrations();
 
-        // 9. Display installation summary.
+        // 10. Display installation summary.
         $this->displaySummary(
             $features,
             $routePrefix,
@@ -405,6 +411,26 @@ class InstallCommand extends Command
         }
 
         return $published;
+    }
+
+    /**
+     * Publish model stubs (Team, TeamUser, TeamInvitation) to App\Models.
+     *
+     * These stubs extend the package's built-in models, allowing consumers
+     * to add custom $fillable, relationships, or factory support.
+     */
+    private function publishModelStubs(): void
+    {
+        $publishOptions = [
+            '--provider' => MagicStarterServiceProvider::class,
+            '--tag' => 'magic-starter-models',
+        ];
+
+        if ((bool) $this->option('force')) {
+            $publishOptions['--force'] = true;
+        }
+
+        $this->callSilently('vendor:publish', $publishOptions);
     }
 
     /**

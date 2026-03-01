@@ -18,7 +18,7 @@ use Illuminate\Support\Carbon;
  * @property Carbon|null $expires_at
  * @property Carbon|null $created_at
  */
-abstract class TeamInvitation extends Model
+class TeamInvitation extends Model
 {
     use ConditionallyUsesUuids;
 

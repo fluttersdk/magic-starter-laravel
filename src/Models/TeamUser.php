@@ -14,7 +14,7 @@ use Illuminate\Support\Carbon;
  * @property Carbon|null $created_at
  * @property Carbon|null $updated_at
  */
-abstract class TeamUser extends Pivot
+class TeamUser extends Pivot
 {
     use ConditionallyUsesUuids;
 
