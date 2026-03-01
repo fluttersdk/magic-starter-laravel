@@ -8,6 +8,7 @@ use FlutterSdk\MagicStarter\MagicStarter;
 use FlutterSdk\MagicStarter\Models\NewsletterSubscriber;
 use FlutterSdk\MagicStarter\Support\RequestLocaleDetector;
 use Illuminate\Contracts\Auth\Authenticatable;
+use Illuminate\Contracts\Auth\MustVerifyEmail;
 use Illuminate\Support\Arr;
 use Illuminate\Support\Facades\Hash;
 use Illuminate\Support\Facades\Validator;
@@ -120,6 +121,16 @@ class CreateUser implements CreatesUsers
                     'is_active' => true,
                 ],
             );
+        }
+
+        // 5. Send email verification notification when feature is enabled.
+        //    Skip for social login (email_verified_at already set) and phone-only users.
+        if (Features::hasEmailVerificationFeatures()
+            && $user->email !== null
+            && $user->email_verified_at === null
+            && $user instanceof MustVerifyEmail
+        ) {
+            $user->sendEmailVerificationNotification();
         }
 
         return $user;

@@ -8,6 +8,7 @@ use FlutterSdk\MagicStarter\Features;
 use FlutterSdk\MagicStarter\MagicStarter;
 use FlutterSdk\MagicStarter\Rules\E164Phone;
 use Illuminate\Contracts\Auth\Authenticatable;
+use Illuminate\Contracts\Auth\MustVerifyEmail;
 use Illuminate\Support\Facades\Validator;
 use Illuminate\Validation\Rule;
 use Illuminate\Validation\ValidationException;
@@ -83,8 +84,23 @@ class UpdateUserProfile implements UpdatesUserProfiles
 
         $validated = Validator::make($input, $rules)->validate();
 
-        // 2. Update the user with validated attributes.
+        // 2. Capture original email before update — needed for change detection.
+        $originalEmail = $user->email;
+
+        // 2a. Update the user with validated attributes.
         $user->update($validated);
+
+        // 2b. When email changes and verification is required, reset verification status.
+        //     This re-queues the user for verification without breaking unrelated updates.
+        if (Features::hasEmailVerificationFeatures()
+            && isset($validated['email'])
+            && $validated['email'] !== null
+            && $validated['email'] !== $originalEmail
+            && $user instanceof MustVerifyEmail
+        ) {
+            $user->update(['email_verified_at' => null]);
+            $user->sendEmailVerificationNotification();
+        }
 
         // 3. Check if guest user now qualifies for conversion.
         $fresh = $user->fresh();
