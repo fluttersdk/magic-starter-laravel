@@ -43,7 +43,10 @@ class CreatePersonalTeamListener
         // 3. Add owner to team members pivot.
         $team->users()->attach($user->id, ['role' => Role::OWNER->value]);
 
-        // 4. Set as current team.
+        // 4. Clear cached relations so subsequent code sees the new team.
+        $user->unsetRelation('ownedTeams')->unsetRelation('teams');
+
+        // 5. Set as current team.
         $user->update(['current_team_id' => $team->id]);
     }
 }

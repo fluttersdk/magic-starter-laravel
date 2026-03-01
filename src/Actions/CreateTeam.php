@@ -38,7 +38,10 @@ class CreateTeam implements CreatesTeams
         // 2. Attach the user as team owner in the pivot.
         $team->users()->attach($user->id, ['role' => Role::OWNER->value]);
 
-        // 3. Set as the user's current team.
+        // 3. Clear cached relations so subsequent Gate checks see the new team.
+        $user->unsetRelation('ownedTeams')->unsetRelation('teams');
+
+        // 4. Set as the user's current team.
         $user->update([
             'current_team_id' => $team->id,
         ]);
