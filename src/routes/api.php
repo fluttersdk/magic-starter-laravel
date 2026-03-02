@@ -58,7 +58,7 @@ Route::prefix((string) config('magic-starter.route_prefix', ''))
         Route::middleware('throttle:5,1')->get('settings', [SettingsController::class, 'index']);
 
         if (Features::hasTimezoneFeatures()) {
-            Route::middleware('throttle:5,1')->get('timezones', [TimezoneController::class, 'index']);
+            Route::get('timezones', [TimezoneController::class, 'index']);
         }
 
         // To require email verification on protected routes, add the 'verified'
