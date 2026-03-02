@@ -532,7 +532,7 @@ To completely disable package route loading and define your own:
 Provides registration, login, logout, current user retrieval, and team switching via Sanctum token authentication. These routes are always registered regardless of which optional features are enabled.
 
 - **Register**: Creates the user via the `CreatesUsers` contract, fires the `Registered` event (which triggers personal team creation if the `teams` feature is active), and returns a Sanctum token.
-- **Login**: Validates credentials, issues a Sanctum token. The token stores `ip_address` and `user_agent` when the `sessions` feature is enabled.
+- **Login**: Validates credentials, issues a Sanctum token. The token always stores `ip_address` and `user_agent` on the `PersonalAccessToken` record.
 - **Logout**: Revokes the current personal access token.
 - **Current User**: Returns the authenticated user. When `teams` feature is enabled, includes `current_team` and `all_teams` fields; these are omitted when teams is disabled.
 - **Switch Team**: Updates `current_team_id` on the user record. Requires `teams` feature.
@@ -836,10 +836,11 @@ Allows unauthenticated users to obtain a guest token by providing only a `device
 
 - **Route**: `POST auth/guest` (public, rate-limited)
 - **Request**: `GuestLoginRequest` — requires `device_id` (string, max:255).
-- **Behaviour**: Looks up an existing guest user by `device_id`. If none exists, creates a new one with `is_guest = true` and returns HTTP 201. Subsequent logins for the same `device_id` return HTTP 200.
+- **Behaviour**: Looks up an existing guest user by `device_id`. If none exists, creates a new one with `is_guest = true` and returns HTTP 201. Subsequent logins for the same `device_id` revoke all existing tokens (preventing session buildup) and return a fresh token with HTTP 200.
 - **Personal Team**: When both `guest-auth` and `teams` features are enabled, a localized personal team is automatically created for new guest users. The team name uses the `magic-starter::teams.personal_team_name` translation key with the guest's translated name (e.g., "Guest's Team" in English, "Misafir Takımı" in Turkish). Returning guests (same `device_id`) do not receive duplicate teams.
 - **Contract**: Delegates to the `CreatesGuestUsers` contract.
 - **Trait**: Add `HasGuestSupport` to your User model to access `isGuest()` and `isRegistered()` helpers.
+- **Email Verification Bypass**: Guest users with the `MustVerifyEmail` trait automatically pass the `verified` middleware — since they have no email to verify, `hasVerifiedEmail()` returns `true`.
 
 ### Phone OTP
 
@@ -996,11 +997,14 @@ All require `auth:sanctum` middleware.
     "name": "John Doe",
     "email": "john@example.com",
     "phone": "+1234567890",
+    "is_guest": false,
+    "phone_country": "US",
     "email_verified_at": "2026-01-01T00:00:00.000000Z",
     "locale": "en",
     "timezone": "UTC",
     "language": "en",
     "profile_photo_url": "https://ui-avatars.com/api/?name=John+Doe",
+    "two_factor_enabled": false,
     "current_team": {},
     "all_teams": [],
     "created_at": "2026-01-01T00:00:00.000000Z",
@@ -1124,24 +1128,24 @@ All 18 contracts live in `FlutterSdk\MagicStarter\Contracts`. The service provid
 
 ## Models
 
-The package ships with 6 Eloquent models. `Team`, `TeamInvitation`, and `TeamUser` are abstract — extend them by publishing model stubs via `vendor:publish --tag=magic-starter-models`.
+The package ships with 6 Eloquent models. `Team`, `TeamInvitation`, and `TeamUser` are concrete and ready to use out of the box. To customize, publish model stubs via `vendor:publish --tag=magic-starter-models` and override the model class in the config.
 
-**`Team`** — `FlutterSdk\MagicStarter\Models\Team` (abstract)
+**`Team`** — `FlutterSdk\MagicStarter\Models\Team`
 
+- Fillable: `user_id`, `name`, `personal_team`, `profile_photo_path`
 - Appends: `profile_photo_url`
 - Casts: `personal_team` → `boolean`
 - Relations: `owner()` → BelongsTo (user model), `users()` → BelongsToMany (with `role` pivot), `invitations()` → HasMany
 - Attributes: `profilePhotoUrl()` computed attribute with ui-avatars fallback; `defaultProfilePhotoUrl()`
-- Your stub extends this and adds `fillable`: `user_id`, `name`, `personal_team`, `profile_photo_path`
 
-**`TeamInvitation`** — `FlutterSdk\MagicStarter\Models\TeamInvitation` (abstract)
+**`TeamInvitation`** — `FlutterSdk\MagicStarter\Models\TeamInvitation`
 
 - Fillable: `email`, `role`, `token`, `expires_at`
 - Casts: `expires_at` → `datetime`
 - Relations: `team()` → BelongsTo
 - Methods: `isExpired(): bool`, `scopeValid(Builder $query): Builder`
 
-**`TeamUser`** — `FlutterSdk\MagicStarter\Models\TeamUser` (abstract)
+**`TeamUser`** — `FlutterSdk\MagicStarter\Models\TeamUser`
 
 - Extends `Pivot`, table: `team_user`
 
@@ -1216,7 +1220,7 @@ The package ships with 6 Eloquent models. `Team`, `TeamInvitation`, and `TeamUse
 
 | Method | Returns | Description |
 |:-------|:--------|:------------|
-| `hasVerifiedEmail()` | bool | Whether email_verified_at is set |
+| `hasVerifiedEmail()` | bool | Whether `email_verified_at` is set. **Guest users** (those with `isGuest() === true`) always return `true` — they have no email to verify, so the `verified` middleware never blocks them. |
 | `markEmailAsVerified()` | bool | Sets email_verified_at to now(), fires Verified event, returns true |
 | `sendEmailVerificationNotification()` | void | Dispatches VerifyEmailNotification |
 | `getEmailForVerification()` | string | Returns the user's email |
@@ -1266,7 +1270,7 @@ The package uses PHPUnit with Orchestra Testbench.
 
 ```shell
 composer install
-composer test        # Run PHPUnit (445 tests, 1193 assertions)
+composer test        # Run PHPUnit (454 tests, 1242 assertions)
 composer lint        # Check code style with Pint
 composer lint:fix    # Auto-fix code style violations
 composer analyse     # Run PHPStan
@@ -1287,4 +1291,6 @@ Test coverage includes:
 - Two-factor authentication — trait, actions, controllers, challenge flow (`TwoFactorAuthenticatableTest`, `TwoFactorActionsTest`, `TwoFactorAuthenticationControllerTest`, `TwoFactorChallengeControllerTest`, `TwoFactorRecoveryCodeControllerTest`, `AuthControllerTwoFactorLoginTest`)
 - Localized personal team creation — `CreatePersonalTeamListenerTest` (English/Turkish team names, idempotency, owner role)
 - Guest personal team creation — `GuestAuthControllerTest` (team creation on first login, skip on returning guest, disabled when teams feature off)
+- Guest end-to-end lifecycle — `GuestLifecycleTest` (token works on all protected endpoints, returning guest gets fresh token, device info stored, team data included)
+- Email verification guest bypass — `MustVerifyEmailTest` (guests pass `hasVerifiedEmail()` without email)
 - UserResource team field gating — `UserResourceTest` (fields present/absent based on team feature toggle)

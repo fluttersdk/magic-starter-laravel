@@ -10,9 +10,18 @@ trait MustVerifyEmail
 {
     /**
      * Determine if the user's email has been verified.
+     *
+     * Guest users bypass email verification since they have no email
+     * address to verify. This prevents the `verified` middleware from
+     * blocking authenticated guest users on protected routes.
      */
     public function hasVerifiedEmail(): bool
     {
+        // Guests have no email to verify — treat them as verified.
+        if (method_exists($this, 'isGuest') && $this->isGuest()) {
+            return true;
+        }
+
         return $this->email_verified_at !== null;
     }
 

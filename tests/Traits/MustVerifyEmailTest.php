@@ -36,6 +36,7 @@ final class MustVerifyEmailTest extends TestCase
         $this->app['db.schema']->create('users', function (Blueprint $table): void {
             $table->uuid('id')->primary();
             $table->string('email')->nullable();
+            $table->boolean('is_guest')->default(false);
             $table->timestamp('email_verified_at')->nullable();
             $table->timestamps();
         });
@@ -130,10 +131,44 @@ final class MustVerifyEmailTest extends TestCase
             VerifyEmailNotification::class,
         );
     }
+
+    /**
+     * Test 7: Guest user bypasses email verification.
+     *
+     * Guest users have no email to verify, so hasVerifiedEmail() should
+     * return true regardless of email_verified_at value.
+     */
+    public function test_guest_user_bypasses_email_verification(): void
+    {
+        $guest = MustVerifyEmailTestUser::query()->create([
+            'email' => null,
+            'email_verified_at' => null,
+            'is_guest' => true,
+        ]);
+
+        $this->assertTrue($guest->hasVerifiedEmail());
+    }
+
+    /**
+     * Test 8: Non-guest user is NOT bypassed.
+     *
+     * Regular users with null email_verified_at must still be unverified.
+     */
+    public function test_non_guest_user_is_not_bypassed(): void
+    {
+        $user = MustVerifyEmailTestUser::query()->create([
+            'email' => 'regular@example.com',
+            'email_verified_at' => null,
+            'is_guest' => false,
+        ]);
+
+        $this->assertFalse($user->hasVerifiedEmail());
+    }
 }
 
 final class MustVerifyEmailTestUser extends Authenticatable implements AuthenticatableContract, MustVerifyEmailContract
 {
+    use \FlutterSdk\MagicStarter\Traits\HasGuestSupport;
     use HasUuids;
     use MustVerifyEmail;
     use Notifiable;
@@ -145,4 +180,15 @@ final class MustVerifyEmailTestUser extends Authenticatable implements Authentic
     protected $keyType = 'string';
 
     protected $guarded = [];
+
+    /**
+     * @return array<string, string>
+     */
+    protected function casts(): array
+    {
+        return [
+            'is_guest' => 'boolean',
+            'email_verified_at' => 'datetime',
+        ];
+    }
 }
