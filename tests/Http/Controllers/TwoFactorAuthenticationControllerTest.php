@@ -67,7 +67,7 @@ final class TwoFactorAuthenticationControllerTest extends TestCase
         ]);
 
         $this->actingAs($user)
-            ->postJson('/two-factor-authentication')
+            ->postJson('/two-factor-authentication', ['password' => 'password'])
             ->assertOk()
             ->assertJsonStructure([
                 'data' => [
@@ -92,6 +92,36 @@ final class TwoFactorAuthenticationControllerTest extends TestCase
             ->assertStatus(401);
     }
 
+    public function test_store_requires_password(): void
+    {
+        $user = TwoFactorAuthControllerTestUser::query()->create([
+            'name' => 'Test User',
+            'email' => 'test@example.com',
+            'password' => Hash::make('password'),
+        ]);
+
+        $this->actingAs($user)
+            ->postJson('/two-factor-authentication', [])
+            ->assertStatus(422)
+            ->assertJsonValidationErrors(['password']);
+    }
+
+    public function test_store_rejects_wrong_password(): void
+    {
+        $user = TwoFactorAuthControllerTestUser::query()->create([
+            'name' => 'Test User',
+            'email' => 'test@example.com',
+            'password' => Hash::make('password'),
+        ]);
+
+        $this->actingAs($user)
+            ->postJson('/two-factor-authentication', [
+                'password' => 'wrong-password',
+            ])
+            ->assertStatus(422)
+            ->assertJsonValidationErrors(['password']);
+    }
+
     public function test_confirm_sets_confirmed_at_with_valid_code(): void
     {
         $user = TwoFactorAuthControllerTestUser::query()->create([
@@ -101,7 +131,7 @@ final class TwoFactorAuthenticationControllerTest extends TestCase
         ]);
 
         $this->actingAs($user)
-            ->postJson('/two-factor-authentication');
+            ->postJson('/two-factor-authentication', ['password' => 'password']);
 
         $user->refresh();
 
@@ -133,7 +163,7 @@ final class TwoFactorAuthenticationControllerTest extends TestCase
         ]);
 
         $this->actingAs($user)
-            ->postJson('/two-factor-authentication');
+            ->postJson('/two-factor-authentication', ['password' => 'password']);
 
         $this->actingAs($user)
             ->postJson('/two-factor-authentication/confirm', [
