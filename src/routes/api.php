@@ -136,7 +136,7 @@ Route::prefix((string) config('magic-starter.route_prefix', ''))
                 Route::post('two-factor-authentication/confirm', [TwoFactorAuthenticationController::class, 'confirm']);
                 Route::delete('two-factor-authentication', [TwoFactorAuthenticationController::class, 'destroy']);
 
-                Route::get('two-factor-recovery-codes', [TwoFactorRecoveryCodeController::class, 'index']);
+                Route::post('two-factor-recovery-codes/show', [TwoFactorRecoveryCodeController::class, 'index']);
                 Route::post('two-factor-recovery-codes', [TwoFactorRecoveryCodeController::class, 'store']);
             }
 

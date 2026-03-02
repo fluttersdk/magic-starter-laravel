@@ -51,7 +51,7 @@ final class TwoFactorRecoveryCodeControllerTest extends TestCase
             $table->timestamps();
         });
 
-        Route::get('/two-factor-recovery-codes', [TwoFactorRecoveryCodeController::class, 'index']);
+        Route::post('/two-factor-recovery-codes/show', [TwoFactorRecoveryCodeController::class, 'index']);
         Route::post('/two-factor-recovery-codes', [TwoFactorRecoveryCodeController::class, 'store']);
     }
 
@@ -69,7 +69,7 @@ final class TwoFactorRecoveryCodeControllerTest extends TestCase
         ]);
 
         $this->actingAs($user)
-            ->getJson('/two-factor-recovery-codes')
+            ->postJson('/two-factor-recovery-codes/show', ['password' => 'password'])
             ->assertOk()
             ->assertJson([
                 'data' => $codes,
@@ -85,7 +85,7 @@ final class TwoFactorRecoveryCodeControllerTest extends TestCase
         ]);
 
         $this->actingAs($user)
-            ->getJson('/two-factor-recovery-codes')
+            ->postJson('/two-factor-recovery-codes/show', ['password' => 'password'])
             ->assertStatus(403)
             ->assertJsonPath('message', 'Two-factor authentication is not enabled.');
     }
@@ -104,7 +104,7 @@ final class TwoFactorRecoveryCodeControllerTest extends TestCase
         ]);
 
         $this->actingAs($user)
-            ->postJson('/two-factor-recovery-codes')
+            ->postJson('/two-factor-recovery-codes', ['password' => 'password'])
             ->assertOk()
             ->assertJsonStructure([
                 'data',
@@ -128,9 +128,79 @@ final class TwoFactorRecoveryCodeControllerTest extends TestCase
         ]);
 
         $this->actingAs($user)
-            ->postJson('/two-factor-recovery-codes')
+            ->postJson('/two-factor-recovery-codes', ['password' => 'password'])
             ->assertStatus(403)
             ->assertJsonPath('message', 'Two-factor authentication is not enabled.');
+    }
+
+    public function test_index_requires_password(): void
+    {
+        $user = TwoFactorRecoveryControllerTestUser::query()->create([
+            'name' => 'Test User',
+            'email' => 'test@example.com',
+            'password' => Hash::make('password'),
+            'two_factor_secret' => encrypt('secret'),
+            'two_factor_recovery_codes' => encrypt(json_encode(['code1'])),
+            'two_factor_confirmed_at' => now(),
+        ]);
+
+        $this->actingAs($user)
+            ->postJson('/two-factor-recovery-codes/show', [])
+            ->assertStatus(422)
+            ->assertJsonValidationErrors(['password']);
+    }
+
+    public function test_index_rejects_wrong_password(): void
+    {
+        $user = TwoFactorRecoveryControllerTestUser::query()->create([
+            'name' => 'Test User',
+            'email' => 'test@example.com',
+            'password' => Hash::make('password'),
+            'two_factor_secret' => encrypt('secret'),
+            'two_factor_recovery_codes' => encrypt(json_encode(['code1'])),
+            'two_factor_confirmed_at' => now(),
+        ]);
+
+        $this->actingAs($user)
+            ->postJson('/two-factor-recovery-codes/show', ['password' => 'wrong'])
+            ->assertStatus(422)
+            ->assertJsonValidationErrors(['password']);
+    }
+
+    public function test_store_requires_password(): void
+    {
+        $user = TwoFactorRecoveryControllerTestUser::query()->create([
+            'name' => 'Test User',
+            'email' => 'test@example.com',
+            'password' => Hash::make('password'),
+            'two_factor_secret' => encrypt('secret'),
+            'two_factor_recovery_codes' => encrypt(json_encode(['code1'])),
+            'two_factor_confirmed_at' => now(),
+        ]);
+
+        $this->actingAs($user)
+            ->postJson('/two-factor-recovery-codes', [])
+            ->assertStatus(422)
+            ->assertJsonValidationErrors(['password']);
+    }
+
+    public function test_store_rejects_wrong_password(): void
+    {
+        $user = TwoFactorRecoveryControllerTestUser::query()->create([
+            'name' => 'Test User',
+            'email' => 'test@example.com',
+            'password' => Hash::make('password'),
+            'two_factor_secret' => encrypt('secret'),
+            'two_factor_recovery_codes' => encrypt(json_encode(['code1'])),
+            'two_factor_confirmed_at' => now(),
+        ]);
+
+        $this->actingAs($user)
+            ->postJson('/two-factor-recovery-codes', [
+                'password' => 'wrong-password',
+            ])
+            ->assertStatus(422)
+            ->assertJsonValidationErrors(['password']);
     }
 }
 
