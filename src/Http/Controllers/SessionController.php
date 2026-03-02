@@ -2,6 +2,7 @@
 
 namespace FlutterSdk\MagicStarter\Http\Controllers;
 
+use FlutterSdk\MagicStarter\Http\Requests\ConfirmPasswordRequest;
 use FlutterSdk\MagicStarter\Http\Requests\DestroyOtherSessionsRequest;
 use FlutterSdk\MagicStarter\Http\Resources\SessionResource;
 use Illuminate\Http\JsonResponse;
@@ -23,8 +24,10 @@ class SessionController
 
     /**
      * Revoke a specific session.
+     *
+     * Requires password confirmation to prevent unauthorized revocation.
      */
-    public function destroy(Request $request, string $tokenId): JsonResponse
+    public function destroy(ConfirmPasswordRequest $request, string $tokenId): JsonResponse
     {
         $token = $request->user()
             ->tokens()

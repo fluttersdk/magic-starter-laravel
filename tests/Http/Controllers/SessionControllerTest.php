@@ -111,7 +111,7 @@ final class SessionControllerTest extends TestCase
         ]);
 
         $this->actingAs($user)
-            ->deleteJson('/sessions/' . $token->getKey())
+            ->deleteJson('/sessions/' . $token->getKey(), ['password' => 'password'])
             ->assertOk()
             ->assertJson([
                 'message' => 'Session revoked successfully.',
@@ -163,8 +163,58 @@ final class SessionControllerTest extends TestCase
             'password' => \Illuminate\Support\Facades\Hash::make('password'),
         ]);
         $this->actingAs($user)
-            ->deleteJson('/sessions/00000000-0000-0000-0000-000000000000')
+            ->deleteJson('/sessions/00000000-0000-0000-0000-000000000000', ['password' => 'password'])
             ->assertStatus(404);
+    }
+
+    public function test_destroy_requires_password(): void
+    {
+        $user = SessionControllerTestUser::query()->create([
+            'name' => 'Session User',
+            'email' => 'session@example.test',
+            'password' => \Illuminate\Support\Facades\Hash::make('password'),
+        ]);
+
+        $token = SessionControllerTestToken::query()->create([
+            'tokenable_type' => SessionControllerTestUser::class,
+            'tokenable_id' => $user->getKey(),
+            'name' => 'target',
+            'token' => hash('sha256', 'target-token'),
+        ]);
+
+        $this->actingAs($user)
+            ->deleteJson('/sessions/' . $token->getKey())
+            ->assertStatus(422)
+            ->assertJsonValidationErrors(['password']);
+
+        // Token should NOT be deleted.
+        $this->assertNotNull(SessionControllerTestToken::query()->find($token->getKey()));
+    }
+
+    public function test_destroy_rejects_wrong_password(): void
+    {
+        $user = SessionControllerTestUser::query()->create([
+            'name' => 'Session User',
+            'email' => 'session@example.test',
+            'password' => \Illuminate\Support\Facades\Hash::make('password'),
+        ]);
+
+        $token = SessionControllerTestToken::query()->create([
+            'tokenable_type' => SessionControllerTestUser::class,
+            'tokenable_id' => $user->getKey(),
+            'name' => 'target',
+            'token' => hash('sha256', 'target-token'),
+        ]);
+
+        $this->actingAs($user)
+            ->deleteJson('/sessions/' . $token->getKey(), [
+                'password' => 'wrong-password',
+            ])
+            ->assertStatus(422)
+            ->assertJsonValidationErrors(['password']);
+
+        // Token should NOT be deleted.
+        $this->assertNotNull(SessionControllerTestToken::query()->find($token->getKey()));
     }
 }
 
