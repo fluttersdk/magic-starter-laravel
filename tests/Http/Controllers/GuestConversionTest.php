@@ -273,4 +273,128 @@ class GuestConversionTest extends TestCase
         $fresh = $user->fresh();
         $this->assertTrue(Hash::check('Password123!', (string) $fresh->password), 'Password should be successfully set');
     }
+
+    /**
+     * Test 8: Guest upgrade via single profile update with email + password
+     */
+    public function test_guest_converts_via_single_profile_update_with_email_and_password(): void
+    {
+        /** @var ConcreteUser $user */
+        $user = ConcreteUser::create([
+            'is_guest' => true,
+            'device_id' => 'device-8',
+        ]);
+
+        $this->actingAs($user)
+            ->putJson('/user/profile', [
+                'name' => 'Upgraded User',
+                'email' => 'upgraded@example.com',
+                'password' => 'Password123!',
+                'password_confirmation' => 'Password123!',
+            ])
+            ->assertOk();
+
+        $fresh = $user->fresh();
+        $this->assertFalse((bool) $fresh->is_guest, 'User must be converted after single profile update with email + password');
+        $this->assertSame('Upgraded User', $fresh->name);
+        $this->assertSame('upgraded@example.com', $fresh->email);
+        $this->assertTrue(Hash::check('Password123!', (string) $fresh->password), 'Password must be hashed and stored');
+    }
+
+    /**
+     * Test 9: Guest profile update rejects mismatched password confirmation
+     */
+    public function test_guest_profile_update_rejects_mismatched_password_confirmation(): void
+    {
+        /** @var ConcreteUser $user */
+        $user = ConcreteUser::create([
+            'is_guest' => true,
+            'device_id' => 'device-9',
+        ]);
+
+        $this->actingAs($user)
+            ->putJson('/user/profile', [
+                'name' => 'Guest User',
+                'email' => 'mismatch@example.com',
+                'password' => 'Password123!',
+                'password_confirmation' => 'DifferentPassword456!',
+            ])
+            ->assertUnprocessable()
+            ->assertJsonValidationErrors(['password']);
+    }
+
+    /**
+     * Test 10: Guest profile update rejects weak password
+     */
+    public function test_guest_profile_update_rejects_weak_password(): void
+    {
+        /** @var ConcreteUser $user */
+        $user = ConcreteUser::create([
+            'is_guest' => true,
+            'device_id' => 'device-10',
+        ]);
+
+        $this->actingAs($user)
+            ->putJson('/user/profile', [
+                'name' => 'Guest User',
+                'email' => 'weak@example.com',
+                'password' => 'short',
+                'password_confirmation' => 'short',
+            ])
+            ->assertUnprocessable()
+            ->assertJsonValidationErrors(['password']);
+    }
+
+    /**
+     * Test 11: Non-guest profile update ignores password field entirely
+     */
+    public function test_non_guest_profile_update_ignores_password_field(): void
+    {
+        /** @var ConcreteUser $user */
+        $user = ConcreteUser::create([
+            'name' => 'Regular User',
+            'email' => 'regular@example.com',
+            'password' => Hash::make('OriginalPassword123!'),
+            'is_guest' => false,
+        ]);
+
+        $this->actingAs($user)
+            ->putJson('/user/profile', [
+                'name' => 'Updated Name',
+                'password' => 'HackerPassword123!',
+                'password_confirmation' => 'HackerPassword123!',
+            ])
+            ->assertOk();
+
+        $fresh = $user->fresh();
+        $this->assertTrue(
+            Hash::check('OriginalPassword123!', (string) $fresh->password),
+            'Non-guest password must NOT be changed via profile update',
+        );
+    }
+
+    /**
+     * Test 12: Guest profile update with password but no email stays guest (needs identity)
+     */
+    public function test_guest_profile_update_with_password_only_stays_guest(): void
+    {
+        /** @var ConcreteUser $user */
+        $user = ConcreteUser::create([
+            'is_guest' => true,
+            'device_id' => 'device-12',
+        ]);
+
+        $this->actingAs($user)
+            ->putJson('/user/profile', [
+                'name' => 'Guest With Password',
+                'password' => 'Password123!',
+                'password_confirmation' => 'Password123!',
+            ])
+            ->assertOk();
+
+        $fresh = $user->fresh();
+        // Password should be set, but user needs email or phone to fully convert
+        $this->assertTrue(Hash::check('Password123!', (string) $fresh->password), 'Password must be hashed and stored even without email');
+        $this->assertTrue((bool) $fresh->is_guest, 'Guest must remain guest without email or phone identity');
+    }
 }

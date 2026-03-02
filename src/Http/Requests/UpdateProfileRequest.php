@@ -6,6 +6,7 @@ use DateTimeZone;
 use FlutterSdk\MagicStarter\Rules\E164Phone;
 use Illuminate\Foundation\Http\FormRequest;
 use Illuminate\Validation\Rule;
+use Illuminate\Validation\Rules\Password;
 
 class UpdateProfileRequest extends FormRequest
 {
@@ -28,7 +29,7 @@ class UpdateProfileRequest extends FormRequest
         $isGuest = $user && (bool) ($user->is_guest ?? false);
         $userTable = (new (\FlutterSdk\MagicStarter\MagicStarter::userModel()))->getTable();
 
-        return [
+        $rules = [
             'name' => [
                 $isGuest ? 'nullable' : 'required',
                 'string',
@@ -68,5 +69,22 @@ class UpdateProfileRequest extends FormRequest
                 ),
             ],
         ];
+
+        // Guest users may set a password during profile upgrade (single-call flow).
+        // Non-guest users must use the dedicated PUT /user/password endpoint.
+        if ($isGuest) {
+            $rules['password'] = [
+                'nullable',
+                'string',
+                Password::min(8)->letters()->numbers()->mixedCase(),
+                'confirmed',
+            ];
+            $rules['password_confirmation'] = [
+                'nullable',
+                'string',
+            ];
+        }
+
+        return $rules;
     }
 }

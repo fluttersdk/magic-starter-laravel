@@ -9,15 +9,18 @@ use FlutterSdk\MagicStarter\MagicStarter;
 use FlutterSdk\MagicStarter\Rules\E164Phone;
 use Illuminate\Contracts\Auth\Authenticatable;
 use Illuminate\Contracts\Auth\MustVerifyEmail;
+use Illuminate\Support\Facades\Hash;
 use Illuminate\Support\Facades\Validator;
 use Illuminate\Validation\Rule;
+use Illuminate\Validation\Rules\Password;
 use Illuminate\Validation\ValidationException;
 
 /**
  * Default profile update action with optional extended fields.
  *
  * When Features::extendedProfile() is enabled, also validates/stores
- * phone, timezone, and locale fields.
+ * phone, timezone, and locale fields. Guest users may also set a
+ * password during profile upgrade (single-call flow).
  */
 class UpdateUserProfile implements UpdatesUserProfiles
 {
@@ -48,6 +51,22 @@ class UpdateUserProfile implements UpdatesUserProfiles
                 Rule::unique($userTable, 'email')->ignore($user->getAuthIdentifier()),
             ],
         ];
+
+        // 1a. Guest users may set a password during profile upgrade.
+        //     Non-guest users must use the dedicated PUT /user/password endpoint.
+        if ($isGuest) {
+            $rules['password'] = [
+                'nullable',
+                'string',
+                Password::min(8)->letters()->numbers()->mixedCase(),
+                'confirmed',
+            ];
+            $rules['password_confirmation'] = [
+                'nullable',
+                'string',
+            ];
+        }
+
         if (Features::hasExtendedProfileFeatures()) {
             $rules['phone'] = [
                 'nullable',
@@ -82,13 +101,19 @@ class UpdateUserProfile implements UpdatesUserProfiles
 
         $validated = Validator::make($input, $rules)->validate();
 
-        // 2. Capture original email before update — needed for change detection.
+        // 2. Hash password if present, then strip confirmation before saving.
+        if (! empty($validated['password'])) {
+            $validated['password'] = Hash::make($validated['password']);
+        }
+        unset($validated['password_confirmation']);
+
+        // 3. Capture original email before update — needed for change detection.
         $originalEmail = $user->email;
 
-        // 2a. Update the user with validated attributes.
+        // 3a. Update the user with validated attributes.
         $user->update($validated);
 
-        // 2b. When email changes and verification is required, reset verification status.
+        // 3b. When email changes and verification is required, reset verification status.
         //     This re-queues the user for verification without breaking unrelated updates.
         if (Features::hasEmailVerificationFeatures()
             && isset($validated['email'])
@@ -99,7 +124,7 @@ class UpdateUserProfile implements UpdatesUserProfiles
             $user->sendEmailVerificationNotification();
         }
 
-        // 3. Check if guest user now qualifies for conversion.
+        // 4. Check if guest user now qualifies for conversion.
         $fresh = $user->fresh();
 
         if ($fresh && (bool) $fresh->is_guest) {
