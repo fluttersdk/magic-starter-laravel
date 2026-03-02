@@ -74,7 +74,6 @@ class RegressionAuthTest extends TestCase
             $table->string('remember_token', 100)->nullable();
             $table->string('locale')->default('en');
             $table->string('timezone')->default('UTC');
-            $table->string('language')->nullable();
             $table->string('profile_photo_path')->nullable();
             $table->string('current_team_id')->nullable();
             $table->text('two_factor_secret')->nullable();

@@ -50,7 +50,7 @@ class InstallCommand extends Command
         'sessions' => 'Session management (device tracking)',
         'social-login' => 'Social login (OAuth via Socialite, routes only)',
         'newsletter-subscription' => 'Newsletter subscription',
-        'extended-profile' => 'Extended profile (phone, timezone, language)',
+        'extended-profile' => 'Extended profile (phone, timezone, locale)',
         'notifications' => 'Notification preferences',
         'guest-auth' => 'Guest authentication (anonymous users)',
         'phone-otp' => 'Phone OTP verification',
@@ -100,6 +100,7 @@ class InstallCommand extends Command
         'extended-profile' => [
             'add_localization_fields_to_users_table.php',
             'add_profile_fields_to_users_table.php',
+            'drop_language_column_from_users_table.php',
         ],
         'notifications' => [
             'create_notifications_table.php',

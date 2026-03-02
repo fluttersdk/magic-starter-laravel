@@ -43,7 +43,6 @@ final class ProfilePhotoControllerTest extends TestCase
             $table->string('profile_photo_path')->nullable();
             $table->string('locale')->nullable();
             $table->string('timezone')->nullable();
-            $table->string('language')->nullable();
             $table->string('current_team_id')->nullable();
             $table->timestamp('email_verified_at')->nullable();
             $table->timestamps();

@@ -74,7 +74,6 @@ class AuthControllerTest extends TestCase
             $table->char('phone_country', 2)->nullable();
             $table->string('locale')->default('en');
             $table->string('timezone')->default('UTC');
-            $table->string('language')->nullable();
             $table->foreignUuid('current_team_id')->nullable();
             $table->string('profile_photo_path', 2048)->nullable();
             $table->timestamps();

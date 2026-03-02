@@ -57,7 +57,7 @@ class UpdateProfileRequest extends FormRequest
                 'string',
                 Rule::in(DateTimeZone::listIdentifiers()),
             ],
-            'language' => [
+            'locale' => [
                 'nullable',
                 'string',
                 Rule::in(

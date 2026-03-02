@@ -65,7 +65,6 @@ class GuestLifecycleTest extends TestCase
             $table->char('phone_country', 2)->nullable();
             $table->string('locale')->default('en');
             $table->string('timezone')->default('UTC');
-            $table->string('language')->nullable();
             $table->string('current_team_id')->nullable();
             $table->string('profile_photo_path', 2048)->nullable();
             $table->timestamp('email_verified_at')->nullable();
@@ -345,7 +344,6 @@ class GuestLifecycleTest extends TestCase
  * @property string|null $phone_country
  * @property string $locale
  * @property string $timezone
- * @property string|null $language
  * @property string|null $current_team_id
  * @property string|null $profile_photo_path
  * @property string|null $email_verified_at

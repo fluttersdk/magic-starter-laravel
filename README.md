@@ -293,7 +293,7 @@ Features::hasTimezoneOrExtendedProfileFeatures();    // bool — true when eithe
 | `models.team_invitation` | `TeamInvitation::class` | Invitation model class |
 | `defaults.locale` | `'en'` | Default locale assigned to new users |
 | `defaults.timezone` | `'UTC'` | Default timezone assigned to new users |
-| `supported_locales` | `['en', 'tr']` | Locales accepted by locale/language validation rules |
+| `supported_locales` | `['en', 'tr']` | Locales accepted by locale validation rules |
 | `profile_photo_disk` | `'public'` | Storage disk for user profile photos |
 | `team_photo_disk` | `'public'` | Storage disk for team photos |
 | `profile_photo_path` | `'profile-photos'` | Directory within disk for user profile photos |
@@ -379,7 +379,7 @@ magic-starter-laravel/
 ├── config/
 │   └── magic-starter.php                  # Package configuration
 ├── database/
-│   └── migrations/                        # 18 publishable migration stubs
+│   └── migrations/                        # 19 publishable migration stubs
 ├── lang/
 │   ├── en/
 │   │   └── teams.php                      # English team translations
@@ -589,7 +589,7 @@ Invitations expire after `config('magic-starter.invitation_expiry_days')` days (
 
 Always active. These routes require `auth:sanctum`:
 
-- **Update Profile**: Via `UpdatesUserProfiles` contract. Accepted fields: `name`, `phone` (E.164 format), `timezone` (any valid IANA timezone), `language` (from supported locales).
+- **Update Profile**: Via `UpdatesUserProfiles` contract. Accepted fields: `name`, `phone` (E.164 format), `timezone` (any valid IANA timezone), `locale` (from supported locales).
 - **Update Password**: Via `UpdatesUserPasswords` contract. Requires current password verification.
 - **Delete Account**: Via `DeletesUsers` contract. Requires password confirmation.
 
@@ -1002,7 +1002,6 @@ All require `auth:sanctum` middleware.
     "email_verified_at": "2026-01-01T00:00:00.000000Z",
     "locale": "en",
     "timezone": "UTC",
-    "language": "en",
     "profile_photo_url": "https://ui-avatars.com/api/?name=John+Doe",
     "two_factor_enabled": false,
     "current_team": {},
@@ -1236,7 +1235,7 @@ The package includes 23 form requests. All validation rules are array-style (nev
 | `SocialLoginRequest` | `access_token`: required_without:authorization_code, string. `authorization_code`: required_without:access_token, string. |
 | `ForgotPasswordRequest` | `email`: required, email. |
 | `ResetPasswordRequest` | `token`: required. `email`: required, email. `password`: required, confirmed, min:8, letters, numbers, mixedCase. |
-| `UpdateProfileRequest` | `name`: required, string, min:2, max:255. `phone`: nullable, string, max:20, E164 format. `timezone`: nullable, valid IANA timezone. `language`: nullable, in:supported_locales. |
+| `UpdateProfileRequest` | `name`: required, string, min:2, max:255. `phone`: nullable, string, max:20, E164 format. `timezone`: nullable, valid IANA timezone. `locale`: nullable, in:supported_locales. |
 | `UpdatePasswordRequest` | `current_password`: required, string (verified against current hash). `password`: required, min:8, letters, numbers, mixedCase, confirmed. |
 | `UpdateProfilePhotoRequest` | `photo`: required, image, max:1024 (KB). |
 | `DeleteAccountRequest` | `password`: required, string (must match current password). |
@@ -1257,7 +1256,7 @@ The package includes 23 form requests. All validation rules are array-style (nev
 
 ## Publishable Migrations
 
-18 migration stubs are published with timestamps applied at install time. They are never auto-loaded by the package — you control when they run.
+19 migration stubs are published with timestamps applied at install time. They are never auto-loaded by the package — you control when they run.
 
 All `create_*` migrations use `Schema::hasTable()` guards — they safely skip table creation if the table already exists. All column types (primary keys, foreign keys) automatically respect the `use_uuids` config setting via `MigrationHelper`.
 

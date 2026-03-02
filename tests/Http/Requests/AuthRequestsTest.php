@@ -53,7 +53,6 @@ final class AuthRequestsTest extends TestCase
             $table->string('password')->nullable();
             $table->string('locale')->default('en');
             $table->string('timezone')->default('UTC');
-            $table->string('language')->nullable();
             $table->string('current_team_id')->nullable();
             $table->string('profile_photo_path', 2048)->nullable();
             $table->timestamp('email_verified_at')->nullable();

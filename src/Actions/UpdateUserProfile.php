@@ -17,7 +17,7 @@ use Illuminate\Validation\ValidationException;
  * Default profile update action with optional extended fields.
  *
  * When Features::extendedProfile() is enabled, also validates/stores
- * phone, timezone, and language fields.
+ * phone, timezone, and locale fields.
  */
 class UpdateUserProfile implements UpdatesUserProfiles
 {
@@ -60,7 +60,7 @@ class UpdateUserProfile implements UpdatesUserProfiles
                 'string',
                 'size:2',
             ];
-            $rules['language'] = [
+            $rules['locale'] = [
                 'nullable',
                 'string',
                 Rule::in(

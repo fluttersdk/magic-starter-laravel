@@ -52,7 +52,6 @@ final class ProfileRequestsTest extends TestCase
             $table->string('password')->nullable();
             $table->string('locale')->nullable();
             $table->string('timezone')->nullable();
-            $table->string('language')->nullable();
             $table->string('profile_photo_path')->nullable();
             $table->string('current_team_id')->nullable();
             $table->timestamp('email_verified_at')->nullable();
@@ -113,7 +112,6 @@ final class ProfileRequestsTest extends TestCase
             'email' => 'user@example.test',
             'phone' => '+1234567890',
             'timezone' => 'UTC',
-            'language' => 'en',
             'password' => Hash::make('Password123'),
         ]);
     }
@@ -168,17 +166,17 @@ final class ProfileRequestsTest extends TestCase
             ->assertJsonValidationErrors(['timezone']);
     }
 
-    public function test_update_profile_invalid_language_format_returns_422(): void
+    public function test_update_profile_invalid_locale_format_returns_422(): void
     {
         $user = $this->createAuthenticatedUser();
 
         $this->actingAs($user)
             ->putJson('/user/profile', [
                 'name' => 'Valid Name',
-                'language' => 'INVALID',
+                'locale' => 'INVALID',
             ])
             ->assertUnprocessable()
-            ->assertJsonValidationErrors(['language']);
+            ->assertJsonValidationErrors(['locale']);
     }
 
     public function test_update_password_missing_current_password_returns_422(): void
@@ -273,25 +271,25 @@ final class ProfileRequestsTest extends TestCase
             ->assertOk();
     }
 
-    public function test_update_profile_rejects_unsupported_language(): void
+    public function test_update_profile_rejects_unsupported_locale(): void
     {
         $user = $this->createAuthenticatedUser();
         $this->actingAs($user)
             ->putJson('/user/profile', [
                 'name' => 'Valid Name',
-                'language' => 'xx',
+                'locale' => 'xx',
             ])
             ->assertUnprocessable()
-            ->assertJsonValidationErrors(['language']);
+            ->assertJsonValidationErrors(['locale']);
     }
 
-    public function test_update_profile_accepts_supported_language(): void
+    public function test_update_profile_accepts_supported_locale(): void
     {
         $user = $this->createAuthenticatedUser();
         $this->actingAs($user)
             ->putJson('/user/profile', [
                 'name' => 'Valid Name',
-                'language' => 'tr',
+                'locale' => 'tr',
             ])
             ->assertOk();
     }

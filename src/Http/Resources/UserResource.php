@@ -25,7 +25,6 @@ class UserResource extends JsonResource
             'email_verified_at' => $this->email_verified_at,
             'locale' => $this->locale,
             'timezone' => $this->timezone,
-            'language' => $this->language,
             'profile_photo_url' => $this->profile_photo_url,
             'two_factor_enabled' => method_exists($this->resource, 'hasEnabledTwoFactorAuthentication') &&
                 $this->resource->hasEnabledTwoFactorAuthentication(),

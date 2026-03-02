@@ -45,7 +45,6 @@ class UserResourceTest extends TestCase
             $table->char('phone_country', 2)->nullable();
             $table->string('locale')->default('en');
             $table->string('timezone')->default('UTC');
-            $table->string('language')->nullable();
             $table->string('profile_photo_path')->nullable();
             $table->string('current_team_id')->nullable();
             $table->timestamps();

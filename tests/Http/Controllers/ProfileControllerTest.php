@@ -46,7 +46,6 @@ final class ProfileControllerTest extends TestCase
             $table->string('password')->nullable();
             $table->string('locale')->nullable();
             $table->string('timezone')->nullable();
-            $table->string('language')->nullable();
             $table->string('profile_photo_path')->nullable();
             $table->string('current_team_id')->nullable();
             $table->timestamp('email_verified_at')->nullable();
@@ -106,7 +105,6 @@ final class ProfileControllerTest extends TestCase
             'email' => 'user@example.test',
             'phone' => '+11234567890',
             'timezone' => 'UTC',
-            'language' => 'en',
             'password' => \password_hash('secret123', PASSWORD_BCRYPT),
         ]);
 
@@ -115,12 +113,12 @@ final class ProfileControllerTest extends TestCase
                 'name' => 'New Name',
                 'phone' => '+15551000000',
                 'timezone' => 'Europe/Istanbul',
-                'language' => 'tr',
+                'locale' => 'tr',
             ])
             ->assertOk()
             ->assertJsonPath('data.name', 'New Name')
             ->assertJsonPath('data.timezone', 'Europe/Istanbul')
-            ->assertJsonPath('data.language', 'tr');
+            ->assertJsonPath('data.locale', 'tr');
 
         $this->assertSame('New Name', $user->fresh()->name);
         $this->assertSame('+15551000000', $user->fresh()->phone);

@@ -50,7 +50,7 @@ class Features
     }
 
     /**
-     * Enable the extended profile feature (phone, timezone, language, locale).
+     * Enable the extended profile feature (phone, timezone, locale).
      */
     public static function extendedProfile(): string
     {
