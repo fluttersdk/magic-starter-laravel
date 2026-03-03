@@ -83,10 +83,6 @@ class CreateUser implements CreatesUsers
             $attributes['phone'] = $input['phone'];
         }
 
-        if (isset($input['phone_country'])) {
-            $attributes['phone_country'] = $input['phone_country'];
-        }
-
         if (Features::hasExtendedProfileFeatures()) {
             $defaults = config('magic-starter.defaults', []);
             $request = request();

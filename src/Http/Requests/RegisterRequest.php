@@ -88,12 +88,6 @@ class RegisterRequest extends FormRequest
                 new E164Phone,
                 Rule::unique($userTable, 'phone'),
             ];
-            $rules['phone_country'] = [
-                'required_with:phone',
-                'nullable',
-                'string',
-                'size:2',
-            ];
         } elseif ($phoneEnabled) {
             $rules['phone'] = [
                 'required',
@@ -101,11 +95,6 @@ class RegisterRequest extends FormRequest
                 'max:20',
                 new E164Phone,
                 Rule::unique($userTable, 'phone'),
-            ];
-            $rules['phone_country'] = [
-                'required',
-                'string',
-                'size:2',
             ];
         } else {
             $rules['email'] = [

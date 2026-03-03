@@ -42,11 +42,6 @@ class UpdateProfileRequest extends FormRequest
                 'max:255',
                 Rule::unique($userTable, 'email')->ignore($user?->id),
             ],
-            'phone_country' => [
-                'nullable',
-                'string',
-                'size:2',
-            ],
             'phone' => [
                 'nullable',
                 'string',

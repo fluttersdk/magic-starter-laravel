@@ -74,11 +74,6 @@ class UpdateUserProfile implements UpdatesUserProfiles
                 'max:20',
                 new E164Phone,
             ];
-            $rules['phone_country'] = [
-                'nullable',
-                'string',
-                'size:2',
-            ];
             $rules['locale'] = [
                 'nullable',
                 'string',
