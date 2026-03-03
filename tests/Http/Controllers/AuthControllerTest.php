@@ -71,6 +71,7 @@ class AuthControllerTest extends TestCase
             $table->rememberToken();
             $table->boolean('is_guest')->default(false);
             $table->string('device_id')->unique()->nullable();
+            $table->string('phone')->nullable()->unique();
             $table->char('phone_country', 2)->nullable();
             $table->string('locale')->default('en');
             $table->string('timezone')->default('UTC');
@@ -111,7 +112,10 @@ class AuthControllerTest extends TestCase
 
         $this->app->bind(CreatesUsers::class, AuthControllerCreatesUsersAction::class);
 
-        Gate::define('switchTo', static fn (): bool => true);
+        Gate::policy(
+            AuthControllerTestTeam::class,
+            \FlutterSdk\MagicStarter\Policies\TeamPolicy::class,
+        );
 
         Route::post('/register', [AuthController::class, 'register']);
         Route::post('/login', [AuthController::class, 'login']);
@@ -143,6 +147,7 @@ class AuthControllerTest extends TestCase
             ->assertCreated()
             ->assertJsonPath('message', 'Registration successful')
             ->assertJsonPath('data.user.email', 'john@example.com')
+            ->assertJsonPath('data.user.phone', null)
             ->assertJsonStructure([
                 'data' => ['user', 'token'],
                 'message',
@@ -345,8 +350,8 @@ class AuthControllerTest extends TestCase
                     'id',
                     'name',
                     'email',
+                    'phone',
                     'is_guest',
-                    'phone_country',
                     'locale',
                     'timezone',
                     'profile_photo_url',
@@ -418,7 +423,7 @@ class AuthControllerTest extends TestCase
 
         $response
             ->assertStatus(403)
-            ->assertJsonPath('message', 'You are not a member of this team.');
+            ->assertJsonPath('message', 'This action is unauthorized.');
     }
 
     public function test_login_returns_401_for_wrong_password(): void
@@ -515,6 +520,30 @@ class AuthControllerTest extends TestCase
             ->assertJsonPath('data.user.locale', 'en')
             ->assertJsonPath('data.user.timezone', 'UTC');
     }
+
+    public function test_register_returns_phone_in_response_when_phone_identity_enabled(): void
+    {
+        // Enable phone identity alongside email.
+        config([
+            'magic-starter.auth.email' => true,
+            'magic-starter.auth.phone' => true,
+        ]);
+
+        $response = $this->postJson('/register', [
+            'name' => 'Phone User',
+            'email' => 'phone-user@example.com',
+            'phone' => '+15551234567',
+            'password' => 'Password123',
+            'password_confirmation' => 'Password123',
+            'locale' => 'en',
+            'timezone' => 'UTC',
+        ]);
+
+        $response
+            ->assertCreated()
+            ->assertJsonPath('data.user.phone', '+15551234567')
+            ->assertJsonPath('data.user.email', 'phone-user@example.com');
+    }
 }
 
 final class AuthControllerTestUser extends Model implements AuthenticatableContract
@@ -609,7 +638,8 @@ final class AuthControllerCreatesUsersAction implements CreatesUsers
         return $model::query()->create([
             'id' => (string) Str::uuid(),
             'name' => $input['name'],
-            'email' => $input['email'],
+            'email' => $input['email'] ?? null,
+            'phone' => $input['phone'] ?? null,
             'password' => Hash::make((string) $input['password']),
             'locale' => $input['locale'] ?? 'en',
             'timezone' => $input['timezone'] ?? 'UTC',

@@ -118,7 +118,8 @@ final class ProfileControllerTest extends TestCase
             ->assertOk()
             ->assertJsonPath('data.name', 'New Name')
             ->assertJsonPath('data.timezone', 'Europe/Istanbul')
-            ->assertJsonPath('data.locale', 'tr');
+            ->assertJsonPath('data.locale', 'tr')
+            ->assertJsonPath('data.phone', '+15551000000');
 
         $this->assertSame('New Name', $user->fresh()->name);
         $this->assertSame('+15551000000', $user->fresh()->phone);

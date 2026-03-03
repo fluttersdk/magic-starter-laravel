@@ -158,6 +158,7 @@ class RegressionAuthTest extends TestCase
             ->assertCreated()
             ->assertJsonPath('message', 'Registration successful')
             ->assertJsonPath('data.user.email', 'regression@example.com')
+            ->assertJsonPath('data.user.phone', null)
             ->assertJsonStructure([
                 'data' => ['user', 'token'],
                 'message',
@@ -400,7 +401,8 @@ final class RegressionCreatesUsersAction implements CreatesUsers
         return $userModel::create([
             'id' => (string) Str::uuid(),
             'name' => $input['name'] ?? null,
-            'email' => $input['email'],
+            'email' => $input['email'] ?? null,
+            'phone' => $input['phone'] ?? null,
             'password' => Hash::make((string) $input['password']),
             'locale' => $input['locale'] ?? 'en',
             'timezone' => $input['timezone'] ?? 'UTC',
