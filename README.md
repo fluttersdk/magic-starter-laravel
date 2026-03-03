@@ -998,7 +998,6 @@ All require `auth:sanctum` middleware.
     "email": "john@example.com",
     "phone": "+1234567890",
     "is_guest": false,
-    "phone_country": "US",
     "email_verified_at": "2026-01-01T00:00:00.000000Z",
     "locale": "en",
     "timezone": "UTC",

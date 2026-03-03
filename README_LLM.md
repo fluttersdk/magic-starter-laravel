@@ -225,7 +225,6 @@ class User extends Authenticatable implements MustVerifyEmailContract
         'email',
         'password',
         'phone',
-        'phone_country',
         'locale',
         'timezone',
         'language',
