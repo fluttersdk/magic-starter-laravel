@@ -24,7 +24,7 @@ class DeleteAccountRequest extends FormRequest
     public function rules(): array
     {
         return [
-            'password' => ['required', 'string'],
+            'password' => $this->isGuestWithoutPassword() ? ['sometimes', 'string'] : ['required', 'string'],
         ];
     }
 
@@ -34,9 +34,25 @@ class DeleteAccountRequest extends FormRequest
     public function withValidator(Validator $validator): void
     {
         $validator->after(function (Validator $validator) {
+            if ($this->isGuestWithoutPassword()) {
+                return;
+            }
+
             if (! Hash::check((string) $this->input('password'), (string) $this->user()?->getAuthPassword())) {
                 $validator->errors()->add('password', 'The password is incorrect.');
             }
         });
+    }
+
+    /**
+     * Determine if the authenticated user is a guest without a password.
+     */
+    private function isGuestWithoutPassword(): bool
+    {
+        $user = $this->user();
+
+        return $user
+            && (bool) ($user->is_guest ?? false)
+            && empty($user->getAuthPassword());
     }
 }

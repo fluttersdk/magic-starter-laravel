@@ -31,7 +31,7 @@ class ConfirmPasswordRequest extends FormRequest
     {
         return [
             'password' => [
-                'required',
+                $this->isGuestWithoutPassword() ? 'sometimes' : 'required',
                 'string',
             ],
         ];
@@ -46,9 +46,25 @@ class ConfirmPasswordRequest extends FormRequest
     public function withValidator(Validator $validator): void
     {
         $validator->after(function ($validator) {
+            if ($this->isGuestWithoutPassword()) {
+                return;
+            }
+
             if (! Hash::check((string) $this->input('password'), (string) $this->user()?->getAuthPassword())) {
                 $validator->errors()->add('password', 'The provided password does not match your current password.');
             }
         });
+    }
+
+    /**
+     * Determine if the authenticated user is a guest without a password.
+     */
+    protected function isGuestWithoutPassword(): bool
+    {
+        $user = $this->user();
+
+        return $user
+            && (bool) ($user->is_guest ?? false)
+            && empty($user->getAuthPassword());
     }
 }
