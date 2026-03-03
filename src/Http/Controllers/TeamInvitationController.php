@@ -99,7 +99,7 @@ class TeamInvitationController
         $invitation = $invitationModelClass::query()->where('token', $token)->firstOrFail();
         $user = $request->user();
 
-        if (mb_strtolower($invitation->email) !== mb_strtolower($user->email)) {
+        if ($user->email === null || mb_strtolower($invitation->email) !== mb_strtolower($user->email)) {
             return response()->json([
                 'message' => 'This invitation was sent to a different email address.',
             ], 403);
