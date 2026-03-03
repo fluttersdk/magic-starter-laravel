@@ -40,6 +40,7 @@ final class ProfilePhotoControllerTest extends TestCase
             $table->uuid('id')->primary();
             $table->string('name')->nullable();
             $table->string('email')->nullable();
+            $table->string('phone')->nullable();
             $table->string('profile_photo_path')->nullable();
             $table->string('locale')->nullable();
             $table->string('timezone')->nullable();

@@ -41,6 +41,7 @@ final class TwoFactorChallengeControllerTest extends TestCase
             $table->string('password')->nullable();
             $table->boolean('is_guest')->default(false);
             $table->string('device_id')->unique()->nullable();
+            $table->string('phone')->nullable()->unique();
             $table->char('phone_country', 2)->nullable();
             $table->text('two_factor_secret')->nullable();
             $table->text('two_factor_recovery_codes')->nullable();

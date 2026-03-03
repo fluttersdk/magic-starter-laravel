@@ -31,6 +31,7 @@ final class HasTeamsTest extends TestCase
             $table->string('password')->nullable();
             $table->boolean('is_guest')->default(false);
             $table->string('device_id')->unique()->nullable();
+            $table->string('phone')->nullable();
             $table->char('phone_country', 2)->nullable();
             $table->string('current_team_id')->nullable();
             $table->timestamps();
