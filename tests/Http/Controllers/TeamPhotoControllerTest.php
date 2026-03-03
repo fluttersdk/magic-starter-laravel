@@ -55,9 +55,10 @@ final class TeamPhotoControllerTest extends TestCase
 
         Storage::fake('public');
 
-        Gate::define('update', function ($user, $team) {
-            return $user->id === $team->user_id;
-        });
+        Gate::policy(
+            TestTeamForTeamPhoto::class,
+            \FlutterSdk\MagicStarter\Policies\TeamPolicy::class,
+        );
 
         Route::post('/teams/{team}/photo', [TeamPhotoController::class, 'update']);
         Route::delete('/teams/{team}/photo', [TeamPhotoController::class, 'delete']);
@@ -257,6 +258,7 @@ class TestUserForTeamPhoto extends Model implements AuthenticatableContract
 {
     use AuthenticatableTrait;
     use Authorizable;
+    use \FlutterSdk\MagicStarter\Traits\HasTeams;
 
     protected $table = 'users';
 

@@ -70,14 +70,10 @@ final class TeamMemberControllerTest extends TestCase
 
         \call_user_func('app')->alias('gate', \Illuminate\Contracts\Auth\Access\Gate::class);
 
-        \call_user_func('app', 'gate')->define('view', function (mixed $user, mixed $team): bool {
-            return (string) $team->user_id === (string) $user->getKey()
-                || $team->users()->where('user_id', $user->getKey())->exists();
-        });
-
-        \call_user_func('app', 'gate')->define('manageMembers', function (mixed $user, mixed $team): bool {
-            return (string) $team->user_id === (string) $user->getKey();
-        });
+        \call_user_func('app', 'gate')->policy(
+            TeamMemberControllerTestTeam::class,
+            \FlutterSdk\MagicStarter\Policies\TeamPolicy::class,
+        );
 
         $this->app->instance(AddsTeamMembers::class, new class implements AddsTeamMembers
         {

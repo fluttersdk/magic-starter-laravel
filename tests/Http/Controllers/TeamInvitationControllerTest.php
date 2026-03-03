@@ -80,9 +80,10 @@ final class TeamInvitationControllerTest extends TestCase
 
         \call_user_func('app')->alias('gate', \Illuminate\Contracts\Auth\Access\Gate::class);
 
-        \call_user_func('app', 'gate')->define('manageInvitations', function (mixed $user, mixed $team): bool {
-            return (string) $team->user_id === (string) $user->getKey();
-        });
+        \call_user_func('app', 'gate')->policy(
+            TeamInvitationControllerTestTeam::class,
+            \FlutterSdk\MagicStarter\Policies\TeamPolicy::class,
+        );
 
         $this->app->instance(InvitesTeamMembers::class, new class implements InvitesTeamMembers
         {
