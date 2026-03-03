@@ -167,7 +167,6 @@ class GuestConversionTest extends TestCase
         $this->actingAs($user)
             ->putJson('/user/profile', [
                 'phone' => '+14155552671',
-                'phone_country' => 'US',
             ])
             ->assertOk();
 
@@ -190,7 +189,6 @@ class GuestConversionTest extends TestCase
         $this->actingAs($user)
             ->putJson('/user/profile', [
                 'phone' => '+14155552672',
-                'phone_country' => 'US',
             ])
             ->assertOk();
 

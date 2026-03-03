@@ -105,7 +105,6 @@ final class AuthRequestsTest extends TestCase
                         'name' => $input['name'],
                         'email' => $input['email'] ?? null,
                         'phone' => $input['phone'] ?? null,
-                        'phone_country' => $input['phone_country'] ?? null,
                         'password' => Hash::make((string) $input['password']),
                         'locale' => $input['locale'] ?? 'en',
                         'timezone' => $input['timezone'] ?? 'UTC',
@@ -115,7 +114,10 @@ final class AuthRequestsTest extends TestCase
             };
         });
 
-        Gate::define('switchTo', static fn (): bool => true);
+        Gate::policy(
+            AuthRequestsTestTeam::class,
+            \FlutterSdk\MagicStarter\Policies\TeamPolicy::class,
+        );
 
         \call_user_func('app', 'router')->post('/auth/register', [AuthController::class, 'register']);
         \call_user_func('app', 'router')->post('/auth/login', [AuthController::class, 'login']);
@@ -499,7 +501,6 @@ final class AuthRequestsTest extends TestCase
         $this->postJson('/auth/register', [
             'name' => 'Phone Reg',
             'phone' => '+905551234567',
-            'phone_country' => 'TR',
             'password' => 'Password123',
             'password_confirmation' => 'Password123',
         ])
@@ -533,7 +534,6 @@ final class AuthRequestsTest extends TestCase
         $this->postJson('/auth/register', [
             'name' => 'Phone Both',
             'phone' => '+905551112233',
-            'phone_country' => 'TR',
             'password' => 'Password123',
             'password_confirmation' => 'Password123',
         ])
