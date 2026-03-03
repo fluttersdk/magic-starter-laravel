@@ -7,6 +7,7 @@ use Illuminate\Auth\Events\Registered;
 use Illuminate\Auth\Notifications\ResetPassword;
 use Illuminate\Notifications\Events\NotificationSending;
 use Illuminate\Support\Facades\Event;
+use Illuminate\Support\Facades\Gate;
 use Illuminate\Support\ServiceProvider;
 use Laravel\Sanctum\Sanctum;
 
@@ -82,8 +83,10 @@ class MagicStarterServiceProvider extends ServiceProvider
             },
         );
 
-        // 3. Auto-register personal team creation when teams feature is enabled.
+        // 3. Auto-register team policy and personal team creation when teams feature is enabled.
         if (Features::hasTeamFeatures()) {
+            Gate::policy(MagicStarter::teamModel(), Policies\TeamPolicy::class);
+
             Event::listen(
                 Registered::class,
                 Listeners\CreatePersonalTeamListener::class,
@@ -122,6 +125,10 @@ class MagicStarterServiceProvider extends ServiceProvider
             $this->publishes([
                 __DIR__ . '/../stubs/actions' => app_path('Actions/MagicStarter'),
             ], 'magic-starter-stubs');
+
+            $this->publishes([
+                __DIR__ . '/../stubs/policies' => app_path('Policies'),
+            ], 'magic-starter-policies');
             $this->publishes([
                 __DIR__ . '/../stubs/models/Team.php' => app_path('Models/Team.php'),
                 __DIR__ . '/../stubs/models/TeamUser.php' => app_path('Models/TeamUser.php'),
