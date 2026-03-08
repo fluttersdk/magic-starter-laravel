@@ -2,10 +2,21 @@
 
 namespace FlutterSdk\MagicStarter\Http\Requests;
 
+use DateTimeZone;
+use FlutterSdk\MagicStarter\Features;
 use FlutterSdk\MagicStarter\MagicStarter;
+use FlutterSdk\MagicStarter\Rules\E164Phone;
 use Illuminate\Foundation\Http\FormRequest;
 use Illuminate\Validation\Rule;
+use Illuminate\Validation\Rules\Password;
 
+/**
+ * Validates incoming registration requests.
+ *
+ * Identity rules are dynamically built from the identity strategy config
+ * (`auth.email` / `auth.phone`). When both identifiers are enabled,
+ * the user must provide at least one — email, phone, or both.
+ */
 class RegisterRequest extends FormRequest
 {
     /**
@@ -23,14 +34,79 @@ class RegisterRequest extends FormRequest
      */
     public function rules(): array
     {
-        return [
-            'name' => ['required', 'string', 'max:255'],
-            'email' => ['required', 'string', 'email', 'max:255', Rule::unique((new (MagicStarter::userModel()))->getTable(), 'email')],
-            'password' => ['required', 'string', 'min:8', 'confirmed'],
-
-            'locale' => ['nullable', 'string', 'max:5'],
-            'timezone' => ['nullable', 'string', 'timezone'],
+        $rules = [
+            'name' => [
+                'required',
+                'string',
+                'max:255',
+            ],
+            'password' => [
+                'required',
+                'string',
+                Password::min(8)->letters()->numbers()->mixedCase(),
+                'confirmed',
+            ],
+            'locale' => [
+                'nullable',
+                'string',
+                Rule::in(
+                    config(
+                        'magic-starter.supported_locales',
+                        ['en'],
+                    ),
+                ),
+            ],
+            'timezone' => [
+                'nullable',
+                'string',
+                Rule::in(DateTimeZone::listIdentifiers()),
+            ],
+            'subscribe_newsletter' => [
+                'nullable',
+                'boolean',
+            ],
         ];
+
+        $emailEnabled = Features::emailIdentity();
+        $phoneEnabled = Features::phoneIdentity();
+        $userTable = (new (MagicStarter::userModel()))->getTable();
+
+        if ($emailEnabled && $phoneEnabled) {
+            $rules['email'] = [
+                'required_without:phone',
+                'nullable',
+                'string',
+                'email',
+                'max:255',
+                Rule::unique($userTable, 'email'),
+            ];
+            $rules['phone'] = [
+                'required_without:email',
+                'nullable',
+                'string',
+                'max:20',
+                new E164Phone,
+                Rule::unique($userTable, 'phone'),
+            ];
+        } elseif ($phoneEnabled) {
+            $rules['phone'] = [
+                'required',
+                'string',
+                'max:20',
+                new E164Phone,
+                Rule::unique($userTable, 'phone'),
+            ];
+        } else {
+            $rules['email'] = [
+                'required',
+                'string',
+                'email',
+                'max:255',
+                Rule::unique($userTable, 'email'),
+            ];
+        }
+
+        return $rules;
     }
 
     /**
