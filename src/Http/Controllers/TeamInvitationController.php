@@ -17,7 +17,7 @@ use Illuminate\Support\Facades\Gate;
 class TeamInvitationController
 {
     /**
-     * List all pending invitations for the specified team.
+     * List all pending invitations for the specified team with pagination.
      */
     public function index(Request $request, string $team): AnonymousResourceCollection
     {
@@ -25,7 +25,16 @@ class TeamInvitationController
         $user = $request->user();
         Gate::forUser($user)->authorize('manageInvitations', $teamModel);
 
-        return TeamInvitationResource::collection($teamModel->invitations);
+        $perPage = min(
+            (int) $request->input('per_page', 15),
+            100,
+        );
+
+        return TeamInvitationResource::collection(
+            $teamModel->invitations()
+                ->latest()
+                ->paginate($perPage),
+        );
     }
 
     public function store(StoreTeamInvitationRequest $request, string $team, InvitesTeamMembers $inviter): TeamInvitationResource|JsonResponse

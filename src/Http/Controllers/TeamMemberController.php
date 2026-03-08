@@ -19,13 +19,18 @@ use Illuminate\Support\Facades\Gate;
 class TeamMemberController
 {
     /**
-     * List all members of the specified team.
+     * List all members of the specified team with pagination.
      */
     public function index(Request $request, string $team): AnonymousResourceCollection
     {
         $teamModel = $this->findTeam($team);
         $user = $request->user();
         Gate::forUser($user)->authorize('view', $teamModel);
+
+        $perPage = min(
+            (int) $request->input('per_page', 15),
+            100,
+        );
 
         $ownerClass = MagicStarter::userModel();
         $owner = $ownerClass::query()->find($teamModel->user_id);
@@ -34,10 +39,27 @@ class TeamMemberController
             $owner->role = Role::OWNER->value;
         }
 
-        $members = $teamModel->users;
-        $allMembers = collect([$owner])->merge($members)->unique('id')->filter();
+        $members = $teamModel->users()
+            ->orderBy('name')
+            ->paginate($perPage);
 
-        return TeamMemberResource::collection($allMembers);
+        // Add owner as first item in the collection
+        $allMembers = collect([$owner])
+            ->merge($members->items())
+            ->unique('id')
+            ->filter()
+            ->values();
+
+        // Create a new paginator with the merged collection
+        $paginator = new \Illuminate\Pagination\LengthAwarePaginator(
+            $allMembers,
+            $members->total() + ($owner ? 1 : 0),
+            $perPage,
+            $members->currentPage(),
+            ['path' => $request->url()],
+        );
+
+        return TeamMemberResource::collection($paginator);
     }
 
     /**

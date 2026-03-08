@@ -21,11 +21,26 @@ use Illuminate\Validation\ValidationException;
 class TeamController
 {
     /**
-     * List all teams for the authenticated user.
+     * List all teams for the authenticated user with pagination.
      */
     public function index(Request $request): AnonymousResourceCollection
     {
-        return TeamResource::collection($request->user()->allTeams());
+        $perPage = min(
+            (int) $request->input('per_page', 15),
+            100,
+        );
+
+        $user = $request->user();
+        $ownedTeamIds = $user->ownedTeams()->pluck('teams.id');
+        $memberTeamIds = $user->teams()->pluck('teams.id');
+        $allTeamIds = $ownedTeamIds->merge($memberTeamIds)->unique();
+
+        $teams = MagicStarter::teamModel()::query()
+            ->whereIn('id', $allTeamIds)
+            ->orderBy('name')
+            ->paginate($perPage);
+
+        return TeamResource::collection($teams);
     }
 
     /**
