@@ -7,15 +7,15 @@ use FlutterSdk\MagicStarter\Contracts\DisablesTwoFactorAuthentication;
 use FlutterSdk\MagicStarter\Contracts\EnablesTwoFactorAuthentication;
 use FlutterSdk\MagicStarter\Http\Requests\ConfirmTwoFactorRequest;
 use FlutterSdk\MagicStarter\Http\Requests\DisableTwoFactorRequest;
-use FlutterSdk\MagicStarter\Http\Requests\EnableTwoFactorRequest;
 use Illuminate\Http\JsonResponse;
+use Illuminate\Http\Request;
 
 class TwoFactorAuthenticationController
 {
     /**
      * Enable two factor authentication for the user.
      */
-    public function store(EnableTwoFactorRequest $request): JsonResponse
+    public function store(Request $request): JsonResponse
     {
         $user = $request->user();
 

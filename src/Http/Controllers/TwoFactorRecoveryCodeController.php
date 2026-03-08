@@ -3,23 +3,15 @@
 namespace FlutterSdk\MagicStarter\Http\Controllers;
 
 use FlutterSdk\MagicStarter\Contracts\GeneratesNewRecoveryCodes;
-use FlutterSdk\MagicStarter\Http\Requests\ConfirmPasswordRequest;
 use Illuminate\Http\JsonResponse;
+use Illuminate\Http\Request;
 
-/**
- * Handles listing and regenerating two-factor recovery codes.
- *
- * Both endpoints require password confirmation (sudo mode) to prevent
- * unauthorized access to sensitive recovery codes.
- */
 class TwoFactorRecoveryCodeController
 {
     /**
      * Get the user's two factor authentication recovery codes.
-     *
-     * Requires password confirmation via POST body.
      */
-    public function index(ConfirmPasswordRequest $request): JsonResponse
+    public function index(Request $request): JsonResponse
     {
         $user = $request->user();
 
@@ -37,10 +29,8 @@ class TwoFactorRecoveryCodeController
 
     /**
      * Generate a fresh set of two factor authentication recovery codes.
-     *
-     * Requires password confirmation via POST body.
      */
-    public function store(ConfirmPasswordRequest $request): JsonResponse
+    public function store(Request $request): JsonResponse
     {
         $user = $request->user();
 

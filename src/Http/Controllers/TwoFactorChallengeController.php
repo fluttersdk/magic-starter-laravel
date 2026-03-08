@@ -2,7 +2,6 @@
 
 namespace FlutterSdk\MagicStarter\Http\Controllers;
 
-use FlutterSdk\MagicStarter\Http\Controllers\Concerns\AuthenticatesUsers;
 use FlutterSdk\MagicStarter\Http\Requests\TwoFactorChallengeRequest;
 use FlutterSdk\MagicStarter\MagicStarter;
 use FlutterSdk\MagicStarter\Support\TwoFactorAuthenticationProvider;
@@ -10,10 +9,8 @@ use Illuminate\Contracts\Encryption\DecryptException;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Validation\ValidationException;
 
-class TwoFactorChallengeController
+class TwoFactorChallengeController extends AuthController
 {
-    use AuthenticatesUsers;
-
     /**
      * Process the two factor challenge.
      */
@@ -55,7 +52,7 @@ class TwoFactorChallengeController
         }
 
         // 5. Generate authenticated response via AuthController parent method.
-        $token = $this->createAuthToken($user, $request, storeDeviceInfo: true);
+        $token = $this->createAuthToken($user, $request);
 
         return $this->authenticatedResponse($user, $request, $token);
     }

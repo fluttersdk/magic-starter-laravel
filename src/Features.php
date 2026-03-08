@@ -50,7 +50,7 @@ class Features
     }
 
     /**
-     * Enable the extended profile feature (phone, timezone, locale).
+     * Enable the extended profile feature (phone, timezone, language, locale).
      */
     public static function extendedProfile(): string
     {
@@ -74,6 +74,14 @@ class Features
     }
 
     /**
+     * Enable the email verification feature.
+     */
+    public static function emailVerification(): string
+    {
+        return 'email-verification';
+    }
+
+    /**
      * Enable the guest authentication feature.
      */
     public static function guestAuth(): string
@@ -87,22 +95,6 @@ class Features
     public static function phoneOtp(): string
     {
         return 'phone-otp';
-    }
-
-    /**
-     * Enable the email verification feature.
-     */
-    public static function emailVerification(): string
-    {
-        return 'email-verification';
-    }
-
-    /**
-     * Enable the timezone list feature.
-     */
-    public static function timezones(): string
-    {
-        return 'timezones';
     }
 
     /**
@@ -178,6 +170,14 @@ class Features
     }
 
     /**
+     * Determine whether the email verification feature is enabled.
+     */
+    public static function hasEmailVerificationFeatures(): bool
+    {
+        return static::enabled(static::emailVerification());
+    }
+
+    /**
      * Determine whether the guest authentication feature is enabled.
      */
     public static function hasGuestAuthFeatures(): bool
@@ -191,48 +191,5 @@ class Features
     public static function hasPhoneOtpFeatures(): bool
     {
         return static::enabled(static::phoneOtp());
-    }
-
-    /**
-     * Determine whether the email verification feature is enabled.
-     */
-    public static function hasEmailVerificationFeatures(): bool
-    {
-        return static::enabled(static::emailVerification());
-    }
-
-    /**
-     * Determine whether the timezone list feature is enabled.
-     */
-    public static function hasTimezoneFeatures(): bool
-    {
-        return static::enabled(static::timezones());
-    }
-
-    /**
-     * Determine whether timezone fields should be active.
-     *
-     * Returns true when either the dedicated timezones feature
-     * or the extended-profile feature (which includes timezone) is enabled.
-     */
-    public static function hasTimezoneOrExtendedProfileFeatures(): bool
-    {
-        return static::hasTimezoneFeatures() || static::hasExtendedProfileFeatures();
-    }
-
-    /**
-     * Determine whether email is accepted as an identity for login/register.
-     */
-    public static function emailIdentity(): bool
-    {
-        return (bool) Config::get('magic-starter.auth.email', true);
-    }
-
-    /**
-     * Determine whether phone is accepted as an identity for login/register.
-     */
-    public static function phoneIdentity(): bool
-    {
-        return (bool) Config::get('magic-starter.auth.phone', false);
     }
 }
