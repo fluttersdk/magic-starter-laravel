@@ -8,6 +8,7 @@ use FlutterSdk\MagicStarter\Tests\TestCase;
 use Illuminate\Database\Eloquent\Concerns\HasUuids;
 use Illuminate\Foundation\Auth\User as Authenticatable;
 use Illuminate\Http\UploadedFile;
+use Illuminate\Support\Facades\Schema;
 
 final class ProfilePhotoControllerTest extends TestCase
 {
