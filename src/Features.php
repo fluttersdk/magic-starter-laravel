@@ -98,6 +98,14 @@ class Features
     }
 
     /**
+     * Enable the timezones feature.
+     */
+    public static function timezones(): string
+    {
+        return 'timezones';
+    }
+
+    /**
      * Determine whether the given feature is enabled.
      */
     public static function enabled(string $feature): bool
@@ -191,5 +199,13 @@ class Features
     public static function hasPhoneOtpFeatures(): bool
     {
         return static::enabled(static::phoneOtp());
+    }
+
+    /**
+     * Determine whether the timezones feature is enabled.
+     */
+    public static function hasTimezoneFeatures(): bool
+    {
+        return static::enabled(static::timezones());
     }
 }
