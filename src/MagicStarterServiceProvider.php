@@ -5,9 +5,11 @@ namespace FlutterSdk\MagicStarter;
 use FlutterSdk\MagicStarter\Console\InstallCommand;
 use Illuminate\Auth\Events\Registered;
 use Illuminate\Auth\Notifications\ResetPassword;
+use Illuminate\Cache\RateLimiting\Limit;
 use Illuminate\Notifications\Events\NotificationSending;
 use Illuminate\Support\Facades\Event;
 use Illuminate\Support\Facades\Gate;
+use Illuminate\Support\Facades\RateLimiter;
 use Illuminate\Support\ServiceProvider;
 use Laravel\Sanctum\Sanctum;
 
@@ -63,7 +65,10 @@ class MagicStarterServiceProvider extends ServiceProvider
      */
     public function boot(): void
     {
-        // 1. Sanctum personal access token model binding.
+        // 1. Register named rate limiters for package endpoints.
+        $this->configureRateLimiting();
+
+        // 2. Sanctum personal access token model binding.
         if (class_exists(Sanctum::class)) {
             Sanctum::usePersonalAccessTokenModel(
                 Models\PersonalAccessToken::class,
@@ -139,5 +144,58 @@ class MagicStarterServiceProvider extends ServiceProvider
             ], 'magic-starter-lang');
 
         }
+    }
+
+    /**
+     * Configure named rate limiters for Magic Starter endpoints.
+     */
+    private function configureRateLimiting(): void
+    {
+        // Authentication endpoints
+        RateLimiter::for('magic-starter-auth-login', function ($request) {
+            return Limit::perMinute(5)->by($request->ip() . '|' . $request->input('email', ''));
+        });
+
+        RateLimiter::for('magic-starter-auth-register', function ($request) {
+            return Limit::perMinute(3)->by($request->ip());
+        });
+
+        RateLimiter::for('magic-starter-auth-social', function ($request) {
+            return Limit::perMinute(10)->by($request->ip() . '|' . $request->route('provider', ''));
+        });
+
+        RateLimiter::for('magic-starter-auth-password-reset', function ($request) {
+            return Limit::perMinute(3)->by($request->ip() . '|' . $request->input('email', ''));
+        });
+
+        // 2FA challenge
+        RateLimiter::for('magic-starter-2fa-challenge', function ($request) {
+            return Limit::perMinute(5)->by($request->ip() . '|' . $request->input('two_factor_token', ''));
+        });
+
+        // Guest auth
+        RateLimiter::for('magic-starter-guest-auth', function ($request) {
+            return Limit::perMinute(10)->by($request->ip() . '|' . $request->input('device_id', ''));
+        });
+
+        // OTP endpoints - combined limiter for both send and verify
+        RateLimiter::for('magic-starter-otp', function ($request) {
+            $key = $request->ip();
+            if ($request->is('*otp/send*')) {
+                return Limit::perMinute(2)->by($key . '|send|' . $request->input('phone', ''));
+            }
+
+            return Limit::perMinute(5)->by($key . '|verify|' . $request->input('phone', ''));
+        });
+
+        // Public settings
+        RateLimiter::for('magic-starter-settings', function ($request) {
+            return Limit::perMinute(30)->by($request->ip());
+        });
+
+        // Email verification
+        RateLimiter::for('magic-starter-email-verification', function ($request) {
+            return Limit::perMinute(1)->by($request->user()?->id ?: $request->ip());
+        });
     }
 }

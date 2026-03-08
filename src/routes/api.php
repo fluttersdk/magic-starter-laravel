@@ -33,29 +33,43 @@ use Illuminate\Support\Facades\Route;
 
 Route::prefix((string) config('magic-starter.route_prefix', ''))
     ->group(function (): void {
-        Route::prefix('auth')->middleware('throttle:5,1')->group(function (): void {
-            Route::post('register', [AuthController::class, 'register']);
+        Route::prefix('auth')->middleware(['throttle:magic-starter-auth-login'])->group(function (): void {
             Route::post('login', [AuthController::class, 'login']);
-            Route::post('social/{provider}', [AuthController::class, 'socialLogin']);
+        });
 
+        Route::prefix('auth')->middleware(['throttle:magic-starter-auth-register'])->group(function (): void {
+            Route::post('register', [AuthController::class, 'register']);
+        });
+
+        Route::prefix('auth')->middleware(['throttle:magic-starter-auth-social'])->group(function (): void {
+            Route::post('social/{provider}', [AuthController::class, 'socialLogin']);
+        });
+
+        Route::prefix('auth')->middleware(['throttle:magic-starter-auth-password-reset'])->group(function (): void {
             Route::post('forgot-password', [PasswordResetController::class, 'sendResetLinkEmail']);
             Route::post('reset-password', [PasswordResetController::class, 'reset']);
+        });
 
+        Route::prefix('auth')->middleware(['throttle:magic-starter-2fa-challenge'])->group(function (): void {
             if (Features::enabled(Features::twoFactorAuthentication())) {
                 Route::post('two-factor-challenge', [TwoFactorChallengeController::class, 'store']);
             }
+        });
 
+        Route::prefix('auth')->middleware(['throttle:magic-starter-guest-auth'])->group(function (): void {
             if (Features::hasGuestAuthFeatures()) {
                 Route::post('guest', [GuestAuthController::class, 'login']);
             }
+        });
 
+        Route::prefix('auth')->middleware(['throttle:magic-starter-otp'])->group(function (): void {
             if (Features::hasPhoneOtpFeatures()) {
                 Route::post('otp/send', [OtpController::class, 'send']);
                 Route::post('otp/verify', [OtpController::class, 'verify']);
             }
         });
 
-        Route::middleware('throttle:5,1')->get('settings', [SettingsController::class, 'index']);
+        Route::middleware(['throttle:magic-starter-settings'])->get('settings', [SettingsController::class, 'index']);
 
         if (Features::hasTimezoneFeatures()) {
             Route::get('timezones', [TimezoneController::class, 'index']);
@@ -153,7 +167,7 @@ Route::prefix((string) config('magic-starter.route_prefix', ''))
                 ->name('verification.verify');
 
             // Protected route — requires Sanctum authentication and is rate-limited.
-            Route::middleware(['auth:sanctum', 'throttle:6,1'])->group(function (): void {
+            Route::middleware(['auth:sanctum', 'throttle:magic-starter-email-verification'])->group(function (): void {
                 Route::post('email/verification-notification', [EmailVerificationController::class, 'sendVerificationNotification'])
                     ->name('verification.send');
             });
