@@ -66,6 +66,38 @@ class Features
     }
 
     /**
+     * Enable the two-factor authentication feature.
+     */
+    public static function twoFactorAuthentication(): string
+    {
+        return 'two-factor-authentication';
+    }
+
+    /**
+     * Enable the email verification feature.
+     */
+    public static function emailVerification(): string
+    {
+        return 'email-verification';
+    }
+
+    /**
+     * Enable the guest authentication feature.
+     */
+    public static function guestAuth(): string
+    {
+        return 'guest-auth';
+    }
+
+    /**
+     * Enable the phone OTP feature.
+     */
+    public static function phoneOtp(): string
+    {
+        return 'phone-otp';
+    }
+
+    /**
      * Determine whether the given feature is enabled.
      */
     public static function enabled(string $feature): bool
@@ -127,5 +159,37 @@ class Features
     public static function hasNotificationFeatures(): bool
     {
         return static::enabled(static::notifications());
+    }
+
+    /**
+     * Determine whether the two-factor authentication feature is enabled.
+     */
+    public static function hasTwoFactorAuthenticationFeatures(): bool
+    {
+        return static::enabled(static::twoFactorAuthentication());
+    }
+
+    /**
+     * Determine whether the email verification feature is enabled.
+     */
+    public static function hasEmailVerificationFeatures(): bool
+    {
+        return static::enabled(static::emailVerification());
+    }
+
+    /**
+     * Determine whether the guest authentication feature is enabled.
+     */
+    public static function hasGuestAuthFeatures(): bool
+    {
+        return static::enabled(static::guestAuth());
+    }
+
+    /**
+     * Determine whether the phone OTP feature is enabled.
+     */
+    public static function hasPhoneOtpFeatures(): bool
+    {
+        return static::enabled(static::phoneOtp());
     }
 }
