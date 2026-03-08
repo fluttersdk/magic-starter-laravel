@@ -6,7 +6,7 @@ parameters:
     paths:
         - src/
     level: 6
-    tmpDir: .phpstan-cache
+    tmpDir: /tmp/phpstan/magic-starter-laravel
     treatPhpDocTypesAsCertain: false
     ignoreErrors:
         # JsonResource magic property access ($this->id, $this->name, etc.)
