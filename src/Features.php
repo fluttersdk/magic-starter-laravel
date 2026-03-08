@@ -208,4 +208,28 @@ class Features
     {
         return static::enabled(static::timezones());
     }
+
+    /**
+     * Determine whether email identity is enabled in config.
+     */
+    public static function emailIdentity(): bool
+    {
+        return Config::get('magic-starter.auth.email', true);
+    }
+
+    /**
+     * Determine whether phone identity is enabled in config.
+     */
+    public static function phoneIdentity(): bool
+    {
+        return Config::get('magic-starter.auth.phone', false);
+    }
+
+    /**
+     * Determine whether timezones or extended profile feature is enabled.
+     */
+    public static function hasTimezoneOrExtendedProfileFeatures(): bool
+    {
+        return static::hasTimezoneFeatures() || static::hasExtendedProfileFeatures();
+    }
 }
