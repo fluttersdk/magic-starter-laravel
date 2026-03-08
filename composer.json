@@ -63,7 +63,7 @@
         "test": "vendor/bin/phpunit",
         "lint": "vendor/bin/pint --test",
         "lint:fix": "vendor/bin/pint",
-        "analyse": "vendor/bin/phpstan analyse"
+        "analyse": "vendor/bin/phpstan analyse --memory-limit=1G"
     },
     "minimum-stability": "stable",
     "prefer-stable": true
