@@ -132,6 +132,10 @@ class TimezoneController
             elseif (str_starts_with($identifierLower, $needle)) {
                 $score += 500;
             }
+            // Any part (after /, _, -) starts with search term = good priority
+            elseif ($this->partStartsWith($identifierLower, $needle)) {
+                $score += 400;
+            }
             // Contains search term in identifier = medium priority
             elseif (str_contains($identifierLower, $needle)) {
                 $score += 300;
@@ -174,5 +178,21 @@ class TimezoneController
                 'region' => $tz['region'],
             ])
             ->values();
+    }
+
+    /**
+     * Check if any part of the identifier (after /, _, or -) starts with the needle.
+     */
+    private function partStartsWith(string $identifier, string $needle): bool
+    {
+        $parts = preg_split('/[\/_\-]/', $identifier);
+
+        foreach ($parts as $part) {
+            if (str_starts_with($part, $needle)) {
+                return true;
+            }
+        }
+
+        return false;
     }
 }
