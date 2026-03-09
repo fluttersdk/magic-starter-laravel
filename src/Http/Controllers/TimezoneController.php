@@ -9,7 +9,6 @@ use Illuminate\Http\Request;
 use Illuminate\Http\Resources\Json\AnonymousResourceCollection;
 use Illuminate\Pagination\LengthAwarePaginator;
 use Illuminate\Support\Collection;
-use Illuminate\Support\Facades\Log;
 
 /**
  * Provides a paginated, searchable list of IANA timezones.
@@ -31,17 +30,8 @@ class TimezoneController
         // 2. Apply search filter if provided (already sorted by relevance).
         $search = $request->input('search');
 
-        Log::info('Timezone search debug', [
-            'search_raw' => $request->input('search'),
-            'search_var' => $search,
-            'is_null' => $search === null,
-            'is_empty' => $search === '',
-            'total_before' => $timezones->count(),
-        ]);
-
         if ($search !== null && $search !== '') {
             $timezones = $this->filterBySearch($timezones, (string) $search);
-            Log::info('After filterBySearch', ['total_after' => $timezones->count()]);
         } else {
             // 3. Sort by offset_minutes ascending (UTC first, then eastward) when no search.
             $timezones = $timezones->sortBy('offset_minutes')->values();
