@@ -109,51 +109,62 @@ class TimezoneController
      */
     private function filterBySearch(Collection $timezones, string $search): Collection
     {
-        $needle = mb_strtolower($search);
+        $needle = mb_strtolower(trim($search));
 
-        return $timezones
-            ->map(function (array $tz) use ($needle): array {
-                $identifierLower = mb_strtolower($tz['identifier']);
-                $offsetLower = mb_strtolower($tz['offset']);
-                $regionLower = mb_strtolower($tz['region']);
+        if ($needle === '') {
+            return $timezones;
+        }
 
-                // Calculate relevance score (higher = more relevant)
-                $score = 0;
+        // First, score and filter
+        $scored = $timezones->map(function (array $tz) use ($needle): ?array {
+            $identifierLower = mb_strtolower($tz['identifier']);
+            $offsetLower = mb_strtolower($tz['offset']);
+            $regionLower = mb_strtolower($tz['region']);
 
-                // Exact match on identifier = highest priority
-                if ($identifierLower === $needle) {
-                    $score += 1000;
-                }
-                // Starts with search term in identifier = high priority
-                elseif (str_starts_with($identifierLower, $needle)) {
-                    $score += 500;
-                }
-                // Contains search term in identifier = medium priority
-                elseif (str_contains($identifierLower, $needle)) {
-                    $score += 300;
-                }
+            // Calculate relevance score (higher = more relevant)
+            $score = 0;
 
-                // Exact match on region
-                if ($regionLower === $needle) {
-                    $score += 200;
-                }
-                // Contains in region
-                elseif (str_contains($regionLower, $needle)) {
-                    $score += 100;
-                }
+            // Exact match on identifier = highest priority
+            if ($identifierLower === $needle) {
+                $score += 1000;
+            }
+            // Starts with search term in identifier = high priority
+            elseif (str_starts_with($identifierLower, $needle)) {
+                $score += 500;
+            }
+            // Contains search term in identifier = medium priority
+            elseif (str_contains($identifierLower, $needle)) {
+                $score += 300;
+            }
 
-                // Offset match
-                if ($offsetLower === $needle) {
-                    $score += 150;
-                } elseif (str_contains($offsetLower, $needle)) {
-                    $score += 50;
-                }
+            // Exact match on region
+            if ($regionLower === $needle) {
+                $score += 200;
+            }
+            // Contains in region
+            elseif (str_contains($regionLower, $needle)) {
+                $score += 100;
+            }
 
-                $tz['_relevance'] = $score;
+            // Offset match
+            if ($offsetLower === $needle) {
+                $score += 150;
+            } elseif (str_contains($offsetLower, $needle)) {
+                $score += 50;
+            }
 
-                return $tz;
-            })
-            ->filter(fn (array $tz): bool => $tz['_relevance'] > 0)
+            if ($score === 0) {
+                return null;
+            }
+
+            $tz['_relevance'] = $score;
+
+            return $tz;
+        });
+
+        // Remove nulls (non-matches), sort by relevance, and clean up
+        return $scored
+            ->filter()
             ->sortByDesc('_relevance')
             ->map(fn (array $tz): array => [
                 'identifier' => $tz['identifier'],
