@@ -6,7 +6,6 @@ composer.lock
 
 **/AGENTS.md
 CLAUDE.md
-.claude/
 .opencode/
 .sisyphus/
 .agent
