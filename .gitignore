@@ -5,7 +5,6 @@ vendor/
 composer.lock
 
 **/AGENTS.md
-CLAUDE.md
 .opencode/
 .sisyphus/
 .agent
