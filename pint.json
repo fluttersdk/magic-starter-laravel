@@ -8,6 +8,8 @@
             "elements": ["arguments", "arrays", "match", "parameters"]
         },
         "not_operator_with_successor_space": true,
-        "single_trait_insert_per_statement": true
+        "single_trait_insert_per_statement": true,
+        "fully_qualified_strict_types": false,
+        "declare_strict_types": false
     }
 }
