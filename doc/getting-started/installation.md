@@ -236,7 +236,7 @@ public function register(): void
 
 Now that Magic Starter is installed:
 
-- **[Configuration](https://wind.fluttersdk.com/packages/starter-laravel/getting-started/configuration)** — Customize feature flags, authentication identity strategy, model overrides, and UUID settings.
-- **[Features](https://wind.fluttersdk.com/packages/starter-laravel/getting-started/features)** — Learn about the 12 available feature flags and what each one enables.
-- **[Authentication](https://wind.fluttersdk.com/packages/starter-laravel/basics/authentication)** — Set up login, registration, password reset, and social OAuth flows.
-- **[Teams](https://wind.fluttersdk.com/packages/starter-laravel/basics/teams)** — Configure team management, invitations, and member roles.
+- **[Configuration](https://magic.fluttersdk.com/packages/starter-laravel/getting-started/configuration)** — Customize feature flags, authentication identity strategy, model overrides, and UUID settings.
+- **[Features](https://magic.fluttersdk.com/packages/starter-laravel/getting-started/features)** — Learn about the 12 available feature flags and what each one enables.
+- **[Authentication](https://magic.fluttersdk.com/packages/starter-laravel/basics/authentication)** — Set up login, registration, password reset, and social OAuth flows.
+- **[Teams](https://magic.fluttersdk.com/packages/starter-laravel/basics/teams)** — Configure team management, invitations, and member roles.

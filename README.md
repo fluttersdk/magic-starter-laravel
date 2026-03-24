@@ -17,8 +17,8 @@
 </p>
 
 <p align="center">
-  <a href="https://wind.fluttersdk.com/starter">Website</a> ·
-  <a href="https://wind.fluttersdk.com/packages/starter-laravel/getting-started/installation">Docs</a> ·
+  <a href="https://magic.fluttersdk.com/starter">Website</a> ·
+  <a href="https://magic.fluttersdk.com/packages/starter-laravel/getting-started/installation">Docs</a> ·
   <a href="https://packagist.org/packages/fluttersdk/magic-starter-laravel">Packagist</a> ·
   <a href="https://github.com/fluttersdk/magic-starter-laravel/issues">Issues</a> ·
   <a href="https://github.com/fluttersdk/magic-starter-laravel/discussions">Discussions</a>
@@ -146,16 +146,16 @@ Request → Route (feature-gated, rate-limited)
 
 | Document | Description |
 |----------|-------------|
-| [Installation](https://wind.fluttersdk.com/packages/starter-laravel/getting-started/installation) | Adding the package, publishing config, running migrations |
-| [Configuration](https://wind.fluttersdk.com/packages/starter-laravel/getting-started/configuration) | Config file reference and feature toggles |
-| [Authentication](https://wind.fluttersdk.com/packages/starter-laravel/basics/authentication) | Login, register, forgot/reset password, social login, OTP |
-| [Teams](https://wind.fluttersdk.com/packages/starter-laravel/basics/teams) | Team CRUD, switching, invitations, member roles |
-| [Profile](https://wind.fluttersdk.com/packages/starter-laravel/basics/profile) | Profile updates, photo upload, password change, account deletion |
-| [Two-Factor Auth](https://wind.fluttersdk.com/packages/starter-laravel/basics/two-factor-auth) | 2FA enable/disable, QR code, confirm, recovery codes |
-| [Notifications](https://wind.fluttersdk.com/packages/starter-laravel/basics/notifications) | Listing, unread count, mark read, preferences |
-| [Service Provider](https://wind.fluttersdk.com/packages/starter-laravel/architecture/service-provider) | Contract bindings, route registration, rate limiters |
-| [Action Contracts](https://wind.fluttersdk.com/packages/starter-laravel/architecture/action-contracts) | Overriding business logic via singleton binding |
-| [Models](https://wind.fluttersdk.com/packages/starter-laravel/architecture/models) | Dynamic resolution, UUID support, traits |
+| [Installation](https://magic.fluttersdk.com/packages/starter-laravel/getting-started/installation) | Adding the package, publishing config, running migrations |
+| [Configuration](https://magic.fluttersdk.com/packages/starter-laravel/getting-started/configuration) | Config file reference and feature toggles |
+| [Authentication](https://magic.fluttersdk.com/packages/starter-laravel/basics/authentication) | Login, register, forgot/reset password, social login, OTP |
+| [Teams](https://magic.fluttersdk.com/packages/starter-laravel/basics/teams) | Team CRUD, switching, invitations, member roles |
+| [Profile](https://magic.fluttersdk.com/packages/starter-laravel/basics/profile) | Profile updates, photo upload, password change, account deletion |
+| [Two-Factor Auth](https://magic.fluttersdk.com/packages/starter-laravel/basics/two-factor-auth) | 2FA enable/disable, QR code, confirm, recovery codes |
+| [Notifications](https://magic.fluttersdk.com/packages/starter-laravel/basics/notifications) | Listing, unread count, mark read, preferences |
+| [Service Provider](https://magic.fluttersdk.com/packages/starter-laravel/architecture/service-provider) | Contract bindings, route registration, rate limiters |
+| [Action Contracts](https://magic.fluttersdk.com/packages/starter-laravel/architecture/action-contracts) | Overriding business logic via singleton binding |
+| [Models](https://magic.fluttersdk.com/packages/starter-laravel/architecture/models) | Dynamic resolution, UUID support, traits |
 
 ---
 

@@ -11,9 +11,9 @@
         }
     ],
     "keywords": ["laravel", "auth", "teams", "profile", "starter", "sanctum", "jetstream"],
-    "homepage": "https://wind.fluttersdk.com/starter",
+    "homepage": "https://magic.fluttersdk.com/starter",
     "support": {
-        "docs": "https://wind.fluttersdk.com/packages/starter-laravel/getting-started/installation",
+        "docs": "https://magic.fluttersdk.com/packages/starter-laravel/getting-started/installation",
         "issues": "https://github.com/fluttersdk/magic-starter-laravel/issues",
         "source": "https://github.com/fluttersdk/magic-starter-laravel"
     },

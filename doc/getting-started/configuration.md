@@ -21,7 +21,7 @@ Magic Starter is configured via a single file at `config/magic-starter.php`. Thi
 All configuration keys support environment variable overrides where noted, making it straightforward to manage per-environment settings without modifying the config file directly.
 
 > [!TIP]
-> For a full walkthrough of installation and initial setup, see the [Installation Guide](https://wind.fluttersdk.com/packages/starter-laravel/getting-started/installation).
+> For a full walkthrough of installation and initial setup, see the [Installation Guide](https://magic.fluttersdk.com/packages/starter-laravel/getting-started/installation).
 
 <a name="publishing-the-config-file"></a>
 ## Publishing the Config File
