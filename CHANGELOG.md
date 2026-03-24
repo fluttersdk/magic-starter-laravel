@@ -4,17 +4,7 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
-### 📚 Documentation
-- **README**: Full rewrite to match Magic ecosystem format with badges, features table, quick start
-- **doc/ folder**: Comprehensive documentation (installation, configuration, authentication, profile, teams, notifications, 2FA, architecture)
-- **CLAUDE.md**: Project context for AI-assisted development
-
-### 🔧 Improvements
-- **Publishing**: GitHub Actions workflows for CI/CD and tag-triggered releases
-- **Package**: Rename to `fluttersdk/magic-starter-laravel`
-- **Templates**: GitHub issue templates for bug reports and feature requests
-
-## [1.0.0] - 2026-02-24
+## [0.0.1] - 2026-03-25
 
 ### ✨ Core Features
 - **Authentication**: Register, login, logout, current user via Sanctum tokens
@@ -36,4 +26,11 @@ All notable changes to this project will be documented in this file.
 - **Publishable Assets**: Config, migrations, action stubs, model stubs, translations
 - **Install Command**: `magic-starter:install` Artisan command with interactive setup
 - **18 Action Contracts**: With publishable stub implementations
-- **Comprehensive PHPDoc**: Full coverage following Laravel conventions
+
+### 📚 Documentation
+- **README**: Full rewrite to match Magic ecosystem format with badges, features table, quick start
+- **doc/ folder**: Comprehensive documentation (installation, configuration, authentication, profile, teams, notifications, 2FA, architecture)
+
+### 🔧 Improvements
+- **Publishing**: GitHub Actions workflows for CI/CD and tag-triggered releases
+- **Templates**: GitHub issue templates for bug reports and feature requests
