@@ -11,3 +11,8 @@
 /.gitattributes     export-ignore
 /.gitignore         export-ignore
 /CHANGELOG.md       export-ignore
+/doc                export-ignore
+/CLAUDE.md          export-ignore
+/.claude            export-ignore
+/AGENTS.md          export-ignore
+/.ac                export-ignore

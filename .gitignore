@@ -10,3 +10,5 @@ composer.lock
 .agent
 .omc/
 .mcp.json
+coverage/
+.ac/

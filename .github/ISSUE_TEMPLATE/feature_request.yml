@@ -1,0 +1,61 @@
+name: Feature Request
+description: Suggest a new feature or enhancement for Magic Starter Laravel
+labels: ["enhancement"]
+body:
+  - type: textarea
+    id: description
+    attributes:
+      label: Description
+      description: A clear and concise description of the feature or enhancement.
+    validations:
+      required: true
+
+  - type: dropdown
+    id: module
+    attributes:
+      label: Module
+      description: Which module does this feature relate to?
+      options:
+        - Authentication
+        - Teams
+        - Profile Management
+        - Two-Factor Authentication
+        - Sessions
+        - Notifications
+        - Social Login
+        - Email Verification
+        - Guest Auth
+        - Phone OTP
+        - Newsletter
+        - Configuration
+        - Other
+    validations:
+      required: true
+
+  - type: textarea
+    id: proposed_api
+    attributes:
+      label: Proposed API
+      description: How would developers interact with this feature? Show the intended API surface.
+      render: php
+
+  - type: textarea
+    id: use_case
+    attributes:
+      label: Use Case
+      description: Describe the problem this feature solves and who it benefits.
+    validations:
+      required: true
+
+  - type: textarea
+    id: alternatives_considered
+    attributes:
+      label: Alternatives Considered
+      description: What other approaches or workarounds have you considered?
+
+  - type: textarea
+    id: example_implementation
+    attributes:
+      label: Example Implementation
+      description: Optional sketch of how this could be implemented internally.
+      render: php
