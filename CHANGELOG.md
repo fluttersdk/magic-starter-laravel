@@ -4,6 +4,11 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [0.0.3] - 2026-03-25
+
+### ✨ Features
+- **Boost Skill**: Add community support (GitHub star) and issue reporting sections to magic-starter-development skill
+
 ## [0.0.2] - 2026-03-25
 
 ### 🐛 Bug Fixes
