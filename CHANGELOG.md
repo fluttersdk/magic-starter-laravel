@@ -4,6 +4,15 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [0.0.4] - 2026-03-25
+
+### ✨ Features
+- **Install Command**: Publish User model stub with all 9 required traits (ConditionallyUsesUuids, HasApiTokens, HasFactory, HasGuestSupport, HasNotifications, HasProfilePhoto, HasTeams, MustVerifyEmail, TwoFactorAuthenticatable)
+- **Install Command**: Publish TeamPolicy stub when teams feature is selected
+- **Install Command**: Publish language files (en/tr team translations)
+- **Install Command**: Publish UserFactory stub with `guest()`, `withPhone()`, and `unverified()` states
+- **Install Command**: Detect and replace Laravel's default users migration when it conflicts with UUID primary keys
+
 ## [0.0.3] - 2026-03-25
 
 ### ✨ Features
