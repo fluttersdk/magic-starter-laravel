@@ -142,6 +142,12 @@ class MagicStarterServiceProvider extends ServiceProvider
             $this->publishes([
                 __DIR__ . '/../lang' => $this->app->langPath('vendor/magic-starter'),
             ], 'magic-starter-lang');
+            $this->publishes([
+                __DIR__ . '/../stubs/models/User.php' => app_path('Models/User.php'),
+            ], 'magic-starter-user-model');
+            $this->publishes([
+                __DIR__ . '/../stubs/factories/UserFactory.php' => database_path('factories/UserFactory.php'),
+            ], 'magic-starter-factories');
 
         }
     }

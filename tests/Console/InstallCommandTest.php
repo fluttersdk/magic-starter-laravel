@@ -47,23 +47,14 @@ final class InstallCommandTest extends TestCase
         }
     }
 
-    public function test_install_command_does_not_run_migrations_or_modify_user_model(): void
+    public function test_install_command_does_not_run_migrations(): void
     {
-        $userModelPath = app_path('Models/User.php');
-        $userModelBefore = File::exists($userModelPath)
-            ? hash_file('sha256', $userModelPath)
-            : null;
-
         $this->artisan('magic-starter:install')->assertExitCode(0);
 
         $this->assertFalse(
             $this->app['db']->getSchemaBuilder()->hasTable('migrations'),
             'Install command must not run migrations.',
         );
-
-        if ($userModelBefore !== null) {
-            $this->assertSame($userModelBefore, hash_file('sha256', $userModelPath));
-        }
     }
 
     // -------------------------------------------------------------------------
@@ -325,6 +316,87 @@ final class InstallCommandTest extends TestCase
         );
     }
 
+    // -------------------------------------------------------------------------
+    // New Behavior Tests
+    // -------------------------------------------------------------------------
+
+    public function test_install_publishes_user_model_stub(): void
+    {
+        $this->artisan('magic-starter:install')->assertExitCode(0);
+
+        $this->assertFileExists(app_path('Models/User.php'));
+        $this->assertStringContainsString(
+            'ConditionallyUsesUuids',
+            File::get(app_path('Models/User.php')),
+        );
+    }
+
+    public function test_install_publishes_team_policy_when_teams_selected(): void
+    {
+        $this->artisan('magic-starter:install', [
+            '--features' => ['teams'],
+        ])->assertExitCode(0);
+
+        $this->assertFileExists(app_path('Policies/TeamPolicy.php'));
+    }
+
+    public function test_install_skips_team_policy_without_teams(): void
+    {
+        $this->artisan('magic-starter:install', [
+            '--features' => ['sessions'],
+        ])->assertExitCode(0);
+
+        $this->assertFileDoesNotExist(app_path('Policies/TeamPolicy.php'));
+    }
+
+    public function test_install_publishes_lang_files(): void
+    {
+        $this->artisan('magic-starter:install')->assertExitCode(0);
+
+        $this->assertFileExists($this->app->langPath('vendor/magic-starter/en/teams.php'));
+    }
+
+    public function test_install_publishes_user_factory_stub(): void
+    {
+        $this->artisan('magic-starter:install')->assertExitCode(0);
+
+        $this->assertFileExists(database_path('factories/UserFactory.php'));
+        $this->assertStringContainsString(
+            'guest',
+            File::get(database_path('factories/UserFactory.php')),
+        );
+    }
+
+    public function test_install_replaces_default_laravel_users_migration(): void
+    {
+        File::ensureDirectoryExists(database_path('migrations'));
+        File::put(
+            database_path('migrations/0001_01_01_000000_create_users_table.php'),
+            "<?php\n\$table->id();\n",
+        );
+
+        $this->artisan('magic-starter:install')->assertExitCode(0);
+
+        $this->assertFileDoesNotExist(
+            database_path('migrations/0001_01_01_000000_create_users_table.php'),
+        );
+    }
+
+    public function test_install_preserves_already_patched_users_migration(): void
+    {
+        File::ensureDirectoryExists(database_path('migrations'));
+        File::put(
+            database_path('migrations/0001_01_01_000000_create_users_table.php'),
+            "<?php\nMigrationHelper::primaryKey(\$table);\n",
+        );
+
+        $this->artisan('magic-starter:install')->assertExitCode(0);
+
+        $this->assertFileExists(
+            database_path('migrations/0001_01_01_000000_create_users_table.php'),
+        );
+    }
+
     // Helpers
     // -------------------------------------------------------------------------
 
@@ -345,6 +417,27 @@ final class InstallCommandTest extends TestCase
                     File::delete($publishedMigration);
                 }
             }
+        }
+
+        // Clean up new artifacts.
+        if (File::exists(app_path('Models/User.php'))) {
+            File::delete(app_path('Models/User.php'));
+        }
+
+        if (File::exists(app_path('Policies/TeamPolicy.php'))) {
+            File::delete(app_path('Policies/TeamPolicy.php'));
+        }
+
+        if (File::exists(database_path('factories/UserFactory.php'))) {
+            File::delete(database_path('factories/UserFactory.php'));
+        }
+
+        if (File::isDirectory($this->app->langPath('vendor/magic-starter'))) {
+            File::deleteDirectory($this->app->langPath('vendor/magic-starter'));
+        }
+
+        if (File::exists(database_path('migrations/0001_01_01_000000_create_users_table.php'))) {
+            File::delete(database_path('migrations/0001_01_01_000000_create_users_table.php'));
         }
     }
 }

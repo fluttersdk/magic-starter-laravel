@@ -147,25 +147,43 @@ class InstallCommand extends Command
         $this->publishConfig($features, $routePrefix, $frontendUrl, $useUuids);
         $this->components->twoColumnDetail('Publishing configuration', '<fg=green;options=bold>DONE</>');
 
-        // 7. Publish feature-relevant migrations.
+        // 7. Replace default Laravel users migration if present.
+        $this->replaceDefaultUsersMigration();
+
+        // 8. Publish feature-relevant migrations.
         $migrationCount = $this->publishMigrations($features);
         $this->components->twoColumnDetail(
             "Publishing migrations ({$migrationCount} files)",
             '<fg=green;options=bold>DONE</>',
         );
 
-        // 8. Publish model stubs when teams feature is selected.
+        // 9. Publish model stubs when teams feature is selected.
         if (in_array('teams', $features, true)) {
             $this->publishModelStubs();
             $this->components->twoColumnDetail('Publishing model stubs', '<fg=green;options=bold>DONE</>');
+
+            $this->publishPolicyStubs();
+            $this->components->twoColumnDetail('Publishing policy stubs', '<fg=green;options=bold>DONE</>');
         }
+
+        // 10. Publish user model stub.
+        $this->publishUserModelStub();
+        $this->components->twoColumnDetail('Publishing user model stub', '<fg=green;options=bold>DONE</>');
+
+        // 11. Publish language files.
+        $this->publishLangFiles();
+        $this->components->twoColumnDetail('Publishing language files', '<fg=green;options=bold>DONE</>');
+
+        // 12. Publish factory stub.
+        $this->publishFactoryStub();
+        $this->components->twoColumnDetail('Publishing factory stub', '<fg=green;options=bold>DONE</>');
 
         $this->newLine();
 
-        // 9. Optionally run database migrations.
+        // 13. Optionally run database migrations.
         $this->promptToRunMigrations();
 
-        // 10. Display installation summary.
+        // 14. Display installation summary.
         $this->displaySummary(
             $features,
             $routePrefix,
@@ -494,6 +512,105 @@ class InstallCommand extends Command
         );
 
         $this->newLine();
+    }
+
+    /**
+     * Publish the User model stub to App\Models.
+     */
+    private function publishUserModelStub(): void
+    {
+        $publishOptions = [
+            '--provider' => MagicStarterServiceProvider::class,
+            '--tag' => 'magic-starter-user-model',
+        ];
+
+        if ((bool) $this->option('force')) {
+            $publishOptions['--force'] = true;
+        }
+
+        $this->callSilently('vendor:publish', $publishOptions);
+    }
+
+    /**
+     * Publish policy stubs (TeamPolicy) to App\Policies.
+     */
+    private function publishPolicyStubs(): void
+    {
+        $publishOptions = [
+            '--provider' => MagicStarterServiceProvider::class,
+            '--tag' => 'magic-starter-policies',
+        ];
+
+        if ((bool) $this->option('force')) {
+            $publishOptions['--force'] = true;
+        }
+
+        $this->callSilently('vendor:publish', $publishOptions);
+    }
+
+    /**
+     * Publish package language files to the application's lang directory.
+     */
+    private function publishLangFiles(): void
+    {
+        $publishOptions = [
+            '--provider' => MagicStarterServiceProvider::class,
+            '--tag' => 'magic-starter-lang',
+        ];
+
+        if ((bool) $this->option('force')) {
+            $publishOptions['--force'] = true;
+        }
+
+        $this->callSilently('vendor:publish', $publishOptions);
+    }
+
+    /**
+     * Publish the UserFactory stub to database/factories.
+     */
+    private function publishFactoryStub(): void
+    {
+        $publishOptions = [
+            '--provider' => MagicStarterServiceProvider::class,
+            '--tag' => 'magic-starter-factories',
+        ];
+
+        if ((bool) $this->option('force')) {
+            $publishOptions['--force'] = true;
+        }
+
+        $this->callSilently('vendor:publish', $publishOptions);
+    }
+
+    /**
+     * Detect and remove Laravel's default users migration to avoid conflicts.
+     *
+     * Only removes the file if it contains $table->id() or $table->bigIncrements,
+     * indicating it is the unpatched Laravel default (not already using MigrationHelper).
+     */
+    private function replaceDefaultUsersMigration(): void
+    {
+        $path = database_path('migrations/0001_01_01_000000_create_users_table.php');
+
+        if (! file_exists($path)) {
+            return;
+        }
+
+        $content = file_get_contents($path);
+
+        if ($content === false) {
+            return;
+        }
+
+        // Only replace if this is the default Laravel migration (not already patched).
+        if (str_contains($content, '$table->id()') || str_contains($content, '$table->bigIncrements')) {
+            (new Filesystem)->delete($path);
+
+            $this->components->twoColumnDetail(
+                'Replacing default users migration',
+                '<fg=green;options=bold>DONE</>',
+            );
+        }
     }
 
     /**
