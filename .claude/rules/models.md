@@ -22,4 +22,4 @@ alsoApplyTo: "src/Traits/**/*.php"
 - Return typed morphMany/morphTo: `MorphMany<NotificationSetting, $this>`
 - HasProfilePhoto: falls back to ui-avatars.com URL using `config('magic-starter.ui_avatars_url')`
 - HasNotifications: `prefers()` returns true by default if notification type not in registry
-- HasNotifications: `routeNotificationForOneSignal()` prefixes user ID with `user_` (OneSignal requires it)
+- HasNotifications: `routeNotificationForOneSignal()` returns `['external_id' => ['user_'.$this->getKey()]]` for OneSignal v5 alias targeting; channel driver is `FlutterSdk\MagicStarter\Notifications\Channels\OneSignalChannel`

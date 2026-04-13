@@ -365,7 +365,7 @@ Resolution order:
 
 **`notificationPreferenceMatrix(): array`** — returns the full preference state for all registered notification types. DB overrides use slug-based keys (not FQCNs) to ensure a stable API response shape regardless of how types were registered.
 
-**`routeNotificationForOneSignal(): array`** — returns `['include_external_user_ids' => ['user_' . $this->id]]`. The `user_` prefix is required because OneSignal rejects simple numeric values such as `0` or `1` as external IDs. The format must match `Notify.initializePush('user_' + user.id)` in the Flutter app.
+**`routeNotificationForOneSignal(): array`**: returns `['external_id' => ['user_' . $this->getKey()]]` for v5 SDK alias-based routing. The payload is passed to `FlutterSdk\MagicStarter\Notifications\Channels\OneSignalChannel`, which applies the aliases to the notification via `setIncludeAliases()`. The `user_` prefix is required because OneSignal rejects simple numeric values such as `0` or `1` as external IDs. The format must match `Notify.initializePush('user_' + user.id)` in the Flutter app.
 
 ### <a name="twofactorauthenticatable"></a>TwoFactorAuthenticatable
 

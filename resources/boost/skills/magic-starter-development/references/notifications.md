@@ -35,10 +35,11 @@
 - Enabled state respects DB overrides; falls back to registry default if no override.
 - Locked channels cannot be toggled (UI should disable them); locked() call on registry returns list of unchangeable channels per type.
 
-### OneSignal routing requires 'user_' prefix on external_id
+### OneSignal routing uses alias-based targeting with v5 SDK
 
-- routeNotificationForOneSignal() returns array with include_external_user_ids key set to ['user_' . $this->id].
-- The prefix is required because OneSignal blocks simple numeric IDs as external_id; must match app-side call Notify.initializePush('user_' + user.id).
+- routeNotificationForOneSignal() returns ['external_id' => ['user_' . $this->getKey()]] for OneSignal v5 alias targeting.
+- The prefix is required because OneSignal rejects bare numeric IDs as external_id; must match app-side call Notify.initializePush('user_' + user.id).
+- Channel driver is FlutterSdk\MagicStarter\Notifications\Channels\OneSignalChannel; notification returned map is passed to \onesignal\client\model\Notification::setIncludeAliases().
 
 ### Consumer pattern: register types, let GateNotificationChannels filter
 
