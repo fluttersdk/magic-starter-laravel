@@ -66,7 +66,7 @@ class MagicStarterServiceProvider extends ServiceProvider
 
             if ($restApiKey === null || $restApiKey === '') {
                 throw new \RuntimeException(
-                    'OneSignal REST API key missing. Set ONESIGNAL_REST_API_KEY or services.onesignal.rest_api_key.',
+                    'OneSignal REST API key missing. Set ONESIGNAL_REST_API_KEY, magic-starter.onesignal.rest_api_key, or services.onesignal.rest_api_key.',
                 );
             }
 

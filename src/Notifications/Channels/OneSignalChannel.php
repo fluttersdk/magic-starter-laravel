@@ -43,15 +43,22 @@ class OneSignalChannel
     public function send(mixed $notifiable, Notification $notification): ?CreateNotificationSuccessResponse
     {
         // 1. Skip if the notification does not support OneSignal
-        if (! method_exists($notification, 'toOneSignal')) {
+        if (! is_callable([$notification, 'toOneSignal'])) {
             return null;
         }
 
         // 2. Resolve aliases from the notifiable
-        /** @var array<string, array<int, string>> $aliases */
-        $aliases = method_exists($notifiable, 'routeNotificationForOneSignal')
-            ? $notifiable->routeNotificationForOneSignal()
-            : ['external_id' => [(string) $notifiable->getKey()]];
+        if (method_exists($notifiable, 'routeNotificationForOneSignal')) {
+            /** @var array<string, array<int, string>> $aliases */
+            $aliases = $notifiable->routeNotificationForOneSignal();
+        } elseif (method_exists($notifiable, 'getKey')) {
+            $aliases = ['external_id' => [(string) $notifiable->getKey()]];
+        } else {
+            throw new InvalidArgumentException(sprintf(
+                '%s must implement routeNotificationForOneSignal() or getKey() to receive OneSignal notifications.',
+                get_debug_type($notifiable),
+            ));
+        }
 
         // 3. Build the OneSignal notification payload (toOneSignal is user-defined per Notification class)
         $payload = \call_user_func([$notification, 'toOneSignal'], $notifiable);
@@ -71,8 +78,16 @@ class OneSignalChannel
             $payload->setTargetChannel((string) config('magic-starter.onesignal.target_channel', 'push'));
         }
 
-        // 5. Always force app_id from package config
-        $payload->setAppId((string) config('magic-starter.onesignal.app_id'));
+        // 5. Always force app_id from package config (validated non-empty)
+        $appId = config('magic-starter.onesignal.app_id');
+
+        if (! is_string($appId) || trim($appId) === '') {
+            throw new InvalidArgumentException(
+                'The OneSignal app ID configuration value [magic-starter.onesignal.app_id] must be a non-empty string.',
+            );
+        }
+
+        $payload->setAppId($appId);
 
         // 6. Send via the OneSignal API
         try {
