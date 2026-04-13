@@ -66,6 +66,14 @@ class Features
     }
 
     /**
+     * Enable the OneSignal push notification feature.
+     */
+    public static function onesignal(): string
+    {
+        return 'onesignal';
+    }
+
+    /**
      * Enable the two-factor authentication feature.
      */
     public static function twoFactorAuthentication(): string
@@ -167,6 +175,14 @@ class Features
     public static function hasNotificationFeatures(): bool
     {
         return static::enabled(static::notifications());
+    }
+
+    /**
+     * Determine whether the OneSignal push notification feature is enabled.
+     */
+    public static function hasOnesignalFeatures(): bool
+    {
+        return static::enabled(static::onesignal());
     }
 
     /**

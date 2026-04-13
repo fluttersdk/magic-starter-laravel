@@ -42,6 +42,7 @@ return [
         // \FlutterSdk\MagicStarter\Features::newsletterSubscription(),
         // \FlutterSdk\MagicStarter\Features::extendedProfile(),
         // \FlutterSdk\MagicStarter\Features::notifications(),
+        // \FlutterSdk\MagicStarter\Features::onesignal(),
         // \FlutterSdk\MagicStarter\Features::guestAuth(),
         // \FlutterSdk\MagicStarter\Features::phoneOtp(),
         // \FlutterSdk\MagicStarter\Features::emailVerification(),
@@ -245,5 +246,53 @@ return [
         */
 
         'challenge_token_ttl' => 5,
+    ],
+
+    /*
+    |--------------------------------------------------------------------------
+    | OneSignal Push Notifications
+    |--------------------------------------------------------------------------
+    |
+    | Configure the settings for OneSignal push notifications. This includes
+    | the app ID, REST API key, and the default target channel for push messages.
+    |
+    */
+
+    'onesignal' => [
+        /*
+        |--------------------------------------------------------------------------
+        | OneSignal App ID
+        |--------------------------------------------------------------------------
+        |
+        | The OneSignal application ID for your project. Required to send push
+        | notifications via the OneSignal PHP SDK.
+        |
+        */
+
+        'app_id' => env('ONESIGNAL_APP_ID'),
+
+        /*
+        |--------------------------------------------------------------------------
+        | OneSignal REST API Key
+        |--------------------------------------------------------------------------
+        |
+        | The OneSignal REST API key for server-to-server authentication.
+        | Required to send push notifications via the OneSignal PHP SDK.
+        |
+        */
+
+        'rest_api_key' => env('ONESIGNAL_REST_API_KEY'),
+
+        /*
+        |--------------------------------------------------------------------------
+        | OneSignal Target Channel
+        |--------------------------------------------------------------------------
+        |
+        | The default delivery channel for OneSignal push notifications.
+        | Typically 'push' for native mobile push notifications.
+        |
+        */
+
+        'target_channel' => 'push',
     ],
 ];

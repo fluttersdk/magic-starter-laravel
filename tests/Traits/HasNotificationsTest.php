@@ -312,7 +312,7 @@ final class HasNotificationsTest extends TestCase
         $this->assertTrue($matrix['monitor_down']['channels']['database']['enabled']);
     }
 
-    public function test_route_notification_for_onesignal_returns_external_user_ids(): void
+    public function test_route_notification_for_onesignal_returns_alias_payload(): void
     {
         $user = HasNotifPrefsTestUser::query()->create([
             'name' => 'OneSignal User',
@@ -322,8 +322,8 @@ final class HasNotificationsTest extends TestCase
         $routing = $user->routeNotificationForOneSignal();
 
         $this->assertIsArray($routing);
-        $this->assertArrayHasKey('include_external_user_ids', $routing);
-        $this->assertEquals(['user_' . $user->id], $routing['include_external_user_ids']);
+        $this->assertArrayHasKey('external_id', $routing);
+        $this->assertSame(['user_' . $user->getKey()], $routing['external_id']);
     }
 
     public function test_route_notification_for_onesignal_returns_prefixed_string_id(): void
@@ -335,8 +335,8 @@ final class HasNotificationsTest extends TestCase
 
         $routing = $user->routeNotificationForOneSignal();
 
-        $this->assertIsString($routing['include_external_user_ids'][0]);
-        $this->assertStringStartsWith('user_', $routing['include_external_user_ids'][0]);
+        $this->assertIsString($routing['external_id'][0]);
+        $this->assertStringStartsWith('user_', $routing['external_id'][0]);
     }
 }
 

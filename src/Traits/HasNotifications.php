@@ -109,23 +109,36 @@ trait HasNotifications
     }
 
     /**
-     * Route notifications for the OneSignal channel.
+     * Route notifications for the OneSignal channel (SDK v5 alias targeting).
      *
-     * Returns the external user ID that OneSignal uses to target this user.
-     * The `user_` prefix is required because OneSignal blocks simple values
-     * like '0', '1', '-1' as external_id.
+     * Returns an alias map that `OneSignalChannel` passes to
+     * `\onesignal\client\model\Notification::setIncludeAliases()`.
+     * The outer key is the alias label ('external_id') and the value is an
+     * array of alias values to target.
      *
-     * The format must match what the Flutter app sets when calling
-     * `Notify.initializePush('user_' + user.id)`.
+     * The `user_` prefix is required for two reasons:
+     *   - OneSignal rejects bare numeric values such as '0', '1', '-1' as
+     *     alias values.
+     *   - The Flutter client registers the same prefixed id via
+     *     `Notify.initializePush('user_' + user.id)`, so both sides must
+     *     agree on the format.
      *
-     * Override this method in your User model if you need a different format.
+     * `getKey()` is used instead of `$this->id` so the method works correctly
+     * for both integer and UUID primary keys.
      *
-     * @return array<string, mixed>
+     * Override in your User model to change the alias label or value format:
+     *
+     *   public function routeNotificationForOneSignal(): array
+     *   {
+     *       return ['external_id' => ['app_user_' . $this->uuid]];
+     *   }
+     *
+     * @return array<string, array<int, string>>
      */
     public function routeNotificationForOneSignal(): array
     {
         return [
-            'include_external_user_ids' => ['user_' . $this->id],
+            'external_id' => ['user_' . $this->getKey()],
         ];
     }
 }

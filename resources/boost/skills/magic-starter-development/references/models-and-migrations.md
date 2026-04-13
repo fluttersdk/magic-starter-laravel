@@ -22,7 +22,7 @@ Relations never reference App\Models\* directly. All model classes are resolved 
 
 HasProfilePhoto exposes getProfilePhotoUrlAttribute(), resolving the configured disk URL when profile_photo_path is set, falling back to a ui-avatars.com URL built from name initials. The ui_avatars_url config key controls the base URL.
 
-HasNotifications provides morphMany notificationSettings() returning MorphMany<NotificationSetting, $this>, a prefers() method with a 3-step fallback (registry miss defaults to true, DB override wins, then registry default channels), and routeNotificationForOneSignal() prefixing IDs with user_ for OneSignal compatibility.
+HasNotifications provides morphMany notificationSettings() returning MorphMany<NotificationSetting, $this>, a prefers() method with a 3-step fallback (registry miss defaults to true, DB override wins, then registry default channels), and routeNotificationForOneSignal() returning ['external_id' => ['user_' . $this->getKey()]] for OneSignal v5 alias targeting via OneSignalChannel driver.
 
 HasTeams provides ownedTeams(), teams() (with pivot), allTeams() (merge + sort), currentTeam() BelongsTo, getCurrentTeamOrPersonal(), belongsToTeam(), ownsTeam(), and hasTeamRole() reading pivot->role.
 

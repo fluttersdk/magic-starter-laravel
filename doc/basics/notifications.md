@@ -14,6 +14,7 @@
 - [HasNotifications Trait](#hasnotifications-trait)
   - [prefers()](#prefers)
   - [routeNotificationForOneSignal()](#routenotificationforonesignal)
+- [OneSignal Push Channel (v5 SDK)](#onesignal-push-channel)
 - [NotificationSetting Model](#notificationsetting-model)
 - [Channel Gating via GateNotificationChannels](#channel-gating-via-gatenotificationchannels)
 - [NotificationPreferenceRegistry](#notificationpreferenceregistry)
@@ -309,14 +310,14 @@ This method is called by `GateNotificationChannels` during the `NotificationSend
 public function routeNotificationForOneSignal(): array
 {
     return [
-        'include_external_user_ids' => ['user_' . $this->id],
+        'external_id' => ['user_' . $this->getKey()],
     ];
 }
 ```
 
-Returns the routing payload for the OneSignal notification channel. The `user_` prefix is **required** because OneSignal rejects bare numeric strings like `'0'`, `'1'`, or `'-1'` as external IDs.
+Returns the routing payload for the OneSignal v5 notification channel using alias-based targeting. The `external_id` key maps to an array of alias identifiers that will be passed to the OneSignal SDK's `setIncludeAliases()` method by the package's `FlutterSdk\MagicStarter\Notifications\Channels\OneSignalChannel` driver.
 
-The format must match the external ID registered by the Flutter client:
+The `user_` prefix is **required** because OneSignal rejects bare numeric strings like `'0'`, `'1'`, or `'-1'` as external IDs. The format must match the external ID registered by the Flutter client:
 
 ```dart
 Notify.initializePush('user_' + user.id);
@@ -328,10 +329,69 @@ To use a different format, override this method in your User model:
 public function routeNotificationForOneSignal(): array
 {
     return [
-        'include_external_user_ids' => ['app_user_' . $this->uuid],
+        'external_id' => ['app_user_' . $this->uuid],
     ];
 }
 ```
+
+---
+
+## <a name="onesignal-push-channel"></a>OneSignal Push Channel (v5 SDK)
+
+The package ships `FlutterSdk\MagicStarter\Notifications\Channels\OneSignalChannel`, a Laravel notification channel driver backed by the official `onesignal/onesignal-php-api: ^5.3` SDK.
+
+### Configuration
+
+Enable the feature by adding to your application:
+
+```php
+// config/magic-starter.php
+'features' => [
+    Features::onesignal(),
+],
+```
+
+When enabled, the service provider automatically registers the `onesignal` driver on Laravel's `ChannelManager` and registers the logical alias `push => onesignal` in `NotificationPreferenceRegistry`.
+
+Required configuration keys under `magic-starter.onesignal`:
+
+| Key | Type | Description |
+|-----|------|-------------|
+| `app_id` | string | OneSignal Application ID |
+| `rest_api_key` | string | OneSignal REST API key. Falls back to `services.onesignal.rest_api_key` if not set. |
+| `target_channel` | string | Default notification channel. Defaults to `'push'`. |
+
+### Notification Contract
+
+Any notification class that sends via OneSignal must implement the `toOneSignal()` method:
+
+```php
+use \onesignal\client\model\Notification;
+
+public function toOneSignal(mixed $notifiable): Notification
+{
+    return new Notification(
+        app_id: config('magic-starter.onesignal.app_id'),
+    )
+        ->setHeadings(
+            new \onesignal\client\model\LanguageStringMap(
+                'en' => 'Order Update'
+            )
+        )
+        ->setContents(
+            new \onesignal\client\model\LanguageStringMap(
+                'en' => 'Your order #12345 has shipped.'
+            )
+        );
+}
+```
+
+The driver handles the remaining setup:
+
+- **`app_id`** is always overridden from `config('magic-starter.onesignal.app_id')`.
+- **Aliases** and **`target_channel`** from the notifiable's `routeNotificationForOneSignal()` are applied only when the notification payload has none set. This allows per-notification customization while preserving sensible defaults.
+
+The channel passes the `Notification` instance directly to the OneSignal SDK for delivery.
 
 ---
 

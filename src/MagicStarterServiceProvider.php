@@ -58,6 +58,23 @@ class MagicStarterServiceProvider extends ServiceProvider
         $this->app->bind(Contracts\ConfirmsTwoFactorAuthentication::class, Actions\ConfirmTwoFactorAuthentication::class);
         $this->app->bind(Contracts\DisablesTwoFactorAuthentication::class, Actions\DisableTwoFactorAuthentication::class);
         $this->app->bind(Contracts\GeneratesNewRecoveryCodes::class, Actions\GenerateNewRecoveryCodes::class);
+
+        // OneSignal SDK client singleton (resolved lazily, only when injected).
+        $this->app->singleton(\onesignal\client\api\DefaultApi::class, function (): \onesignal\client\api\DefaultApi {
+            $restApiKey = config('magic-starter.onesignal.rest_api_key')
+                ?? config('services.onesignal.rest_api_key');
+
+            if ($restApiKey === null || $restApiKey === '') {
+                throw new \RuntimeException(
+                    'OneSignal REST API key missing. Set ONESIGNAL_REST_API_KEY, magic-starter.onesignal.rest_api_key, or services.onesignal.rest_api_key.',
+                );
+            }
+
+            $config = \onesignal\client\Configuration::getDefaultConfiguration()
+                ->setRestApiKeyToken((string) $restApiKey);
+
+            return new \onesignal\client\api\DefaultApi(new \GuzzleHttp\Client, $config);
+        });
     }
 
     /**
@@ -103,6 +120,16 @@ class MagicStarterServiceProvider extends ServiceProvider
                 NotificationSending::class,
                 Listeners\GateNotificationChannels::class,
             );
+        }
+
+        // 3.6. Register OneSignal push channel when onesignal feature is enabled.
+        if (Features::hasOnesignalFeatures()) {
+            $this->app->make(\Illuminate\Notifications\ChannelManager::class)
+                ->extend('onesignal', fn ($app) => $app->make(
+                    \FlutterSdk\MagicStarter\Notifications\Channels\OneSignalChannel::class,
+                ));
+
+            NotificationPreferenceRegistry::channelAliases(['push' => 'onesignal']);
         }
 
         // 3.7. Register package translations.
