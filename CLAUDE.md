@@ -6,7 +6,7 @@ This file provides guidance to Claude Code when working with code in this reposi
 
 | Command | Description |
 |---------|-------------|
-| `composer test` | PHPUnit test suite (Orchestra Testbench, PHP 8.2-8.4 × Laravel 11-12) |
+| `composer test` | PHPUnit test suite (Orchestra Testbench, PHP 8.2-8.4 × Laravel 12) |
 | `composer lint` | Pint check (dry-run, no changes) |
 | `composer lint:fix` | Pint auto-fix |
 | `composer analyse` | PHPStan level 6 + Larastan (`--memory-limit=1G`) |
@@ -55,7 +55,7 @@ config/magic-starter.php          # Feature toggles, model classes, auth identit
 
 - Base class: `FlutterSdk\MagicStarter\Tests\TestCase` (extends Orchestra Testbench)
 - Fixtures in `tests/Fixtures/` — ConcreteUser, ConcreteTeam, ConcreteTeamUser, ConcreteTeamInvitation
-- CI matrix: PHP 8.2/8.3/8.4 × Laravel 11/12
+- CI matrix: PHP 8.2/8.3/8.4 × Laravel 12
 
 ## Gotchas
 
