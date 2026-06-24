@@ -4,8 +4,13 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Fixed
+
+- **SwitchTeamRequest**: `team_id` validation rule now respects `magic-starter.use_uuids` config. When UUIDs are disabled (integer primary keys), the rule is `integer` instead of the previously hardcoded `uuid`, which caused a 422 on every team-switch attempt in integer-PK deployments.
+
 ### Changed
 - **Documentation**: Clarify in README and installation guide when `MAGIC_STARTER_FRONTEND_URL` (or `--frontend-url`) is needed: set it when email links should open a frontend whose host or scheme differs from `APP_URL`; otherwise email links (verification, password reset, and other email links) point at the backend host instead of the frontend app. Added a troubleshooting section covering the symptom, the solution, and three ways to configure it.
+- **Documentation**: Rewrite installation guide to lead with `php artisan magic-starter:install` command as the recommended path, with non-interactive `--all`, `--features`, `--uuid`, `--no-uuid`, `--route-prefix`, and `--frontend-url` options for CI/CD. Demote manual `vendor:publish` + `migrate` steps to an "Advanced" section with a caveat that vendor:publish does not generate ordered migration timestamps.
 
 ## [0.0.4] - 2026-03-25
 

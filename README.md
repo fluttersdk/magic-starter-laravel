@@ -67,15 +67,56 @@ Stop rebuilding authentication, profile management, and team features from scrat
 composer require fluttersdk/magic-starter-laravel
 ```
 
-### 2. Publish configuration and run migrations
+### 2. Run the install command
 
 ```bash
-php artisan vendor:publish --tag=magic-starter-config
+php artisan magic-starter:install
+```
+
+The `magic-starter:install` command guides you through setup interactively:
+
+- Selects which of the 12 features to enable (all enabled by default)
+- Detects your database primary key type (UUID or auto-incrementing integer)
+- Publishes configuration and migrations in correct order
+- Removes Laravel's default users migration to avoid conflicts
+- Publishes model stubs, factory, and language files
+
+The installer prompts to run `php artisan migrate` at the end (default: no). If you skip that prompt, run the migrations yourself before using the API, otherwise the published migrations stay unapplied:
+
+```bash
 php artisan migrate
 ```
 
 > [!IMPORTANT]
 > **Frontend URL:** The backend signs email links (verification, password reset, and other email links) using `APP_URL` as the base. If your email links should open a frontend whose host or scheme differs from `APP_URL`, set `MAGIC_STARTER_FRONTEND_URL` in your `.env` to the frontend base URL (the `magic-starter.frontend_url` config reads it), or pass `--frontend-url=https://app.example.com` when installing via `php artisan magic-starter:install`. Without it, email links point at the backend host (e.g. `https://api.example.com/email/verify/...`) instead of opening the intended frontend app.
+
+**For CI/CD or non-interactive environments**, use command options:
+
+```bash
+# Install all features with UUID primary keys and custom route prefix
+php artisan magic-starter:install --all --uuid --route-prefix=api/v2
+
+# Install specific features, auto-detect primary key type
+php artisan magic-starter:install --features=teams --features=profile-photos --features=notifications
+
+# Install with integer primary keys instead of UUID
+php artisan magic-starter:install --all --no-uuid
+
+# Use custom frontend URL for email links
+php artisan magic-starter:install --all --frontend-url=https://app.example.com
+
+# Overwrite existing files (migrations, config, stubs)
+php artisan magic-starter:install --all --force
+```
+
+Available options:
+- `--all`: Enable all 12 features without prompting
+- `--features=<name>`: Enable specific feature(s); repeat for multiple (e.g. `--features=teams --features=sessions`)
+- `--uuid`: Force UUID primary keys
+- `--no-uuid`: Force auto-incrementing integer primary keys
+- `--route-prefix=<prefix>`: Set route prefix (default: `api/v1`)
+- `--frontend-url=<url>`: Frontend URL for email links (e.g. verification and password resets)
+- `--force`: Overwrite existing published files
 
 ### 3. Prepare your User model
 
@@ -99,6 +140,24 @@ class User extends Authenticatable
 ```
 
 That's it — auth, profile, teams, and notifications API endpoints are ready to use.
+
+---
+
+## Advanced: Manual Installation
+
+If you prefer to publish and migrate without the install command, you can run the steps manually. Note that manual `vendor:publish` does NOT generate ordered migration timestamps, so migrations may run in unpredictable order and cause foreign key conflicts. The `magic-starter:install` command is the recommended path because it ensures correct migration order.
+
+If you must use manual steps:
+
+```bash
+php artisan vendor:publish --provider="FlutterSdk\MagicStarter\MagicStarterServiceProvider" --tag=magic-starter-config
+php artisan migrate
+```
+
+You will also need to:
+1. Remove Laravel's default `database/migrations/0001_01_01_000000_create_users_table.php` if it conflicts
+2. Manually publish migrations from the package at `src/../database/migrations/` to `database/migrations/` with ordered `Y_m_d_NNNNNN_` prefixes
+3. Apply the traits listed in Step 3 above to your User model
 
 ---
 
