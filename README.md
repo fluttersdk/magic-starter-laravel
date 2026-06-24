@@ -74,6 +74,9 @@ php artisan vendor:publish --tag=magic-starter-config
 php artisan migrate
 ```
 
+> [!IMPORTANT]
+> **Frontend URL for non-localhost deployments:** email verification links are signed with the backend base (from `APP_URL`). If your frontend runs on a different host than the backend (for example backend on `api.example.com`, app on `app.example.com`), the signed link will carry the wrong base and verification will fail. Set `MAGIC_STARTER_FRONTEND_URL` in your `.env` to the frontend base URL (the `magic-starter.frontend_url` config reads it), or pass `--frontend-url=https://app.example.com` if you install via `php artisan magic-starter:install`. `APP_URL` alone is not enough when the hosts differ.
+
 ### 3. Prepare your User model
 
 Add the required traits to your `User` model:

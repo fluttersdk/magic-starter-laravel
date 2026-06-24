@@ -5,6 +5,7 @@
 - [Installing the Package](#installing-the-package)
 - [Service Provider Auto-Discovery](#service-provider-auto-discovery)
 - [Running the Install Command](#running-the-install-command)
+- [Frontend URL for Non-Localhost Deployments](#frontend-url-non-localhost)
 - [Publishable Assets](#publishable-assets)
 - [User Model Setup](#user-model-setup)
 - [Binding Action Contracts](#binding-action-contracts)
@@ -71,7 +72,7 @@ When run without flags, the command uses [Laravel Prompts](https://laravel.com/d
 
 1. **Features** — a `multiselect` prompt with all 12 features pre-selected.
 2. **Route prefix** — a `text` input (defaults to `api/v1`).
-3. **Frontend URL** — a `text` input (defaults to `http://localhost:3000`), used for password reset links in emails.
+3. **Frontend URL** — a `text` input (defaults to `http://localhost:3000`), used for email verification links. **Important:** If your backend is not on localhost, you must set this to your frontend URL (see [Frontend URL for Non-Localhost Deployments](#frontend-url-non-localhost) below).
 4. **Run migrations** — a `confirm` prompt to run `php artisan migrate` immediately.
 
 UUID vs. integer primary keys are auto-detected from your existing `users` table schema. If no `users` table exists (fresh install), UUID is used by default.
@@ -106,6 +107,46 @@ When `--all` is passed, all 12 features are enabled regardless of `--features`.
 
 > [!NOTE]
 > When neither `--uuid` nor `--no-uuid` is provided, the installer auto-detects your existing `users` table schema. If no `users` table exists (fresh install), UUID is used by default.
+
+<a name="frontend-url-non-localhost"></a>
+## Frontend URL for Non-Localhost Deployments
+
+Email verification links are signed by the backend using the base URL from `APP_URL`. When your frontend and backend are on different hosts, the signed verification URLs will have the backend's URL as the base, causing them to fail when clicked in the frontend application.
+
+**Symptom:** Verification links in emails contain `https://backend.example.com/verify/...` but your frontend is at `https://app.example.com`. Clicking the link either directs to a non-existent page or fails to recognize the signature.
+
+**Solution:** Configure the `frontend_url` setting to point to your frontend's base URL. This tells the email notification where to build verification links.
+
+### Setting the Frontend URL
+
+You can provide the frontend URL in three ways:
+
+1. **During install with the flag:**
+   ```bash
+   php artisan magic-starter:install --all --frontend-url=https://app.example.com
+   ```
+
+2. **During interactive install:**
+   When prompted for "Frontend URL", enter your frontend app URL (e.g. `https://app.example.com`).
+
+3. **Via environment variable:**
+   Set `MAGIC_STARTER_FRONTEND_URL` in your `.env`:
+   ```env
+   MAGIC_STARTER_FRONTEND_URL=https://app.example.com
+   ```
+
+### Localhost Development
+
+For localhost development (backend at `http://localhost:8000`, frontend at `http://localhost:3000`), you **must** still set the frontend URL or verification links will point to the backend:
+
+```bash
+php artisan magic-starter:install --all --frontend-url=http://localhost:3000
+```
+
+The default prompt value is `http://localhost:3000`, which covers this common case.
+
+> [!IMPORTANT]
+> Do NOT rely on `APP_URL` alone for non-localhost backends. `APP_URL` sets the backend base and is correct for API routes, but email links need the frontend base. Always set `MAGIC_STARTER_FRONTEND_URL` (or `--frontend-url`) when backend and frontend are on different hosts.
 
 <a name="publishable-assets"></a>
 ## Publishable Assets

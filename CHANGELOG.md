@@ -4,6 +4,9 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Changed
+- **Documentation**: Clarify in README and installation guide that `MAGIC_STARTER_FRONTEND_URL` (or `--frontend-url` flag) is required for non-localhost backends. Email verification links are signed with the backend base (from `APP_URL`); when frontend and backend are on different hosts, the signed URL will have the wrong base and verification links will fail unless the frontend URL is explicitly set. Added detailed troubleshooting section covering symptoms, the solution, and three ways to configure it.
+
 ## [0.0.4] - 2026-03-25
 
 ### ✨ Features
