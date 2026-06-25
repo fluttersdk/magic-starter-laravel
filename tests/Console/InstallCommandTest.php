@@ -331,6 +331,101 @@ final class InstallCommandTest extends TestCase
         );
     }
 
+    public function test_install_overwrites_stock_default_user_model(): void
+    {
+        // Regression: vendor:publish silently skips an existing target without
+        // --force, so a fresh Laravel app kept the default User model with none
+        // of the Magic Starter traits while the installer reported DONE.
+        File::ensureDirectoryExists(app_path('Models'));
+        File::put(app_path('Models/User.php'), $this->stockLaravelUserModel());
+
+        $this->artisan('magic-starter:install')->assertExitCode(0);
+
+        $this->assertStringContainsString(
+            'ConditionallyUsesUuids',
+            File::get(app_path('Models/User.php')),
+            'Stock default User model should be overwritten with the trait-laden stub.',
+        );
+    }
+
+    public function test_install_preserves_a_fully_trait_equipped_user_model(): void
+    {
+        // A model that already carries EVERY required trait is left intact
+        // (no overwrite, no warning) so consumer customizations survive re-runs.
+        File::ensureDirectoryExists(app_path('Models'));
+        File::put(app_path('Models/User.php'), $this->fullyWiredUserModel());
+
+        $this->artisan('magic-starter:install')->assertExitCode(0);
+
+        $contents = File::get(app_path('Models/User.php'));
+        $this->assertStringContainsString('customMarker', $contents);
+        $this->assertStringContainsString('HasTeams', $contents);
+    }
+
+    public function test_install_warns_when_user_model_has_only_some_traits(): void
+    {
+        // A partially-updated model (some traits, not all) must NOT be treated
+        // as compatible: it is preserved AND the operator is told which traits
+        // are still missing, instead of a silent skip.
+        File::ensureDirectoryExists(app_path('Models'));
+        $partial = "<?php\n\nnamespace App\\Models;\n\n"
+            . "use FlutterSdk\\MagicStarter\\Traits\\HasTeams;\n"
+            . "use Illuminate\\Foundation\\Auth\\User as Authenticatable;\n\n"
+            . "class User extends Authenticatable\n{\n    use HasTeams;\n"
+            . "    public \$customMarker = true;\n}\n";
+        File::put(app_path('Models/User.php'), $partial);
+
+        $this->artisan('magic-starter:install')
+            ->expectsOutputToContain('missing required Magic Starter traits')
+            ->assertExitCode(0);
+
+        // Preserved (not overwritten), and the missing-trait warning fired.
+        $contents = File::get(app_path('Models/User.php'));
+        $this->assertStringContainsString('customMarker', $contents);
+        $this->assertStringNotContainsString('ConditionallyUsesUuids', $contents);
+    }
+
+    public function test_install_force_republishes_fully_trait_equipped_user_model(): void
+    {
+        File::ensureDirectoryExists(app_path('Models'));
+        File::put(app_path('Models/User.php'), $this->fullyWiredUserModel());
+
+        $this->artisan('magic-starter:install', ['--force' => true])->assertExitCode(0);
+
+        // --force re-publishes the package stub, dropping the custom marker.
+        $contents = File::get(app_path('Models/User.php'));
+        $this->assertStringContainsString('ConditionallyUsesUuids', $contents);
+        $this->assertStringNotContainsString('customMarker', $contents);
+    }
+
+    public function test_install_preserves_customized_user_model_without_force(): void
+    {
+        File::ensureDirectoryExists(app_path('Models'));
+        $customized = "<?php\n\nnamespace App\\Models;\n\n"
+            . "use Illuminate\\Foundation\\Auth\\User as Authenticatable;\n\n"
+            . "class User extends Authenticatable\n{\n    public \$customMarker = true;\n}\n";
+        File::put(app_path('Models/User.php'), $customized);
+
+        $this->artisan('magic-starter:install')->assertExitCode(0);
+
+        // Customized model preserved, NOT silently overwritten.
+        $this->assertStringContainsString('customMarker', File::get(app_path('Models/User.php')));
+        $this->assertStringNotContainsString('ConditionallyUsesUuids', File::get(app_path('Models/User.php')));
+    }
+
+    public function test_install_force_overwrites_customized_user_model(): void
+    {
+        File::ensureDirectoryExists(app_path('Models'));
+        $customized = "<?php\n\nnamespace App\\Models;\n\n"
+            . "use Illuminate\\Foundation\\Auth\\User as Authenticatable;\n\n"
+            . "class User extends Authenticatable\n{\n    public \$customMarker = true;\n}\n";
+        File::put(app_path('Models/User.php'), $customized);
+
+        $this->artisan('magic-starter:install', ['--force' => true])->assertExitCode(0);
+
+        $this->assertStringContainsString('ConditionallyUsesUuids', File::get(app_path('Models/User.php')));
+    }
+
     public function test_install_publishes_team_policy_when_teams_selected(): void
     {
         $this->artisan('magic-starter:install', [
@@ -399,6 +494,42 @@ final class InstallCommandTest extends TestCase
 
     // Helpers
     // -------------------------------------------------------------------------
+
+    /**
+     * The stock Laravel default User model content (signature the installer
+     * recognises as safe to overwrite).
+     */
+    /**
+     * A User model that already carries every required Magic Starter trait
+     * plus a custom marker (to assert it is preserved, not overwritten).
+     */
+    private function fullyWiredUserModel(): string
+    {
+        return "<?php\n\nnamespace App\\Models;\n\n"
+            . "use FlutterSdk\\MagicStarter\\Support\\ConditionallyUsesUuids;\n"
+            . "use FlutterSdk\\MagicStarter\\Traits\\HasGuestSupport;\n"
+            . "use FlutterSdk\\MagicStarter\\Traits\\HasNotifications;\n"
+            . "use FlutterSdk\\MagicStarter\\Traits\\HasProfilePhoto;\n"
+            . "use FlutterSdk\\MagicStarter\\Traits\\HasTeams;\n"
+            . "use FlutterSdk\\MagicStarter\\Traits\\TwoFactorAuthenticatable;\n"
+            . "use Illuminate\\Foundation\\Auth\\User as Authenticatable;\n\n"
+            . "class User extends Authenticatable\n{\n"
+            . "    use ConditionallyUsesUuids;\n    use HasGuestSupport;\n"
+            . "    use HasNotifications;\n    use HasProfilePhoto;\n"
+            . "    use HasTeams;\n    use TwoFactorAuthenticatable;\n\n"
+            . "    public \$customMarker = true;\n}\n";
+    }
+
+    private function stockLaravelUserModel(): string
+    {
+        return "<?php\n\nnamespace App\\Models;\n\n"
+            . "use Illuminate\\Database\\Eloquent\\Factories\\HasFactory;\n"
+            . "use Illuminate\\Foundation\\Auth\\User as Authenticatable;\n"
+            . "use Illuminate\\Notifications\\Notifiable;\n\n"
+            . "class User extends Authenticatable\n{\n"
+            . "    use HasFactory, Notifiable;\n\n"
+            . "    protected \$fillable = ['name', 'email', 'password'];\n}\n";
+    }
 
     private function cleanupPublishedArtifacts(): void
     {

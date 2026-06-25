@@ -6,6 +6,8 @@ All notable changes to this project will be documented in this file.
 
 ### Fixed
 
+- **User model stub silently skipped on a fresh app**: `magic-starter:install` published the trait-laden `app/Models/User.php` stub via `vendor:publish` without `--force`, which silently skips an existing target. On a fresh Laravel app (which ships `app/Models/User.php`), the default model was kept with none of the Magic Starter traits (`HasTeams`, `TwoFactorAuthenticatable`, etc.) while the installer still printed "DONE", leaving teams/2FA/profile endpoints broken with no warning. The installer now mirrors the default-users-migration heuristic: it overwrites the stock Laravel default model (or with `--force`), preserves an already trait-equipped or customized model, and prints `SKIPPED` plus a warning listing the traits to add when a customized model lacks them.
+- **Team switch persistence**: `AuthController::switchTeam` now uses `forceFill(['current_team_id' => ...])->save()` instead of `update()`. `current_team_id` is a system-managed field deliberately kept out of the published User stub's `$fillable`, so the mass-assignment guard silently dropped it: the endpoint returned 200 "Team switched successfully" while `current_team_id` stayed null. Mirrors Jetstream's `switchTeam`. Regression test added with a fillable-restricted user fixture (the prior tests used a fully unguarded fixture and masked the bug).
 - **SwitchTeamRequest**: `team_id` validation rule now respects `magic-starter.use_uuids` config. When UUIDs are disabled (integer primary keys), the rule is `integer` instead of the previously hardcoded `uuid`, which caused a 422 on every team-switch attempt in integer-PK deployments.
 
 ### Changed
