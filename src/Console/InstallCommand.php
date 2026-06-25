@@ -369,7 +369,7 @@ class InstallCommand extends Command
         // Set route prefix when provided.
         if ($routePrefix !== '') {
             $this->replaceInFile(
-                "'route_prefix' => env('MAGIC_STARTER_ROUTE_PREFIX', ''),",
+                "'route_prefix' => env('MAGIC_STARTER_ROUTE_PREFIX', 'api/v1'),",
                 "'route_prefix' => env('MAGIC_STARTER_ROUTE_PREFIX', '{$routePrefix}'),",
                 $configPath,
             );

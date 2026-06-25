@@ -3,6 +3,7 @@
 namespace FlutterSdk\MagicStarter\Http\Requests;
 
 use FlutterSdk\MagicStarter\MagicStarter;
+use FlutterSdk\MagicStarter\Support\MigrationHelper;
 use Illuminate\Foundation\Http\FormRequest;
 use Illuminate\Support\Facades\Gate;
 use Illuminate\Validation\Rule;
@@ -35,7 +36,7 @@ class SwitchTeamRequest extends FormRequest
      */
     public function rules(): array
     {
-        $formatRule = config('magic-starter.use_uuids', true) ? 'uuid' : 'integer';
+        $formatRule = MigrationHelper::usesUuids() ? 'uuid' : 'integer';
 
         return [
             'team_id' => [
