@@ -348,17 +348,12 @@ final class InstallCommandTest extends TestCase
         );
     }
 
-    public function test_install_preserves_an_already_trait_equipped_user_model(): void
+    public function test_install_preserves_a_fully_trait_equipped_user_model(): void
     {
-        // A model that already uses the Magic Starter traits is left intact
+        // A model that already carries EVERY required trait is left intact
         // (no overwrite, no warning) so consumer customizations survive re-runs.
         File::ensureDirectoryExists(app_path('Models'));
-        $equipped = "<?php\n\nnamespace App\\Models;\n\n"
-            . "use FlutterSdk\\MagicStarter\\Traits\\HasTeams;\n"
-            . "use Illuminate\\Foundation\\Auth\\User as Authenticatable;\n\n"
-            . "class User extends Authenticatable\n{\n    use HasTeams;\n"
-            . "    public \$customMarker = true;\n}\n";
-        File::put(app_path('Models/User.php'), $equipped);
+        File::put(app_path('Models/User.php'), $this->fullyWiredUserModel());
 
         $this->artisan('magic-starter:install')->assertExitCode(0);
 
@@ -367,15 +362,33 @@ final class InstallCommandTest extends TestCase
         $this->assertStringContainsString('HasTeams', $contents);
     }
 
-    public function test_install_force_republishes_trait_equipped_user_model(): void
+    public function test_install_warns_when_user_model_has_only_some_traits(): void
     {
+        // A partially-updated model (some traits, not all) must NOT be treated
+        // as compatible: it is preserved AND the operator is told which traits
+        // are still missing, instead of a silent skip.
         File::ensureDirectoryExists(app_path('Models'));
-        $equipped = "<?php\n\nnamespace App\\Models;\n\n"
+        $partial = "<?php\n\nnamespace App\\Models;\n\n"
             . "use FlutterSdk\\MagicStarter\\Traits\\HasTeams;\n"
             . "use Illuminate\\Foundation\\Auth\\User as Authenticatable;\n\n"
             . "class User extends Authenticatable\n{\n    use HasTeams;\n"
             . "    public \$customMarker = true;\n}\n";
-        File::put(app_path('Models/User.php'), $equipped);
+        File::put(app_path('Models/User.php'), $partial);
+
+        $this->artisan('magic-starter:install')
+            ->expectsOutputToContain('missing required Magic Starter traits')
+            ->assertExitCode(0);
+
+        // Preserved (not overwritten), and the missing-trait warning fired.
+        $contents = File::get(app_path('Models/User.php'));
+        $this->assertStringContainsString('customMarker', $contents);
+        $this->assertStringNotContainsString('ConditionallyUsesUuids', $contents);
+    }
+
+    public function test_install_force_republishes_fully_trait_equipped_user_model(): void
+    {
+        File::ensureDirectoryExists(app_path('Models'));
+        File::put(app_path('Models/User.php'), $this->fullyWiredUserModel());
 
         $this->artisan('magic-starter:install', ['--force' => true])->assertExitCode(0);
 
@@ -486,6 +499,27 @@ final class InstallCommandTest extends TestCase
      * The stock Laravel default User model content (signature the installer
      * recognises as safe to overwrite).
      */
+    /**
+     * A User model that already carries every required Magic Starter trait
+     * plus a custom marker (to assert it is preserved, not overwritten).
+     */
+    private function fullyWiredUserModel(): string
+    {
+        return "<?php\n\nnamespace App\\Models;\n\n"
+            . "use FlutterSdk\\MagicStarter\\Support\\ConditionallyUsesUuids;\n"
+            . "use FlutterSdk\\MagicStarter\\Traits\\HasGuestSupport;\n"
+            . "use FlutterSdk\\MagicStarter\\Traits\\HasNotifications;\n"
+            . "use FlutterSdk\\MagicStarter\\Traits\\HasProfilePhoto;\n"
+            . "use FlutterSdk\\MagicStarter\\Traits\\HasTeams;\n"
+            . "use FlutterSdk\\MagicStarter\\Traits\\TwoFactorAuthenticatable;\n"
+            . "use Illuminate\\Foundation\\Auth\\User as Authenticatable;\n\n"
+            . "class User extends Authenticatable\n{\n"
+            . "    use ConditionallyUsesUuids;\n    use HasGuestSupport;\n"
+            . "    use HasNotifications;\n    use HasProfilePhoto;\n"
+            . "    use HasTeams;\n    use TwoFactorAuthenticatable;\n\n"
+            . "    public \$customMarker = true;\n}\n";
+    }
+
     private function stockLaravelUserModel(): string
     {
         return "<?php\n\nnamespace App\\Models;\n\n"

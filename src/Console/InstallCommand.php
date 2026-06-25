@@ -535,9 +535,14 @@ class InstallCommand extends Command
             return;
         }
 
-        // Already wired with the Magic Starter traits: leave any customizations
-        // intact (publish only on explicit --force).
-        if ($this->userModelHasMagicTraits($path)) {
+        // Already wired with EVERY required Magic Starter trait: leave any
+        // customizations intact (publish only on explicit --force). A model
+        // carrying only SOME of the traits is NOT treated as compatible here;
+        // it falls through to the warning below so the operator learns which
+        // traits are still missing.
+        $missing = $this->missingUserTraits($path);
+
+        if ($missing === []) {
             if ((bool) $this->option('force')) {
                 $this->callSilently('vendor:publish', $this->userModelPublishOptions(true));
             }
@@ -546,8 +551,9 @@ class InstallCommand extends Command
             return;
         }
 
-        // Existing model without the traits: overwrite when it is the stock
-        // Laravel default or --force was passed; otherwise preserve and warn.
+        // Existing model missing one or more traits: overwrite when it is the
+        // stock Laravel default or --force was passed; otherwise preserve and
+        // warn, naming the specific traits that are absent.
         if ((bool) $this->option('force') || $this->isDefaultLaravelUserModel($path)) {
             $this->callSilently('vendor:publish', $this->userModelPublishOptions(true));
             $this->components->twoColumnDetail('Publishing user model stub', '<fg=green;options=bold>DONE</>');
@@ -556,11 +562,12 @@ class InstallCommand extends Command
         }
 
         $this->components->twoColumnDetail('Publishing user model stub', '<fg=yellow;options=bold>SKIPPED</>');
-        $this->components->warn('app/Models/User.php exists and is missing the required Magic Starter traits.');
+        $this->components->warn(
+            'app/Models/User.php is missing required Magic Starter traits: ' . implode(', ', $missing) . '.',
+        );
         $this->components->bulletList([
             'Your customized model was preserved (stub NOT published).',
-            'Add manually: ConditionallyUsesUuids, HasApiTokens, HasGuestSupport, '
-                . 'HasNotifications, HasProfilePhoto, HasTeams, MustVerifyEmail, TwoFactorAuthenticatable.',
+            'Add the missing traits manually (HasApiTokens from Laravel Sanctum is also required).',
             'Or re-run with --force to overwrite app/Models/User.php with the package stub.',
         ]);
     }
@@ -585,34 +592,76 @@ class InstallCommand extends Command
     }
 
     /**
-     * Determine if the User model already uses the Magic Starter traits.
+     * The Magic Starter traits the User model must carry for teams, 2FA,
+     * profile photos, notifications, guest auth, and UUID-optional keys to work.
+     *
+     * @var list<string>
      */
-    private function userModelHasMagicTraits(string $path): bool
+    private const REQUIRED_USER_TRAITS = [
+        'ConditionallyUsesUuids',
+        'HasGuestSupport',
+        'HasNotifications',
+        'HasProfilePhoto',
+        'HasTeams',
+        'TwoFactorAuthenticatable',
+    ];
+
+    /**
+     * Return the required Magic Starter traits NOT referenced by the User model.
+     *
+     * An empty result means the model is fully wired; a non-empty result (even
+     * a single entry) means the model is incomplete, so a partially-updated
+     * model is never mistaken for a compatible one. An unreadable file is
+     * treated as missing every trait.
+     *
+     * @return list<string>
+     */
+    private function missingUserTraits(string $path): array
     {
         $content = @file_get_contents($path);
 
-        return $content !== false
-            && str_contains($content, 'FlutterSdk\\MagicStarter\\Traits\\');
+        if ($content === false) {
+            return self::REQUIRED_USER_TRAITS;
+        }
+
+        return array_values(array_filter(
+            self::REQUIRED_USER_TRAITS,
+            static fn (string $trait): bool => ! str_contains($content, $trait),
+        ));
     }
 
     /**
      * Determine if the User model is the unmodified Laravel default.
      *
-     * Mirrors replaceDefaultUsersMigration's content-signature heuristic: the
-     * stock model extends Authenticatable and declares the default
-     * "use HasFactory, Notifiable;" trait line, with no Magic Starter traits.
+     * Tightened to require EVERY marker shared by the stock Laravel 11/12
+     * (property-based) and Laravel 13 (attribute-based) User models, so a
+     * customized model that has dropped or renamed any of them is not mistaken
+     * for the default and overwritten without --force. A model referencing the
+     * Magic Starter namespace is never the stock default.
      */
     private function isDefaultLaravelUserModel(string $path): bool
     {
         $content = @file_get_contents($path);
 
-        if ($content === false) {
+        if ($content === false || str_contains($content, 'FlutterSdk\\MagicStarter')) {
             return false;
         }
 
-        return ! str_contains($content, 'FlutterSdk\\MagicStarter')
-            && str_contains($content, 'extends Authenticatable')
-            && str_contains($content, 'use HasFactory, Notifiable;');
+        $stockMarkers = [
+            'class User extends Authenticatable',
+            'use HasFactory, Notifiable;',
+            'use Illuminate\\Foundation\\Auth\\User as Authenticatable;',
+            'use Illuminate\\Notifications\\Notifiable;',
+            'use Illuminate\\Database\\Eloquent\\Factories\\HasFactory;',
+        ];
+
+        foreach ($stockMarkers as $marker) {
+            if (! str_contains($content, $marker)) {
+                return false;
+            }
+        }
+
+        return true;
     }
 
     /**
