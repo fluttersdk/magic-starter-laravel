@@ -348,6 +348,43 @@ final class InstallCommandTest extends TestCase
         );
     }
 
+    public function test_install_preserves_an_already_trait_equipped_user_model(): void
+    {
+        // A model that already uses the Magic Starter traits is left intact
+        // (no overwrite, no warning) so consumer customizations survive re-runs.
+        File::ensureDirectoryExists(app_path('Models'));
+        $equipped = "<?php\n\nnamespace App\\Models;\n\n"
+            . "use FlutterSdk\\MagicStarter\\Traits\\HasTeams;\n"
+            . "use Illuminate\\Foundation\\Auth\\User as Authenticatable;\n\n"
+            . "class User extends Authenticatable\n{\n    use HasTeams;\n"
+            . "    public \$customMarker = true;\n}\n";
+        File::put(app_path('Models/User.php'), $equipped);
+
+        $this->artisan('magic-starter:install')->assertExitCode(0);
+
+        $contents = File::get(app_path('Models/User.php'));
+        $this->assertStringContainsString('customMarker', $contents);
+        $this->assertStringContainsString('HasTeams', $contents);
+    }
+
+    public function test_install_force_republishes_trait_equipped_user_model(): void
+    {
+        File::ensureDirectoryExists(app_path('Models'));
+        $equipped = "<?php\n\nnamespace App\\Models;\n\n"
+            . "use FlutterSdk\\MagicStarter\\Traits\\HasTeams;\n"
+            . "use Illuminate\\Foundation\\Auth\\User as Authenticatable;\n\n"
+            . "class User extends Authenticatable\n{\n    use HasTeams;\n"
+            . "    public \$customMarker = true;\n}\n";
+        File::put(app_path('Models/User.php'), $equipped);
+
+        $this->artisan('magic-starter:install', ['--force' => true])->assertExitCode(0);
+
+        // --force re-publishes the package stub, dropping the custom marker.
+        $contents = File::get(app_path('Models/User.php'));
+        $this->assertStringContainsString('ConditionallyUsesUuids', $contents);
+        $this->assertStringNotContainsString('customMarker', $contents);
+    }
+
     public function test_install_preserves_customized_user_model_without_force(): void
     {
         File::ensureDirectoryExists(app_path('Models'));
