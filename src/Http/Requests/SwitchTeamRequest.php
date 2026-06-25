@@ -3,6 +3,7 @@
 namespace FlutterSdk\MagicStarter\Http\Requests;
 
 use FlutterSdk\MagicStarter\MagicStarter;
+use FlutterSdk\MagicStarter\Support\MigrationHelper;
 use Illuminate\Foundation\Http\FormRequest;
 use Illuminate\Support\Facades\Gate;
 use Illuminate\Validation\Rule;
@@ -27,14 +28,20 @@ class SwitchTeamRequest extends FormRequest
     /**
      * Get the validation rules that apply to the team switch request.
      *
+     * The team_id format rule mirrors the package's UUID-optional contract:
+     * when use_uuids is true (the default) the ID must be a UUID string;
+     * when use_uuids is false (integer primary keys) it must be an integer.
+     *
      * @return array<string, mixed>
      */
     public function rules(): array
     {
+        $formatRule = MigrationHelper::usesUuids() ? 'uuid' : 'integer';
+
         return [
             'team_id' => [
                 'required',
-                'uuid',
+                $formatRule,
                 Rule::exists(MagicStarter::teamModel(), 'id'),
             ],
         ];
