@@ -196,9 +196,12 @@ class AuthController
             ], 403);
         }
 
-        $user->update([
+        // current_team_id is a system-managed field deliberately kept out of
+        // the User model's $fillable; forceFill persists it regardless of the
+        // consumer model's mass-assignment guard (mirrors Jetstream switchTeam).
+        $user->forceFill([
             'current_team_id' => $teamId,
-        ]);
+        ])->save();
 
         return response()->json([
             'data' => new UserResource($request->user()->fresh()),

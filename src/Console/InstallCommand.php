@@ -166,9 +166,8 @@ class InstallCommand extends Command
             $this->components->twoColumnDetail('Publishing policy stubs', '<fg=green;options=bold>DONE</>');
         }
 
-        // 10. Publish user model stub.
+        // 10. Publish user model stub (emits its own DONE / SKIPPED status).
         $this->publishUserModelStub();
-        $this->components->twoColumnDetail('Publishing user model stub', '<fg=green;options=bold>DONE</>');
 
         // 11. Publish language files.
         $this->publishLangFiles();
@@ -516,19 +515,104 @@ class InstallCommand extends Command
 
     /**
      * Publish the User model stub to App\Models.
+     *
+     * vendor:publish silently skips an existing target without --force, so a
+     * fresh Laravel app (which ships app/Models/User.php) would otherwise keep
+     * the default model with none of the Magic Starter traits while the
+     * installer still reported success. Mirror replaceDefaultUsersMigration:
+     * overwrite when the existing model is the stock Laravel default (or
+     * --force), preserve-and-warn when it has been customized.
      */
     private function publishUserModelStub(): void
     {
-        $publishOptions = [
+        $path = app_path('Models/User.php');
+
+        // No model yet: a plain publish lands the stub. Report DONE.
+        if (! file_exists($path)) {
+            $this->callSilently('vendor:publish', $this->userModelPublishOptions(false));
+            $this->components->twoColumnDetail('Publishing user model stub', '<fg=green;options=bold>DONE</>');
+
+            return;
+        }
+
+        // Already wired with the Magic Starter traits: leave any customizations
+        // intact (publish only on explicit --force).
+        if ($this->userModelHasMagicTraits($path)) {
+            if ((bool) $this->option('force')) {
+                $this->callSilently('vendor:publish', $this->userModelPublishOptions(true));
+            }
+            $this->components->twoColumnDetail('Publishing user model stub', '<fg=green;options=bold>DONE</>');
+
+            return;
+        }
+
+        // Existing model without the traits: overwrite when it is the stock
+        // Laravel default or --force was passed; otherwise preserve and warn.
+        if ((bool) $this->option('force') || $this->isDefaultLaravelUserModel($path)) {
+            $this->callSilently('vendor:publish', $this->userModelPublishOptions(true));
+            $this->components->twoColumnDetail('Publishing user model stub', '<fg=green;options=bold>DONE</>');
+
+            return;
+        }
+
+        $this->components->twoColumnDetail('Publishing user model stub', '<fg=yellow;options=bold>SKIPPED</>');
+        $this->components->warn('app/Models/User.php exists and is missing the required Magic Starter traits.');
+        $this->components->bulletList([
+            'Your customized model was preserved (stub NOT published).',
+            'Add manually: ConditionallyUsesUuids, HasApiTokens, HasGuestSupport, '
+                . 'HasNotifications, HasProfilePhoto, HasTeams, MustVerifyEmail, TwoFactorAuthenticatable.',
+            'Or re-run with --force to overwrite app/Models/User.php with the package stub.',
+        ]);
+    }
+
+    /**
+     * Build the vendor:publish options for the user model stub.
+     *
+     * @return array<string, mixed>
+     */
+    private function userModelPublishOptions(bool $force): array
+    {
+        $options = [
             '--provider' => MagicStarterServiceProvider::class,
             '--tag' => 'magic-starter-user-model',
         ];
 
-        if ((bool) $this->option('force')) {
-            $publishOptions['--force'] = true;
+        if ($force) {
+            $options['--force'] = true;
         }
 
-        $this->callSilently('vendor:publish', $publishOptions);
+        return $options;
+    }
+
+    /**
+     * Determine if the User model already uses the Magic Starter traits.
+     */
+    private function userModelHasMagicTraits(string $path): bool
+    {
+        $content = @file_get_contents($path);
+
+        return $content !== false
+            && str_contains($content, 'FlutterSdk\\MagicStarter\\Traits\\');
+    }
+
+    /**
+     * Determine if the User model is the unmodified Laravel default.
+     *
+     * Mirrors replaceDefaultUsersMigration's content-signature heuristic: the
+     * stock model extends Authenticatable and declares the default
+     * "use HasFactory, Notifiable;" trait line, with no Magic Starter traits.
+     */
+    private function isDefaultLaravelUserModel(string $path): bool
+    {
+        $content = @file_get_contents($path);
+
+        if ($content === false) {
+            return false;
+        }
+
+        return ! str_contains($content, 'FlutterSdk\\MagicStarter')
+            && str_contains($content, 'extends Authenticatable')
+            && str_contains($content, 'use HasFactory, Notifiable;');
     }
 
     /**

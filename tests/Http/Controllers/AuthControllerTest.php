@@ -426,6 +426,39 @@ class AuthControllerTest extends TestCase
             ->assertJsonPath('message', 'This action is unauthorized.');
     }
 
+    public function test_switch_team_persists_when_user_model_guards_current_team_id(): void
+    {
+        // Regression: the published User stub lists an explicit $fillable that
+        // omits current_team_id (a system-managed field). A mass-assignment
+        // update() silently drops it, so the switch returned 200 but never
+        // persisted. This fixture mirrors that guard; switchTeam must forceFill.
+        $user = AuthControllerGuardedUser::query()->create([
+            'name' => 'Guarded User',
+            'email' => 'guarded@example.com',
+            'password' => Hash::make('Password123'),
+            'locale' => 'en',
+            'timezone' => 'UTC',
+        ]);
+
+        $team = AuthControllerTestTeam::query()->create([
+            'id' => (string) Str::uuid(),
+            'user_id' => $user->id,
+            'name' => 'Guarded Team',
+            'personal_team' => false,
+        ]);
+
+        $response = $this->actingAs($user)->postJson('/switch-team', [
+            'team_id' => $team->id,
+        ]);
+
+        $response
+            ->assertOk()
+            ->assertJsonPath('message', 'Team switched successfully')
+            ->assertJsonPath('data.current_team.id', $team->id);
+
+        $this->assertSame($team->id, $user->fresh()->current_team_id);
+    }
+
     public function test_login_returns_401_for_wrong_password(): void
     {
         AuthControllerTestUser::query()->create([
@@ -575,6 +608,33 @@ final class AuthControllerTestUser extends Model implements AuthenticatableContr
     {
         return $this->currentAccessTokenStub;
     }
+}
+
+final class AuthControllerGuardedUser extends Model implements AuthenticatableContract
+{
+    use AuthenticatableTrait;
+    use Authorizable;
+    use \FlutterSdk\MagicStarter\Traits\HasProfilePhoto;
+    use \FlutterSdk\MagicStarter\Traits\HasTeams;
+    use HasUuids;
+
+    protected $table = 'users';
+
+    public $incrementing = false;
+
+    protected $keyType = 'string';
+
+    // Mirrors the published User stub: current_team_id is intentionally absent,
+    // so a plain mass-assignment update() cannot persist it.
+    protected $fillable = [
+        'name',
+        'email',
+        'password',
+        'phone',
+        'phone_country',
+        'locale',
+        'timezone',
+    ];
 }
 
 final class AuthControllerTestTeam extends \FlutterSdk\MagicStarter\Models\Team
