@@ -5,6 +5,7 @@
 - [Installing the Package](#installing-the-package)
 - [Service Provider Auto-Discovery](#service-provider-auto-discovery)
 - [Running the Install Command](#running-the-install-command)
+- [Frontend URL for Non-Localhost Deployments](#frontend-url-non-localhost)
 - [Publishable Assets](#publishable-assets)
 - [User Model Setup](#user-model-setup)
 - [Binding Action Contracts](#binding-action-contracts)
@@ -71,7 +72,7 @@ When run without flags, the command uses [Laravel Prompts](https://laravel.com/d
 
 1. **Features** — a `multiselect` prompt with all 12 features pre-selected.
 2. **Route prefix** — a `text` input (defaults to `api/v1`).
-3. **Frontend URL** — a `text` input (defaults to `http://localhost:3000`), used for password reset links in emails.
+3. **Frontend URL** — a `text` input (defaults to `http://localhost:3000`), used for email verification, password reset, and other email links. **Important:** Set this to your frontend base URL when its host or scheme differs from `APP_URL` (see [Frontend URL](#frontend-url-non-localhost) below).
 4. **Run migrations** — a `confirm` prompt to run `php artisan migrate` immediately.
 
 UUID vs. integer primary keys are auto-detected from your existing `users` table schema. If no `users` table exists (fresh install), UUID is used by default.
@@ -106,6 +107,42 @@ When `--all` is passed, all 12 features are enabled regardless of `--features`.
 
 > [!NOTE]
 > When neither `--uuid` nor `--no-uuid` is provided, the installer auto-detects your existing `users` table schema. If no `users` table exists (fresh install), UUID is used by default.
+
+<a name="frontend-url-non-localhost"></a>
+## Frontend URL for Non-Localhost Deployments
+
+The backend signs email links (verification, password reset, and other email links) using `APP_URL` as the base. When your email links should open a frontend whose host or scheme differs from `APP_URL`, configure `frontend_url` to rewrite the link base to your frontend URL. Without it, email links point at the backend host (e.g. `https://api.example.com/email/verify/{id}/{hash}`) instead of opening the intended frontend app or deep link.
+
+**Solution:** Configure the `frontend_url` setting to point to your frontend's base URL. This rewrites the base for all package email links.
+
+### Setting the Frontend URL
+
+You can provide the frontend URL in three ways:
+
+1. **During install with the flag:**
+   ```bash
+   php artisan magic-starter:install --all --frontend-url=https://app.example.com
+   ```
+
+2. **During interactive install:**
+   When prompted for "Frontend URL", enter your frontend app URL (e.g. `https://app.example.com`).
+
+3. **Via environment variable:**
+   Set `MAGIC_STARTER_FRONTEND_URL` in your `.env`:
+   ```env
+   MAGIC_STARTER_FRONTEND_URL=https://app.example.com
+   ```
+
+### Localhost Development
+
+For localhost development (backend at `http://localhost:8000`, frontend at `http://localhost:3000`), the hosts differ so you should keep `frontend_url` set. The installer defaults the prompt to `http://localhost:3000`, which covers this common case:
+
+```bash
+php artisan magic-starter:install --all --frontend-url=http://localhost:3000
+```
+
+> [!IMPORTANT]
+> Set `MAGIC_STARTER_FRONTEND_URL` (or `--frontend-url`) whenever your frontend's host or scheme differs from `APP_URL`. `APP_URL` sets the backend base and is correct for API routes, but email links need the frontend base. A backend and frontend sharing the same origin do not need a separate `frontend_url`.
 
 <a name="publishable-assets"></a>
 ## Publishable Assets

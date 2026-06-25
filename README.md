@@ -74,6 +74,9 @@ php artisan vendor:publish --tag=magic-starter-config
 php artisan migrate
 ```
 
+> [!IMPORTANT]
+> **Frontend URL:** The backend signs email links (verification, password reset, and other email links) using `APP_URL` as the base. If your email links should open a frontend whose host or scheme differs from `APP_URL`, set `MAGIC_STARTER_FRONTEND_URL` in your `.env` to the frontend base URL (the `magic-starter.frontend_url` config reads it), or pass `--frontend-url=https://app.example.com` when installing via `php artisan magic-starter:install`. Without it, email links point at the backend host (e.g. `https://api.example.com/email/verify/...`) instead of opening the intended frontend app.
+
 ### 3. Prepare your User model
 
 Add the required traits to your `User` model:
