@@ -53,7 +53,10 @@ class CreatePersonalTeamListener
         // 4. Clear cached relations so subsequent code sees the new team.
         $user->unsetRelation('ownedTeams')->unsetRelation('teams');
 
-        // 5. Set as current team.
-        $user->update(['current_team_id' => $team->id]);
+        // 5. Set as current team. current_team_id is deliberately kept out of
+        //    the User model's $fillable (mirrors Jetstream), so forceFill is
+        //    required to persist it past the mass-assignment guard; update()
+        //    would be silently dropped.
+        $user->forceFill(['current_team_id' => $team->id])->save();
     }
 }

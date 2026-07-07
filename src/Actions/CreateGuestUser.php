@@ -59,13 +59,26 @@ class CreateGuestUser implements CreatesGuestUsers
             $attributes['timezone'] = $detectedTimezone ?? ($defaults['timezone'] ?? 'UTC');
         }
 
-        // 6. Find existing guest or create a new one using firstOrCreate.
+        // 6. Find existing guest by device_id, or create a new one.
+        //    `is_guest` and `device_id` are system-managed and deliberately kept
+        //    out of the published User stub's $fillable (mirrors current_team_id):
+        //    making `is_guest` mass-assignable would let a crafted payload flag any
+        //    account as a guest. firstOrCreate() goes through mass-assignment and
+        //    silently dropped both, so guests persisted with is_guest = false and a
+        //    null device_id (breaking the find-existing idempotency). forceFill
+        //    persists them past the guard.
         $userModel = MagicStarter::userModel();
 
-        $user = $userModel::query()->firstOrCreate(
-            ['device_id' => $validated['device_id']],
-            $attributes,
-        );
+        $user = $userModel::query()
+            ->where('device_id', $validated['device_id'])
+            ->first();
+
+        if ($user === null) {
+            $user = $userModel::query()->newModelInstance();
+            $user->forceFill(array_merge($attributes, [
+                'device_id' => $validated['device_id'],
+            ]))->save();
+        }
 
         // 7. Create personal team for newly created guests when teams feature is enabled.
         if ($user->wasRecentlyCreated && Features::hasTeamFeatures()) {
@@ -105,8 +118,10 @@ class CreateGuestUser implements CreatesGuestUsers
         // 3. Attach user as team owner.
         $team->users()->attach($user->id, ['role' => Role::OWNER->value]);
 
-        // 4. Clear cached relations and set as current team.
+        // 4. Clear cached relations and set as current team. current_team_id is
+        //    deliberately kept out of $fillable (mirrors Jetstream), so forceFill
+        //    is required to persist it past the mass-assignment guard.
         $user->unsetRelation('ownedTeams')->unsetRelation('teams');
-        $user->update(['current_team_id' => $team->id]);
+        $user->forceFill(['current_team_id' => $team->id])->save();
     }
 }

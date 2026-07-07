@@ -5,6 +5,10 @@ namespace FlutterSdk\MagicStarter\Tests\Actions;
 use FlutterSdk\MagicStarter\Actions\CreateGuestUser;
 use FlutterSdk\MagicStarter\MagicStarter;
 use FlutterSdk\MagicStarter\Tests\TestCase;
+use Illuminate\Auth\Authenticatable as AuthenticatableTrait;
+use Illuminate\Contracts\Auth\Authenticatable as AuthenticatableContract;
+use Illuminate\Database\Eloquent\Concerns\HasUuids;
+use Illuminate\Database\Eloquent\Model;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\Schema;
 
@@ -67,6 +71,39 @@ class CreateGuestUserTest extends TestCase
     }
 
     /**
+     * Regression: is_guest and device_id are system-managed and intentionally
+     * absent from the published User stub's $fillable (making is_guest
+     * mass-assignable would let a crafted payload flag any account as a guest).
+     * firstOrCreate() went through mass-assignment and silently dropped both, so
+     * guests persisted with is_guest = false and a null device_id, which also
+     * broke the find-existing idempotency. The action must forceFill. The prior
+     * tests used a fully unguarded fixture and masked the bug.
+     */
+    public function test_guest_user_persists_is_guest_and_device_id_when_user_model_guards_them(): void
+    {
+        MagicStarter::useUserModel(CreateGuestUserGuardedUser::class);
+
+        $action = new CreateGuestUser;
+
+        $user = $action->create([
+            'device_id' => 'guarded-device-1',
+        ]);
+
+        $fresh = CreateGuestUserGuardedUser::query()->find($user->id);
+        $this->assertTrue((bool) $fresh->is_guest);
+        $this->assertSame('guarded-device-1', $fresh->device_id);
+
+        // Idempotency must still hold against the guarded model (a null device_id
+        // would have created a second user on the next call).
+        $again = $action->create([
+            'device_id' => 'guarded-device-1',
+        ]);
+
+        $this->assertSame($user->id, $again->id);
+        $this->assertSame(1, CreateGuestUserGuardedUser::query()->count());
+    }
+
+    /**
      * Test that guest user inherits locale and timezone from headers.
      */
     public function test_guest_user_inherits_locale_and_timezone_from_headers(): void
@@ -86,4 +123,31 @@ class CreateGuestUserTest extends TestCase
         $this->assertEquals('tr', $user->locale);
         $this->assertEquals('Europe/Istanbul', $user->timezone);
     }
+}
+
+/**
+ * Mirrors the published User stub: is_guest, device_id, and current_team_id are
+ * system-managed and intentionally absent from $fillable, so a plain
+ * mass-assignment cannot persist them.
+ */
+final class CreateGuestUserGuardedUser extends Model implements AuthenticatableContract
+{
+    use AuthenticatableTrait;
+    use HasUuids;
+
+    protected $table = 'users';
+
+    public $incrementing = false;
+
+    protected $keyType = 'string';
+
+    protected $fillable = [
+        'name',
+        'email',
+        'password',
+        'phone',
+        'phone_country',
+        'locale',
+        'timezone',
+    ];
 }

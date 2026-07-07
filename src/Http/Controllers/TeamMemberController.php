@@ -100,7 +100,8 @@ class TeamMemberController
 
         if ((string) $user->current_team_id === (string) $teamModel->getKey()) {
             $nextTeam = $user->allTeams()->where('id', '!=', $teamModel->getKey())->first();
-            $user->update(['current_team_id' => $nextTeam?->getKey()]);
+            // current_team_id is kept out of $fillable; forceFill persists it.
+            $user->forceFill(['current_team_id' => $nextTeam?->getKey()])->save();
         }
 
         return response()->json(['message' => 'You have left the team.']);

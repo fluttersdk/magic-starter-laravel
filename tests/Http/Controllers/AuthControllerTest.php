@@ -4,9 +4,11 @@ namespace FlutterSdk\MagicStarter\Tests\Http\Controllers;
 
 use FlutterSdk\MagicStarter\Contracts\CreatesUsers;
 use FlutterSdk\MagicStarter\Http\Controllers\AuthController;
+use FlutterSdk\MagicStarter\Listeners\CreatePersonalTeamListener;
 use FlutterSdk\MagicStarter\MagicStarter;
 use FlutterSdk\MagicStarter\Tests\TestCase;
 use Illuminate\Auth\Authenticatable as AuthenticatableTrait;
+use Illuminate\Auth\Events\Registered;
 use Illuminate\Contracts\Auth\Authenticatable as AuthenticatableContract;
 use Illuminate\Database\Eloquent\Concerns\HasUuids;
 use Illuminate\Database\Eloquent\Model;
@@ -457,6 +459,35 @@ class AuthControllerTest extends TestCase
             ->assertJsonPath('data.current_team.id', $team->id);
 
         $this->assertSame($team->id, $user->fresh()->current_team_id);
+    }
+
+    public function test_register_personal_team_persists_current_team_id_when_user_model_guards_it(): void
+    {
+        // Regression: CreatePersonalTeamListener set current_team_id with a
+        // mass-assignment update(), which the published User stub's $fillable
+        // guard silently dropped (current_team_id is system-managed and
+        // intentionally not fillable). The personal team was created but
+        // current_team_id stayed null after registration. The listener must
+        // forceFill, mirroring switchTeam. This fixture reproduces the guard.
+        config(['magic-starter.models.user' => AuthControllerGuardedUser::class]);
+
+        $user = AuthControllerGuardedUser::query()->create([
+            'name' => 'Guarded Registrant',
+            'email' => 'guarded-register@example.com',
+            'password' => Hash::make('Password123'),
+            'locale' => 'en',
+            'timezone' => 'UTC',
+        ]);
+
+        (new CreatePersonalTeamListener)->handle(new Registered($user));
+
+        $personalTeamId = AuthControllerTestTeam::query()
+            ->where('user_id', $user->id)
+            ->where('personal_team', true)
+            ->value('id');
+
+        $this->assertNotNull($personalTeamId);
+        $this->assertSame($personalTeamId, $user->fresh()->current_team_id);
     }
 
     public function test_login_returns_401_for_wrong_password(): void
