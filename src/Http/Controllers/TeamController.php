@@ -135,7 +135,8 @@ class TeamController
         $nextTeam = $user->allTeams()->first();
 
         if ($nextTeam) {
-            $user->update(['current_team_id' => $nextTeam->getKey()]);
+            // current_team_id is kept out of $fillable; forceFill persists it.
+            $user->forceFill(['current_team_id' => $nextTeam->getKey()])->save();
         }
     }
 

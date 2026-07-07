@@ -41,10 +41,10 @@ class CreateTeam implements CreatesTeams
         // 3. Clear cached relations so subsequent Gate checks see the new team.
         $user->unsetRelation('ownedTeams')->unsetRelation('teams');
 
-        // 4. Set as the user's current team.
-        $user->update([
-            'current_team_id' => $team->id,
-        ]);
+        // 4. Set as the user's current team. current_team_id is deliberately
+        //    kept out of $fillable (mirrors Jetstream), so forceFill is required
+        //    to persist it past the mass-assignment guard.
+        $user->forceFill(['current_team_id' => $team->id])->save();
 
         return $team;
     }
