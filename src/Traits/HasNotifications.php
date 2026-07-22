@@ -26,6 +26,20 @@ use Illuminate\Database\Eloquent\Relations\MorphMany;
 trait HasNotifications
 {
     /**
+     * Merge the trait's attribute casts into the model.
+     *
+     * Eloquent calls this automatically for every model that uses the trait,
+     * so consuming apps get the `sms_registered_at` datetime cast (used by the
+     * on-demand OneSignal SMS subscription guard) without declaring it manually.
+     */
+    public function initializeHasNotifications(): void
+    {
+        $this->mergeCasts([
+            'sms_registered_at' => 'datetime',
+        ]);
+    }
+
+    /**
      * Get the notification settings overrides for the user.
      *
      * @return MorphMany<NotificationSetting, $this>
