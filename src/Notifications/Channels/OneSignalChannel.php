@@ -41,10 +41,9 @@ class OneSignalChannel
     /**
      * Send the given notification via OneSignal.
      *
-     *
      * @return CreateNotificationSuccessResponse<int|null, mixed>|null
      *
-     * @throws InvalidArgumentException When toOneSignal() returns an unexpected type.
+     * @throws InvalidArgumentException When the configured builder method returns an unexpected type.
      * @throws Throwable Re-thrown after reporting when the API call fails.
      */
     public function send(mixed $notifiable, Notification $notification): ?CreateNotificationSuccessResponse
@@ -72,8 +71,9 @@ class OneSignalChannel
 
         if (! $payload instanceof OneSignalNotification) {
             throw new InvalidArgumentException(sprintf(
-                '%s::toOneSignal() must return %s; got %s.',
+                '%s::%s() must return %s; got %s.',
                 get_class($notification),
+                $this->builderMethod,
                 OneSignalNotification::class,
                 get_debug_type($payload),
             ));
