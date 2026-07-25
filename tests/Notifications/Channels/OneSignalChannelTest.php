@@ -8,6 +8,7 @@ use FlutterSdk\MagicStarter\Tests\Fixtures\ConcreteUser;
 use FlutterSdk\MagicStarter\Tests\TestCase;
 use Illuminate\Contracts\Debug\ExceptionHandler;
 use Illuminate\Support\Facades\Schema;
+use InvalidArgumentException;
 use onesignal\client\api\DefaultApi;
 use onesignal\client\model\CreateNotificationSuccessResponse;
 use onesignal\client\model\Notification as OneSignalNotification;
@@ -149,6 +150,43 @@ final class OneSignalChannelTest extends TestCase
 
         // Assert
         $this->assertNull($result);
+    }
+
+    public function test_send_error_names_the_configured_builder_on_a_wrong_payload_type(): void
+    {
+        // Arrange: the sms driver runs toSms, so the error must name toSms and
+        // not the toOneSignal default it shares the class with.
+        $client = $this->createMock(DefaultApi::class);
+        $client->expects($this->never())->method('createNotification');
+
+        $notification = new StubBadSmsNotification;
+        $notifiable = new StubRoutableNotifiable('delta');
+
+        $channel = new OneSignalChannel($client, 'toSms');
+
+        // Assert
+        $this->expectException(InvalidArgumentException::class);
+        $this->expectExceptionMessage('::toSms() must return');
+
+        // Act
+        $channel->send($notifiable, $notification);
+    }
+
+    public function test_send_rejects_a_notifiable_it_cannot_address(): void
+    {
+        // Arrange: no routeNotificationForOneSignal and no getKey means there is
+        // no alias to target, so the send must fail loudly rather than broadcast.
+        $client = $this->createMock(DefaultApi::class);
+        $client->expects($this->never())->method('createNotification');
+
+        $channel = new OneSignalChannel($client);
+
+        // Assert
+        $this->expectException(InvalidArgumentException::class);
+        $this->expectExceptionMessage('must implement routeNotificationForOneSignal() or getKey()');
+
+        // Act
+        $channel->send(new StubUnaddressableNotifiable, new StubOneSignalNotification);
     }
 
     public function test_send_reports_and_rethrows_on_sdk_exception(): void
@@ -328,6 +366,47 @@ final class OneSignalChannelTest extends TestCase
         $this->assertStringNotContainsString($phone, $reported->getMessage());
     }
 
+    public function test_ensure_sms_subscription_skips_a_user_without_a_phone(): void
+    {
+        // Arrange
+        $this->bootUsersTable();
+        config(['magic-starter.onesignal.app_id' => 'app-xyz']);
+
+        $user = ConcreteUser::create(['name' => 'Delta']);
+
+        $client = $this->createMock(DefaultApi::class);
+        $client->expects($this->never())->method('createSubscription');
+
+        $helper = new OneSignalSubscriptions($client);
+
+        // Act + Assert: no phone means nothing to subscribe, and the guard stays
+        // unset so the user registers as soon as a phone lands on the account.
+        $this->assertFalse($helper->ensureSmsSubscription($user));
+        $this->assertNull($user->fresh()->sms_registered_at);
+    }
+
+    public function test_ensure_sms_subscription_skips_a_model_with_no_resolvable_external_id(): void
+    {
+        // Arrange: a user model that does not route to OneSignal has no alias to
+        // register the subscription against.
+        $this->bootUsersTable();
+        config(['magic-starter.onesignal.app_id' => 'app-xyz']);
+
+        $user = StubUnroutableUser::create([
+            'name' => 'Epsilon',
+            'phone' => '+15559998888',
+        ]);
+
+        $client = $this->createMock(DefaultApi::class);
+        $client->expects($this->never())->method('createSubscription');
+
+        $helper = new OneSignalSubscriptions($client);
+
+        // Act + Assert
+        $this->assertFalse($helper->ensureSmsSubscription($user));
+        $this->assertNull($user->fresh()->sms_registered_at);
+    }
+
     private function bootUsersTable(): void
     {
         Schema::dropIfExists('users');
@@ -359,6 +438,14 @@ class StubOneSignalNotification extends \Illuminate\Notifications\Notification
 
 class StubPlainNotification extends \Illuminate\Notifications\Notification {}
 
+class StubBadSmsNotification extends \Illuminate\Notifications\Notification
+{
+    public function toSms(mixed $notifiable): string
+    {
+        return 'not a OneSignal notification';
+    }
+}
+
 class StubRoutableNotifiable
 {
     public function __construct(private string $key) {}
@@ -385,4 +472,18 @@ class StubBasicNotifiable
     {
         return $this->key;
     }
+}
+
+class StubUnaddressableNotifiable {}
+
+/**
+ * A user model with no OneSignal routing, so no alias can be resolved for it.
+ */
+class StubUnroutableUser extends \Illuminate\Database\Eloquent\Model
+{
+    use \FlutterSdk\MagicStarter\Support\ConditionallyUsesUuids;
+
+    protected $table = 'users';
+
+    protected $guarded = [];
 }
