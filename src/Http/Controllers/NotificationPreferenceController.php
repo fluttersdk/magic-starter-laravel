@@ -3,6 +3,7 @@
 namespace FlutterSdk\MagicStarter\Http\Controllers;
 
 use FlutterSdk\MagicStarter\Http\Requests\UpdateNotificationPreferenceRequest;
+use FlutterSdk\MagicStarter\MagicStarter;
 use FlutterSdk\MagicStarter\Models\NotificationSetting;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
@@ -81,17 +82,20 @@ class NotificationPreferenceController
      * Build the response meta describing what the matrix can actually deliver.
      *
      * `push_provisioned` reports whether the app configured its OneSignal
-     * `app_id`. A push preference is offered as soon as the onesignal feature
+     * `app_id`. A push preference is offered as soon as the `onesignal` feature
      * is enabled, but without an app id the channel is dropped from `via()` at
      * send time, so a client that shows the toggle needs this flag to say so
      * instead of promising a delivery that never happens.
+     *
+     * Resolved through {@see MagicStarter::onesignalAppId()}, so the flag means
+     * exactly what the send path validates: a non-empty trimmed string.
      *
      * @return array<string, bool>
      */
     private function meta(): array
     {
         return [
-            'push_provisioned' => filled(config('magic-starter.onesignal.app_id')),
+            'push_provisioned' => MagicStarter::onesignalAppId() !== null,
         ];
     }
 }

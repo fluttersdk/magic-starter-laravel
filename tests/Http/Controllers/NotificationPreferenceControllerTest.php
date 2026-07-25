@@ -142,6 +142,24 @@ final class NotificationPreferenceControllerTest extends TestCase
             ->assertJsonPath('meta.push_provisioned', true);
     }
 
+    public function test_show_rejects_an_app_id_the_send_path_would_reject(): void
+    {
+        // A non-string (or whitespace) app id is unusable: the OneSignal SDK
+        // needs a non-empty string, so the flag must not advertise it as
+        // provisioned just because the config value is set.
+        config(['magic-starter.onesignal.app_id' => 12345]);
+
+        $user = NotifPrefControllerTestUser::query()->create([
+            'name' => 'Pref User',
+            'email' => 'pref@example.test',
+        ]);
+
+        $this->actingAs($user)
+            ->getJson('/notification-preferences')
+            ->assertOk()
+            ->assertJsonPath('meta.push_provisioned', false);
+    }
+
     public function test_update_returns_the_push_provisioning_flag_too(): void
     {
         config(['magic-starter.onesignal.app_id' => '']);

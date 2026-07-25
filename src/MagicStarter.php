@@ -168,6 +168,26 @@ class MagicStarter
     }
 
     /**
+     * Resolve the configured OneSignal app id, or `null` when unusable.
+     *
+     * The single definition of "push is provisioned": a non-empty trimmed
+     * string. Every caller needs the same answer, so they must not each read
+     * the config their own way. A `filled()` check would accept an int or an
+     * array that the OneSignal SDK rejects at send time, which would let the
+     * API advertise a push channel that can never deliver.
+     */
+    public static function onesignalAppId(): ?string
+    {
+        $appId = config('magic-starter.onesignal.app_id');
+
+        if (! is_string($appId) || trim($appId) === '') {
+            return null;
+        }
+
+        return trim($appId);
+    }
+
+    /**
      * Instruct Magic Starter to skip route registration.
      */
     public static function ignoreRoutes(): static
