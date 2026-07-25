@@ -3,6 +3,7 @@
 namespace FlutterSdk\MagicStarter\Http\Controllers;
 
 use FlutterSdk\MagicStarter\Http\Requests\UpdateNotificationPreferenceRequest;
+use FlutterSdk\MagicStarter\MagicStarter;
 use FlutterSdk\MagicStarter\Models\NotificationSetting;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
@@ -11,6 +12,10 @@ use Illuminate\Http\Request;
  * Manages notification preference settings for the authenticated user.
  *
  * Returns a type × channel matrix and supports single or bulk preference updates.
+ *
+ * Both responses carry `meta.push_provisioned`, so a client can tell the user
+ * that a push toggle cannot deliver yet (the app has no OneSignal `app_id`)
+ * without a dedicated status route or a team-scoped lookup.
  */
 class NotificationPreferenceController
 {
@@ -24,6 +29,7 @@ class NotificationPreferenceController
 
         return response()->json([
             'data' => $user->notificationPreferenceMatrix(),
+            'meta' => $this->meta(),
         ]);
     }
 
@@ -68,6 +74,28 @@ class NotificationPreferenceController
 
         return response()->json([
             'data' => $user->notificationPreferenceMatrix(),
+            'meta' => $this->meta(),
         ]);
+    }
+
+    /**
+     * Build the response meta describing what the matrix can actually deliver.
+     *
+     * `push_provisioned` reports whether the app configured its OneSignal
+     * `app_id`. A push preference is offered as soon as the `onesignal` feature
+     * is enabled, but without an app id the channel is dropped from `via()` at
+     * send time, so a client that shows the toggle needs this flag to say so
+     * instead of promising a delivery that never happens.
+     *
+     * Resolved through {@see MagicStarter::onesignalAppId()}, so the flag means
+     * exactly what the send path validates: a non-empty trimmed string.
+     *
+     * @return array<string, bool>
+     */
+    private function meta(): array
+    {
+        return [
+            'push_provisioned' => MagicStarter::onesignalAppId() !== null,
+        ];
     }
 }

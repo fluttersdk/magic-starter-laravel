@@ -2,6 +2,7 @@
 
 namespace FlutterSdk\MagicStarter\Support;
 
+use FlutterSdk\MagicStarter\MagicStarter;
 use Illuminate\Database\Eloquent\Model;
 use onesignal\client\api\DefaultApi;
 use onesignal\client\model\Subscription;
@@ -57,10 +58,10 @@ class OneSignalSubscriptions
 
         // 2. Require a phone, a configured app id, and a resolvable external id.
         $phone = is_string($user->phone ?? null) ? trim($user->phone) : '';
-        $appId = config('magic-starter.onesignal.app_id');
+        $appId = MagicStarter::onesignalAppId();
         $externalId = $this->resolveExternalId($user);
 
-        if ($phone === '' || ! is_string($appId) || trim($appId) === '' || $externalId === null) {
+        if ($phone === '' || $appId === null || $externalId === null) {
             return false;
         }
 
@@ -78,7 +79,7 @@ class OneSignalSubscriptions
         //    message) without throwing so a single send is not poisoned by a
         //    transient registration hiccup, and leave the guard unset for retry.
         try {
-            $this->client->createSubscription((string) $appId, 'external_id', $externalId, $body);
+            $this->client->createSubscription($appId, 'external_id', $externalId, $body);
         } catch (Throwable $exception) {
             report($exception);
 

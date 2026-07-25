@@ -2,6 +2,7 @@
 
 namespace FlutterSdk\MagicStarter\Notifications\Channels;
 
+use FlutterSdk\MagicStarter\MagicStarter;
 use Illuminate\Notifications\Notification;
 use InvalidArgumentException;
 use onesignal\client\api\DefaultApi;
@@ -86,9 +87,9 @@ class OneSignalChannel
         }
 
         // 5. Always force app_id from package config (validated non-empty)
-        $appId = config('magic-starter.onesignal.app_id');
+        $appId = MagicStarter::onesignalAppId();
 
-        if (! is_string($appId) || trim($appId) === '') {
+        if ($appId === null) {
             throw new InvalidArgumentException(
                 'The OneSignal app ID configuration value [magic-starter.onesignal.app_id] must be a non-empty string.',
             );
