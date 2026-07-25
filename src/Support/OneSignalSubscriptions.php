@@ -2,6 +2,7 @@
 
 namespace FlutterSdk\MagicStarter\Support;
 
+use Illuminate\Database\Eloquent\Model;
 use onesignal\client\api\DefaultApi;
 use onesignal\client\model\Subscription;
 use onesignal\client\model\SubscriptionBody;
@@ -17,6 +18,20 @@ use Throwable;
  *
  * The user's phone number is PII: it travels only inside the request body and
  * is never written to a log or an exception message by this class.
+ *
+ * Registration is CONSUMER-INVOKED, not automatic: the package has no hook that
+ * fires "a notification is about to SMS this user", so the notification that
+ * builds the SMS payload calls this first. The `onesignal-sms` channel then
+ * targets an already-registered subscription:
+ *
+ * ```php
+ * public function toSms(mixed $notifiable): OneSignalNotification
+ * {
+ *     app(OneSignalSubscriptions::class)->ensureSmsSubscription($notifiable);
+ *
+ *     // ... build the sms-targeted payload
+ * }
+ * ```
  */
 class OneSignalSubscriptions
 {
@@ -31,9 +46,9 @@ class OneSignalSubscriptions
      * (persisted `sms_registered_at`). Returns true only when a subscription
      * was registered during this call; false when it was skipped or failed.
      *
-     * @param  object  $user  A user model using the HasNotifications trait, carrying a phone.
+     * @param  Model  $user  A user model using the HasNotifications trait, carrying a phone.
      */
-    public function ensureSmsSubscription(object $user): bool
+    public function ensureSmsSubscription(Model $user): bool
     {
         // 1. Idempotency guard: never re-register (no GET-per-send).
         if (! empty($user->sms_registered_at)) {
@@ -79,7 +94,7 @@ class OneSignalSubscriptions
     /**
      * Resolve the OneSignal external id (alias value) for the user.
      */
-    private function resolveExternalId(object $user): ?string
+    private function resolveExternalId(Model $user): ?string
     {
         if (! method_exists($user, 'routeNotificationForOneSignal')) {
             return null;

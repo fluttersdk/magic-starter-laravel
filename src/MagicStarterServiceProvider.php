@@ -132,7 +132,10 @@ class MagicStarterServiceProvider extends ServiceProvider
 
             // SMS rides the same channel via a distinct driver + builder (toSms),
             // so push and SMS stay independently toggleable. Adding sms to a
-            // notification's channel set stays an opt-in consumer decision.
+            // notification's channel set stays an opt-in consumer decision, and
+            // so does the subscription: the notification's toSms() calls
+            // OneSignalSubscriptions::ensureSmsSubscription() before it targets
+            // the sms channel (this driver only sends).
             $channelManager->extend('onesignal-sms', fn ($app) => $app->make(
                 \FlutterSdk\MagicStarter\Notifications\Channels\OneSignalChannel::class,
                 ['builderMethod' => 'toSms'],
