@@ -105,6 +105,7 @@ class InstallCommand extends Command
         'notifications' => [
             'create_notifications_table.php',
             'create_notification_settings_table.php',
+            'add_sms_registered_at_to_users_table.php',
         ],
         'newsletter-subscription' => [
             'create_newsletter_subscribers_table.php',

@@ -122,14 +122,29 @@ class MagicStarterServiceProvider extends ServiceProvider
             );
         }
 
-        // 3.6. Register OneSignal push channel when onesignal feature is enabled.
+        // 3.6. Register OneSignal push + SMS channels when onesignal feature is enabled.
         if (Features::hasOnesignalFeatures()) {
-            $this->app->make(\Illuminate\Notifications\ChannelManager::class)
-                ->extend('onesignal', fn ($app) => $app->make(
-                    \FlutterSdk\MagicStarter\Notifications\Channels\OneSignalChannel::class,
-                ));
+            $channelManager = $this->app->make(\Illuminate\Notifications\ChannelManager::class);
 
-            NotificationPreferenceRegistry::channelAliases(['push' => 'onesignal']);
+            $channelManager->extend('onesignal', fn ($app) => $app->make(
+                \FlutterSdk\MagicStarter\Notifications\Channels\OneSignalChannel::class,
+            ));
+
+            // SMS rides the same channel via a distinct driver + builder (toSms),
+            // so push and SMS stay independently toggleable. Adding sms to a
+            // notification's channel set stays an opt-in consumer decision, and
+            // so does the subscription: the notification's toSms() calls
+            // OneSignalSubscriptions::ensureSmsSubscription() before it targets
+            // the sms channel (this driver only sends).
+            $channelManager->extend('onesignal-sms', fn ($app) => $app->make(
+                \FlutterSdk\MagicStarter\Notifications\Channels\OneSignalChannel::class,
+                ['builderMethod' => 'toSms'],
+            ));
+
+            NotificationPreferenceRegistry::channelAliases([
+                'push' => 'onesignal',
+                'sms' => 'onesignal-sms',
+            ]);
         }
 
         // 3.7. Register package translations.

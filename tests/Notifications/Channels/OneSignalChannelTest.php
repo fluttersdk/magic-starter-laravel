@@ -3,11 +3,19 @@
 namespace FlutterSdk\MagicStarter\Tests\Notifications\Channels;
 
 use FlutterSdk\MagicStarter\Notifications\Channels\OneSignalChannel;
+use FlutterSdk\MagicStarter\Support\OneSignalSubscriptions;
+use FlutterSdk\MagicStarter\Tests\Fixtures\ConcreteUser;
 use FlutterSdk\MagicStarter\Tests\TestCase;
 use Illuminate\Contracts\Debug\ExceptionHandler;
+use Illuminate\Support\Facades\Schema;
+use InvalidArgumentException;
 use onesignal\client\api\DefaultApi;
+use onesignal\client\model\CreateNotificationSuccessResponse;
 use onesignal\client\model\Notification as OneSignalNotification;
+use onesignal\client\model\Subscription;
+use onesignal\client\model\SubscriptionBody;
 use RuntimeException;
+use Throwable;
 
 final class OneSignalChannelTest extends TestCase
 {
@@ -144,6 +152,43 @@ final class OneSignalChannelTest extends TestCase
         $this->assertNull($result);
     }
 
+    public function test_send_error_names_the_configured_builder_on_a_wrong_payload_type(): void
+    {
+        // Arrange: the sms driver runs toSms, so the error must name toSms and
+        // not the toOneSignal default it shares the class with.
+        $client = $this->createMock(DefaultApi::class);
+        $client->expects($this->never())->method('createNotification');
+
+        $notification = new StubBadSmsNotification;
+        $notifiable = new StubRoutableNotifiable('delta');
+
+        $channel = new OneSignalChannel($client, 'toSms');
+
+        // Assert
+        $this->expectException(InvalidArgumentException::class);
+        $this->expectExceptionMessage('::toSms() must return');
+
+        // Act
+        $channel->send($notifiable, $notification);
+    }
+
+    public function test_send_rejects_a_notifiable_it_cannot_address(): void
+    {
+        // Arrange: no routeNotificationForOneSignal and no getKey means there is
+        // no alias to target, so the send must fail loudly rather than broadcast.
+        $client = $this->createMock(DefaultApi::class);
+        $client->expects($this->never())->method('createNotification');
+
+        $channel = new OneSignalChannel($client);
+
+        // Assert
+        $this->expectException(InvalidArgumentException::class);
+        $this->expectExceptionMessage('must implement routeNotificationForOneSignal() or getKey()');
+
+        // Act
+        $channel->send(new StubUnaddressableNotifiable, new StubOneSignalNotification);
+    }
+
     public function test_send_reports_and_rethrows_on_sdk_exception(): void
     {
         // Arrange
@@ -168,6 +213,212 @@ final class OneSignalChannelTest extends TestCase
 
         $channel->send($notifiable, $notification);
     }
+
+    public function test_send_reports_empty_id_response_without_throwing(): void
+    {
+        // Arrange: a zero-recipient send returns HTTP 200 with an empty id.
+        $response = (new CreateNotificationSuccessResponse)->setId('');
+
+        $client = $this->createMock(DefaultApi::class);
+        $client->expects($this->once())
+            ->method('createNotification')
+            ->willReturn($response);
+
+        $handlerMock = $this->createMock(ExceptionHandler::class);
+        $handlerMock->expects($this->once())->method('report');
+        $this->app->instance(ExceptionHandler::class, $handlerMock);
+
+        $notification = new StubOneSignalNotification;
+        $notifiable = new StubBasicNotifiable('55');
+        $channel = new OneSignalChannel($client);
+
+        // Act: an honest no-delivery is reported but must NOT throw.
+        $result = $channel->send($notifiable, $notification);
+
+        // Assert
+        $this->assertSame($response, $result);
+    }
+
+    public function test_send_does_not_report_on_non_empty_id_response(): void
+    {
+        // Arrange: a genuine delivery returns a non-empty notification id.
+        $response = (new CreateNotificationSuccessResponse)->setId('notif-123');
+
+        $client = $this->createMock(DefaultApi::class);
+        $client->expects($this->once())
+            ->method('createNotification')
+            ->willReturn($response);
+
+        $handlerMock = $this->createMock(ExceptionHandler::class);
+        $handlerMock->expects($this->never())->method('report');
+        $this->app->instance(ExceptionHandler::class, $handlerMock);
+
+        $notification = new StubOneSignalNotification;
+        $notifiable = new StubBasicNotifiable('55');
+        $channel = new OneSignalChannel($client);
+
+        // Act
+        $result = $channel->send($notifiable, $notification);
+
+        // Assert
+        $this->assertSame($response, $result);
+    }
+
+    public function test_ensure_sms_subscription_registers_and_persists_once(): void
+    {
+        // Arrange
+        $this->bootUsersTable();
+        config(['magic-starter.onesignal.app_id' => 'app-xyz']);
+
+        $user = ConcreteUser::create([
+            'name' => 'Alpha',
+            'phone' => '+15551234567',
+        ]);
+
+        $captured = [];
+        $client = $this->createMock(DefaultApi::class);
+        $client->expects($this->once())
+            ->method('createSubscription')
+            ->willReturnCallback(function ($appId, $label, $id, $body) use (&$captured): SubscriptionBody {
+                $captured = [$appId, $label, $id, $body];
+
+                return new SubscriptionBody;
+            });
+
+        $helper = new OneSignalSubscriptions($client);
+
+        // Act
+        $this->assertTrue($helper->ensureSmsSubscription($user));
+
+        // Assert: subscription persisted + correct POST arguments.
+        $this->assertNotNull($user->fresh()->sms_registered_at);
+        $this->assertSame('app-xyz', $captured[0]);
+        $this->assertSame('external_id', $captured[1]);
+        $this->assertSame('user_' . $user->getKey(), $captured[2]);
+
+        $subscription = $captured[3]->getSubscription();
+        $this->assertSame(Subscription::TYPE_SMS, $subscription->getType());
+        $this->assertSame('+15551234567', $subscription->getToken());
+        $this->assertTrue($subscription->getEnabled());
+
+        // Idempotent: a second call short-circuits on the persisted guard
+        // (the once() expectation above fails if createSubscription fires twice).
+        $this->assertFalse($helper->ensureSmsSubscription($user));
+    }
+
+    public function test_ensure_sms_subscription_handles_202_transfer_as_success(): void
+    {
+        // Arrange
+        $this->bootUsersTable();
+        config(['magic-starter.onesignal.app_id' => 'app-xyz']);
+
+        $user = ConcreteUser::create([
+            'name' => 'Gamma',
+            'phone' => '+15550001111',
+        ]);
+
+        // A 202 transfer returns a SubscriptionBody just like a 200 (new); the SDK
+        // only throws on non-2xx, so a normal return models both new and transfer.
+        $client = $this->createMock(DefaultApi::class);
+        $client->expects($this->once())
+            ->method('createSubscription')
+            ->willReturn(new SubscriptionBody);
+
+        $helper = new OneSignalSubscriptions($client);
+
+        // Act + Assert
+        $this->assertTrue($helper->ensureSmsSubscription($user));
+        $this->assertNotNull($user->fresh()->sms_registered_at);
+    }
+
+    public function test_ensure_sms_subscription_never_logs_the_phone_on_failure(): void
+    {
+        // Arrange
+        $this->bootUsersTable();
+        config(['magic-starter.onesignal.app_id' => 'app-xyz']);
+
+        $phone = '+15557654321';
+        $user = ConcreteUser::create([
+            'name' => 'Beta',
+            'phone' => $phone,
+        ]);
+
+        $client = $this->createMock(DefaultApi::class);
+        $client->method('createSubscription')->willThrowException(
+            new RuntimeException('[400] Error connecting to the API (/apps/app-xyz/users/by/external_id/user_x/subscriptions)'),
+        );
+
+        $reported = null;
+        $handlerMock = $this->createMock(ExceptionHandler::class);
+        $handlerMock->method('report')->willReturnCallback(function (Throwable $exception) use (&$reported): void {
+            $reported = $exception;
+        });
+        $this->app->instance(ExceptionHandler::class, $handlerMock);
+
+        $helper = new OneSignalSubscriptions($client);
+
+        // Act: failure is reported without throwing and the guard stays unset (retryable).
+        $this->assertFalse($helper->ensureSmsSubscription($user));
+
+        // Assert
+        $this->assertNull($user->fresh()->sms_registered_at);
+        $this->assertNotNull($reported);
+        $this->assertStringNotContainsString($phone, $reported->getMessage());
+    }
+
+    public function test_ensure_sms_subscription_skips_a_user_without_a_phone(): void
+    {
+        // Arrange
+        $this->bootUsersTable();
+        config(['magic-starter.onesignal.app_id' => 'app-xyz']);
+
+        $user = ConcreteUser::create(['name' => 'Delta']);
+
+        $client = $this->createMock(DefaultApi::class);
+        $client->expects($this->never())->method('createSubscription');
+
+        $helper = new OneSignalSubscriptions($client);
+
+        // Act + Assert: no phone means nothing to subscribe, and the guard stays
+        // unset so the user registers as soon as a phone lands on the account.
+        $this->assertFalse($helper->ensureSmsSubscription($user));
+        $this->assertNull($user->fresh()->sms_registered_at);
+    }
+
+    public function test_ensure_sms_subscription_skips_a_model_with_no_resolvable_external_id(): void
+    {
+        // Arrange: a user model that does not route to OneSignal has no alias to
+        // register the subscription against.
+        $this->bootUsersTable();
+        config(['magic-starter.onesignal.app_id' => 'app-xyz']);
+
+        $user = StubUnroutableUser::create([
+            'name' => 'Epsilon',
+            'phone' => '+15559998888',
+        ]);
+
+        $client = $this->createMock(DefaultApi::class);
+        $client->expects($this->never())->method('createSubscription');
+
+        $helper = new OneSignalSubscriptions($client);
+
+        // Act + Assert
+        $this->assertFalse($helper->ensureSmsSubscription($user));
+        $this->assertNull($user->fresh()->sms_registered_at);
+    }
+
+    private function bootUsersTable(): void
+    {
+        Schema::dropIfExists('users');
+
+        Schema::create('users', function ($table): void {
+            $table->uuid('id')->primary();
+            $table->string('name')->nullable();
+            $table->string('phone')->nullable();
+            $table->timestamp('sms_registered_at')->nullable();
+            $table->timestamps();
+        });
+    }
 }
 
 class StubOneSignalNotification extends \Illuminate\Notifications\Notification
@@ -186,6 +437,14 @@ class StubOneSignalNotification extends \Illuminate\Notifications\Notification
 }
 
 class StubPlainNotification extends \Illuminate\Notifications\Notification {}
+
+class StubBadSmsNotification extends \Illuminate\Notifications\Notification
+{
+    public function toSms(mixed $notifiable): string
+    {
+        return 'not a OneSignal notification';
+    }
+}
 
 class StubRoutableNotifiable
 {
@@ -213,4 +472,18 @@ class StubBasicNotifiable
     {
         return $this->key;
     }
+}
+
+class StubUnaddressableNotifiable {}
+
+/**
+ * A user model with no OneSignal routing, so no alias can be resolved for it.
+ */
+class StubUnroutableUser extends \Illuminate\Database\Eloquent\Model
+{
+    use \FlutterSdk\MagicStarter\Support\ConditionallyUsesUuids;
+
+    protected $table = 'users';
+
+    protected $guarded = [];
 }

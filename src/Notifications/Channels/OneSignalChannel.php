@@ -7,6 +7,7 @@ use InvalidArgumentException;
 use onesignal\client\api\DefaultApi;
 use onesignal\client\model\CreateNotificationSuccessResponse;
 use onesignal\client\model\Notification as OneSignalNotification;
+use RuntimeException;
 use Throwable;
 
 /**
@@ -17,10 +18,15 @@ use Throwable;
  * legacy player IDs. When no explicit aliases or segments are set on the notification
  * payload, this channel automatically resolves aliases from the notifiable entity.
  *
- * Notification classes that wish to use this channel must implement a `toOneSignal()`
- * method returning an `\onesignal\client\model\Notification` instance:
+ * Notification classes that wish to use this channel must implement a builder
+ * method (default `toOneSignal()`) returning an `\onesignal\client\model\Notification`:
  *
  *     public function toOneSignal(mixed $notifiable): \onesignal\client\model\Notification
+ *
+ * The builder method is configurable so a single channel implementation can back
+ * multiple driver channels: the package registers `onesignal` (builder `toOneSignal`)
+ * for push and `onesignal-sms` (builder `toSms`) for SMS, keeping push and SMS
+ * independently toggleable while sharing one send pipeline.
  *
  * The `app_id` is always forced from package config (`magic-starter.onesignal.app_id`),
  * regardless of what the notification sets.
@@ -29,21 +35,21 @@ class OneSignalChannel
 {
     public function __construct(
         private DefaultApi $client,
+        private string $builderMethod = 'toOneSignal',
     ) {}
 
     /**
      * Send the given notification via OneSignal.
      *
-     *
      * @return CreateNotificationSuccessResponse<int|null, mixed>|null
      *
-     * @throws InvalidArgumentException When toOneSignal() returns an unexpected type.
+     * @throws InvalidArgumentException When the configured builder method returns an unexpected type.
      * @throws Throwable Re-thrown after reporting when the API call fails.
      */
     public function send(mixed $notifiable, Notification $notification): ?CreateNotificationSuccessResponse
     {
-        // 1. Skip if the notification does not support OneSignal
-        if (! is_callable([$notification, 'toOneSignal'])) {
+        // 1. Skip if the notification does not support this OneSignal builder
+        if (! is_callable([$notification, $this->builderMethod])) {
             return null;
         }
 
@@ -60,13 +66,14 @@ class OneSignalChannel
             ));
         }
 
-        // 3. Build the OneSignal notification payload (toOneSignal is user-defined per Notification class)
-        $payload = \call_user_func([$notification, 'toOneSignal'], $notifiable);
+        // 3. Build the OneSignal notification payload (the builder is user-defined per Notification class)
+        $payload = \call_user_func([$notification, $this->builderMethod], $notifiable);
 
         if (! $payload instanceof OneSignalNotification) {
             throw new InvalidArgumentException(sprintf(
-                '%s::toOneSignal() must return %s; got %s.',
+                '%s::%s() must return %s; got %s.',
                 get_class($notification),
+                $this->builderMethod,
                 OneSignalNotification::class,
                 get_debug_type($payload),
             ));
@@ -89,13 +96,25 @@ class OneSignalChannel
 
         $payload->setAppId($appId);
 
-        // 6. Send via the OneSignal API
+        // 6. Send via the OneSignal API. A transport exception is reported and
+        //    rethrown so the ShouldQueue job can retry the delivery.
         try {
-            return $this->client->createNotification($payload);
+            $response = $this->client->createNotification($payload);
         } catch (Throwable $exception) {
             report($exception);
 
             throw $exception;
         }
+
+        // 7. A zero-recipient send is an HTTP 200 with an empty id. Report it as an
+        //    honest delivery failure without throwing: unlike a transport error it
+        //    is not retryable, so rethrowing would only poison the queue.
+        if ($response instanceof CreateNotificationSuccessResponse && $response->getId() === '') {
+            report(new RuntimeException(
+                'OneSignal accepted the notification but delivered it to zero recipients (empty notification id).',
+            ));
+        }
+
+        return $response;
     }
 }
