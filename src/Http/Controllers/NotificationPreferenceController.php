@@ -11,6 +11,10 @@ use Illuminate\Http\Request;
  * Manages notification preference settings for the authenticated user.
  *
  * Returns a type × channel matrix and supports single or bulk preference updates.
+ *
+ * Both responses carry `meta.push_provisioned`, so a client can tell the user
+ * that a push toggle cannot deliver yet (the app has no OneSignal `app_id`)
+ * without a dedicated status route or a team-scoped lookup.
  */
 class NotificationPreferenceController
 {
@@ -24,6 +28,7 @@ class NotificationPreferenceController
 
         return response()->json([
             'data' => $user->notificationPreferenceMatrix(),
+            'meta' => $this->meta(),
         ]);
     }
 
@@ -68,6 +73,25 @@ class NotificationPreferenceController
 
         return response()->json([
             'data' => $user->notificationPreferenceMatrix(),
+            'meta' => $this->meta(),
         ]);
+    }
+
+    /**
+     * Build the response meta describing what the matrix can actually deliver.
+     *
+     * `push_provisioned` reports whether the app configured its OneSignal
+     * `app_id`. A push preference is offered as soon as the onesignal feature
+     * is enabled, but without an app id the channel is dropped from `via()` at
+     * send time, so a client that shows the toggle needs this flag to say so
+     * instead of promising a delivery that never happens.
+     *
+     * @return array<string, bool>
+     */
+    private function meta(): array
+    {
+        return [
+            'push_provisioned' => filled(config('magic-starter.onesignal.app_id')),
+        ];
     }
 }

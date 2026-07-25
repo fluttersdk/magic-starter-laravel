@@ -109,6 +109,60 @@ final class NotificationPreferenceControllerTest extends TestCase
         $this->assertTrue($data['push']['enabled']);
     }
 
+    public function test_show_reports_push_as_unprovisioned_without_an_app_id(): void
+    {
+        config(['magic-starter.onesignal.app_id' => '']);
+
+        $user = NotifPrefControllerTestUser::query()->create([
+            'name' => 'Pref User',
+            'email' => 'pref@example.test',
+        ]);
+
+        // The push preference is still offered, but the client has to be able
+        // to say it cannot deliver yet rather than promise a silent no-op.
+        $this->actingAs($user)
+            ->getJson('/notification-preferences')
+            ->assertOk()
+            ->assertJsonPath('data.monitor_down.channels.push.enabled', true)
+            ->assertJsonPath('meta.push_provisioned', false);
+    }
+
+    public function test_show_reports_push_as_provisioned_with_an_app_id(): void
+    {
+        config(['magic-starter.onesignal.app_id' => 'app-xyz']);
+
+        $user = NotifPrefControllerTestUser::query()->create([
+            'name' => 'Pref User',
+            'email' => 'pref@example.test',
+        ]);
+
+        $this->actingAs($user)
+            ->getJson('/notification-preferences')
+            ->assertOk()
+            ->assertJsonPath('meta.push_provisioned', true);
+    }
+
+    public function test_update_returns_the_push_provisioning_flag_too(): void
+    {
+        config(['magic-starter.onesignal.app_id' => '']);
+
+        $user = NotifPrefControllerTestUser::query()->create([
+            'name' => 'Pref User',
+            'email' => 'pref@example.test',
+        ]);
+
+        // A save republishes the flag, so a client that refreshes its matrix
+        // from the write response does not lose the heads-up.
+        $this->actingAs($user)
+            ->putJson('/notification-preferences', [
+                'type' => 'monitor_down',
+                'channel' => 'mail',
+                'is_enabled' => false,
+            ])
+            ->assertOk()
+            ->assertJsonPath('meta.push_provisioned', false);
+    }
+
     public function test_update_single_preference(): void
     {
         $user = NotifPrefControllerTestUser::query()->create([
