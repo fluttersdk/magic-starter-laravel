@@ -4,6 +4,8 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [0.0.5] - 2026-07-26
+
 ### Added
 
 - **`meta.push_provisioned` on the notification-preferences responses**: both `GET` and `PUT /notification-preferences` now return a `meta.push_provisioned` boolean alongside the matrix, reporting whether the app configured its OneSignal `app_id`. A push preference is offered as soon as the onesignal feature is enabled, but with no app id the channel is dropped from `via()` at send time, so a client rendering the toggle could only promise a delivery that never happened. The flag lets it say so instead. Returned from the write response too, so a client that refreshes its matrix after a save does not lose the heads-up. Purely additive: the `data` shape is unchanged.
