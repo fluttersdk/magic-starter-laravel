@@ -50,8 +50,7 @@ class TeamInvitationNotification extends Notification implements ShouldQueue
         // @phpstan-ignore-next-line: Magic relation access on Eloquent model
         $teamName = (string) $this->invitation->team->name;
 
-        $acceptUrl = rtrim((string) config('magic-starter.frontend_url'), '/')
-            . '/invitations/' . urlencode($token) . '/accept';
+        $acceptUrl = $this->acceptUrl($token);
 
         return (new MailMessage)
             ->subject(Lang::get('Team Invitation'))
@@ -60,5 +59,36 @@ class TeamInvitationNotification extends Notification implements ShouldQueue
             ->line(Lang::get('If you do not have an account, you may create one by clicking the button below. After creating an account, you may click the invitation acceptance button in this email to accept the invitation:'))
             ->action(Lang::get('Accept Invitation'), $acceptUrl)
             ->line(Lang::get('If you did not expect to receive an invitation to this team, you may discard this email.'));
+    }
+
+    /**
+     * The absolute URL an invited person follows to accept.
+     *
+     * **Absolute in every configuration, which it was not.** The old form
+     * concatenated `config('magic-starter.frontend_url')` unguarded, so an unset or
+     * empty value produced the relative `/invitations/<token>/accept`. A mail client
+     * cannot resolve that and a human cannot use it either: the delivered message's
+     * own fallback line read "copy and paste the URL below into your web browser:
+     * /invitations/.../accept". Since the mail is the ONLY way an invitation is
+     * accepted, the invitation was simply unacceptable, silently.
+     *
+     * A whitespace-only value is the same operator mistake as an empty one
+     * (`MAGIC_STARTER_FRONTEND_URL= ` in an env file) and produced a URL with
+     * leading spaces, so it is trimmed before the emptiness test rather than after.
+     *
+     * Falls back to the application's own root, matching
+     * {@see VerifyEmailNotification::verificationUrl()}, which already guards the
+     * same config value. A link to the API is not where an invited person wants to
+     * land, but it is a resolvable address and the operator can see what went wrong;
+     * a relative URL gives them neither.
+     */
+    protected function acceptUrl(string $token): string
+    {
+        $configured = config('magic-starter.frontend_url');
+        $base = is_string($configured) && trim($configured) !== ''
+            ? trim($configured)
+            : url('/');
+
+        return rtrim($base, '/') . '/invitations/' . urlencode($token) . '/accept';
     }
 }

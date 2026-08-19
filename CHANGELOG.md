@@ -16,6 +16,7 @@ All notable changes to this project will be documented in this file.
 ### Fixed
 
 - **A registration sent the verification email twice.** `Actions\CreateUser` sends it explicitly and `AuthController::register()` then fires `Registered`, whose framework listener (`Illuminate\Auth\Listeners\SendEmailVerificationNotification`) sends it again on the same instance. Measured on a consumer app: two identical mails carrying the same signed URL, 47ms apart, on every sign-up. `MustVerifyEmail::sendEmailVerificationNotification()` now sends at most once per model instance, which is where both paths funnel. A deliberate resend through `POST /email/verification-notification` is unaffected: it arrives in its own request with its own instance.
+- **A team invitation email carried an unusable accept link when `frontend_url` was not set.** `TeamInvitationNotification` concatenated `config('magic-starter.frontend_url')` unguarded, so an empty or missing value produced the RELATIVE `/invitations/<token>/accept`, and a whitespace-only value produced one with leading spaces. A mail client cannot resolve either, and the message's own fallback line told the reader to paste `/invitations/.../accept` into their browser. Since the mail is the only way an invitation is accepted, the invitation was silently unacceptable. The URL is now absolute in every configuration, falling back to the application root exactly as `VerifyEmailNotification` already did.
 
 ## [0.0.5] - 2026-07-26
 
