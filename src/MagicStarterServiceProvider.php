@@ -4,6 +4,7 @@ namespace FlutterSdk\MagicStarter;
 
 use FlutterSdk\MagicStarter\Console\InstallCommand;
 use FlutterSdk\MagicStarter\Console\ReconcileBillingEntitlements;
+use FlutterSdk\MagicStarter\Support\FrontendUrl;
 use Illuminate\Auth\Events\Registered;
 use Illuminate\Auth\Notifications\ResetPassword;
 use Illuminate\Cache\RateLimiting\Limit;
@@ -162,10 +163,12 @@ class MagicStarterServiceProvider extends ServiceProvider
         // 2. Password reset URL using package config with app config fallback.
         ResetPassword::createUrlUsing(
             function (object $notifiable, string $token) {
-                $frontendUrl = config(
-                    'magic-starter.frontend_url',
-                    config('app.frontend_url'),
-                );
+                // Was `config('magic-starter.frontend_url', config('app.frontend_url'))`,
+                // whose fallback never fired: the key is PRESENT and empty rather than
+                // missing, and Laravel's default argument only covers missing. So a
+                // blank env produced the RELATIVE `/auth/reset-password?token=...`, and
+                // a locked-out customer could not get back in from the mail.
+                $frontendUrl = FrontendUrl::baseOrNull() ?? rtrim(url('/'), '/');
 
                 return "{$frontendUrl}/auth/reset-password?token={$token}&email="
                     . $notifiable->getEmailForPasswordReset();

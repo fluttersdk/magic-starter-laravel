@@ -63,11 +63,34 @@ final class TeamInvitationNotificationTest extends TestCase
     }
 
     /**
-     * THE REGRESSION. An empty `frontend_url` must not produce a relative URL.
+     * The chain the old `config('magic-starter.frontend_url', config('app.frontend_url'))`
+     * INTENDED and never reached: its default argument only fires for a MISSING key,
+     * and the package key is present-and-empty. So `app.frontend_url` was dead
+     * configuration until now.
      */
-    public function test_an_empty_frontend_url_still_yields_an_absolute_url(): void
+    public function test_an_empty_package_key_falls_back_to_the_app_key(): void
     {
-        config(['magic-starter.frontend_url' => '']);
+        config([
+            'magic-starter.frontend_url' => '',
+            'app.frontend_url' => 'https://fallback.example.test',
+        ]);
+
+        $mail = (new TeamInvitationNotification(
+            new TeamInvitationNotificationTestInvitation('tok-123'),
+        ))->toMail(null);
+
+        $this->assertSame(
+            'https://fallback.example.test/invitations/tok-123/accept',
+            $mail->actionUrl,
+        );
+    }
+
+    /**
+     * THE REGRESSION. With NO frontend URL anywhere, the link must still be absolute.
+     */
+    public function test_no_frontend_url_anywhere_still_yields_an_absolute_url(): void
+    {
+        config(['magic-starter.frontend_url' => '', 'app.frontend_url' => null]);
 
         $mail = (new TeamInvitationNotification(
             new TeamInvitationNotificationTestInvitation('tok-123'),
@@ -81,7 +104,7 @@ final class TeamInvitationNotificationTest extends TestCase
 
     public function test_a_missing_frontend_url_still_yields_an_absolute_url(): void
     {
-        config(['magic-starter.frontend_url' => null]);
+        config(['magic-starter.frontend_url' => null, 'app.frontend_url' => null]);
 
         $mail = (new TeamInvitationNotification(
             new TeamInvitationNotificationTestInvitation('tok-123'),
@@ -96,7 +119,7 @@ final class TeamInvitationNotificationTest extends TestCase
      */
     public function test_a_whitespace_only_frontend_url_is_treated_as_absent(): void
     {
-        config(['magic-starter.frontend_url' => '   ']);
+        config(['magic-starter.frontend_url' => '   ', 'app.frontend_url' => '  ']);
 
         $mail = (new TeamInvitationNotification(
             new TeamInvitationNotificationTestInvitation('tok-123'),

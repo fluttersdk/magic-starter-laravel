@@ -2,6 +2,7 @@
 
 namespace FlutterSdk\MagicStarter\Notifications;
 
+use FlutterSdk\MagicStarter\Support\FrontendUrl;
 use Illuminate\Bus\Queueable;
 use Illuminate\Contracts\Queue\ShouldQueue;
 use Illuminate\Database\Eloquent\Model;
@@ -84,11 +85,8 @@ class TeamInvitationNotification extends Notification implements ShouldQueue
      */
     protected function acceptUrl(string $token): string
     {
-        $configured = config('magic-starter.frontend_url');
-        $base = is_string($configured) && trim($configured) !== ''
-            ? trim($configured)
-            : url('/');
+        $base = FrontendUrl::baseOrNull() ?? rtrim(url('/'), '/');
 
-        return rtrim($base, '/') . '/invitations/' . urlencode($token) . '/accept';
+        return $base . '/invitations/' . urlencode($token) . '/accept';
     }
 }
