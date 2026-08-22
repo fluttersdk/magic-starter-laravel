@@ -104,6 +104,7 @@ class WriteTeamEntitlement implements WritesTeamEntitlement
         PlanStatus $status,
         BillingProvider $provider,
         CarbonInterface $eventAt,
+        bool $authoritative,
         ?string $providerStatus = null,
         ?string $productId = null,
         ?CarbonInterface $currentPeriodEnd = null,
@@ -168,8 +169,8 @@ class WriteTeamEntitlement implements WritesTeamEntitlement
             return false;
         }
 
-        // 3b. RULE 2b, a rail that is not selling an UPGRADE may not take over
-        // the provenance of a rail that is still granting.
+        // 3b. RULE 2b, a PROJECTION may not take over the record of a rail that
+        // is still granting.
         //
         // Rule 2 only stops a cross-rail REVOCATION, so a cross-rail write
         // carrying the SAME tier passed and step 5 below then rewrote
@@ -181,25 +182,33 @@ class WriteTeamEntitlement implements WritesTeamEntitlement
         // provenance moved by one ordinary renewal event and then be revoked to
         // free by the cancellation of the rail that was never paying it.
         //
-        // Dropping the write loses nothing: a SAME-tier write carries no tier
-        // information the record does not already hold, so the takeover was its
-        // only effect.
+        // The test is the WRITER's standing, and getting there took one wrong
+        // turn worth recording. This guard was first written as a blanket
+        // SAME-TIER drop, which closed the direction above by opening its
+        // mirror: a store selling the tier a customer already holds on another
+        // rail is a MIGRATION, and refusing it left the record on the rail that
+        // was about to stop billing, whose cancellation was then SAME-rail and
+        // revoked a tier somebody was still paying for. The tier could never
+        // answer the question; how well the writer knows its own claim can.
         //
-        // Both halves of the condition are load-bearing.
-        // {@see BillingProvider::grants()} is a per-RAIL table, true for every
-        // real rail, so gating on it alone would drop a genuine purchase from a
-        // team whose LAPSED record on another rail still names the same tier: the
-        // customer would pay and receive nothing, which is worse than the defect
-        // being closed. And the direction test names SAME rather than "not an
-        // upgrade" because this package deliberately fails OPEN when `tier_order`
-        // is unpublished ({@see self::DIRECTION_INCOMPARABLE}); "not an upgrade"
-        // would silently turn that fail-open into a drop.
+        // A PROJECTION is assembled from state the rail wrote into the
+        // consumer's database earlier, so it cannot testify to a handover: it
+        // may refresh what the record says and may not decide who is billing.
+        // An AUTHORITATIVE claim is the rail speaking now, and it takes the
+        // record. This also removes the `tier_order` hazard the previous
+        // formulation had to work around, since no direction is consulted here
+        // at all.
+        //
+        // The status half stays: {@see BillingProvider::grants()} is a per-RAIL
+        // table, true for every real rail, so gating on it alone would drop a
+        // genuine purchase from a team whose LAPSED record on another rail still
+        // names the same tier, and the customer would pay and receive nothing.
         if ($storedProvider !== $provider
             && $storedProvider->grants()
             && $this->storedStatusStillGrants($team)
-            && $direction === self::DIRECTION_SAME
+            && ! $authoritative
         ) {
-            $this->logDrop('cross-rail provenance takeover', $context);
+            $this->logDrop('projected cross-rail takeover', $context);
 
             return false;
         }

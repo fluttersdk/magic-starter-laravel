@@ -543,6 +543,10 @@ class WriteTeamEntitlementTest extends TestCase
             status: PlanStatus::ACTIVE,
             provider: BillingProvider::STRIPE,
             eventAt: $grantedAt->copy()->addMinute(),
+            // A PROJECTION: assembled from a row this rail wrote earlier, not
+            // from reading the rail. That, and not the tier, is what makes it
+            // unfit to move the record.
+            authoritative: false,
             providerStatus: 'active',
             productId: 'price_business_monthly',
         );
@@ -1002,6 +1006,11 @@ class WriteTeamEntitlementTest extends TestCase
         PlanStatus $status,
         BillingProvider $provider,
         CarbonInterface $eventAt,
+        // Defaulted HERE and required on the contract, deliberately: a feeder
+        // must decide, a test scenario that is not about the distinction should
+        // not have to restate it. Most scenarios below model a rail speaking for
+        // itself, which is what `true` means.
+        bool $authoritative = true,
         ?string $providerStatus = null,
         ?string $productId = null,
         ?CarbonInterface $currentPeriodEnd = null,
@@ -1015,6 +1024,7 @@ class WriteTeamEntitlementTest extends TestCase
             status: $status,
             provider: $provider,
             eventAt: $eventAt,
+            authoritative: $authoritative,
             providerStatus: $providerStatus,
             productId: $productId,
             currentPeriodEnd: $currentPeriodEnd,

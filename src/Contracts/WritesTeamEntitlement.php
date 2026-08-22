@@ -49,6 +49,18 @@ interface WritesTeamEntitlement
      *                                    passing the receipt time instead of the
      *                                    event time disarms the ordering rule
      *                                    while looking correct.
+     * @param  bool  $authoritative  Whether this claim comes from READING the
+     *                               rail, or from projecting state the rail
+     *                               wrote into your database earlier. Required,
+     *                               with no default, because a new feeder has to
+     *                               decide which it is rather than inherit a
+     *                               quiet answer. True for a webhook payload or
+     *                               a re-read of the rail's API; FALSE for a
+     *                               claim assembled from a local row, which can
+     *                               be a whole period behind while looking
+     *                               exactly like a fresh one. Only an
+     *                               authoritative claim may move a team from one
+     *                               rail to another.
      * @param  string|null  $providerStatus  The rail's own status word, verbatim.
      * @param  string|null  $productId  The rail-native product or price id.
      * @param  CarbonInterface|null  $currentPeriodEnd  When the paid period ends,
@@ -69,6 +81,7 @@ interface WritesTeamEntitlement
         PlanStatus $status,
         BillingProvider $provider,
         CarbonInterface $eventAt,
+        bool $authoritative,
         ?string $providerStatus = null,
         ?string $productId = null,
         ?CarbonInterface $currentPeriodEnd = null,
