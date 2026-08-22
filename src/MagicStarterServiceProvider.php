@@ -59,6 +59,12 @@ class MagicStarterServiceProvider extends ServiceProvider
         $this->app->bind(Contracts\DisablesTwoFactorAuthentication::class, Actions\DisableTwoFactorAuthentication::class);
         $this->app->bind(Contracts\GeneratesNewRecoveryCodes::class, Actions\GenerateNewRecoveryCodes::class);
 
+        // Bound unconditionally, like every binding above it: the billing
+        // feature gates the SCHEMA (see InstallCommand), not the arbitration
+        // contract. A consumer has to be able to bind its own entitlement
+        // writer before it decides to switch billing on.
+        $this->app->bind(Contracts\WritesTeamEntitlement::class, Actions\WriteTeamEntitlement::class);
+
         // OneSignal SDK client singleton (resolved lazily, only when injected).
         $this->app->singleton(\onesignal\client\api\DefaultApi::class, function (): \onesignal\client\api\DefaultApi {
             $restApiKey = config('magic-starter.onesignal.rest_api_key')

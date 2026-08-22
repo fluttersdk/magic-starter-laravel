@@ -47,6 +47,7 @@ return [
         // \FlutterSdk\MagicStarter\Features::phoneOtp(),
         // \FlutterSdk\MagicStarter\Features::emailVerification(),
         // \FlutterSdk\MagicStarter\Features::timezones(),
+        // \FlutterSdk\MagicStarter\Features::billing(),
     ],
 
     /*
@@ -246,6 +247,40 @@ return [
         */
 
         'challenge_token_ttl' => 5,
+    ],
+
+    /*
+    |--------------------------------------------------------------------------
+    | Billing
+    |--------------------------------------------------------------------------
+    |
+    | The package ships the entitlement CONTRACT, not a payment rail: the two
+    | neutral enums, the provenance columns, and the one action that arbitrates
+    | between rails writing the same tier. Your own rail (Cashier, a store SDK,
+    | an operator command) feeds it.
+    |
+    | 'tier_order' is your plan catalogue, CHEAPEST FIRST. The tier vocabulary
+    | belongs to your application, so this package never guesses it; list your
+    | own plan ids in the order a customer upgrades through them.
+    |
+    | WritesTeamEntitlement uses this list for exactly one decision: whether an
+    | incoming write from a DIFFERENT billing rail than the one on record would
+    | move the team DOWN a tier. Such a write is dropped, because a rail may
+    | only revoke what it granted.
+    |
+    | Leaving the list empty makes that comparison undecidable, and the action
+    | then treats the write as a non-downgrade and logs a warning naming this
+    | key. Refusing to compare leaves a customer entitled; guessing could revoke
+    | a customer who is paying, so the guard fails open and says so.
+    |
+    */
+
+    'billing' => [
+        'tier_order' => [
+            // 'free',
+            // 'pro',
+            // 'business',
+        ],
     ],
 
     /*

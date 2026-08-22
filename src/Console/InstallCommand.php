@@ -56,6 +56,7 @@ class InstallCommand extends Command
         'phone-otp' => 'Phone OTP verification',
         'email-verification' => 'Email verification (send/verify email address)',
         'timezones' => 'Timezone list (paginated, searchable)',
+        'billing' => 'Billing entitlement (provider-neutral plan provenance)',
     ];
 
     /** @var array<string, string> Feature key → Features class method name. */
@@ -72,6 +73,7 @@ class InstallCommand extends Command
         'phone-otp' => 'phoneOtp',
         'email-verification' => 'emailVerification',
         'timezones' => 'timezones',
+        'billing' => 'billing',
     ];
 
     /** @var list<string> Migrations always published regardless of feature selection. */
@@ -112,6 +114,14 @@ class InstallCommand extends Command
         ],
         'timezones' => [
             'add_timezone_to_users_table.php',
+        ],
+        // Entitlement provenance lands on the teams table, so this migration is
+        // only meaningful alongside the teams feature. It is listed here rather
+        // than in CONDITIONAL_MIGRATIONS because the migration guards itself on
+        // Schema::hasTable('teams'): a billing-without-teams selection is a
+        // no-op rather than a broken `migrate`.
+        'billing' => [
+            'add_entitlement_provenance_to_teams_table.php',
         ],
     ];
 

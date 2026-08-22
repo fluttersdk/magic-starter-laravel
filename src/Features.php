@@ -114,6 +114,14 @@ class Features
     }
 
     /**
+     * Enable the billing entitlement feature.
+     */
+    public static function billing(): string
+    {
+        return 'billing';
+    }
+
+    /**
      * Determine whether the given feature is enabled.
      */
     public static function enabled(string $feature): bool
@@ -223,6 +231,14 @@ class Features
     public static function hasTimezoneFeatures(): bool
     {
         return static::enabled(static::timezones());
+    }
+
+    /**
+     * Determine whether the billing entitlement feature is enabled.
+     */
+    public static function hasBillingFeatures(): bool
+    {
+        return static::enabled(static::billing());
     }
 
     /**
