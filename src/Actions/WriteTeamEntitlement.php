@@ -129,11 +129,30 @@ class WriteTeamEntitlement implements WritesTeamEntitlement
             'direction' => $direction,
         ];
 
-        // 2. RULE 1, monotonic per rail. An event older than the one already on
+        // 2. RULE 1, monotonic per rail. An event OLDER than the one already on
         // record from the SAME rail is a late or re-ordered delivery, and the
         // record it would overwrite was written from a fresher truth.
-        if ($storedProvider === $provider && ! $this->isNewerThanStored($eventAt, $storedEventAt)) {
+        if ($storedProvider === $provider && $this->isOlderThanStored($eventAt, $storedEventAt)) {
             $this->logDrop('stale', $context);
+
+            return false;
+        }
+
+        // 2b. RULE 1b, a TIE resolves by direction rather than by arrival order.
+        // Treating an equal timestamp as stale looks safe and is not. A rail that
+        // stamps to the SECOND (Stripe's `created` is a Unix second) emits paired
+        // events from a single API call inside one second, in an order it does not
+        // guarantee, and one of those two carries a stale tier read from the
+        // consumer's own local state. Dropping the other one left a customer who
+        // had just paid for a higher tier on the lower one.
+        //
+        // Resolving by direction is what keeps this consistent with rule 2 below:
+        // a tie that would TAKE the entitlement away still loses.
+        if ($storedProvider === $provider
+            && $this->isSameInstantAsStored($eventAt, $storedEventAt)
+            && $this->revokes($direction)
+        ) {
+            $this->logDrop('same-instant revocation', $context);
 
             return false;
         }
@@ -145,6 +164,42 @@ class WriteTeamEntitlement implements WritesTeamEntitlement
         // with better manners.
         if ($storedProvider !== $provider && $this->revokes($direction)) {
             $this->logDrop('cross-rail revocation', $context);
+
+            return false;
+        }
+
+        // 3b. RULE 2b, a rail that is not selling an UPGRADE may not take over
+        // the provenance of a rail that is still granting.
+        //
+        // Rule 2 only stops a cross-rail REVOCATION, so a cross-rail write
+        // carrying the SAME tier passed and step 5 below then rewrote
+        // `plan_provider` unconditionally. The damage lands one step later, which
+        // is what makes it hard to see: with the record now naming the new rail,
+        // that rail's next revocation is SAME-rail, so rule 2 can no longer see
+        // it and rule 1 lets it through. A team billed by one store, still
+        // holding an uncancelled subscription on another rail, could have its
+        // provenance moved by one ordinary renewal event and then be revoked to
+        // free by the cancellation of the rail that was never paying it.
+        //
+        // Dropping the write loses nothing: a SAME-tier write carries no tier
+        // information the record does not already hold, so the takeover was its
+        // only effect.
+        //
+        // Both halves of the condition are load-bearing.
+        // {@see BillingProvider::grants()} is a per-RAIL table, true for every
+        // real rail, so gating on it alone would drop a genuine purchase from a
+        // team whose LAPSED record on another rail still names the same tier: the
+        // customer would pay and receive nothing, which is worse than the defect
+        // being closed. And the direction test names SAME rather than "not an
+        // upgrade" because this package deliberately fails OPEN when `tier_order`
+        // is unpublished ({@see self::DIRECTION_INCOMPARABLE}); "not an upgrade"
+        // would silently turn that fail-open into a drop.
+        if ($storedProvider !== $provider
+            && $storedProvider->grants()
+            && $this->storedStatusStillGrants($team)
+            && $direction === self::DIRECTION_SAME
+        ) {
+            $this->logDrop('cross-rail provenance takeover', $context);
 
             return false;
         }
@@ -179,21 +234,50 @@ class WriteTeamEntitlement implements WritesTeamEntitlement
     }
 
     /**
-     * Whether the incoming event is STRICTLY newer than the one that wrote the
-     * stored entitlement.
-     *
-     * Strictly, not "newer or equal", because equal timestamps carry no
-     * ordering information and the safe reading of "I cannot tell which came
-     * first" is to keep what is already there. The cost is real and accepted:
-     * a rail that stamps its events to the second lets only the first of two
-     * events on one customer inside the same second through.
+     * Whether the incoming event is STRICTLY older than the one that wrote the
+     * stored entitlement, which is the only case rule 1 drops outright.
      *
      * A null stored timestamp means this rail has never written here, so there
-     * is nothing for the incoming event to be newer THAN and it applies.
+     * is nothing for the incoming event to be older THAN and it applies.
+     *
+     * This was its own inverse until the tie case was separated out. The old
+     * docblock argued that "equal timestamps carry no ordering information and
+     * the safe reading is to keep what is already there", and named the cost: a
+     * rail that stamps to the second lets only the first of two events inside
+     * one second through. The reasoning was right and the conclusion was wrong,
+     * because it assumed the loser of a tie is always the write that takes
+     * something away. It is routinely a paid upgrade instead, so a tie now goes
+     * to {@see self::isSameInstantAsStored()} and is judged by direction.
      */
-    protected function isNewerThanStored(CarbonInterface $eventAt, ?CarbonInterface $storedEventAt): bool
+    protected function isOlderThanStored(CarbonInterface $eventAt, ?CarbonInterface $storedEventAt): bool
     {
-        return $storedEventAt === null || $eventAt->greaterThan($storedEventAt);
+        return $storedEventAt !== null && $eventAt->lessThan($storedEventAt);
+    }
+
+    /**
+     * Whether the incoming event carries the SAME instant as the stored one.
+     *
+     * A tie is not evidence of late delivery, it is an absence of evidence
+     * either way, which is why the caller resolves it with the same predicate
+     * rule 2 uses instead of with arrival order.
+     */
+    protected function isSameInstantAsStored(CarbonInterface $eventAt, ?CarbonInterface $storedEventAt): bool
+    {
+        return $storedEventAt !== null && $eventAt->equalTo($storedEventAt);
+    }
+
+    /**
+     * Whether the STATUS already on record is one that entitles the team.
+     *
+     * Distinct from {@see BillingProvider::grants()}, which answers "is this a
+     * real billing rail" for every rail alive. This answers "is that rail
+     * currently granting anything", which is the question rule 2b needs: a
+     * stored record that has lapsed is not an entitlement another rail can take
+     * over, it is a slot another rail can fill.
+     */
+    protected function storedStatusStillGrants(Model $team): bool
+    {
+        return PlanStatus::fromWire($this->stringAttribute($team, 'plan_status'))->grants();
     }
 
     /**

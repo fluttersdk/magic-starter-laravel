@@ -428,12 +428,19 @@ class WriteTeamEntitlementTest extends TestCase
     }
 
     /**
-     * A write carrying the SAME timestamp as the one on record is dropped too.
+     * A write carrying the SAME timestamp as the one on record is dropped when
+     * it would REVOKE.
      *
-     * Strictly newer, not "newer or equal": equal timestamps carry no ordering
-     * information, and the safe reading of "I cannot tell which came first" is
-     * to keep what is already there. Pinned separately from the older-event
-     * case because `>=` passes that one and only this one catches it.
+     * This test predates the tie-break rule and its reasoning was once "equal
+     * timestamps carry no ordering information, so keep what is already there".
+     * That reading dropped paid upgrades as well, so a tie is now decided by
+     * direction. The scenario here is business to free, a downgrade, so the
+     * outcome is unchanged and the reason is better: a tie that would take the
+     * entitlement away still loses.
+     *
+     * {@see self::test_a_same_instant_upgrade_on_the_same_rail_is_applied()} is
+     * the other half, and pairing them is what stops either from passing with
+     * the tie-break deleted.
      */
     public function test_a_write_with_the_same_event_timestamp_is_dropped(): void
     {
@@ -461,6 +468,134 @@ class WriteTeamEntitlementTest extends TestCase
 
         $team->refresh();
         $this->assertSame('business', $team->plan);
+    }
+
+    /**
+     * The other half of the tie-break: a same-instant UPGRADE applies.
+     *
+     * A rail that stamps its events to the SECOND (Stripe's `created` is a Unix
+     * second) emits paired events from one API call inside a single second, in
+     * an order it does not guarantee, and one of the pair carries a tier read
+     * from the consumer's own not-yet-resynced local state. Dropping the other
+     * left a customer who had just paid for a higher tier on the lower one, and
+     * the opposite delivery order was always correct, so the bug was invisible
+     * half the time.
+     */
+    public function test_a_same_instant_upgrade_on_the_same_rail_is_applied(): void
+    {
+        Log::spy();
+
+        $eventAt = Carbon::parse('2026-08-22 12:00:00');
+
+        $team = $this->makeTeam([
+            'plan' => 'pro',
+            'plan_status' => PlanStatus::ACTIVE->value,
+            'plan_provider' => BillingProvider::STRIPE->value,
+            'plan_source_event_at' => $eventAt,
+        ]);
+
+        $applied = $this->write(
+            team: $team,
+            plan: 'business',
+            status: PlanStatus::ACTIVE,
+            provider: BillingProvider::STRIPE,
+            eventAt: $eventAt->copy(),
+            providerStatus: 'active',
+            productId: 'starter_business_monthly',
+        );
+
+        $this->assertTrue($applied);
+
+        $team->refresh();
+        $this->assertSame('business', $team->plan);
+        $this->assertSame('starter_business_monthly', $team->plan_product_id);
+    }
+
+    /**
+     * RULE 2b: a cross-rail write carrying the SAME tier does not get to take
+     * over the provenance of a rail that is still granting.
+     *
+     * Rule 2 only stops a cross-rail REVOCATION, so this write used to pass and
+     * the persist step then rewrote `plan_provider` unconditionally. The damage
+     * lands one step later, which is why no other test in this file caught it:
+     * with the record naming the new rail, that rail's next revocation is
+     * SAME-rail, so rule 2 can no longer see it and rule 1 lets it through. The
+     * team ends on free while the rail that was actually billing it never
+     * stopped.
+     */
+    public function test_a_cross_rail_same_tier_write_cannot_take_over_provenance(): void
+    {
+        Log::spy();
+
+        $grantedAt = Carbon::parse('2026-08-22 12:00:00');
+
+        $team = $this->makeTeam([
+            'plan' => 'business',
+            'plan_status' => PlanStatus::ACTIVE->value,
+            'plan_provider' => BillingProvider::APP_STORE->value,
+            'plan_source_event_at' => $grantedAt,
+            'plan_product_id' => 'starter_business_monthly',
+        ]);
+
+        $applied = $this->write(
+            team: $team,
+            plan: 'business',
+            status: PlanStatus::ACTIVE,
+            provider: BillingProvider::STRIPE,
+            eventAt: $grantedAt->copy()->addMinute(),
+            providerStatus: 'active',
+            productId: 'price_business_monthly',
+        );
+
+        $this->assertFalse($applied);
+
+        $team->refresh();
+        $this->assertSame(BillingProvider::APP_STORE->value, $team->plan_provider);
+        $this->assertSame('business', $team->plan);
+        $this->assertSame('starter_business_monthly', $team->plan_product_id);
+
+        $this->assertDropWasLogged($team, 'app_store', 'stripe', 'same');
+    }
+
+    /**
+     * The control that decides how rule 2b may be written: it asks about the
+     * stored STATUS, not only the stored rail.
+     *
+     * `BillingProvider::grants()` is a per-RAIL table, true for every real rail,
+     * so a rule 2b gated on it alone would drop this write. That would be a
+     * customer buying Business on a store, for a team whose long-lapsed record
+     * on another rail still names Business, and receiving nothing for it. Worse
+     * than the defect rule 2b closes. A lapsed record is not an entitlement
+     * another rail can take over, it is a slot another rail can fill.
+     */
+    public function test_a_cross_rail_same_tier_write_applies_when_the_stored_rail_has_lapsed(): void
+    {
+        Log::spy();
+
+        $grantedAt = Carbon::parse('2026-08-22 12:00:00');
+
+        $team = $this->makeTeam([
+            'plan' => 'business',
+            'plan_status' => PlanStatus::EXPIRED->value,
+            'plan_provider' => BillingProvider::STRIPE->value,
+            'plan_source_event_at' => $grantedAt,
+        ]);
+
+        $applied = $this->write(
+            team: $team,
+            plan: 'business',
+            status: PlanStatus::ACTIVE,
+            provider: BillingProvider::APP_STORE,
+            eventAt: $grantedAt->copy()->addMinute(),
+            providerStatus: 'ACTIVE',
+            productId: 'starter_business_monthly',
+        );
+
+        $this->assertTrue($applied);
+
+        $team->refresh();
+        $this->assertSame(BillingProvider::APP_STORE->value, $team->plan_provider);
+        $this->assertSame(PlanStatus::ACTIVE->value, $team->plan_status);
     }
 
     /**
