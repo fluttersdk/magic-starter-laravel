@@ -6,7 +6,7 @@
 
 <p align="center">
   <strong>Pre-built Auth, Profile, Teams & Notifications API for Laravel.</strong><br/>
-  12 opt-in features — every action overridable.
+  14 opt-in features — every action overridable.
 </p>
 
 <p align="center">
@@ -34,7 +34,7 @@
 
 Stop rebuilding authentication, profile management, and team features from scratch in every Laravel project. The same controllers, the same validation, the same service bindings — over and over.
 
-**Magic Starter Laravel** gives you a production-ready JSON API for auth, profile, teams, and notifications out of the box. Everything is config-driven with 12 opt-in feature toggles. Every action is overridable via contract bindings — swap any business logic from your host app without touching the package.
+**Magic Starter Laravel** gives you a production-ready JSON API for auth, profile, teams, and notifications out of the box. Everything is config-driven with 14 opt-in feature toggles. Every action is overridable via contract bindings — swap any business logic from your host app without touching the package.
 
 > **Config-driven API starter kit.** Enable only what you need. Override any action. Ship faster.
 
@@ -56,6 +56,7 @@ Stop rebuilding authentication, profile management, and team features from scrat
 | :globe_with_meridians: | **Timezones** | Timezone listing API for extended profile |
 | :camera: | **Profile Photos** | Upload and delete for users and teams |
 | :desktop_computer: | **Sessions** | Active session listing and revocation |
+| :credit_card: | **Billing** | Team entitlement columns plus one guarded write path, so more than one payment rail can claim a tier without racing |
 
 ---
 
@@ -75,7 +76,7 @@ php artisan magic-starter:install
 
 The `magic-starter:install` command guides you through setup interactively:
 
-- Selects which of the 12 features to enable (all enabled by default)
+- Selects which of the 14 features to enable (all enabled by default)
 - Detects your database primary key type (UUID or auto-incrementing integer)
 - Publishes configuration and migrations in correct order
 - Removes Laravel's default users migration to avoid conflicts
@@ -110,7 +111,7 @@ php artisan magic-starter:install --all --force
 ```
 
 Available options:
-- `--all`: Enable all 12 features without prompting
+- `--all`: Enable all 14 features without prompting
 - `--features=<name>`: Enable specific feature(s); repeat for multiple (e.g. `--features=teams --features=sessions`)
 - `--uuid`: Force UUID primary keys
 - `--no-uuid`: Force auto-incrementing integer primary keys
@@ -163,7 +164,7 @@ You will also need to:
 
 ## Feature Toggles
 
-All 12 features are opt-in. Enable them by uncommenting in `config/magic-starter.php`:
+All 14 features are opt-in. Enable them by uncommenting in `config/magic-starter.php`:
 
 | Toggle Key | Description |
 |------------|-------------|
@@ -179,6 +180,8 @@ All 12 features are opt-in. Enable them by uncommenting in `config/magic-starter
 | `guest-auth` | Guest-only authentication without a registered account |
 | `phone-otp` | Phone-based OTP send/verify login flow |
 | `timezones` | Timezone listing API endpoint |
+| `onesignal` | OneSignal push channel for the notification features |
+| `billing` | Team entitlement columns and the arbitration contract that writes them |
 
 ---
 
