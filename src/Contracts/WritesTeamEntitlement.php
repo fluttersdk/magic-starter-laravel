@@ -33,7 +33,7 @@ interface WritesTeamEntitlement
     /**
      * Apply one rail's claim to the given team's entitlement columns.
      *
-     * CALL THIS WITH NAMED ARGUMENTS. Six of the eleven parameters are
+     * CALL THIS WITH NAMED ARGUMENTS. Six of the twelve parameters are
      * nullable, three of them are strings and two are timestamps, so a
      * positional call site can transpose a pair without any type error to show
      * for it. Named arguments are what makes that impossible.

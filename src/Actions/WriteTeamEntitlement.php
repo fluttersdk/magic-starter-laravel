@@ -19,7 +19,7 @@ use Illuminate\Support\Facades\Log;
  * feeders writing it unconditionally is not two features, it is a race:
  * whichever event is delivered last wins, and delivery order is a property of
  * the internet rather than of the truth. Every feeder passes its claim through
- * here, and the two rules below decide.
+ * here, and the four rules below decide.
  *
  * RULE 1, monotonic per rail. A write from the rail that already granted the
  * entitlement is dropped unless its event is STRICTLY newer than the one on
@@ -30,13 +30,31 @@ use Illuminate\Support\Facades\Log;
  * Applied in delivery order, that sequence puts a paying team on the cheapest
  * tier and leaves it there until somebody complains.
  *
+ * RULE 1b, a TIE is decided by what the write would DO, not by arrival order.
+ * An equal timestamp is not evidence of late delivery, it is an absence of
+ * evidence either way, so the write applies unless it would leave the team
+ * holding LESS than it holds now: a lower tier, or the same tier on a status
+ * that no longer grants. Dropping every tie outright looked safer and was not,
+ * because a rail that stamps to the SECOND (Stripe's `created` is a Unix second)
+ * emits paired events from one API call inside that second in an order it does
+ * not guarantee, and the loser was routinely a paid upgrade.
+ *
  * RULE 2, a rail may only revoke what it granted. A downgrade whose provider
  * differs from the stored one is dropped. Concretely it is what stops a late
  * card-rail cancellation from revoking a store grant during a web-to-store
  * migration, where both rails legitimately hold a record of the same customer
  * and only one of them is still being paid.
  *
- * Neither rule is symmetric, and that is deliberate. A write wrongly dropped
+ * RULE 2b, a PROJECTION may not take over the record of a rail that is still
+ * granting. Rule 2 only ever stopped a cross-rail REVOCATION, so a cross-rail
+ * write that was not a downgrade passed and the persist step then rewrote
+ * `plan_provider`, after which that rail's own next revocation was SAME-rail:
+ * rule 2 could no longer see it and rule 1 let it through. The test is the
+ * WRITER's standing rather than the tier, because the tier could never answer
+ * the question. A claim assembled from a row the rail wrote into this database
+ * earlier cannot testify to a handover; the rail speaking now can.
+ *
+ * No rule here is symmetric, and that is deliberate. A write wrongly dropped
  * leaves a customer on a tier for longer than they paid for it, and a log line
  * says so; a write wrongly applied takes a tier away from somebody who is
  * paying. Every ambiguity here resolves toward keeping the entitlement.
@@ -91,6 +109,13 @@ class WriteTeamEntitlement implements WritesTeamEntitlement
      * @param  PlanStatus  $status  Where that tier stands, in neutral words.
      * @param  BillingProvider  $provider  The rail making the claim.
      * @param  CarbonInterface  $eventAt  The source event's own timestamp.
+     * @param  bool  $authoritative  Whether the rail is speaking NOW (a webhook
+     *                               payload, or a re-read of its API) or the
+     *                               claim was projected from a row the rail
+     *                               wrote here earlier. Only an authoritative
+     *                               claim may move a team from one rail to
+     *                               another; {@see WritesTeamEntitlement} for
+     *                               why it carries no default.
      * @param  string|null  $providerStatus  The rail's own status word, verbatim.
      * @param  string|null  $productId  The rail-native product or price id.
      * @param  CarbonInterface|null  $currentPeriodEnd  End of the paid period.
@@ -147,11 +172,17 @@ class WriteTeamEntitlement implements WritesTeamEntitlement
         // consumer's own local state. Dropping the other one left a customer who
         // had just paid for a higher tier on the lower one.
         //
-        // Resolving by direction is what keeps this consistent with rule 2 below:
-        // a tie that would TAKE the entitlement away still loses.
+        // Resolving by what the write would DO is what keeps this consistent
+        // with rule 2 below: a tie that would TAKE the entitlement away still
+        // loses. "Away" is not only a lower tier, and reading it that way left
+        // half the promise unkept. {@see revokes()} ranks two TIERS, so a
+        // same-instant pair that keeps the tier and moves the status from a
+        // granting one to a lapsed one ranked as SAME and applied: the guard
+        // held for a downgrade and not for a cancellation, which is the same
+        // loss arriving through a different column.
         if ($storedProvider === $provider
             && $this->isSameInstantAsStored($eventAt, $storedEventAt)
-            && $this->revokes($direction)
+            && $this->takesAccessAway($direction, $status, $team)
         ) {
             $this->logDrop('same-instant revocation', $context);
 
@@ -198,6 +229,15 @@ class WriteTeamEntitlement implements WritesTeamEntitlement
         // record. This also removes the `tier_order` hazard the previous
         // formulation had to work around, since no direction is consulted here
         // at all.
+        //
+        // Consulting no direction widened this in one more way, and it is the
+        // intended reading rather than a side effect: a projected cross-rail
+        // UPGRADE is now dropped too, where the tier formulation applied it and
+        // warned. A projection is stale by construction, so the higher tier it
+        // reports is one this database already held, and the rail's own event
+        // follows carrying the standing to move the record. The cost is one
+        // delayed upgrade with a log line naming it; the alternative is letting
+        // a stale row move provenance, which is the defect above.
         //
         // The status half stays: {@see BillingProvider::grants()} is a per-RAIL
         // table, true for every real rail, so gating on it alone would drop a
@@ -359,6 +399,36 @@ class WriteTeamEntitlement implements WritesTeamEntitlement
             self::DIRECTION_DOWNGRADE, self::DIRECTION_UNKNOWN => true,
             self::DIRECTION_UPGRADE, self::DIRECTION_SAME, self::DIRECTION_INCOMPARABLE => false,
         };
+    }
+
+    /**
+     * Whether a write would leave the team holding LESS access than it has now.
+     *
+     * A tier can be taken away through either of two columns, and {@see
+     * revokes()} only reads one of them. A same-rail pair stamped to the same
+     * second that keeps the tier and moves `plan_status` from a granting value
+     * to a lapsed one ranks as `same`, so rule 1b's tie-break let the
+     * cancellation half of that pair land: the loss was real and the direction
+     * could not see it. Access is what is being arbitrated, so the tie-break
+     * asks about access.
+     *
+     * Deliberately NOT folded into `revokes()`, which rule 2 also uses. Rule 2
+     * asks a different question, whether a rail may revoke what another rail
+     * granted, and a cross-rail status change is already answered there by rule
+     * 2b's standing test. Widening the shared predicate would have moved rule
+     * 2's behaviour as a side effect of fixing rule 1b's.
+     *
+     * @param  self::DIRECTION_*  $direction  Where this write moves the tier.
+     * @param  PlanStatus  $status  The status this write would leave behind.
+     * @param  Model  $team  The team, read for the status already on record.
+     */
+    protected function takesAccessAway(string $direction, PlanStatus $status, Model $team): bool
+    {
+        if ($this->revokes($direction)) {
+            return true;
+        }
+
+        return ! $status->grants() && $this->storedStatusStillGrants($team);
     }
 
     /**

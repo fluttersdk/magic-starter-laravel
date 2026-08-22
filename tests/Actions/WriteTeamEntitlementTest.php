@@ -20,13 +20,20 @@ use Illuminate\Support\Facades\Schema;
 use Illuminate\Support\Str;
 
 /**
- * Locks the two ordering rules of the package's single entitlement write path.
+ * Locks the four ordering rules of the package's single entitlement write path.
  *
- * Both rules guard the SAME column, so they are pinned in separate tests
- * against separate teams on purpose. A single scenario that trips both would
- * keep passing with either rule entirely absent: each guard would absorb the
- * other's mutation, and the test would certify a protection that is not there.
- * Every test below is arranged so that exactly ONE rule can decide its outcome.
+ * All four guard the SAME column, so they are pinned in separate tests against
+ * separate teams on purpose. A single scenario that trips two of them would keep
+ * passing with either one entirely absent: each guard would absorb the other's
+ * mutation, and the test would certify a protection that is not there. Every
+ * test below is arranged so that exactly ONE rule can decide its outcome.
+ *
+ * Two of the rules are permissive in one direction and restrictive in the other,
+ * and each of those needs BOTH tests. Rule 1b applies a tie and refuses one that
+ * would take access away; rule 2b honours an authoritative handover and refuses
+ * a projected one. A file holding only the refusing half of either pair passes
+ * with the earlier, wrong formulation of that rule back in place, which is not
+ * hypothetical: it is how rule 2b's mirror defect shipped once.
  *
  * The stakes are the reason for that care. A dropped write that should have
  * landed leaves a customer on a tier they no longer pay for; a landed write
@@ -512,6 +519,54 @@ class WriteTeamEntitlementTest extends TestCase
     }
 
     /**
+     * RULE 1b covers a status-only revocation, not only a tier downgrade.
+     *
+     * Same rail, same second, same tier, and the two events disagree about
+     * whether that tier still grants. Ranked on the tier alone the pair reads as
+     * `same`, so the tie-break's own promise, that a tie which would take the
+     * entitlement away still loses, held for a downgrade and not for this: the
+     * cancellation half landed and a paying team lost access on a coin flip.
+     * Stripe stamps `created` to the SECOND, so a pair emitted from one API call
+     * genuinely does share a timestamp.
+     *
+     * The tier could not answer this question because the loss arrives through
+     * the other column. Access is what is being arbitrated, so the tie-break
+     * asks about access.
+     */
+    public function test_a_same_instant_status_only_revocation_on_the_same_rail_is_dropped(): void
+    {
+        Log::spy();
+
+        $grantedAt = Carbon::parse('2026-08-22 12:00:00');
+
+        $team = $this->makeTeam([
+            'plan' => 'business',
+            'plan_status' => PlanStatus::ACTIVE->value,
+            'plan_provider' => BillingProvider::STRIPE->value,
+            'plan_source_event_at' => $grantedAt,
+        ]);
+
+        $applied = $this->write(
+            team: $team,
+            plan: 'business',
+            status: PlanStatus::EXPIRED,
+            provider: BillingProvider::STRIPE,
+            // The SAME instant, not a later one: rule 1 cannot decide this, and
+            // the tier cannot either, so only the status half can.
+            eventAt: $grantedAt->copy(),
+            providerStatus: 'canceled',
+        );
+
+        $this->assertFalse($applied);
+
+        $team->refresh();
+        $this->assertSame(PlanStatus::ACTIVE->value, $team->plan_status);
+        $this->assertSame('business', $team->plan);
+
+        $this->assertDropWasLogged($team, 'stripe', 'stripe', 'same');
+    }
+
+    /**
      * RULE 2b: a cross-rail write carrying the SAME tier does not get to take
      * over the provenance of a rail that is still granting.
      *
@@ -559,6 +614,102 @@ class WriteTeamEntitlementTest extends TestCase
         $this->assertSame('starter_business_monthly', $team->plan_product_id);
 
         $this->assertDropWasLogged($team, 'app_store', 'stripe', 'same');
+    }
+
+    /**
+     * The positive twin of the rule above, and the behaviour rule 2b exists to
+     * PERMIT rather than to block: a store selling the tier a customer already
+     * holds on the web rail is a MIGRATION, and it takes the record.
+     *
+     * This is the case an earlier formulation got wrong. Written as a blanket
+     * same-tier drop, it refused this write, left provenance on the rail that
+     * was about to stop billing, and that rail's later cancellation was then
+     * SAME-rail: rule 2 could not see it and the team was revoked to free while
+     * the store it had just moved to went on charging. Without this test the
+     * tier formulation passes the whole file, which is how that mirror defect
+     * shipped once already.
+     *
+     * Byte-identical to the test above apart from `authoritative`, deliberately:
+     * the writer's standing is the ONLY thing separating a dropped projection
+     * from an honoured handover, so the pair isolates it.
+     */
+    public function test_an_authoritative_cross_rail_same_tier_write_takes_over_provenance(): void
+    {
+        Log::spy();
+
+        $grantedAt = Carbon::parse('2026-08-22 12:00:00');
+
+        $team = $this->makeTeam([
+            'plan' => 'business',
+            'plan_status' => PlanStatus::ACTIVE->value,
+            'plan_provider' => BillingProvider::STRIPE->value,
+            'plan_source_event_at' => $grantedAt,
+            'plan_product_id' => 'price_business_monthly',
+        ]);
+
+        $applied = $this->write(
+            team: $team,
+            plan: 'business',
+            status: PlanStatus::ACTIVE,
+            provider: BillingProvider::APP_STORE,
+            eventAt: $grantedAt->copy()->addMinute(),
+            // The store speaking for itself: a webhook payload, or a re-read of
+            // its API. That standing is what lets it claim the handover.
+            authoritative: true,
+            providerStatus: 'ACTIVE',
+            productId: 'starter_business_monthly',
+        );
+
+        $this->assertTrue($applied);
+
+        $team->refresh();
+        $this->assertSame(BillingProvider::APP_STORE->value, $team->plan_provider);
+        $this->assertSame('business', $team->plan);
+        $this->assertSame('starter_business_monthly', $team->plan_product_id);
+    }
+
+    /**
+     * The other half of the widened condition: rule 2b consults no direction, so
+     * a PROJECTED cross-rail UPGRADE is dropped as well.
+     *
+     * The tier formulation this replaced applied a cross-rail upgrade and logged
+     * a warning, so this is a deliberate behaviour change and not a leftover. A
+     * projection is stale by construction: the higher tier it reports is one
+     * this database already held, and the rail's own event follows carrying the
+     * standing to move the record. One delayed upgrade with a log line naming it
+     * is the cost; letting a stale row move provenance is the defect rule 2b
+     * closes.
+     */
+    public function test_a_projected_cross_rail_upgrade_is_dropped(): void
+    {
+        Log::spy();
+
+        $grantedAt = Carbon::parse('2026-08-22 12:00:00');
+
+        $team = $this->makeTeam([
+            'plan' => 'pro',
+            'plan_status' => PlanStatus::ACTIVE->value,
+            'plan_provider' => BillingProvider::APP_STORE->value,
+            'plan_source_event_at' => $grantedAt,
+        ]);
+
+        $applied = $this->write(
+            team: $team,
+            plan: 'business',
+            status: PlanStatus::ACTIVE,
+            provider: BillingProvider::STRIPE,
+            eventAt: $grantedAt->copy()->addMinute(),
+            authoritative: false,
+            providerStatus: 'active',
+        );
+
+        $this->assertFalse($applied);
+
+        $team->refresh();
+        $this->assertSame('pro', $team->plan);
+        $this->assertSame(BillingProvider::APP_STORE->value, $team->plan_provider);
+
+        $this->assertDropWasLogged($team, 'app_store', 'stripe', 'upgrade');
     }
 
     /**
