@@ -282,6 +282,67 @@ class StoreSubscriptionGuardedDeleteTest extends TestCase
     }
 
     /**
+     * The adopter's own catalogue names their floor, and a subject sitting on
+     * it is not paying for anything.
+     *
+     * This is the half a bare null check cannot answer. An application that
+     * writes its own free-tier WORD on a downgrade, rather than the NULL this
+     * package's writer stores, would otherwise read as store-billed forever:
+     * `plan_provider` is provenance and survives the subscription ending, so
+     * the team could never be deleted again, and the refusal would name a
+     * subscription its owner had already cancelled.
+     *
+     * The floor is `tier_order[0]` because the config's documented convention
+     * is cheapest first. Nothing here names a tier the package invented.
+     */
+    public function test_the_declared_floor_tier_does_not_read_as_store_billed(): void
+    {
+        config(['magic-starter.billing.tier_order' => ['free', 'pro', 'business']]);
+
+        $team = $this->makeTeam([
+            'plan' => 'free',
+            'plan_status' => 'active',
+            'plan_provider' => 'app_store',
+        ]);
+
+        $this->assertFalse(
+            StoreSubscriptionGuardedDeleteTeam::storeIsBilling($team),
+            'A subject on the catalogue\'s floor tier holds nothing anybody is paying for.',
+        );
+
+        $team->forceFill(['plan' => 'pro'])->save();
+
+        $this->assertTrue(
+            StoreSubscriptionGuardedDeleteTeam::storeIsBilling($team),
+            'The tier above the floor is the control: without it, a predicate that always '
+            . 'answered false would pass the assertion above.',
+        );
+    }
+
+    /**
+     * An UNPUBLISHED catalogue keeps exactly the behaviour it had before the
+     * floor existed, which is what makes reading it a widening rather than a
+     * change: the package ships an empty `tier_order`, so an adopter who never
+     * publishes one must not see their guard move under them.
+     */
+    public function test_an_unpublished_catalogue_leaves_the_guard_where_it_was(): void
+    {
+        config(['magic-starter.billing.tier_order' => []]);
+
+        $team = $this->makeTeam([
+            'plan' => 'free',
+            'plan_status' => 'active',
+            'plan_provider' => 'app_store',
+        ]);
+
+        $this->assertTrue(
+            StoreSubscriptionGuardedDeleteTeam::storeIsBilling($team),
+            'With no catalogue there is no floor to recognise, so a named tier reads as paid, '
+            . 'exactly as it did before the floor was read at all.',
+        );
+    }
+
+    /**
      * Under `billing.billable = 'user'` a team's own row carries no rail at
      * all: the money is on the user's row, not the team's, so this guard must
      * not fire even when the team row happens to carry store-shaped values.

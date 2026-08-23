@@ -575,36 +575,6 @@ class WriteEntitlement implements WritesEntitlement
     }
 
     /**
-     * The consumer's tier catalogue, cheapest first.
-     *
-     * Read from config rather than from any enum here, because the package
-     * ships no tier vocabulary at all. Non-string entries are discarded rather
-     * than cast: a catalogue holding something other than plan ids is not a
-     * catalogue this action can rank against, and silently stringifying it
-     * would invent an order.
-     *
-     * @return list<string>
-     */
-    protected function tierOrder(): array
-    {
-        $configured = config('magic-starter.billing.tier_order', []);
-
-        if (! is_array($configured)) {
-            return [];
-        }
-
-        $order = [];
-
-        foreach ($configured as $planId) {
-            if (is_string($planId) && $planId !== '') {
-                $order[] = $planId;
-            }
-        }
-
-        return $order;
-    }
-
-    /**
      * Report a dropped write with everything needed to reconstruct the decision.
      *
      * A drop is the action declining to change a customer's plan, so it is

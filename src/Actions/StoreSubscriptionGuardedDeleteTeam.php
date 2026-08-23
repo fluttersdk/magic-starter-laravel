@@ -5,7 +5,6 @@ namespace FlutterSdk\MagicStarter\Actions;
 use FlutterSdk\MagicStarter\Contracts\DeletesTeams;
 use FlutterSdk\MagicStarter\Enums\BillingProvider;
 use FlutterSdk\MagicStarter\Enums\PlanStatus;
-use FlutterSdk\MagicStarter\Http\Resources\SubscriptionResource;
 use FlutterSdk\MagicStarter\MagicStarter;
 use FlutterSdk\MagicStarter\Support\ReadsBillableAttributes;
 use Illuminate\Database\Eloquent\Model;
@@ -75,7 +74,7 @@ class StoreSubscriptionGuardedDeleteTeam extends DeleteTeam
      *   because `plan_provider` is an uncast column by design and a value
      *   this build has never heard of has to land on `NONE` instead of
      *   raising;
-     * - the tier is not absent, and
+     * - the tier is above the adopter's declared floor, and
      * - {@see PlanStatus::grants()} says the plan is still owed to them,
      *   which keeps a dunning subscription (`past_due`, `grace`) inside the
      *   guard: the rail is still trying to take the money, which is exactly
@@ -85,29 +84,18 @@ class StoreSubscriptionGuardedDeleteTeam extends DeleteTeam
      * so a guard on the rail alone would refuse to delete every team that
      * ever bought in a store, forever.
      *
-     * The tier half is a NULL CHECK and nothing more, the same one
-     * {@see SubscriptionResource::subscribed()} makes. The application this
-     * action was ported from read a typed tier ACCESSOR here instead, one
-     * that answered its own free tier for both a stored `'free'` value and a
-     * revoked NULL, so that call site never had to re-decide what NULL meant.
-     * This package has no tier vocabulary to build such an accessor from, and
-     * comparing the raw column against a literal `'free'` would get the
-     * revoked case wrong: NULL is not `'free'`, so that comparison would
-     * answer true, and a team the store stopped billing would never be
-     * deletable again.
-     *
-     * What the null check does NOT buy is the accessor's other half. A
-     * consuming application that writes its own free-tier WORD into the
-     * column on a downgrade, rather than the NULL this package's own writer
-     * stores, reads as store-billed here and cannot delete the team. That is
-     * the same price {@see SubscriptionResource::subscribed()} already pays
-     * for the same reason, and it is a heavier one here, because a badge that
-     * reads wrong is not a deletion that is refused with a sentence naming a
-     * subscription the customer no longer has. The adopter's own
-     * `magic-starter.billing.tier_order` names their floor tier and would
-     * close it; wiring that in belongs with the read endpoints that share
-     * this predicate, so both answers move together rather than the package
-     * growing two definitions of "holds a paid tier".
+     * The tier half goes through {@see ReadsBillableAttributes::holdsPaidTier()}
+     * rather than being re-decided here. The application this action was ported
+     * from read a typed tier ACCESSOR at this call site, one that answered its
+     * own free tier for both a stored `'free'` value and a revoked NULL, so the
+     * caller never had to say what NULL meant. This package has no tier
+     * vocabulary to build such an accessor from, so the shared reader takes the
+     * floor from the adopter's own `magic-starter.billing.tier_order` instead,
+     * and treats an absent tier and the floor tier alike. Both mistakes it
+     * avoids are the same defect from opposite ends: a bare `!== 'free'` reads
+     * NULL as paid, and a bare `!== null` reads a named free tier as paid, and
+     * either one leaves a team refused deletion with a sentence naming a
+     * subscription its owner has already cancelled.
      *
      * It is `public static` so it can be shared with the read endpoints'
      * equivalent check on a caller's OTHER teams, which is deliberate rather
@@ -143,7 +131,9 @@ class StoreSubscriptionGuardedDeleteTeam extends DeleteTeam
             return false;
         }
 
-        return $reader->stringAttribute($team, 'plan') !== null
-            && PlanStatus::fromWire($reader->stringAttribute($team, 'plan_status'))->grants();
+        return $reader->holdsPaidTier(
+            $reader->stringAttribute($team, 'plan'),
+            PlanStatus::fromWire($reader->stringAttribute($team, 'plan_status')),
+        );
     }
 }

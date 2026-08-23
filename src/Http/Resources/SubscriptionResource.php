@@ -103,20 +103,18 @@ class SubscriptionResource extends JsonResource
      * owed to them, which keeps a customer with a failed charge subscribed while
      * their rail retries.
      *
-     * The tier half is a NULL CHECK and nothing more, which is where this
-     * diverges from the application it was ported from: there it compared the
-     * tier against a free case, through a reader that answered "free" for both a
-     * stored `'free'` and a revoked NULL. This package has no tier vocabulary and
-     * cannot recognise a free tier by name. What it does have is the convention
-     * its own writer keeps, that a revoked subject stores NULL rather than a
-     * free-tier word, so "holds nothing" stays answerable without naming a tier.
-     * A consumer that writes its own free tier into the column instead reads as
-     * subscribed here; that is the price of the package never inventing a tier
-     * name, and it is why `plan` reaches the wire raw for the client to read.
+     * Both halves go through {@see ReadsBillableAttributes::holdsPaidTier()},
+     * which the delete guard asks as well. That sharing is the point: one of
+     * them decides a badge and the other decides whether a team can be deleted,
+     * and two definitions of "holds a paid tier" would be free to disagree with
+     * each other while both sides' tests stayed green.
+     *
+     * `plan` still reaches the wire raw for the client to read, because the tier
+     * NAMES are the consuming application's and this resource only reports them.
      */
     protected function subscribed(?string $plan, PlanStatus $status): bool
     {
-        return $plan !== null && $status->grants();
+        return $this->holdsPaidTier($plan, $status);
     }
 
     /**
