@@ -506,6 +506,37 @@ class WriteEntitlementTest extends TestCase
             'An existing entitlement must survive the provenance migration.',
         );
         $this->assertSame('active', DB::table('teams')->value('plan_status'));
+
+        // 4. The case an early return used to swallow: PARTIAL columns. A
+        // consumer carrying `plan_provider` but not `plan` got neither added,
+        // because the guard on `plan_provider` returned before the entitlement
+        // block ran, and the default action's `forceFill` then threw on the first
+        // payment. Every column is guarded on its own now, and this is the
+        // arrangement that proves it rather than the comment claiming it.
+        Schema::drop('teams');
+        Schema::create('teams', function ($table): void {
+            $table->uuid('id')->primary();
+            $table->uuid('user_id');
+            $table->string('name');
+            $table->boolean('personal_team')->default(false);
+            $table->string('plan_provider')->nullable();
+            $table->timestamps();
+        });
+
+        $this->assertTrue(Schema::hasColumn('teams', 'plan_provider'));
+        $this->assertFalse(Schema::hasColumn('teams', 'plan'));
+
+        $migration->up();
+
+        $this->assertTrue(
+            Schema::hasColumn('teams', 'plan'),
+            'A partial provenance set must not stop the entitlement columns being added.',
+        );
+        $this->assertTrue(Schema::hasColumn('teams', 'plan_status'));
+        $this->assertTrue(
+            Schema::hasColumn('teams', 'plan_source_event_at'),
+            'The provenance columns the consumer lacked must be added too.',
+        );
     }
 
     /**
@@ -1223,6 +1254,101 @@ class WriteEntitlementTest extends TestCase
      * and would be certifying nothing. A plan swap down to a cheaper tier is
      * `active` on the new tier, so only the direction can decide it.
      */
+    /**
+     * Rule 1b is NOT fail-closed on an unpublished catalogue, and rule 2 is.
+     *
+     * This is the case the empty-order refusal broke on its way in, and nothing
+     * caught it because both existing `tier_order => []` cases are CROSS-rail.
+     * `direction()` is shared, so making it revoking for an unpublished order
+     * reached rule 1b through `takesAccessAway()`, and on this package's SHIPPED
+     * DEFAULT every same-rail same-instant write against a held tier was then
+     * dropped. That is exactly the paid upgrade rule 1b exists to keep: Stripe
+     * stamps `created` to the second, so a plan swap emits its pair inside one
+     * second, and the half carrying the tier the customer just bought is the one
+     * that used to lose.
+     *
+     * The two rules ask different questions, so they get different answers to the
+     * same absence. Rule 2 asks whether a rail may revoke what ANOTHER rail
+     * granted, and refuses when it cannot rank the claim. Rule 1b asks whether
+     * this write would reduce access, and an unpublished catalogue is not an
+     * answer to that, it is the lack of one; only the STATUS half can still
+     * decide, which the next test pins.
+     */
+    #[DataProvider('billableSubjects')]
+    public function test_a_same_rail_tie_still_applies_when_no_tier_order_is_published(
+        string $subject,
+    ): void {
+        Log::spy();
+
+        config(['magic-starter.billing.tier_order' => []]);
+
+        $eventAt = Carbon::parse('2026-08-22 12:00:00');
+
+        $billable = $this->makeBillable($subject, [
+            'plan' => 'starter',
+            'plan_status' => PlanStatus::ACTIVE->value,
+            'plan_provider' => BillingProvider::STRIPE->value,
+            'plan_source_event_at' => $eventAt,
+        ]);
+
+        // The paid upgrade half of a same-second Stripe pair: same rail, same
+        // instant, a higher tier, still granting. Nothing here reduces access.
+        $applied = $this->write(
+            billable: $billable,
+            plan: 'business',
+            status: PlanStatus::ACTIVE,
+            provider: BillingProvider::STRIPE,
+            eventAt: $eventAt->copy(),
+            providerStatus: 'active',
+        );
+
+        $this->assertTrue($applied, 'An unpublished catalogue must not cost a same-rail tie its apply.');
+
+        $billable->refresh();
+        $this->assertSame('business', $billable->plan);
+    }
+
+    /**
+     * The other half: with no order published, the STATUS can still refuse a tie.
+     *
+     * Together with the test above this is what keeps the fix honest. Rule 1b
+     * stops reading an unpublished catalogue as a revocation without becoming
+     * blind: a same-instant write that keeps nothing rankable but moves the
+     * status from granting to lapsed still loses, because that half of
+     * `takesAccessAway()` never needed a catalogue to decide.
+     */
+    #[DataProvider('billableSubjects')]
+    public function test_a_same_rail_tie_that_lapses_the_status_is_dropped_with_no_tier_order(
+        string $subject,
+    ): void {
+        Log::spy();
+
+        config(['magic-starter.billing.tier_order' => []]);
+
+        $eventAt = Carbon::parse('2026-08-22 12:00:00');
+
+        $billable = $this->makeBillable($subject, [
+            'plan' => 'business',
+            'plan_status' => PlanStatus::ACTIVE->value,
+            'plan_provider' => BillingProvider::STRIPE->value,
+            'plan_source_event_at' => $eventAt,
+        ]);
+
+        $applied = $this->write(
+            billable: $billable,
+            plan: 'business',
+            status: PlanStatus::EXPIRED,
+            provider: BillingProvider::STRIPE,
+            eventAt: $eventAt->copy(),
+            providerStatus: 'canceled',
+        );
+
+        $this->assertFalse($applied);
+
+        $billable->refresh();
+        $this->assertSame(PlanStatus::ACTIVE->value, $billable->plan_status);
+    }
+
     #[DataProvider('billableSubjects')]
     public function test_a_cross_rail_write_against_a_held_tier_is_dropped_when_no_tier_order_is_published(
         string $subject,
@@ -1260,8 +1386,13 @@ class WriteEntitlementTest extends TestCase
         Log::shouldHaveReceived('warning')
             ->once()
             ->withArgs(function (string $message, array $context) use ($billable): bool {
+                // `no-order` and not `unknown`. The two were one label until a
+                // same-rail tie showed they need opposite answers: rule 2 refuses
+                // an unrankable cross-rail claim, and rule 1b must not read an
+                // absent catalogue as a loss. Pinning the label here is what
+                // catches them being merged again.
                 return $context['billable_id'] === $billable->id
-                    && $context['direction'] === 'unknown'
+                    && $context['direction'] === 'no-order'
                     && str_contains($message, 'tier_order');
             });
     }

@@ -92,15 +92,35 @@ class WriteEntitlement implements WritesEntitlement
     protected const DIRECTION_DOWNGRADE = 'downgrade';
 
     /**
-     * The two tiers could not be compared, so the write MIGHT be a loss.
+     * The published catalogue does not name one of the two tiers.
      *
-     * Either the catalogue does not name one of them or no catalogue is
-     * published at all. Both are config states rather than facts about the
-     * customer, and {@see self::revokes()} reads them as a revocation for that
-     * reason: an unprovable downgrade applied cross-rail is a revocation with
-     * better manners.
+     * A config GAP rather than a fact about the customer, and {@see
+     * self::revokes()} reads it as a revocation for that reason: an unprovable
+     * downgrade applied cross-rail is a revocation with better manners.
      */
     protected const DIRECTION_UNKNOWN = 'unknown';
+
+    /**
+     * No catalogue is published at all, so nothing here can be ranked.
+     *
+     * Split out of `unknown`, and for the same reason `nothing-stored` was: one
+     * label was answering two rules that need opposite answers. {@see
+     * self::revokes()} still reads this as a revocation, because rule 2 asks
+     * whether a rail may revoke what ANOTHER rail granted and must refuse a claim
+     * it cannot rank. But rule 1b asks something narrower, whether THIS write
+     * reduces access, and an unpublished catalogue is not an answer to that, it is
+     * the absence of one, so {@see self::reducesAccess()} excludes it while {@see
+     * self::takesAccessAway()} counts it.
+     *
+     * Merged, the fail-closed decision taken for rule 2 reached rule 1b through
+     * the shared `direction()` and dropped every same-rail same-instant write
+     * against a held tier on this package's SHIPPED DEFAULT of an empty
+     * `tier_order`. That is precisely the paid upgrade rule 1b was added to keep:
+     * a Stripe plan swap emits its pair inside one second, and the half carrying
+     * the tier the customer just bought is the one that loses. Both existing
+     * empty-order tests were cross-rail, so nothing saw it.
+     */
+    protected const DIRECTION_NO_ORDER = 'no-order';
 
     /**
      * The billable holds no tier at all, so no write can move it in any
@@ -205,7 +225,7 @@ class WriteEntitlement implements WritesEntitlement
         // loss arriving through a different column.
         if ($storedProvider === $provider
             && $this->isSameInstantAsStored($eventAt, $storedEventAt)
-            && $this->takesAccessAway($direction, $status, $billable)
+            && $this->reducesAccess($direction, $status, $billable)
         ) {
             $this->logDrop('same-instant revocation', $context);
 
@@ -232,7 +252,7 @@ class WriteEntitlement implements WritesEntitlement
             // could not be proven. An operator whose only config gap is the
             // unpublished catalogue needs the key named; the generic drop line
             // would send them looking for a rail problem that is not there.
-            if ($tierOrder === [] && $direction === self::DIRECTION_UNKNOWN) {
+            if ($direction === self::DIRECTION_NO_ORDER) {
                 $this->warnUndecidableTierOrder($context);
             } else {
                 $this->logDrop('cross-rail revocation', $context);
@@ -421,7 +441,7 @@ class WriteEntitlement implements WritesEntitlement
         //    it fails closed, and {@see self::warnUndecidableTierOrder()} names
         //    the key that would let the write be ranked instead of refused.
         if ($tierOrder === []) {
-            return self::DIRECTION_UNKNOWN;
+            return self::DIRECTION_NO_ORDER;
         }
 
         $stored = $this->tierRank($storedPlan, $tierOrder);
@@ -473,7 +493,7 @@ class WriteEntitlement implements WritesEntitlement
     protected function revokes(string $direction): bool
     {
         return match ($direction) {
-            self::DIRECTION_DOWNGRADE, self::DIRECTION_UNKNOWN => true,
+            self::DIRECTION_DOWNGRADE, self::DIRECTION_UNKNOWN, self::DIRECTION_NO_ORDER => true,
             self::DIRECTION_UPGRADE, self::DIRECTION_SAME, self::DIRECTION_NOTHING_STORED => false,
         };
     }
@@ -509,10 +529,46 @@ class WriteEntitlement implements WritesEntitlement
      */
     protected function takesAccessAway(string $direction, PlanStatus $status, Model $billable): bool
     {
-        if ($this->revokes($direction)) {
-            return true;
-        }
+        return $this->revokes($direction) || $this->statusRevokes($status, $billable);
+    }
 
+    /**
+     * Rule 1b's question: would this write reduce access, as far as anything here
+     * can actually tell?
+     *
+     * The same two axes as {@see self::takesAccessAway()} with ONE difference, and
+     * the difference is the whole reason both exist. Rule 2 asks whether a rail may
+     * revoke what ANOTHER rail granted and refuses a claim it cannot rank, so an
+     * unpublished catalogue counts against the write. Rule 1b asks only whether
+     * THIS write takes something away, and an unpublished catalogue is not an
+     * answer to that: with no order published the tier axis cannot speak at all, so
+     * only the status axis decides.
+     *
+     * Collapsing the two into one predicate is a mistake I made twice while
+     * getting here. Sharing it and counting `no-order` dropped every same-rail tie
+     * against a held tier on the SHIPPED DEFAULT, which is the paid upgrade rule 1b
+     * exists to keep. Sharing it and NOT counting `no-order` disarmed rule 2's
+     * deliberate fail-closed on the same default. Two callers wanted opposite
+     * answers from one question, which is the same shape as the direction labels
+     * this class has already had to split twice.
+     */
+    protected function reducesAccess(string $direction, PlanStatus $status, Model $billable): bool
+    {
+        $tierAxisSpeaks = $direction !== self::DIRECTION_NO_ORDER;
+
+        return ($tierAxisSpeaks && $this->revokes($direction))
+            || $this->statusRevokes($status, $billable);
+    }
+
+    /**
+     * The status axis, shared by both rules: this write leaves the billable on a
+     * status that no longer grants, where the record still does.
+     *
+     * Needs no catalogue, which is why it is the half that still answers when the
+     * tier axis cannot.
+     */
+    protected function statusRevokes(PlanStatus $status, Model $billable): bool
+    {
         return ! $status->grants() && $this->storedStatusStillGrants($billable);
     }
 

@@ -78,19 +78,32 @@ return new class extends Migration
     {
         $table = $this->billableTable();
 
-        if (Schema::hasColumn($table, 'plan_provider')) {
-            return;
-        }
+        // Per column, not per table, and the whole file is that way for one
+        // reason. An early return on `plan_provider` used to guard this block, and
+        // it short-circuited the ENTIRE method: a consumer that already carried
+        // `plan_provider` but not `plan` got neither added, and the default
+        // action's `forceFill` then threw on its first payment. That is the same
+        // deferred-to-first-payment failure this migration's rename was written to
+        // remove, reintroduced by its own idempotency guard, and the block below
+        // already argued against it in words ("nothing says a consumer cannot have
+        // arrived at one and not the other") while this one contradicted it.
+        Schema::table($table, function (Blueprint $blueprint) use ($table): void {
+            $columns = [
+                'plan_provider' => fn (): mixed => $blueprint->string('plan_provider')->nullable(),
+                'plan_source_event_at' => fn (): mixed => $blueprint->timestampTz('plan_source_event_at')->nullable(),
+                'plan_provider_status' => fn (): mixed => $blueprint->string('plan_provider_status')->nullable(),
+                'plan_product_id' => fn (): mixed => $blueprint->string('plan_product_id')->nullable(),
+                'plan_current_period_end' => fn (): mixed => $blueprint->timestampTz('plan_current_period_end')->nullable(),
+                'plan_renews' => fn (): mixed => $blueprint->boolean('plan_renews')->nullable(),
+                'plan_grace_period_ends_at' => fn (): mixed => $blueprint->timestampTz('plan_grace_period_ends_at')->nullable(),
+                'plan_manage_url' => fn (): mixed => $blueprint->string('plan_manage_url', 2048)->nullable(),
+            ];
 
-        Schema::table($table, function (Blueprint $blueprint): void {
-            $blueprint->string('plan_provider')->nullable();
-            $blueprint->timestampTz('plan_source_event_at')->nullable();
-            $blueprint->string('plan_provider_status')->nullable();
-            $blueprint->string('plan_product_id')->nullable();
-            $blueprint->timestampTz('plan_current_period_end')->nullable();
-            $blueprint->boolean('plan_renews')->nullable();
-            $blueprint->timestampTz('plan_grace_period_ends_at')->nullable();
-            $blueprint->string('plan_manage_url', 2048)->nullable();
+            foreach ($columns as $column => $add) {
+                if (! Schema::hasColumn($table, $column)) {
+                    $add();
+                }
+            }
         });
 
         // The entitlement ITSELF, added only where a consumer has not already
