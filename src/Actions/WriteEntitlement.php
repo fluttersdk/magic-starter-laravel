@@ -5,7 +5,7 @@ namespace FlutterSdk\MagicStarter\Actions;
 use BackedEnum;
 use Carbon\CarbonInterface;
 use DateTimeInterface;
-use FlutterSdk\MagicStarter\Contracts\WritesTeamEntitlement;
+use FlutterSdk\MagicStarter\Contracts\WritesEntitlement;
 use FlutterSdk\MagicStarter\Enums\BillingProvider;
 use FlutterSdk\MagicStarter\Enums\PlanStatus;
 use Illuminate\Database\Eloquent\Model;
@@ -13,10 +13,10 @@ use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\Log;
 
 /**
- * The single code path that writes a team's entitlement columns.
+ * The single code path that writes a billable subject's entitlement columns.
  *
- * A team's tier is one column and more than one payment rail can feed it. Two
- * feeders writing it unconditionally is not two features, it is a race:
+ * A billable's tier is one column and more than one payment rail can feed it.
+ * Two feeders writing it unconditionally is not two features, it is a race:
  * whichever event is delivered last wins, and delivery order is a property of
  * the internet rather than of the truth. Every feeder passes its claim through
  * here, and the four rules below decide.
@@ -27,27 +27,29 @@ use Illuminate\Support\Facades\Log;
  * of the rails: a store retries a failed webhook on a schedule measured in tens
  * of minutes and can deliver a cancellation hours late, so a promptly delivered
  * EXPIRATION genuinely does arrive before a RENEWAL whose first attempt failed.
- * Applied in delivery order, that sequence puts a paying team on the cheapest
- * tier and leaves it there until somebody complains.
+ * Applied in delivery order, that sequence puts a paying customer on the
+ * cheapest tier and leaves it there until somebody complains.
  *
  * RULE 1b, a TIE is decided by what the write would DO, not by arrival order.
  * An equal timestamp is not evidence of late delivery, it is an absence of
- * evidence either way, so the write applies unless it would leave the team
+ * evidence either way, so the write applies unless it would leave the billable
  * holding LESS than it holds now: a lower tier, or the same tier on a status
  * that no longer grants. Dropping every tie outright looked safer and was not,
  * because a rail that stamps to the SECOND (Stripe's `created` is a Unix second)
  * emits paired events from one API call inside that second in an order it does
  * not guarantee, and the loser was routinely a paid upgrade.
  *
- * RULE 2, a rail may only revoke what it granted. A downgrade whose provider
- * differs from the stored one is dropped. Concretely it is what stops a late
- * card-rail cancellation from revoking a store grant during a web-to-store
- * migration, where both rails legitimately hold a record of the same customer
- * and only one of them is still being paid.
+ * RULE 2, a rail may only revoke what it granted. A cross-rail write that would
+ * leave the billable holding LESS access than it holds now is dropped, whether
+ * the loss arrives as a lower tier or as the same tier on a status that no
+ * longer grants. Concretely it is what stops a late card-rail cancellation from
+ * revoking a store grant during a web-to-store migration, where both rails
+ * legitimately hold a record of the same customer and only one of them is still
+ * being paid.
  *
  * RULE 2b, a PROJECTION may not take over the record of a rail that is still
  * granting. Rule 2 only ever stopped a cross-rail REVOCATION, so a cross-rail
- * write that was not a downgrade passed and the persist step then rewrote
+ * write that takes nothing away passed and the persist step then rewrote
  * `plan_provider`, after which that rail's own next revocation was SAME-rail:
  * rule 2 could no longer see it and rule 1 let it through. The test is the
  * WRITER's standing rather than the tier, because the tier could never answer
@@ -62,31 +64,26 @@ use Illuminate\Support\Facades\Log;
  * Rule 2 has to compare two tiers, and the tier vocabulary belongs to the
  * consuming application, so the order is read from
  * `config('magic-starter.billing.tier_order')`. When that list is EMPTY the
- * comparison is undecidable, and this package then treats the write as a
- * non-downgrade rather than as a revocation. That is the opposite default from
- * an application that owns its own catalogue, and the reason is the reason the
- * default exists at all: here an absent catalogue is the normal state of a
- * fresh install, so reading it as a revocation would drop EVERY cross-rail
- * write forever and a paying customer would receive nothing. A catalogue that
- * IS published but does not name one of the two tiers is a different thing, a
- * config gap, and that case does count as a revocation exactly as it would in
- * the consuming application.
+ * comparison is undecidable, and an undecidable cross-rail write against a tier
+ * the billable HOLDS is refused, exactly as a published catalogue missing one
+ * of the two tiers is. This is the second formulation. The first read an empty
+ * list as a non-downgrade, on the argument that an absent catalogue is the
+ * normal state of a fresh install rather than a config error, so refusing every
+ * cross-rail write would leave a paying customer with nothing. That argument is
+ * about a billable holding NOTHING, and that case is answered on its own terms:
+ * nothing on record cannot be taken away, so such a write applies whether or
+ * not an order is published. What the empty-list reading actually governed was
+ * a billable that already holds a tier while this package's SHIPPED DEFAULT
+ * leaves the order empty, which is the one state where being permissive costs a
+ * payer the tier they are paying for.
  *
  * This is the package default. A consumer that needs different arbitration
- * binds its own implementation of {@see WritesTeamEntitlement} over this one.
+ * binds its own implementation of {@see WritesEntitlement} over this one.
  */
-class WriteTeamEntitlement implements WritesTeamEntitlement
+class WriteEntitlement implements WritesEntitlement
 {
     /**
      * Direction labels a write can move the entitlement in.
-     *
-     * The last two are both "no proven ordering" and they are NOT the same
-     * decision. `unknown` means a published catalogue does not name one of the
-     * two tiers, which is a config gap and counts as a revocation.
-     * `incomparable` means there is nothing to compare against at all, either
-     * because no catalogue is published or because the team holds no
-     * entitlement yet, and it cannot count as a revocation because there is
-     * nothing there to revoke.
      */
     protected const DIRECTION_UPGRADE = 'upgrade';
 
@@ -94,18 +91,64 @@ class WriteTeamEntitlement implements WritesTeamEntitlement
 
     protected const DIRECTION_DOWNGRADE = 'downgrade';
 
+    /**
+     * The published catalogue does not name one of the two tiers.
+     *
+     * A config GAP rather than a fact about the customer, and {@see
+     * self::revokes()} reads it as a revocation for that reason: an unprovable
+     * downgrade applied cross-rail is a revocation with better manners.
+     */
     protected const DIRECTION_UNKNOWN = 'unknown';
 
-    protected const DIRECTION_INCOMPARABLE = 'incomparable';
+    /**
+     * No catalogue is published at all, so nothing here can be ranked.
+     *
+     * Split out of `unknown`, and for the same reason `nothing-stored` was: one
+     * label was answering two rules that need opposite answers. {@see
+     * self::revokes()} still reads this as a revocation, because rule 2 asks
+     * whether a rail may revoke what ANOTHER rail granted and must refuse a claim
+     * it cannot rank. But rule 1b asks something narrower, whether THIS write
+     * reduces access, and an unpublished catalogue is not an answer to that, it is
+     * the absence of one, so {@see self::reducesAccess()} excludes it while {@see
+     * self::takesAccessAway()} counts it.
+     *
+     * Merged, the fail-closed decision taken for rule 2 reached rule 1b through
+     * the shared `direction()` and dropped every same-rail same-instant write
+     * against a held tier on this package's SHIPPED DEFAULT of an empty
+     * `tier_order`. That is precisely the paid upgrade rule 1b was added to keep:
+     * a Stripe plan swap emits its pair inside one second, and the half carrying
+     * the tier the customer just bought is the one that loses. Both existing
+     * empty-order tests were cross-rail, so nothing saw it.
+     */
+    protected const DIRECTION_NO_ORDER = 'no-order';
 
     /**
-     * Apply one rail's claim to the team's entitlement columns.
+     * The billable holds no tier at all, so no write can move it in any
+     * direction.
+     *
+     * Distinct from `unknown`, and the distinction is load-bearing rather than
+     * descriptive. `unknown` means the comparison failed and the write might be
+     * a loss. This one means there is nothing on record to lose, so reading it
+     * as a revocation would refuse every cross-rail write against a billable
+     * that holds nothing, including the purchase that grants it a tier for the
+     * first time. Absence and unrankability are different facts and one label
+     * cannot carry both; it carried both once, and the tier-holding half of it
+     * is what let a cross-rail downgrade through on the shipped default.
+     */
+    protected const DIRECTION_NOTHING_STORED = 'nothing-stored';
+
+    /**
+     * Apply one rail's claim to the billable's entitlement columns.
      *
      * Returns true when the columns were written, false when a rule dropped the
      * write. Every false return has logged why.
      *
-     * @param  Model  $team  The team whose entitlement this claim is about.
-     * @param  string  $plan  The consumer-defined plan id the rail says is owed.
+     * @param  Model  $billable  The subject whose entitlement this claim is
+     *                           about, whatever an application bills.
+     * @param  string|null  $plan  The consumer-defined plan id the rail says is
+     *                             owed, or null for a rail saying nothing is
+     *                             owed; {@see WritesEntitlement} for why absence
+     *                             is written rather than a free-tier id.
      * @param  PlanStatus  $status  Where that tier stands, in neutral words.
      * @param  BillingProvider  $provider  The rail making the claim.
      * @param  CarbonInterface  $eventAt  The source event's own timestamp.
@@ -113,8 +156,8 @@ class WriteTeamEntitlement implements WritesTeamEntitlement
      *                               payload, or a re-read of its API) or the
      *                               claim was projected from a row the rail
      *                               wrote here earlier. Only an authoritative
-     *                               claim may move a team from one rail to
-     *                               another; {@see WritesTeamEntitlement} for
+     *                               claim may move a billable from one rail to
+     *                               another; {@see WritesEntitlement} for
      *                               why it carries no default.
      * @param  string|null  $providerStatus  The rail's own status word, verbatim.
      * @param  string|null  $productId  The rail-native product or price id.
@@ -124,8 +167,8 @@ class WriteTeamEntitlement implements WritesTeamEntitlement
      * @param  string|null  $manageUrl  Durable subscription management URL.
      */
     public function write(
-        Model $team,
-        string $plan,
+        Model $billable,
+        ?string $plan,
         PlanStatus $status,
         BillingProvider $provider,
         CarbonInterface $eventAt,
@@ -138,14 +181,14 @@ class WriteTeamEntitlement implements WritesTeamEntitlement
         ?string $manageUrl = null,
     ): bool {
         // 1. Read what is already on record, and rank the move it would make.
-        $storedProvider = BillingProvider::fromWire($this->stringAttribute($team, 'plan_provider'));
-        $storedPlan = $this->stringAttribute($team, 'plan');
-        $storedEventAt = $this->storedEventAt($team);
+        $storedProvider = BillingProvider::fromWire($this->stringAttribute($billable, 'plan_provider'));
+        $storedPlan = $this->stringAttribute($billable, 'plan');
+        $storedEventAt = $this->storedEventAt($billable);
         $tierOrder = $this->tierOrder();
         $direction = $this->direction($plan, $storedPlan, $tierOrder);
 
         $context = [
-            'team_id' => $team->getKey(),
+            'billable_id' => $billable->getKey(),
             'stored_provider' => $storedProvider->value,
             'incoming_provider' => $provider->value,
             'stored_event_at' => $storedEventAt?->toIso8601String(),
@@ -182,7 +225,7 @@ class WriteTeamEntitlement implements WritesTeamEntitlement
         // loss arriving through a different column.
         if ($storedProvider === $provider
             && $this->isSameInstantAsStored($eventAt, $storedEventAt)
-            && $this->takesAccessAway($direction, $status, $team)
+            && $this->reducesAccess($direction, $status, $billable)
         ) {
             $this->logDrop('same-instant revocation', $context);
 
@@ -194,8 +237,26 @@ class WriteTeamEntitlement implements WritesTeamEntitlement
         // published catalogue cannot rank counts as revocation for the same
         // reason: an unprovable downgrade applied cross-rail is a revocation
         // with better manners.
-        if ($storedProvider !== $provider && $this->revokes($direction)) {
-            $this->logDrop('cross-rail revocation', $context);
+        //
+        // The predicate is {@see takesAccessAway()} and not the tier-only
+        // {@see revokes()}, which is the same correction rule 1b already
+        // carries: access leaves through two columns and the tier is one of
+        // them. Ranked on the tier alone, a cross-rail claim carrying the SAME
+        // tier on a status that no longer grants read as no change, so it
+        // passed here, and it passed rule 2b as well whenever the rail was
+        // speaking for itself, which is the standing rule 2b exists to honour.
+        // The write then put a lapsed status over a rail that is still billing
+        // and every reader gating on `plan_status` cut off a paying customer.
+        if ($storedProvider !== $provider && $this->takesAccessAway($direction, $status, $billable)) {
+            // One line, not two, and which one depends on WHY the direction
+            // could not be proven. An operator whose only config gap is the
+            // unpublished catalogue needs the key named; the generic drop line
+            // would send them looking for a rail problem that is not there.
+            if ($direction === self::DIRECTION_NO_ORDER) {
+                $this->warnUndecidableTierOrder($context);
+            } else {
+                $this->logDrop('cross-rail revocation', $context);
+            }
 
             return false;
         }
@@ -203,15 +264,16 @@ class WriteTeamEntitlement implements WritesTeamEntitlement
         // 3b. RULE 2b, a PROJECTION may not take over the record of a rail that
         // is still granting.
         //
-        // Rule 2 only stops a cross-rail REVOCATION, so a cross-rail write
-        // carrying the SAME tier passed and step 5 below then rewrote
-        // `plan_provider` unconditionally. The damage lands one step later, which
-        // is what makes it hard to see: with the record now naming the new rail,
-        // that rail's next revocation is SAME-rail, so rule 2 can no longer see
-        // it and rule 1 lets it through. A team billed by one store, still
-        // holding an uncancelled subscription on another rail, could have its
-        // provenance moved by one ordinary renewal event and then be revoked to
-        // free by the cancellation of the rail that was never paying it.
+        // Rule 2 only stops a cross-rail write that takes access away, so a
+        // cross-rail write carrying the SAME tier on a status that STILL grants
+        // passed and step 5 below then rewrote `plan_provider` unconditionally.
+        // The damage lands one step later, which is what makes it hard to see:
+        // with the record now naming the new rail, that rail's next revocation
+        // is SAME-rail, so rule 2 can no longer see it and rule 1 lets it
+        // through. A billable paid up on one store, still holding an uncancelled
+        // subscription on another rail, could have its provenance moved by one
+        // ordinary renewal event and then be revoked by the cancellation of the
+        // rail that was never paying it.
         //
         // The test is the WRITER's standing, and getting there took one wrong
         // turn worth recording. This guard was first written as a blanket
@@ -241,11 +303,12 @@ class WriteTeamEntitlement implements WritesTeamEntitlement
         //
         // The status half stays: {@see BillingProvider::grants()} is a per-RAIL
         // table, true for every real rail, so gating on it alone would drop a
-        // genuine purchase from a team whose LAPSED record on another rail still
-        // names the same tier, and the customer would pay and receive nothing.
+        // genuine purchase from a billable whose LAPSED record on another rail
+        // still names the same tier, and the customer would pay and receive
+        // nothing.
         if ($storedProvider !== $provider
             && $storedProvider->grants()
-            && $this->storedStatusStillGrants($team)
+            && $this->storedStatusStillGrants($billable)
             && ! $authoritative
         ) {
             $this->logDrop('projected cross-rail takeover', $context);
@@ -255,18 +318,20 @@ class WriteTeamEntitlement implements WritesTeamEntitlement
 
         // 4. A second rail claiming a customer the first rail is still billing
         // means somebody is paying twice. The write lands, but it cannot land
-        // quietly. Which of the two lines is right depends on whether rule 2
-        // was able to answer at all.
+        // quietly.
+        //
+        // This used to fork here, warning instead that the tier order was
+        // unpublished and the guard therefore switched off. That line has moved
+        // to the drop at rule 2, because the guard is no longer switched off: an
+        // unpublished order now REFUSES a cross-rail write against a held tier,
+        // and the only writes that still reach this point with no order
+        // published are the ones that had nothing to compare against anyway.
         if ($storedProvider !== $provider && $storedProvider->grants()) {
-            if ($tierOrder === []) {
-                $this->warnUndecidableTierOrder($context);
-            } else {
-                $this->warnCrossRailGrant($context);
-            }
+            $this->warnCrossRailGrant($context);
         }
 
         // 5. Persist the claim plus the provenance the next write reasons about.
-        $team->forceFill([
+        $billable->forceFill([
             'plan' => $plan,
             'plan_status' => $status->value,
             'plan_provider' => $provider->value,
@@ -316,7 +381,7 @@ class WriteTeamEntitlement implements WritesTeamEntitlement
     }
 
     /**
-     * Whether the STATUS already on record is one that entitles the team.
+     * Whether the STATUS already on record is one that entitles the billable.
      *
      * Distinct from {@see BillingProvider::grants()}, which answers "is this a
      * real billing rail" for every rail alive. This answers "is that rail
@@ -324,9 +389,9 @@ class WriteTeamEntitlement implements WritesTeamEntitlement
      * stored record that has lapsed is not an entitlement another rail can take
      * over, it is a slot another rail can fill.
      */
-    protected function storedStatusStillGrants(Model $team): bool
+    protected function storedStatusStillGrants(Model $billable): bool
     {
-        return PlanStatus::fromWire($this->stringAttribute($team, 'plan_status'))->grants();
+        return PlanStatus::fromWire($this->stringAttribute($billable, 'plan_status'))->grants();
     }
 
     /**
@@ -337,6 +402,15 @@ class WriteTeamEntitlement implements WritesTeamEntitlement
      * downgrade" has to mean exactly one thing: two definitions of it would
      * eventually disagree, and the disagreement would be a revocation.
      *
+     * An incoming null is a rail saying nothing is owed, and it ranks BELOW
+     * every tier the catalogue names rather than off the ladder: a revocation is
+     * not a maybe. A STORED null is the other way round, off the ladder
+     * entirely, because there is nothing on record for the write to take away.
+     * Same absence, two different facts, which is why one direction label could
+     * not serve both.
+     *
+     * @param  string|null  $plan  The tier the rail says is owed, or null for a
+     *                             rail saying nothing is owed.
      * @param  list<string>  $tierOrder  The published catalogue, cheapest first.
      * @return self::DIRECTION_* One of the five labels above and nothing else.
      *                           Declared as the closed set rather than as
@@ -346,23 +420,45 @@ class WriteTeamEntitlement implements WritesTeamEntitlement
      *                           static error rather than an uncaught exception on
      *                           a payment path.
      */
-    protected function direction(string $plan, ?string $storedPlan, array $tierOrder): string
+    protected function direction(?string $plan, ?string $storedPlan, array $tierOrder): string
     {
-        // No catalogue at all: nothing can be ranked, and on a fresh install
-        // that is the normal state rather than a config error.
-        if ($tierOrder === []) {
-            return self::DIRECTION_INCOMPARABLE;
+        // 1. Nothing on record: a write cannot take away what was never
+        //    granted. FIRST, because this is the branch that carries the
+        //    fresh-install argument, and the order used to be the other way
+        //    round.
+        if ($storedPlan === null) {
+            return self::DIRECTION_NOTHING_STORED;
         }
 
-        // Nothing on record: a write cannot take away what was never granted.
-        if ($storedPlan === null) {
-            return self::DIRECTION_INCOMPARABLE;
+        // 2. A tier is held and no catalogue is published, so the comparison
+        //    cannot be made. This branch used to fail OPEN, on the argument
+        //    that an unpublished catalogue is the normal state of a fresh
+        //    install rather than a config error. The argument was sound and it
+        //    belongs to branch 1: a fresh install holds no tier. Subtract that
+        //    and what is left is a billable that ALREADY holds a tier on this
+        //    package's SHIPPED DEFAULT of an empty `tier_order`, which is the
+        //    one state where failing open costs a payer the tier they hold. So
+        //    it fails closed, and {@see self::warnUndecidableTierOrder()} names
+        //    the key that would let the write be ranked instead of refused.
+        if ($tierOrder === []) {
+            return self::DIRECTION_NO_ORDER;
+        }
+
+        $stored = $this->tierRank($storedPlan, $tierOrder);
+
+        if ($stored === null) {
+            return self::DIRECTION_UNKNOWN;
+        }
+
+        // 3. A rail saying nothing is owed ranks BELOW every tier the catalogue
+        //    names, so a revocation always reads as a downgrade.
+        if ($plan === null) {
+            return self::DIRECTION_DOWNGRADE;
         }
 
         $incoming = $this->tierRank($plan, $tierOrder);
-        $stored = $this->tierRank($storedPlan, $tierOrder);
 
-        if ($incoming === null || $stored === null) {
+        if ($incoming === null) {
             return self::DIRECTION_UNKNOWN;
         }
 
@@ -383,10 +479,11 @@ class WriteTeamEntitlement implements WritesTeamEntitlement
      * customer loses a tier they paid for; reading it as a revocation only
      * delays a legitimate change until an operator sees the log.
      *
-     * `incomparable` is on the other side of that line, and the asymmetry is
-     * the same one read from the other end: there is nothing on record for the
-     * write to take away, so refusing it could only withhold a tier somebody
-     * has already paid for.
+     * `nothing-stored` is the one absence that is NOT grouped with them, for the
+     * reason its own constant records: the asymmetry above is about what the
+     * customer stands to lose, and a billable holding no tier stands to lose
+     * nothing. Grouping it here would have rule 2 refuse the first purchase of
+     * every billable whose plan column is null.
      *
      * @param  self::DIRECTION_*  $direction  The closed set, so the `match`
      *                                        below is checked for
@@ -396,13 +493,14 @@ class WriteTeamEntitlement implements WritesTeamEntitlement
     protected function revokes(string $direction): bool
     {
         return match ($direction) {
-            self::DIRECTION_DOWNGRADE, self::DIRECTION_UNKNOWN => true,
-            self::DIRECTION_UPGRADE, self::DIRECTION_SAME, self::DIRECTION_INCOMPARABLE => false,
+            self::DIRECTION_DOWNGRADE, self::DIRECTION_UNKNOWN, self::DIRECTION_NO_ORDER => true,
+            self::DIRECTION_UPGRADE, self::DIRECTION_SAME, self::DIRECTION_NOTHING_STORED => false,
         };
     }
 
     /**
-     * Whether a write would leave the team holding LESS access than it has now.
+     * Whether a write would leave the billable holding LESS access than it has
+     * now.
      *
      * A tier can be taken away through either of two columns, and {@see
      * revokes()} only reads one of them. A same-rail pair stamped to the same
@@ -412,23 +510,66 @@ class WriteTeamEntitlement implements WritesTeamEntitlement
      * could not see it. Access is what is being arbitrated, so the tie-break
      * asks about access.
      *
-     * Deliberately NOT folded into `revokes()`, which rule 2 also uses. Rule 2
-     * asks a different question, whether a rail may revoke what another rail
-     * granted, and a cross-rail status change is already answered there by rule
-     * 2b's standing test. Widening the shared predicate would have moved rule
-     * 2's behaviour as a side effect of fixing rule 1b's.
+     * Rules 1b AND 2 both ask this, and the wrong turn worth recording is that
+     * they did not. This predicate was introduced for rule 1b alone, with a
+     * docblock arguing that rule 2 asks a different question and that a
+     * cross-rail status change is already answered by rule 2b's standing test.
+     * The second half of that was false: rule 2b honours an AUTHORITATIVE claim
+     * by design, so a rail speaking for itself, carrying the tier already on
+     * record on a status that no longer grants, passed rule 2 as `same` and
+     * passed rule 2b as authoritative, and wrote a lapsed status over a rail
+     * that was still billing. Both rules arbitrate access, so both ask about
+     * access. {@see revokes()} stays as the tier-only half used inside here and
+     * nowhere else, because "would this move the tier down" is still a distinct
+     * question the log and this predicate both need answered separately.
      *
      * @param  self::DIRECTION_*  $direction  Where this write moves the tier.
      * @param  PlanStatus  $status  The status this write would leave behind.
-     * @param  Model  $team  The team, read for the status already on record.
+     * @param  Model  $billable  The subject, read for the status on record.
      */
-    protected function takesAccessAway(string $direction, PlanStatus $status, Model $team): bool
+    protected function takesAccessAway(string $direction, PlanStatus $status, Model $billable): bool
     {
-        if ($this->revokes($direction)) {
-            return true;
-        }
+        return $this->revokes($direction) || $this->statusRevokes($status, $billable);
+    }
 
-        return ! $status->grants() && $this->storedStatusStillGrants($team);
+    /**
+     * Rule 1b's question: would this write reduce access, as far as anything here
+     * can actually tell?
+     *
+     * The same two axes as {@see self::takesAccessAway()} with ONE difference, and
+     * the difference is the whole reason both exist. Rule 2 asks whether a rail may
+     * revoke what ANOTHER rail granted and refuses a claim it cannot rank, so an
+     * unpublished catalogue counts against the write. Rule 1b asks only whether
+     * THIS write takes something away, and an unpublished catalogue is not an
+     * answer to that: with no order published the tier axis cannot speak at all, so
+     * only the status axis decides.
+     *
+     * Collapsing the two into one predicate is a mistake I made twice while
+     * getting here. Sharing it and counting `no-order` dropped every same-rail tie
+     * against a held tier on the SHIPPED DEFAULT, which is the paid upgrade rule 1b
+     * exists to keep. Sharing it and NOT counting `no-order` disarmed rule 2's
+     * deliberate fail-closed on the same default. Two callers wanted opposite
+     * answers from one question, which is the same shape as the direction labels
+     * this class has already had to split twice.
+     */
+    protected function reducesAccess(string $direction, PlanStatus $status, Model $billable): bool
+    {
+        $tierAxisSpeaks = $direction !== self::DIRECTION_NO_ORDER;
+
+        return ($tierAxisSpeaks && $this->revokes($direction))
+            || $this->statusRevokes($status, $billable);
+    }
+
+    /**
+     * The status axis, shared by both rules: this write leaves the billable on a
+     * status that no longer grants, where the record still does.
+     *
+     * Needs no catalogue, which is why it is the half that still answers when the
+     * tier axis cannot.
+     */
+    protected function statusRevokes(PlanStatus $status, Model $billable): bool
+    {
+        return ! $status->grants() && $this->storedStatusStillGrants($billable);
     }
 
     /**
@@ -492,9 +633,9 @@ class WriteTeamEntitlement implements WritesTeamEntitlement
      * Anything that is neither a backed enum nor a non-empty string reads as
      * absent, which is the direction that cannot revoke.
      */
-    protected function stringAttribute(Model $team, string $attribute): ?string
+    protected function stringAttribute(Model $billable, string $attribute): ?string
     {
-        $value = $team->getAttribute($attribute);
+        $value = $billable->getAttribute($attribute);
 
         if ($value instanceof BackedEnum) {
             $value = $value->value;
@@ -518,9 +659,9 @@ class WriteTeamEntitlement implements WritesTeamEntitlement
      * this action wrote itself cannot be unparseable without the row being
      * corrupt.
      */
-    protected function storedEventAt(Model $team): ?CarbonInterface
+    protected function storedEventAt(Model $billable): ?CarbonInterface
     {
-        $stored = $team->getAttribute('plan_source_event_at');
+        $stored = $billable->getAttribute('plan_source_event_at');
 
         if ($stored instanceof DateTimeInterface) {
             return Carbon::instance($stored);
@@ -574,14 +715,16 @@ class WriteTeamEntitlement implements WritesTeamEntitlement
     }
 
     /**
-     * Report that rule 2 could not be evaluated because no tier order is
-     * published, and that the write was therefore allowed through.
+     * Report that rule 2 refused a cross-rail write because no tier order is
+     * published and the two tiers therefore could not be compared.
      *
-     * This is the honest version of a protection that is switched off. The
-     * cross-rail downgrade guard needs an order to compare against, so without
-     * one it cannot refuse anything, and an operator who sees rails changing
-     * hands on a customer deserves to be told which config key would restore
-     * the guard rather than to assume it is working.
+     * This message once reported the opposite outcome, a protection switched
+     * off and the write allowed through, and it is the same sentence because it
+     * carries the same operator-facing fact: the only config key that decides
+     * this is unpublished. What changed is which side of the decision an
+     * unpublished key lands on. An operator seeing a customer's rails change
+     * hands deserves to be told which key governs it, whether the guard let the
+     * write through or refused it.
      *
      * @param  array<string, mixed>  $context
      */
@@ -589,7 +732,8 @@ class WriteTeamEntitlement implements WritesTeamEntitlement
     {
         Log::warning(
             'Entitlement claimed by a second billing rail and the tiers could not be compared; '
-            . 'publish magic-starter.billing.tier_order to enable the cross-rail downgrade guard.',
+            . 'the write was dropped. Publish magic-starter.billing.tier_order so a cross-rail '
+            . 'claim can be ranked rather than refused.',
             $context,
         );
     }

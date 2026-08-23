@@ -259,23 +259,43 @@ return [
     | between rails writing the same tier. Your own rail (Cashier, a store SDK,
     | an operator command) feeds it.
     |
+    | 'billable' is WHICH KIND of thing you bill, and it accepts exactly two
+    | values: 'user' or 'team'. It is a closed token rather than a model class
+    | name deliberately, because the package has to know what kind of subject it
+    | is writing to and a class name cannot say (an App\Models\Account could be
+    | either). The class itself still comes from the 'models' block above, so a
+    | published App\Models\Team or your own user model is picked up unchanged.
+    |
+    | The default is 'user' because the teams feature ships OFF: on a fresh
+    | install there is no team to bill, not even a personal one. Selecting 'team'
+    | therefore REQUIRES the teams feature, and the provider refuses to boot
+    | rather than letting an entitlement be written to a subject that does not
+    | exist. Any other PRESENT value, including an explicit null, is refused at
+    | boot for the same reason. Leaving the key out entirely is not: an older
+    | published config has no key at all, and 'user' is the answer for it.
+    |
     | 'tier_order' is your plan catalogue, CHEAPEST FIRST. The tier vocabulary
     | belongs to your application, so this package never guesses it; list your
     | own plan ids in the order a customer upgrades through them.
     |
-    | WritesTeamEntitlement uses this list for exactly one decision: whether an
+    | WritesEntitlement uses this list for exactly one decision: whether an
     | incoming write from a DIFFERENT billing rail than the one on record would
-    | move the team DOWN a tier. Such a write is dropped, because a rail may
-    | only revoke what it granted.
+    | leave the billable holding LESS than it holds now. Such a write is
+    | dropped, because a rail may only revoke what it granted.
     |
-    | Leaving the list empty makes that comparison undecidable, and the action
-    | then treats the write as a non-downgrade and logs a warning naming this
-    | key. Refusing to compare leaves a customer entitled; guessing could revoke
-    | a customer who is paying, so the guard fails open and says so.
+    | Leaving the list empty makes that comparison undecidable, and an
+    | undecidable cross-rail write against a tier the billable HOLDS is REFUSED,
+    | with a warning naming this key. A billable holding nothing is a separate
+    | case and is unaffected: there is no tier to take away, so such a write
+    | applies whether or not this list is published. So the empty default is
+    | safe for a fresh install and is not safe once you sell something on more
+    | than one rail: publish the order then.
     |
     */
 
     'billing' => [
+        'billable' => 'user',
+
         'tier_order' => [
             // 'free',
             // 'pro',

@@ -2,9 +2,11 @@
 
 namespace FlutterSdk\MagicStarter\Console;
 
+use Carbon\CarbonInterface;
 use FlutterSdk\MagicStarter\MagicStarterServiceProvider;
 use Illuminate\Console\Command;
 use Illuminate\Filesystem\Filesystem;
+use Illuminate\Support\Carbon;
 use Symfony\Component\Console\Attribute\AsCommand;
 
 use function Laravel\Prompts\confirm;
@@ -115,13 +117,17 @@ class InstallCommand extends Command
         'timezones' => [
             'add_timezone_to_users_table.php',
         ],
-        // Entitlement provenance lands on the teams table, so this migration is
-        // only meaningful alongside the teams feature. It is listed here rather
-        // than in CONDITIONAL_MIGRATIONS because the migration guards itself on
-        // Schema::hasTable('teams'): a billing-without-teams selection is a
-        // no-op rather than a broken `migrate`.
+        // Entitlement provenance lands on whichever table
+        // `magic-starter.billing.billable` names, which is `users` by default
+        // and `teams` for an application that bills a team. So this migration
+        // needs no companion feature and is NOT in CONDITIONAL_MIGRATIONS: the
+        // users table is a core migration, and a team billable already requires
+        // the teams feature (the provider refuses to boot otherwise). It is
+        // declared LAST in this array on purpose: publishMigrations() honours
+        // this declaration order, so the table it alters is always created by an
+        // earlier timestamp. It throws rather than skipping when it is not.
         'billing' => [
-            'add_entitlement_provenance_to_teams_table.php',
+            'add_entitlement_provenance_to_billable_table.php',
         ],
     ];
 
@@ -414,9 +420,16 @@ class InstallCommand extends Command
     {
         $files = self::CORE_MIGRATIONS;
 
-        // Add feature-specific migrations.
-        foreach ($features as $feature) {
-            $files = array_merge($files, self::FEATURE_MIGRATIONS[$feature] ?? []);
+        // Add feature-specific migrations, in the order THIS class declares them
+        // rather than the order the operator named the features in. The published
+        // timestamp is the run order, and one of these migrations alters a table
+        // another one creates: `--features=billing,teams` would otherwise publish
+        // the entitlement provenance ahead of the teams table it lands on, and
+        // that migration now throws on an absent table instead of skipping it.
+        foreach (self::FEATURE_MIGRATIONS as $feature => $migrations) {
+            if (in_array($feature, $features, true)) {
+                $files = array_merge($files, $migrations);
+            }
         }
 
         // Add conditional migrations where ALL required features are selected.
@@ -782,9 +795,31 @@ class InstallCommand extends Command
             }
         }
 
-        $timestamp = now()->format('Y_m_d');
-        $sequence = str_pad((string) ($index + 1), 6, '0', STR_PAD_LEFT);
-        $destination = database_path("migrations/{$timestamp}_{$sequence}_{$filename}");
+        // The stamp has to order files WITHIN a run and ACROSS runs, and getting
+        // there took two wrong turns worth recording, because the failure it
+        // guards is a hard one: the provenance migration now throws on an absent
+        // table, so a provenance file sorting before `create_teams_table` is a
+        // failed `migrate` rather than the silent no-op it used to be.
+        //
+        // The first shape was a date plus this batch's position, and the position
+        // restarts at zero every invocation: `--features=teams` and a later
+        // same-day `--features=billing` both handed index 3 to their respective
+        // files, and `add_entitlement...` sorts first alphabetically.
+        //
+        // The second shape added `Y_m_d_His` and then an `$index` suffix, and
+        // that suffix was DEAD. It and the seconds offset are two encodings of
+        // the same number, so two files with equal indices got the same
+        // timestamp and the same suffix, and files with different indices were
+        // already separated by the offset. It closed nothing while reading as if
+        // it did.
+        //
+        // What actually closes it is anchoring the base on what this package has
+        // ALREADY published, so a second run cannot start where the first one
+        // ended. The offset then orders the run's own files by declaration order.
+        $timestamp = $this->migrationTimestampBase()
+            ->addSeconds($index)
+            ->format('Y_m_d_His');
+        $destination = database_path("migrations/{$timestamp}_{$filename}");
 
         $source = $this->migrationSourcePath() . "/{$filename}";
 
@@ -835,5 +870,43 @@ class InstallCommand extends Command
     private function migrationSourcePath(): string
     {
         return __DIR__ . '/../../database/migrations';
+    }
+
+    /**
+     * The second this run's migration stamps start from.
+     *
+     * `now()`, unless this package has already published a migration stamped at
+     * or after it, in which case one second later than the latest of those. That
+     * is what makes two installs orderable: without it a second run restarts at
+     * the current second and can hand a file a stamp that sorts before a file the
+     * first run published, and the provenance migration sorting before the table
+     * it alters is a failed `migrate` rather than a cosmetic problem.
+     *
+     * Only this package's own filenames are consulted, so an application's
+     * unrelated migrations cannot push the base forward.
+     */
+    private function migrationTimestampBase(): CarbonInterface
+    {
+        $latest = null;
+
+        foreach (glob($this->migrationSourcePath() . '/*.php') ?: [] as $source) {
+            foreach (glob(database_path('migrations/*_' . basename($source))) ?: [] as $published) {
+                if (preg_match('/^(\d{4}_\d{2}_\d{2}_\d{6})_/', basename($published), $matches) !== 1) {
+                    continue;
+                }
+
+                $stamp = Carbon::createFromFormat('Y_m_d_His', $matches[1]);
+
+                if ($stamp instanceof Carbon && ($latest === null || $stamp->greaterThan($latest))) {
+                    $latest = $stamp;
+                }
+            }
+        }
+
+        $now = now();
+
+        return $latest !== null && $latest->greaterThanOrEqualTo($now)
+            ? $latest->addSecond()
+            : $now;
     }
 }

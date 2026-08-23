@@ -131,6 +131,41 @@ class MagicStarter
     }
 
     /**
+     * Resolve the model class an entitlement is written to.
+     *
+     * The billable subject is a CLOSED TOKEN, `'user'` or `'team'`, never a
+     * model class name: the package has to know WHAT KIND of thing it bills, and
+     * a class name cannot answer that, since a consumer's `App\Models\Account`
+     * could be either. So this is a two-arm match over the accessors above
+     * rather than a resolution mechanism of its own, and a consumer that
+     * published its own model keeps being auto-detected exactly as before.
+     *
+     * The literal default mirrors the shipped config and is load-bearing rather
+     * than decorative. `mergeConfigFrom` is a SHALLOW `array_merge` (measured in
+     * Illuminate\Support\ServiceProvider, not assumed), so a consumer that
+     * published its config before this key existed replaces the whole `billing`
+     * array with a copy carrying only `tier_order`. `config()` then finds no such
+     * path, and this default answers instead of a null reaching the match.
+     *
+     * @return class-string
+     *
+     * @throws RuntimeException
+     */
+    public static function billableModel(): string
+    {
+        $subject = config('magic-starter.billing.billable', 'user');
+
+        return match ($subject) {
+            'user' => static::userModel(),
+            'team' => static::teamModel(),
+            default => throw new RuntimeException(sprintf(
+                "Unsupported billable subject [%s]. Set [magic-starter.billing.billable] to 'user' or 'team'.",
+                is_string($subject) ? $subject : get_debug_type($subject),
+            )),
+        };
+    }
+
+    /**
      * Resolve a package model to its App\Models equivalent if published.
      *
      * When the configured class is one of the package's built-in models,

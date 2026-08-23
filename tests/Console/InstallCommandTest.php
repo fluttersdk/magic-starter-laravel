@@ -84,6 +84,54 @@ final class InstallCommandTest extends TestCase
         }
     }
 
+    /**
+     * A second install run cannot stamp a migration ahead of the first run's.
+     *
+     * This is the invariant the provenance migration turned from cosmetic into
+     * fatal. It resolves its table from the declared billable and THROWS when
+     * that table is absent, so if `add_entitlement_provenance_to_billable_table`
+     * ever sorts before `create_teams_table`, a team-billing adopter's `migrate`
+     * fails outright rather than silently no-opping as it used to.
+     *
+     * Installing in two passes is what exposed it, and two earlier stamp shapes
+     * both got it wrong: a date plus the batch position handed both runs the same
+     * number because the position restarts, and adding a per-file seconds offset
+     * plus an index SUFFIX changed nothing, because the suffix and the offset
+     * encode the same index. Only anchoring the base on what the package has
+     * already published orders the two runs, and only this test would notice if
+     * that anchoring were removed again.
+     */
+    public function test_a_second_install_run_stamps_after_the_first(): void
+    {
+        $this->artisan('magic-starter:install', [
+            '--features' => ['teams'],
+        ])->assertExitCode(0);
+
+        $teamsTable = glob(database_path('migrations/*_create_teams_table.php')) ?: [];
+        $this->assertNotEmpty($teamsTable, 'The first run must publish create_teams_table.');
+
+        $this->artisan('magic-starter:install', [
+            '--features' => ['billing'],
+        ])->assertExitCode(0);
+
+        $provenance = glob(
+            database_path('migrations/*_add_entitlement_provenance_to_billable_table.php'),
+        ) ?: [];
+        $this->assertNotEmpty($provenance, 'The second run must publish the provenance migration.');
+
+        // Compared as filenames, because that is exactly what Laravel's migrator
+        // sorts on. Asserting the parsed timestamps instead would pass a pair
+        // whose stamps tie, which is the bug both earlier shapes had.
+        $this->assertTrue(
+            basename($provenance[0]) > basename($teamsTable[0]),
+            sprintf(
+                'The provenance migration [%s] must sort after [%s], or migrate runs the ALTER first.',
+                basename($provenance[0]),
+                basename($teamsTable[0]),
+            ),
+        );
+    }
+
     public function test_without_teams_skips_team_migrations(): void
     {
         $this->artisan('magic-starter:install', [
