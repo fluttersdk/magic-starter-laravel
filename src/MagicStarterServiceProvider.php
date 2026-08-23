@@ -3,14 +3,22 @@
 namespace FlutterSdk\MagicStarter;
 
 use FlutterSdk\MagicStarter\Console\InstallCommand;
+use FlutterSdk\MagicStarter\Console\ReconcileBillingEntitlements;
 use Illuminate\Auth\Events\Registered;
 use Illuminate\Auth\Notifications\ResetPassword;
 use Illuminate\Cache\RateLimiting\Limit;
+// Aliased because this file already imports the `Event` FACADE below, and the
+// scheduler's Event is a different thing entirely: one dispatches listeners, the
+// other is a single entry on the schedule.
+use Illuminate\Console\Scheduling\Event as ScheduledEvent;
+use Illuminate\Console\Scheduling\Schedule;
 use Illuminate\Notifications\Events\NotificationSending;
 use Illuminate\Support\Facades\Event;
 use Illuminate\Support\Facades\Gate;
+use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\RateLimiter;
 use Illuminate\Support\ServiceProvider;
+use Laravel\Cashier\Cashier;
 use Laravel\Sanctum\Sanctum;
 use RuntimeException;
 
@@ -46,7 +54,14 @@ class MagicStarterServiceProvider extends ServiceProvider
         $this->app->bind(Contracts\DeletesUsers::class, Actions\DeleteUser::class);
         $this->app->bind(Contracts\CreatesTeams::class, Actions\CreateTeam::class);
         $this->app->bind(Contracts\UpdatesTeams::class, Actions\UpdateTeam::class);
-        $this->app->bind(Contracts\DeletesTeams::class, Actions\DeleteTeam::class);
+        // Bound to the store-guarded action rather than the plain one. The
+        // guard is unconditional like every binding above it: it reads
+        // `plan_provider`/`plan_status` through Eloquent's own attribute
+        // access, which answers null on a table that never got the
+        // provenance columns (billing feature off, or `billing.billable`
+        // pointed elsewhere), so the extra check is a safe no-op there and
+        // a real one only where the schema and the config both say it should be.
+        $this->app->bind(Contracts\DeletesTeams::class, Actions\StoreSubscriptionGuardedDeleteTeam::class);
         $this->app->bind(Contracts\AddsTeamMembers::class, Actions\AddTeamMember::class);
         $this->app->bind(Contracts\RemovesTeamMembers::class, Actions\RemoveTeamMember::class);
         $this->app->bind(Contracts\InvitesTeamMembers::class, Actions\InviteTeamMember::class);
@@ -65,6 +80,48 @@ class MagicStarterServiceProvider extends ServiceProvider
         // contract. A consumer has to be able to bind its own entitlement
         // writer before it decides to switch billing on.
         $this->app->bind(Contracts\WritesEntitlement::class, Actions\WriteEntitlement::class);
+
+        // Cashier is wired HERE and never in boot(), because boot() is already
+        // too late: CashierServiceProvider::boot() registers the stripe/webhook
+        // route under config('cashier.path') the moment it runs, and every
+        // provider's register() runs before any provider's boot(), so this is
+        // the only phase that can still refuse those routes (maintainer
+        // confirmed, laravel/cashier#1739). The package serves the webhook
+        // itself, under a key of its own, so Cashier's copy would be a second
+        // endpoint on the same events.
+        //
+        // The gate is the billing feature and not the mere presence of Cashier,
+        // because the require is unconditional (see the Billing block in
+        // config/magic-starter.php): an adopter who installs this package and
+        // drives Cashier directly keeps Cashier's own routes untouched.
+        //
+        // The useXModel() family belongs in this phase for the same reason, and
+        // the maintainer's answer on #1739 covers both: Cashier resolves these
+        // statics from its own boot() onwards, so register() is the last phase
+        // that still lands.
+        //
+        // The two subscription calls hand over a CLASS NAME the package owns
+        // outright, and neither instantiates a model nor reads the billable
+        // subject. useCustomerModel() is the one that DOES resolve the billable,
+        // which is why the guard runs beside it here rather than only in boot():
+        // by boot() Cashier has already been handed a model, so a refusal there
+        // would come after the wrong one was accepted.
+        //
+        // Wiring it is not optional now that the Stripe rail ships. Cashier's
+        // findBillable() reads this static, and left at its 'App\Models\User'
+        // default it searches the users table on a team-billing application and
+        // matches nobody: every delivery resolves no customer, returns 200, and
+        // writes no entitlement.
+        if (Features::hasBillingFeatures()) {
+            Cashier::ignoreRoutes();
+
+            Cashier::useSubscriptionModel(Models\Subscription::class);
+            Cashier::useSubscriptionItemModel(Models\SubscriptionItem::class);
+
+            $this->guardBillableSubject();
+
+            Cashier::useCustomerModel(MagicStarter::billableModel());
+        }
 
         // OneSignal SDK client singleton (resolved lazily, only when injected).
         $this->app->singleton(\onesignal\client\api\DefaultApi::class, function (): \onesignal\client\api\DefaultApi {
@@ -124,6 +181,48 @@ class MagicStarterServiceProvider extends ServiceProvider
                 Listeners\CreatePersonalTeamListener::class,
             );
         }
+
+        // 3.4. Register the billing WRITE gate when the billing feature is on.
+        //
+        // A NAMED ABILITY and never `Gate::policy(MagicStarter::billableModel(),
+        // ...)`, and the difference is load-bearing rather than stylistic. The
+        // policy map is keyed by model class and `Gate::policy()` is a plain
+        // assignment, so under `billing.billable = 'team'` the billable model IS
+        // the team model and a second registration would REPLACE the entry made
+        // three lines above: either team member management, invitations and
+        // deletion go unguarded, or every billing write is refused. Nothing on
+        // the billing side could observe it, because the billing ability would
+        // keep answering correctly the whole time.
+        //
+        // Gated on the feature and defined AFTER the teams block on purpose: the
+        // coexistence this comment defends is only real when both are on, so the
+        // two registrations sit where a reader sees them together.
+        if (Features::hasBillingFeatures()) {
+            Gate::define('manageBilling', [Policies\BillingPolicy::class, 'manage']);
+
+            // 3.4b. Say ONCE that a configured store rail has no signing secret.
+            //
+            // Boot rather than per request, and a log line rather than a throw,
+            // because the proportion matters: the rail cannot work, and nothing
+            // else about the application is broken by it. A throw here would take
+            // artisan down with the web surface (see guardBillableSubject() for
+            // what that costs), and a per-request warning would say the same
+            // thing once per delivery of an endpoint that is not even
+            // registered, since the route file withholds it on this exact
+            // condition.
+            $this->warnAboutHalfConfiguredStoreRail();
+
+            // 3.4c. Schedule the sweep that heals a dropped webhook.
+            //
+            // Registered by the PACKAGE rather than left to the adopter, because
+            // a rail that only heals when somebody remembered to schedule
+            // something is a rail that does not heal, and the two failures it
+            // repairs are both silent: a dropped expiry is a paid tier held for
+            // free forever, and a dropped purchase is a paying customer stuck on
+            // the free tier with no self-serve way out.
+            $this->scheduleEntitlementReconciler();
+        }
+
         // 3.5. Auto-gate notification channels when notification feature is enabled.
         if (Features::hasNotificationFeatures()) {
             Event::listen(
@@ -163,6 +262,16 @@ class MagicStarterServiceProvider extends ServiceProvider
         // 4. Load package routes unless explicitly ignored.
         if (! MagicStarter::shouldIgnoreRoutes()) {
             $this->loadRoutesFrom(__DIR__ . '/routes/api.php');
+
+            // 4b. The vendor webhook routes, loaded from a SEPARATE file with a
+            // separate gate. Everything in api.php sits under
+            // `magic-starter.route_prefix`, which an adopter may move with a
+            // deploy; a webhook URL is registered in a vendor dashboard and
+            // cannot move at all, so it must not inherit that prefix. The file
+            // groups each rail under its own key and carries the reasoning.
+            if (Features::hasBillingFeatures()) {
+                $this->loadRoutesFrom(__DIR__ . '/routes/webhooks.php');
+            }
         }
 
         // 5. Console-only: publish config, migrations, and stubs.
@@ -170,6 +279,17 @@ class MagicStarterServiceProvider extends ServiceProvider
             $this->commands([
                 InstallCommand::class,
             ]);
+
+            // The reconciler is registered with the feature it belongs to, so an
+            // application that does not bill has no `billing:reconcile` in its
+            // artisan list at all. The schedule above runs it as a SEPARATE
+            // artisan process, which boots this provider again and reaches this
+            // same gate, so the two registrations cannot disagree.
+            if (Features::hasBillingFeatures()) {
+                $this->commands([
+                    ReconcileBillingEntitlements::class,
+                ]);
+            }
 
             $this->publishes([
                 __DIR__ . '/../config/magic-starter.php' => config_path('magic-starter.php'),
@@ -214,15 +334,19 @@ class MagicStarterServiceProvider extends ServiceProvider
      * would have nothing to land on. Saying so here costs one boot; saying it at
      * the first payment costs a customer their tier.
      *
-     * The phase is deliberate. Config is loaded before any provider registers,
-     * so both phases could read the token, and the choice is about ORDER of use
-     * instead: nothing in `register()` reads the subject, while this provider's
-     * own first model resolution (the teams gate's `Gate::policy`) happens
-     * further down this method, so a refusal at the top of `boot()` is strictly
-     * earlier than any use of it. A future reader in `register()` (Cashier
-     * requires `useCustomerModel()` there) has to carry the same guard beside
-     * it, because `boot()` would then be too late to stop the wrong model being
-     * handed over.
+     * CALLED FROM BOTH PHASES, and neither call is redundant. Config is loaded
+     * before any provider registers, so both phases can read the token, and what
+     * decides where the guard belongs is ORDER OF USE. In `boot()` the first use
+     * is the teams gate's `Gate::policy` further down this method, so a refusal
+     * at the top of it is strictly earlier. In `register()` the first use is
+     * `Cashier::useCustomerModel(MagicStarter::billableModel())`, which Cashier
+     * requires in that phase, and `boot()` would be too late to stop the wrong
+     * model being handed over. The `register()` call sits inside the billing
+     * gate with the reader it protects; this one covers every application that
+     * has teams and no billing at all.
+     *
+     * The method is idempotent by construction: it reads config and either
+     * throws or returns, so calling it twice costs two config reads.
      *
      * @throws RuntimeException
      */
@@ -276,6 +400,125 @@ class MagicStarterServiceProvider extends ServiceProvider
             . 'cannot run either.',
             Features::teams(),
         ));
+    }
+
+    /**
+     * Log, once per boot, that the store rail is configured without the secret
+     * that authenticates its deliveries.
+     *
+     * ERROR level rather than warning, and the distinction is the point: a
+     * warning is a decision not to act on something a rail said, and this is a
+     * rail that cannot say anything at all. The whole store surface is inert
+     * while it holds, and nothing else in the application will ever mention it.
+     *
+     * The `reason` is DISTINCT from the per-request `unconfigured_secret` the
+     * controller refuses a delivery with, deliberately. The two describe
+     * different failures: this one is a rail that was never registered, that one
+     * is a registered endpoint refusing a caller it cannot identify, which is
+     * what an adopter who configured nothing but the route still gets. A shared
+     * reason would make a boot-time misconfiguration indistinguishable from a
+     * forged delivery in the log.
+     *
+     * {@see StoreRailConfiguration::isMisconfigured()} is the one predicate
+     * behind this line, the route file's registration and the installer's
+     * refusal, so the three cannot drift into disagreeing about what a
+     * configured rail is.
+     */
+    private function warnAboutHalfConfiguredStoreRail(): void
+    {
+        if (! Support\StoreRailConfiguration::isMisconfigured()) {
+            return;
+        }
+
+        Log::error(
+            'The RevenueCat store rail is configured without a webhook signing secret, so its endpoint is '
+            . 'not registered and no store purchase can reach this application. Set REVENUECAT_WEBHOOK_SECRET '
+            . '(or [magic-starter.billing.revenuecat.webhook_secret]) to the secret from the RevenueCat '
+            . 'dashboard webhook integration.',
+            [
+                'reason' => 'store_rail_without_webhook_secret',
+                'path' => config('magic-starter.billing.revenuecat.path', 'webhooks/revenuecat'),
+            ],
+        );
+    }
+
+    /**
+     * Put `billing:reconcile` on the schedule, at the adopter's cadence.
+     *
+     * Attached through `callAfterResolving()` rather than from `$this->app->
+     * booted()`, so the scheduler is touched only by the processes that actually
+     * consult it (`schedule:run`, `schedule:list`, `schedule:work`) instead of
+     * being built on every web request for a task no web request runs.
+     *
+     * `withoutOverlapping()` is not boilerplate here: the sweep makes one network
+     * read per store subject, so it can outlive its own tick, and two of them
+     * would re-read the same subscriber and write the same row twice.
+     *
+     * `onOneServer()` IS NOT FLEET-WIDE PROTECTION ON EVERY CACHE STORE, and
+     * saying so is the whole reason this docblock exists. Laravel takes the
+     * once-per-fleet lock through the default cache store
+     * ({@see \Illuminate\Console\Scheduling\CacheSchedulingMutex::create()}), and
+     * both the `file` and the `array` store implement `LockProvider` LOCALLY: a
+     * file on that server's own disk, an array in that process's own memory. So
+     * on either of them every server acquires its own lock, every server runs its
+     * own sweep, and nothing raises or warns. An adopter who needs one sweep per
+     * fleet points the default cache at a shared store (redis, memcached,
+     * database, dynamodb); an adopter who does not gets one sweep per server,
+     * which costs one authoritative store read per subject per server.
+     */
+    private function scheduleEntitlementReconciler(): void
+    {
+        $this->callAfterResolving(Schedule::class, function (Schedule $schedule): void {
+            $this->applyReconcilerCadence(
+                $schedule->command(ReconcileBillingEntitlements::NAME)
+                    ->name(ReconcileBillingEntitlements::NAME)
+                    ->withoutOverlapping()
+                    ->onOneServer(),
+            );
+        });
+    }
+
+    /**
+     * Apply the configured cadence to the reconciler's schedule entry.
+     *
+     * DAILY BY DEFAULT, and the default is the only lever this package has over
+     * what the sweep costs. The application this rail was extracted from runs it
+     * hourly, which heals inside the window the damage arrives in; but the sweep
+     * makes one authoritative RevenueCat read per store subject per run, and this
+     * package registers the schedule for every adopter who switches billing on,
+     * including ones who never thought about the cadence. An hourly fleet walk is
+     * an API bill nobody agreed to, so the shipped value is the conservative one
+     * and an adopter selling mostly through the stores sets `hourly` themselves.
+     * Daily is still comfortably inside Stripe's roughly three-day abandonment
+     * window; what it can be a day behind is a store expiry.
+     *
+     * A word from the table below, or ANY cron expression, which is the escape
+     * hatch for a cadence no word names. An unrecognised word therefore falls to
+     * `cron()` and raises from `schedule:run` when it is not a valid expression,
+     * which is the loud failure; it is never quietly reinterpreted as the
+     * default. The one value that DOES read as the default is an absent, null or
+     * non-string key, because `mergeConfigFrom` is a shallow merge and an adopter
+     * who published the `billing` block before this key existed has no key at all.
+     */
+    private function applyReconcilerCadence(ScheduledEvent $event): void
+    {
+        $configured = config('magic-starter.billing.reconcile.cadence', 'daily');
+        $cadence = is_string($configured) ? trim($configured) : '';
+
+        match ($cadence) {
+            'everyMinute' => $event->everyMinute(),
+            'everyFiveMinutes' => $event->everyFiveMinutes(),
+            'everyTenMinutes' => $event->everyTenMinutes(),
+            'everyFifteenMinutes' => $event->everyFifteenMinutes(),
+            'everyThirtyMinutes' => $event->everyThirtyMinutes(),
+            'hourly' => $event->hourly(),
+            'everyTwoHours' => $event->everyTwoHours(),
+            'everySixHours' => $event->everySixHours(),
+            'twiceDaily' => $event->twiceDaily(),
+            'daily', '' => $event->daily(),
+            'weekly' => $event->weekly(),
+            default => $event->cron($cadence),
+        };
     }
 
     /**

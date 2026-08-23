@@ -185,6 +185,20 @@ All 14 features are opt-in. Enable them by uncommenting in `config/magic-starter
 
 ---
 
+## Billing
+
+The `billing` feature declares **what** you bill through `magic-starter.billing.billable`, a closed token that accepts `user` or `team`. Everything downstream resolves from it: the entitlement provenance columns, the Cashier customer columns, and the `subscriptions` foreign key all land on the table that token names, and the primary keys follow `magic-starter.use_uuids` like every other table the package ships.
+
+`laravel/cashier` is a hard requirement and the package registers it from `register()`: `Cashier::ignoreRoutes()` (the package serves its own webhook route under a key of its own) plus `Cashier::useSubscriptionModel()` and `Cashier::useSubscriptionItemModel()`, pointed at the package's UUID-optional subclasses.
+
+> [!WARNING]
+> **Do not run `php artisan vendor:publish --tag=cashier-migrations`.** Cashier's five migrations hardcode `Schema::table('users')`, `$table->id()` and `foreignId('user_id')`. On an application billing a team they put the Stripe customer columns on the wrong table; on any application using UUID primary keys they create a bigint `subscriptions` that the `subscription_items` child cannot reference. The package ships three replacements (`add_cashier_customer_columns_to_billable_table`, `create_subscriptions_table`, `create_subscription_items_table`) that resolve the table from `billing.billable` and the key type from `use_uuids`, with Cashier's two later meter columns folded into the items create. `magic-starter:install` publishes them in dependency order. Cashier's publish group still appears in `vendor:publish` output because `addPublishGroup()` is additive and Laravel exposes no way to remove one, so this is a rule the package can document and cannot enforce.
+
+> [!IMPORTANT]
+> **Upgrading from a release before `billing.billable` existed: set the key explicitly before re-running the installer.** `mergeConfigFrom` is a shallow merge, so a `config/magic-starter.php` published before that key existed carries no `billable` at all, and the `user` default answers for it. If you bill a team, that default silently retargets the entitlement provenance **and** the three Cashier migrations at `users` instead of `teams`. Nothing refuses it: the boot guard rejects only a token it does not recognise, and `user` is a valid one. Set `'billable' => 'team'` in your published config first, then re-run `php artisan magic-starter:install`.
+
+---
+
 ## Architecture
 
 ```

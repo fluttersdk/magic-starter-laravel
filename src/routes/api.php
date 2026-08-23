@@ -8,8 +8,10 @@
  * respect the configured route prefix from `config('magic-starter.route_prefix')`.
  */
 
+use FlutterSdk\MagicStarter\Contracts\ReportsUsage;
 use FlutterSdk\MagicStarter\Features;
 use FlutterSdk\MagicStarter\Http\Controllers\AuthController;
+use FlutterSdk\MagicStarter\Http\Controllers\BillingController;
 use FlutterSdk\MagicStarter\Http\Controllers\EmailVerificationController;
 use FlutterSdk\MagicStarter\Http\Controllers\GuestAuthController;
 use FlutterSdk\MagicStarter\Http\Controllers\NewsletterController;
@@ -157,6 +159,40 @@ Route::prefix((string) config('magic-starter.route_prefix', ''))
             if (Features::hasNewsletterSubscriptionFeatures()) {
                 Route::get('user/newsletter', [NewsletterController::class, 'show']);
                 Route::put('user/newsletter', [NewsletterController::class, 'update']);
+            }
+
+            if (Features::hasBillingFeatures()) {
+                Route::get('billing', [BillingController::class, 'show']);
+                Route::get('billing/plans', [BillingController::class, 'plans']);
+                Route::get('billing/invoices', [BillingController::class, 'invoices']);
+                Route::get('billing/payment-method', [BillingController::class, 'paymentMethod']);
+                // Asked by the client before it offers a STORE purchase: one
+                // store account can fund only one subject, so a second purchase
+                // would transfer the subscription rather than add one.
+                Route::get('billing/store-funded-team', [BillingController::class, 'storeFundedTeam']);
+                Route::get('billing/portal', [BillingController::class, 'portal']);
+
+                // Registered ONLY when a consumer has bound the usage contract,
+                // because this package cannot count what it does not know. An
+                // unbound application therefore 404s here, which is an honest
+                // "not wired yet"; a bound-by-default empty map would read to
+                // every cap the consumer gates on it as "you have used nothing"
+                // and open all of them. See the ReportsUsage docblock.
+                if (app()->bound(ReportsUsage::class)) {
+                    Route::get('billing/usage', [BillingController::class, 'usage']);
+                }
+
+                // The three card-rail WRITES. Registered beside the reads and
+                // gated the same way, because what separates them is not the
+                // route file: they are the OWNER's while the reads are open to
+                // any member, and that gate lives on the policy the controller
+                // asks rather than on a middleware here. They act on a tier the
+                // adopter publishes, so an application that has published no
+                // catalogue serves these routes and refuses every call to them,
+                // which is a different fact from the route being absent.
+                Route::post('billing/checkout', [BillingController::class, 'checkout']);
+                Route::post('billing/swap', [BillingController::class, 'swap']);
+                Route::post('billing/cancel', [BillingController::class, 'cancel']);
             }
         });
 

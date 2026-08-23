@@ -9,6 +9,7 @@ use FlutterSdk\MagicStarter\Enums\BillingProvider;
 use FlutterSdk\MagicStarter\Enums\PlanStatus;
 use FlutterSdk\MagicStarter\Features;
 use FlutterSdk\MagicStarter\MagicStarter;
+use FlutterSdk\MagicStarter\Support\EntitlementWrite;
 use FlutterSdk\MagicStarter\Tests\Fixtures\ConcreteTeam;
 use FlutterSdk\MagicStarter\Tests\Fixtures\ConcreteUser;
 use FlutterSdk\MagicStarter\Tests\TestCase;
@@ -22,6 +23,9 @@ use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Schema;
 use Illuminate\Support\Str;
 use PHPUnit\Framework\Attributes\DataProvider;
+use ReflectionClass;
+use ReflectionMethod;
+use ReflectionNamedType;
 use RuntimeException;
 
 /**
@@ -59,9 +63,9 @@ use RuntimeException;
  * its subject through `Model` and never asks what kind of thing it is, so the
  * same expectation has to hold for both, and a case that needed a different
  * answer per subject would be a leak in the action rather than something to
- * special-case here. The five tests above the arbitration block stay single-run
+ * special-case here. The six tests above the arbitration block stay single-run
  * on purpose: they carry no billable subject at all, or they are about the
- * schema and the migration rather than about a subject.
+ * schema, the migration or the SHAPE of a claim rather than about a subject.
  *
  * The parameterisation is a data provider yielding nothing but the TOKEN, and
  * that shape is deliberate. Providers are resolved before `setUp()` while this
@@ -340,6 +344,109 @@ class WriteEntitlementTest extends TestCase
     }
 
     /**
+     * Every key in the billing catalogue exists in both locales, and every one
+     * of them says something different in each.
+     *
+     * A companion to the test above rather than part of it, because that one is
+     * enum-driven: it walks `BillingProvider::cases()` and `PlanStatus::cases()`
+     * and asks each for its `label()`. The keys the billing rails added are
+     * refusal SENTENCES with no enum and no accessor behind them, so nothing
+     * there could reach them.
+     *
+     * It copies the property that test enforces rather than its mechanism, and
+     * the property is the difference and not the presence. A missing `tr` key
+     * falls back to the `en` value SILENTLY, so a check that only asked whether
+     * every key resolves would pass on a catalogue that was never translated at
+     * all. Reading both files directly is what makes the comparison possible;
+     * asking the translator would hand back the fallback and hide it.
+     *
+     * The exempt list is named rather than inferred. Two provider labels are
+     * brand names a customer reads on a receipt, so they are identical in both
+     * catalogues on purpose, and a check that discovered its own exemptions
+     * would quietly absorb the next key somebody forgot to translate.
+     */
+    public function test_every_billing_key_is_present_and_translated_in_both_locales(): void
+    {
+        $identicalOnPurpose = [
+            'providers.app_store',
+            'providers.play_store',
+        ];
+
+        $english = $this->flattenedCatalogue('en');
+        $turkish = $this->flattenedCatalogue('tr');
+
+        // Vacuity guard: two empty arrays agree about everything.
+        $this->assertNotEmpty($english, 'The en billing catalogue is empty, so every check below is vacuous.');
+
+        $this->assertSame(
+            array_keys($english),
+            array_keys($turkish),
+            'The two billing catalogues carry different keys. A key present only in en resolves '
+            . 'to English for a Turkish reader with nothing to say so, and a key present only in '
+            . 'tr is dead weight nothing reads.',
+        );
+
+        foreach ($english as $key => $value) {
+            if (in_array($key, $identicalOnPurpose, true)) {
+                $this->assertSame(
+                    $value,
+                    $turkish[$key],
+                    "[{$key}] is on the exempt list because it is a brand name, so the two "
+                    . 'catalogues must still agree about it. If it was translated, take it off '
+                    . 'the list rather than leaving the list lying about what it exempts.',
+                );
+
+                continue;
+            }
+
+            $this->assertNotSame(
+                $value,
+                $turkish[$key],
+                "[{$key}] reads identically in both catalogues. Either the tr entry is missing "
+                . 'and this is the en value falling through, or the English sentence was pasted '
+                . 'into tr. Both look like a translated catalogue to a presence check.',
+            );
+        }
+    }
+
+    /**
+     * One locale's billing catalogue, read off disk with its nesting flattened
+     * to dotted keys.
+     *
+     * Read with `require` rather than through the translator on purpose: the
+     * translator's whole job is to hide a missing key behind the fallback
+     * locale, which is the exact thing the caller is trying to measure.
+     *
+     * @return array<string, string>
+     */
+    private function flattenedCatalogue(string $locale): array
+    {
+        $path = dirname(__DIR__, 2) . "/lang/{$locale}/billing.php";
+
+        $this->assertFileExists($path, "The {$locale} billing catalogue is not there.");
+
+        $flatten = static function (array $entries, string $prefix = '') use (&$flatten): array {
+            $flat = [];
+
+            foreach ($entries as $key => $value) {
+                $dotted = $prefix === '' ? (string) $key : $prefix . '.' . $key;
+
+                if (is_array($value)) {
+                    $flat += $flatten($value, $dotted);
+
+                    continue;
+                }
+
+                $flat[$dotted] = (string) $value;
+            }
+
+            return $flat;
+        };
+
+        return $flatten(require $path);
+    }
+
+    /**
      * The provenance migration adds its eight columns, and removes them again.
      *
      * Every other test here hand-builds the schema so it can arrange a
@@ -537,6 +644,100 @@ class WriteEntitlementTest extends TestCase
             Schema::hasColumn('teams', 'plan_source_event_at'),
             'The provenance columns the consumer lacked must be added too.',
         );
+    }
+
+    /**
+     * The claim object carries all TWELVE fields, under the same names, in the
+     * same order, with the same six optional, and the contract takes exactly it.
+     *
+     * The mutant this exists to catch is a DROPPED or WEAKENED field, not a
+     * transposed one. Transposition is not reachable: the claim is built with
+     * named arguments, and a positional swap of `?string $plan` against
+     * `PlanStatus $status` is an immediate TypeError. What no scenario below can
+     * see is a field that stopped being REQUIRED. Every case reaches the write
+     * through one helper that passes all twelve, so `authoritative` acquiring a
+     * default would leave the whole file green while removing the one guarantee
+     * it exists for: a new feeder has to decide whether it is reading the rail or
+     * projecting a local row, rather than inheriting a quiet answer.
+     *
+     * A field deleted outright does show up elsewhere, as an "Unknown named
+     * parameter" error in every arbitration case, but that error names the helper
+     * and not the shape. This test is the one that says which field was lost, and
+     * it is driven off the parameter list rather than off a `new` call so a field
+     * added later without a decision fails here too.
+     */
+    public function test_the_claim_carries_every_field_the_contract_used_to_take(): void
+    {
+        // The twelve, in the order the twelve-parameter contract declared them.
+        // Written out rather than derived, because this list IS the expectation:
+        // deriving it from the class under test would assert only that the class
+        // equals itself.
+        $expected = [
+            'billable',
+            'plan',
+            'status',
+            'provider',
+            'eventAt',
+            'authoritative',
+            'providerStatus',
+            'productId',
+            'currentPeriodEnd',
+            'renews',
+            'gracePeriodEndsAt',
+            'manageUrl',
+        ];
+
+        $constructor = (new ReflectionClass(EntitlementWrite::class))->getConstructor();
+
+        $this->assertNotNull($constructor, 'The claim must be constructed with its fields, not filled after the fact.');
+
+        $parameters = $constructor->getParameters();
+
+        $this->assertSame(
+            $expected,
+            array_map(fn ($parameter): string => $parameter->getName(), $parameters),
+            'Every field the twelve-parameter contract took must survive on the claim, under its own name.',
+        );
+
+        // Six required, six optional, exactly as the old signature had them. The
+        // split is the half a scenario cannot check: a required field given a
+        // default reads as null at every call site that omits it, and no
+        // assertion here or below omits one.
+        $required = array_slice($expected, 0, 6);
+
+        foreach ($parameters as $parameter) {
+            $isRequired = in_array($parameter->getName(), $required, true);
+
+            $this->assertSame(
+                $isRequired,
+                ! $parameter->isOptional(),
+                sprintf('Field [%s] changed whether a feeder has to supply it.', $parameter->getName()),
+            );
+
+            if (! $isRequired) {
+                $this->assertNull(
+                    $parameter->getDefaultValue(),
+                    sprintf('Optional field [%s] must default to absence, not to a value.', $parameter->getName()),
+                );
+            }
+
+            // Promoted, so the action can read it back. A field declared without
+            // `public` still accepts the named argument and then answers null on
+            // every read, which is a dropped column with no error anywhere.
+            $this->assertTrue(
+                $parameter->isPromoted(),
+                sprintf('Field [%s] must be promoted, or nothing can read it.', $parameter->getName()),
+            );
+        }
+
+        // And the contract takes the claim ITSELF, rather than keeping a
+        // parameter list beside it.
+        $write = new ReflectionMethod(WritesEntitlement::class, 'write');
+        $type = $write->getParameters()[0]->getType();
+
+        $this->assertCount(1, $write->getParameters());
+        $this->assertInstanceOf(ReflectionNamedType::class, $type);
+        $this->assertSame(EntitlementWrite::class, $type->getName());
     }
 
     /**
@@ -1673,6 +1874,14 @@ class WriteEntitlementTest extends TestCase
      *
      * Resolved through the contract rather than the class so the test also
      * covers the binding a consumer would override.
+     *
+     * The parameters stay spelled out here while the contract takes a single
+     * {@see EntitlementWrite}: every case below names the fields its scenario
+     * needs and nothing else, which a `new EntitlementWrite(...)` per case would
+     * not give (the value object requires `authoritative` on purpose, and most
+     * scenarios are not about that distinction). So this helper is the one place
+     * the claim is assembled, and it is the only thing the twelve-parameter
+     * contract's removal changed in this file.
      */
     protected function write(
         Model $billable,
@@ -1692,7 +1901,7 @@ class WriteEntitlementTest extends TestCase
         ?CarbonInterface $gracePeriodEndsAt = null,
         ?string $manageUrl = null,
     ): bool {
-        return $this->app->make(WritesEntitlement::class)->write(
+        return $this->app->make(WritesEntitlement::class)->write(new EntitlementWrite(
             billable: $billable,
             plan: $plan,
             status: $status,
@@ -1705,7 +1914,7 @@ class WriteEntitlementTest extends TestCase
             renews: $renews,
             gracePeriodEndsAt: $gracePeriodEndsAt,
             manageUrl: $manageUrl,
-        );
+        ));
     }
 
     /**

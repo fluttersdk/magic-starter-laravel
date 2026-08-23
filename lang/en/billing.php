@@ -39,4 +39,44 @@ return [
         'paused' => 'Paused',
     ],
 
+    /*
+     * Refusal sentences the billing actions and endpoints raise, keyed by a
+     * short reason. Shipped here rather than inlined so every reader gets the
+     * same wording in their own locale, and so a redeclaration-guard test can
+     * assert the two locales actually differ instead of one silently
+     * inheriting the other's text.
+     */
+    'refusals' => [
+        'store_subscription_active' => 'A store subscription is still billing this team. Cancel it in the store account that bought it first: deleting the team now would remove the plan and leave the store charging you, and this app cannot cancel it for you.',
+
+        /*
+         * The two 409 sentences the billing endpoints raise, and they are
+         * deliberately two rather than one. "Manage this where you bought it"
+         * and "there is nothing to manage yet" are opposite instructions, so a
+         * single shared sentence would leave the customer guessing which of
+         * them they had been given. Each travels beside a machine-readable
+         * reason so the client never has to parse the prose to decide.
+         */
+        'managed_by_store' => 'This subscription is managed by the store that sold it and cannot be changed here.',
+        'no_billing_account' => 'There is no billing account to manage yet.',
+
+        /*
+         * The three refusals the card-rail WRITES raise. Two of them describe a
+         * gap in the adopter's own configuration rather than a fault in the
+         * request, and they name the key that closes it: without that, an
+         * adopter reads their client's request body looking for a problem that
+         * is in their config file.
+         *
+         * 'no_published_catalogue' names BOTH keys because either one answers.
+         * The ranking is read cheapest-first from 'tier_order' when it is
+         * published and from the catalogue's entry ids when it is not, so an
+         * adopter who has published only the catalogue already has a valid list
+         * and naming the other key alone would send half of them to the wrong
+         * file.
+         */
+        'no_published_catalogue' => 'No plans are published, so there is nothing to buy yet. Publish magic-starter.billing.plans or magic-starter.billing.tier_order to sell one.',
+        'unmapped_price' => 'No Stripe price sells this plan. Map one under magic-starter.billing.prices before offering it.',
+        'no_subscription' => 'There is no active subscription to change.',
+    ],
+
 ];

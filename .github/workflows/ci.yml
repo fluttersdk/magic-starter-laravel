@@ -31,9 +31,23 @@ jobs:
           extensions: dom, curl, libxml, mbstring, zip, pcntl, pdo, sqlite, pdo_sqlite
           coverage: pcov
 
+      # Every Illuminate component in composer.json's require block is pinned
+      # to the matrix version BY NAME. tests/DependencyPinTest.php compares the
+      # two files and fails when a require lands without its pin here.
       - name: Install dependencies
         run: |
-          composer require "illuminate/support:${{ matrix.laravel }}" "illuminate/routing:${{ matrix.laravel }}" "illuminate/database:${{ matrix.laravel }}" "orchestra/testbench:${{ matrix.testbench }}" --no-interaction --no-update
+          composer require \
+            "illuminate/auth:${{ matrix.laravel }}" \
+            "illuminate/bus:${{ matrix.laravel }}" \
+            "illuminate/console:${{ matrix.laravel }}" \
+            "illuminate/database:${{ matrix.laravel }}" \
+            "illuminate/http:${{ matrix.laravel }}" \
+            "illuminate/queue:${{ matrix.laravel }}" \
+            "illuminate/routing:${{ matrix.laravel }}" \
+            "illuminate/support:${{ matrix.laravel }}" \
+            "illuminate/validation:${{ matrix.laravel }}" \
+            "orchestra/testbench:${{ matrix.testbench }}" \
+            --no-interaction --no-update
           composer update --prefer-dist --no-interaction --no-progress
 
       - name: Run tests

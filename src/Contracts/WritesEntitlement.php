@@ -2,10 +2,7 @@
 
 namespace FlutterSdk\MagicStarter\Contracts;
 
-use Carbon\CarbonInterface;
-use FlutterSdk\MagicStarter\Enums\BillingProvider;
-use FlutterSdk\MagicStarter\Enums\PlanStatus;
-use Illuminate\Database\Eloquent\Model;
+use FlutterSdk\MagicStarter\Support\EntitlementWrite;
 
 /**
  * Contract for the single code path that writes a billable's entitlement.
@@ -39,72 +36,21 @@ interface WritesEntitlement
     /**
      * Apply one rail's claim to the given billable's entitlement columns.
      *
-     * CALL THIS WITH NAMED ARGUMENTS. Seven of the twelve parameters are
-     * nullable, four of them are strings and two are timestamps, so a
-     * positional call site can transpose a pair without any type error to show
-     * for it. Named arguments are what makes that impossible.
+     * The claim arrives as ONE value object rather than as twelve parameters,
+     * and {@see EntitlementWrite} carries the reasoning for every field it
+     * holds. Twelve positional arguments of which seven are nullable is a call
+     * site nobody can read, and two of them can be silently transposed; and the
+     * ordering rules an implementation enforces need the rail and the source
+     * timestamp to travel WITH the tier they justify, which a parameter list
+     * cannot guarantee and a constructor can.
      *
-     * @param  Model  $billable  The subject whose entitlement this claim is
-     *                           about, whatever an application bills.
-     * @param  string|null  $plan  The consumer-defined plan id the rail says is
-     *                             owed, or NULL for a rail saying nothing is
-     *                             owed at all. Null is how a revocation says
-     *                             what it means. The alternative is naming a
-     *                             free-tier id, which this package cannot know
-     *                             (the vocabulary is the consumer's), and an
-     *                             implementation that invents one gets the
-     *                             comparison wrong in both directions at once:
-     *                             no change against a billable already on that
-     *                             tier, and unrankable in a catalogue that
-     *                             publishes no such row. Both readings let a
-     *                             cross-rail cancellation through.
-     * @param  PlanStatus  $status  Where that tier stands, in neutral words.
-     * @param  BillingProvider  $provider  The rail making the claim.
-     * @param  CarbonInterface  $eventAt  The SOURCE event's own timestamp, not
-     *                                    the moment of delivery and not `now()`.
-     *                                    This is what makes an out-of-order
-     *                                    delivery detectable at all, so a feeder
-     *                                    passing the receipt time instead of the
-     *                                    event time disarms the ordering rule
-     *                                    while looking correct.
-     * @param  bool  $authoritative  Whether this claim comes from READING the
-     *                               rail, or from projecting state the rail
-     *                               wrote into your database earlier. Required,
-     *                               with no default, because a new feeder has to
-     *                               decide which it is rather than inherit a
-     *                               quiet answer. True for a webhook payload or
-     *                               a re-read of the rail's API; FALSE for a
-     *                               claim assembled from a local row, which can
-     *                               be a whole period behind while looking
-     *                               exactly like a fresh one. Only an
-     *                               authoritative claim may move a billable from
-     *                               one rail to another.
-     * @param  string|null  $providerStatus  The rail's own status word, verbatim.
-     * @param  string|null  $productId  The rail-native product or price id.
-     * @param  CarbonInterface|null  $currentPeriodEnd  When the paid period ends,
-     *                                                  whether or not it renews.
-     * @param  bool|null  $renews  Auto-renew state. Null means the rail has not
-     *                             said, which is not the same claim as false.
-     * @param  CarbonInterface|null  $gracePeriodEndsAt  End of a dunning window.
-     * @param  string|null  $manageUrl  Where the customer manages this
-     *                                  subscription, on the rail that sold it.
-     *                                  Only durable destinations belong here; a
-     *                                  short-lived portal session does not.
+     * @param  EntitlementWrite  $write  One rail's complete claim: the subject,
+     *                                   the tier, where it stands, which rail
+     *                                   said so, when that rail's own event
+     *                                   happened, and whether the rail is
+     *                                   speaking for itself.
      * @return bool True when the columns were written, false when an ordering
      *              rule dropped the write. Every false return has logged why.
      */
-    public function write(
-        Model $billable,
-        ?string $plan,
-        PlanStatus $status,
-        BillingProvider $provider,
-        CarbonInterface $eventAt,
-        bool $authoritative,
-        ?string $providerStatus = null,
-        ?string $productId = null,
-        ?CarbonInterface $currentPeriodEnd = null,
-        ?bool $renews = null,
-        ?CarbonInterface $gracePeriodEndsAt = null,
-        ?string $manageUrl = null,
-    ): bool;
+    public function write(EntitlementWrite $write): bool;
 }
