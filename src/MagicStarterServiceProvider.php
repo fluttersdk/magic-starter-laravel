@@ -159,6 +159,26 @@ class MagicStarterServiceProvider extends ServiceProvider
                 Listeners\CreatePersonalTeamListener::class,
             );
         }
+
+        // 3.4. Register the billing WRITE gate when the billing feature is on.
+        //
+        // A NAMED ABILITY and never `Gate::policy(MagicStarter::billableModel(),
+        // ...)`, and the difference is load-bearing rather than stylistic. The
+        // policy map is keyed by model class and `Gate::policy()` is a plain
+        // assignment, so under `billing.billable = 'team'` the billable model IS
+        // the team model and a second registration would REPLACE the entry made
+        // three lines above: either team member management, invitations and
+        // deletion go unguarded, or every billing write is refused. Nothing on
+        // the billing side could observe it, because the billing ability would
+        // keep answering correctly the whole time.
+        //
+        // Gated on the feature and defined AFTER the teams block on purpose: the
+        // coexistence this comment defends is only real when both are on, so the
+        // two registrations sit where a reader sees them together.
+        if (Features::hasBillingFeatures()) {
+            Gate::define('manageBilling', [Policies\BillingPolicy::class, 'manage']);
+        }
+
         // 3.5. Auto-gate notification channels when notification feature is enabled.
         if (Features::hasNotificationFeatures()) {
             Event::listen(

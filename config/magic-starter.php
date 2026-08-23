@@ -350,6 +350,18 @@ return [
     | folded into the items create. `magic-starter:install` publishes them in
     | dependency order.
     |
+    | USAGE REPORTING has no key here, because it has no default to hold: the
+    | package ships FlutterSdk\MagicStarter\Contracts\ReportsUsage with
+    | deliberately NO default implementation and NO binding, and the usage
+    | endpoint it would feed is registered only once a consumer binds one
+    | (typically `$this->app->bind(ReportsUsage::class, ...)` in the
+    | consumer's own AppServiceProvider). Binding a default here would answer
+    | an empty usage map for every billable until the consumer wires real
+    | counting, and an empty map is not "unknown", it is "used nothing": every
+    | cap a consumer gates on that answer would silently open. See the
+    | contract's own docblock for the shipped defect this refusal exists to
+    | prevent.
+    |
     | UPGRADING FROM A RELEASE BEFORE 'billable' EXISTED. Set this key
     | EXPLICITLY before re-running the installer, even to the value you believe
     | is already in effect. mergeConfigFrom is a shallow merge, so a config
