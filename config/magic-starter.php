@@ -291,6 +291,30 @@ return [
     | safe for a fresh install and is not safe once you sell something on more
     | than one rail: publish the order then.
     |
+    | 'prices' is which Stripe PRICE sells which of those tiers, as a plain
+    | ['price_id' => 'tier_id'] map. The Stripe rail reads it in both directions:
+    | a webhook asks which tier the price on a subscription sells, and a checkout
+    | asks which price sells a tier the customer picked.
+    |
+    | It lives here rather than under cashier.plans, which is where an earlier
+    | application kept it. That key is NOT part of Cashier: Cashier's own config
+    | has no 'plans' key at all, so an adopter following Cashier's documentation
+    | would never create one, every price would resolve to no tier, and no
+    | webhook would ever grant anything, with no error anywhere to say why.
+    |
+    | An unmapped price is a CONFIG GAP and never a downgrade: a rail that cannot
+    | name the tier a paying subscription sells leaves the entitlement alone and
+    | warns, because the alternative is taking a tier away from somebody whose
+    | card just cleared.
+    |
+    | Assembling this from the environment is the normal case
+    | (env('CASHIER_PRICE_PRO') and friends), and it is also how the dangerous
+    | entry appears: an unset variable writes an EMPTY KEY, and an empty key that
+    | reached a reverse lookup would name the empty string as the price that
+    | sells a paid tier. Empty keys and empty tiers are therefore stripped when
+    | this map is read, so leaving a variable unset costs you one tier that
+    | cannot be sold rather than one that is given away.
+    |
     | WHY laravel/cashier IS A HARD REQUIRE. It is the one dependency in this
     | package that needed an argument. The four SDKs already in the require
     | block (Sanctum, Socialite, google2fa, OneSignal) are libraries: they cost
@@ -312,6 +336,34 @@ return [
     | code: addPublishGroup() is additive and Laravel exposes no removal, so
     | Cashier's groups stay listed under vendor:publish.
     |
+    | DO NOT RUN `vendor:publish --tag=cashier-migrations`. That is the residual
+    | cost turning into a broken schema, and it is the one instruction here that
+    | can only be written down. Cashier's five migrations hardcode
+    | Schema::table('users'), $table->id() and foreignId('user_id'): on an
+    | application billing a team they put the Stripe customer columns on the
+    | wrong table, and on any application using UUID keys they create a bigint
+    | `subscriptions` whose child `subscription_items` cannot reference it. The
+    | package ships its own three in place of those five
+    | (add_cashier_customer_columns_to_billable_table, create_subscriptions_table
+    | and create_subscription_items_table), resolving the table from 'billable'
+    | and the key type from 'use_uuids', with Cashier's two later meter columns
+    | folded into the items create. `magic-starter:install` publishes them in
+    | dependency order.
+    |
+    | UPGRADING FROM A RELEASE BEFORE 'billable' EXISTED. Set this key
+    | EXPLICITLY before re-running the installer, even to the value you believe
+    | is already in effect. mergeConfigFrom is a shallow merge, so a config
+    | published before the key existed carries no 'billable' at all and the
+    | 'user' default answers for it. That is correct for the arbitration
+    | contract, and it is wrong for the SCHEMA of an application billing a team:
+    | the four migrations above resolve their target through
+    | MagicStarter::billableModel(), so a team-billing application that upgrades
+    | without setting the key gets a whole Cashier schema plus the entitlement
+    | provenance on `users` instead of `teams`. Nothing refuses it, and nothing
+    | can: the boot guard only rejects a token it does not RECOGNISE, and 'user'
+    | is a perfectly valid one. Before the Cashier tables shipped this cost one
+    | mis-targeted ALTER; it now costs the whole billing schema.
+    |
     */
 
     'billing' => [
@@ -321,6 +373,11 @@ return [
             // 'free',
             // 'pro',
             // 'business',
+        ],
+
+        'prices' => [
+            // env('CASHIER_PRICE_PRO') => 'pro',
+            // env('CASHIER_PRICE_BUSINESS') => 'business',
         ],
     ],
 

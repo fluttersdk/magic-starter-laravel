@@ -126,7 +126,17 @@ class InstallCommand extends Command
         // declared LAST in this array on purpose: publishMigrations() honours
         // this declaration order, so the table it alters is always created by an
         // earlier timestamp. It throws rather than skipping when it is not.
+        // The four Cashier files sit between the dedup table and the provenance
+        // one, and their order among themselves is not cosmetic either:
+        // `create_subscription_items_table` reads the key type its parent was
+        // created with, so `create_subscriptions_table` has to be stamped
+        // earlier. The customer columns come before both because they land on
+        // the billable table, which is created by a migration earlier still.
         'billing' => [
+            'create_processed_webhook_events_table.php',
+            'add_cashier_customer_columns_to_billable_table.php',
+            'create_subscriptions_table.php',
+            'create_subscription_items_table.php',
             'add_entitlement_provenance_to_billable_table.php',
         ],
     ];

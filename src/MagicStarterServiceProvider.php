@@ -80,8 +80,25 @@ class MagicStarterServiceProvider extends ServiceProvider
         // because the require is unconditional (see the Billing block in
         // config/magic-starter.php): an adopter who installs this package and
         // drives Cashier directly keeps Cashier's own routes untouched.
+        //
+        // The useXModel() family belongs in this phase for the same reason, and
+        // the maintainer's answer on #1739 covers both: Cashier resolves these
+        // statics from its own boot() onwards, so register() is the last phase
+        // that still lands.
+        //
+        // Both calls hand over a CLASS NAME the package owns outright, and
+        // neither instantiates a model nor reads the billable subject, which is
+        // what keeps them compatible with guardBillableSubject() running down in
+        // boot(). Cashier's third accessor, useCustomerModel(), is the one that
+        // WOULD have to resolve the billable here, and it is deliberately not
+        // called yet: it needs the guard beside it (see that method's docblock),
+        // and nothing in the package resolves a Stripe customer until the rail
+        // ships. The subscription models need no such thing.
         if (Features::hasBillingFeatures()) {
             Cashier::ignoreRoutes();
+
+            Cashier::useSubscriptionModel(Models\Subscription::class);
+            Cashier::useSubscriptionItemModel(Models\SubscriptionItem::class);
         }
 
         // OneSignal SDK client singleton (resolved lazily, only when injected).

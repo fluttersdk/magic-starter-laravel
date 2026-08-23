@@ -2,15 +2,13 @@
 
 namespace FlutterSdk\MagicStarter\Actions;
 
-use BackedEnum;
 use Carbon\CarbonInterface;
-use DateTimeInterface;
 use FlutterSdk\MagicStarter\Contracts\WritesEntitlement;
 use FlutterSdk\MagicStarter\Enums\BillingProvider;
 use FlutterSdk\MagicStarter\Enums\PlanStatus;
 use FlutterSdk\MagicStarter\Support\EntitlementWrite;
+use FlutterSdk\MagicStarter\Support\ReadsBillableAttributes;
 use Illuminate\Database\Eloquent\Model;
-use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\Log;
 
 /**
@@ -83,6 +81,17 @@ use Illuminate\Support\Facades\Log;
  */
 class WriteEntitlement implements WritesEntitlement
 {
+    /**
+     * The provenance columns are decoded through the shared readers rather than
+     * read directly, and they live outside this class because they are not this
+     * class's rule. The package ships the columns and not the model that casts
+     * them, so every controller, resource, job and command on the billing rails
+     * has to decode the same way this action does; a protected method here would
+     * have made each of them write its own copy, and two copies of a decode rule
+     * disagree while both sides' tests pass.
+     */
+    use ReadsBillableAttributes;
+
     /**
      * Direction labels a write can move the entitlement in.
      */
@@ -593,59 +602,6 @@ class WriteEntitlement implements WritesEntitlement
         }
 
         return $order;
-    }
-
-    /**
-     * Read a stored attribute as a plain string id.
-     *
-     * A consuming application is free to cast `plan` (or `plan_provider`) to an
-     * enum of its own, in which case Eloquent hands back an enum instance
-     * rather than the column's text. Unwrapping the backing value here is what
-     * keeps rule 2 armed on such a model: a stored tier read as absent would
-     * make every cross-rail write look like it had nothing to revoke.
-     *
-     * Anything that is neither a backed enum nor a non-empty string reads as
-     * absent, which is the direction that cannot revoke.
-     */
-    protected function stringAttribute(Model $billable, string $attribute): ?string
-    {
-        $value = $billable->getAttribute($attribute);
-
-        if ($value instanceof BackedEnum) {
-            $value = $value->value;
-        }
-
-        if (is_int($value)) {
-            return (string) $value;
-        }
-
-        return is_string($value) && $value !== '' ? $value : null;
-    }
-
-    /**
-     * The stored source-event timestamp, whether or not the consumer's model
-     * casts that column.
-     *
-     * The package ships the column but not the model that owns it, so this
-     * accepts a cast `datetime` and a raw string alike. A value that is neither
-     * reads as absent, which lets the incoming write apply; a malformed date
-     * string raises rather than being quietly reordered, because a timestamp
-     * this action wrote itself cannot be unparseable without the row being
-     * corrupt.
-     */
-    protected function storedEventAt(Model $billable): ?CarbonInterface
-    {
-        $stored = $billable->getAttribute('plan_source_event_at');
-
-        if ($stored instanceof DateTimeInterface) {
-            return Carbon::instance($stored);
-        }
-
-        if (is_string($stored) && $stored !== '') {
-            return Carbon::parse($stored);
-        }
-
-        return null;
     }
 
     /**
