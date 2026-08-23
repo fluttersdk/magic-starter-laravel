@@ -8,9 +8,12 @@ use FlutterSdk\MagicStarter\Contracts\WritesEntitlement;
 use FlutterSdk\MagicStarter\Enums\BillingProvider;
 use FlutterSdk\MagicStarter\Enums\PlanStatus;
 use FlutterSdk\MagicStarter\Features;
+use FlutterSdk\MagicStarter\MagicStarter;
 use FlutterSdk\MagicStarter\Tests\Fixtures\ConcreteTeam;
+use FlutterSdk\MagicStarter\Tests\Fixtures\ConcreteUser;
 use FlutterSdk\MagicStarter\Tests\TestCase;
 use Illuminate\Database\Eloquent\Model;
+use Illuminate\Database\Schema\Blueprint;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\DB;
@@ -18,6 +21,7 @@ use Illuminate\Support\Facades\File;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Schema;
 use Illuminate\Support\Str;
+use PHPUnit\Framework\Attributes\DataProvider;
 use RuntimeException;
 
 /**
@@ -47,6 +51,27 @@ use RuntimeException;
  * `config(['magic-starter.features' => [...]])`, and one test deliberately
  * turns it OFF again: the contract has to stay bindable with the feature
  * disabled, because a binding is not a capability.
+ *
+ * Every ARBITRATION case runs TWICE, once per value of
+ * `magic-starter.billing.billable`, and that is the only way the user subject
+ * is ever exercised: the one real adopter bills teams, so a rule that quietly
+ * depended on the subject being a team would ship unnoticed. The action reads
+ * its subject through `Model` and never asks what kind of thing it is, so the
+ * same expectation has to hold for both, and a case that needed a different
+ * answer per subject would be a leak in the action rather than something to
+ * special-case here. The five tests above the arbitration block stay single-run
+ * on purpose: they carry no billable subject at all, or they are about the
+ * schema and the migration rather than about a subject.
+ *
+ * The parameterisation is a data provider yielding nothing but the TOKEN, and
+ * that shape is deliberate. Providers are resolved before `setUp()` while this
+ * class hand-builds its schema INSIDE `setUp()`, so a provider that reached for
+ * a model or a table would be reading a database that does not exist yet; a
+ * `foreach` inside each case was the other candidate and is worse, because the
+ * `Log` spy and the written row would carry from the first subject into the
+ * second and half the assertions here count log lines. A second class extending
+ * this one was the third, and it cannot express the split above: it would re-run
+ * the five schema tests as well.
  */
 class WriteEntitlementTest extends TestCase
 {
@@ -61,6 +86,36 @@ class WriteEntitlementTest extends TestCase
         'free',
         'pro',
         'business',
+    ];
+
+    /**
+     * The table each billable token selects, as an INDEPENDENT oracle.
+     *
+     * Written out here rather than read from `MagicStarter::billableModel()`
+     * because it is what that resolution is measured against: a parameterisation
+     * that silently ran one subject twice would satisfy every arbitration
+     * assertion in this file, so at least one case reads its row back by table
+     * name and this map is what tells it which name to expect.
+     *
+     * @var array<string, string>
+     */
+    private const SUBJECT_TABLES = [
+        'team' => 'teams',
+        'user' => 'users',
+    ];
+
+    /**
+     * The enum-casting analogue of each subject.
+     *
+     * A consuming application casts `plan` to its own tier enum whatever it
+     * bills, so the cast test needs one of these per subject. Declared at the
+     * foot of this file beside the enum they cast to.
+     *
+     * @var array<string, class-string<Model>>
+     */
+    private const ENUM_CASTING_MODELS = [
+        'team' => EnumCastingTeam::class,
+        'user' => EnumCastingUser::class,
     ];
 
     protected function setUp(): void
@@ -79,26 +134,66 @@ class WriteEntitlementTest extends TestCase
             'magic-starter.billing.tier_order' => self::TIER_ORDER,
         ]);
 
-        // The consuming application owns `plan` and `plan_status` (the tier
-        // vocabulary is its own); the package ships the eight provenance
-        // columns. Both halves are created here because the action writes both.
-        Schema::create('teams', function ($table): void {
+        // BOTH billable subjects get a table, and both get the entitlement
+        // columns from one shared definition. The columns are not on the fixture
+        // models (`ConcreteTeam` declares a table and three fillable names, and
+        // `ConcreteUser` a table and an open guard), so this schema is the only
+        // place they exist: "the fixture carries the columns" would have been a
+        // criterion nothing could fail. Sharing the definition is what makes
+        // "every column the other subject has" true by construction rather than
+        // by two lists a later edit can drift apart.
+        Schema::create('teams', function (Blueprint $table): void {
             $table->uuid('id')->primary();
             $table->uuid('user_id');
             $table->string('name');
             $table->boolean('personal_team')->default(true);
-            $table->string('plan')->nullable();
-            $table->string('plan_status')->nullable();
-            $table->string('plan_provider')->nullable();
-            $table->timestamp('plan_source_event_at')->nullable();
-            $table->string('plan_provider_status')->nullable();
-            $table->string('plan_product_id')->nullable();
-            $table->timestamp('plan_current_period_end')->nullable();
-            $table->boolean('plan_renews')->nullable();
-            $table->timestamp('plan_grace_period_ends_at')->nullable();
-            $table->string('plan_manage_url', 2048)->nullable();
+            $this->addEntitlementColumns($table);
             $table->timestamps();
         });
+
+        Schema::create('users', function (Blueprint $table): void {
+            $table->uuid('id')->primary();
+            $table->string('name');
+            $this->addEntitlementColumns($table);
+            $table->timestamps();
+        });
+    }
+
+    /**
+     * The two billable subjects every arbitration case runs against.
+     *
+     * Yields the TOKEN and nothing else. A provider is resolved before
+     * `setUp()`, so anything here that touched a model or a table would be
+     * reading a schema this class has not built yet; naming the subject is all
+     * the case needs to select one.
+     *
+     * @return iterable<string, array{string}>
+     */
+    public static function billableSubjects(): iterable
+    {
+        yield 'team' => ['team'];
+        yield 'user' => ['user'];
+    }
+
+    /**
+     * The entitlement and provenance columns, on whichever subject is billed.
+     *
+     * The consuming application owns `plan` and `plan_status` (the tier
+     * vocabulary is its own); the package ships the eight provenance columns.
+     * Both halves are here because the action writes both.
+     */
+    private function addEntitlementColumns(Blueprint $table): void
+    {
+        $table->string('plan')->nullable();
+        $table->string('plan_status')->nullable();
+        $table->string('plan_provider')->nullable();
+        $table->timestamp('plan_source_event_at')->nullable();
+        $table->string('plan_provider_status')->nullable();
+        $table->string('plan_product_id')->nullable();
+        $table->timestamp('plan_current_period_end')->nullable();
+        $table->boolean('plan_renews')->nullable();
+        $table->timestamp('plan_grace_period_ends_at')->nullable();
+        $table->string('plan_manage_url', 2048)->nullable();
     }
 
     /**
@@ -426,13 +521,14 @@ class WriteEntitlementTest extends TestCase
      * a RENEWAL whose first attempt failed. Without this rule the late
      * renewal's team lands on the cheapest tier while still paying.
      */
-    public function test_a_stale_write_on_the_same_rail_is_dropped(): void
+    #[DataProvider('billableSubjects')]
+    public function test_a_stale_write_on_the_same_rail_is_dropped(string $subject): void
     {
         Log::spy();
 
         $grantedAt = Carbon::parse('2026-08-22 12:00:00');
 
-        $billable = $this->makeBillable([
+        $billable = $this->makeBillable($subject, [
             'plan' => 'business',
             'plan_status' => PlanStatus::ACTIVE->value,
             'plan_provider' => BillingProvider::APP_STORE->value,
@@ -474,13 +570,14 @@ class WriteEntitlementTest extends TestCase
      * the other half, and pairing them is what stops either from passing with
      * the tie-break deleted.
      */
-    public function test_a_write_with_the_same_event_timestamp_is_dropped(): void
+    #[DataProvider('billableSubjects')]
+    public function test_a_write_with_the_same_event_timestamp_is_dropped(string $subject): void
     {
         Log::spy();
 
         $grantedAt = Carbon::parse('2026-08-22 12:00:00');
 
-        $billable = $this->makeBillable([
+        $billable = $this->makeBillable($subject, [
             'plan' => 'business',
             'plan_status' => PlanStatus::ACTIVE->value,
             'plan_provider' => BillingProvider::STRIPE->value,
@@ -513,13 +610,14 @@ class WriteEntitlementTest extends TestCase
      * the opposite delivery order was always correct, so the bug was invisible
      * half the time.
      */
-    public function test_a_same_instant_upgrade_on_the_same_rail_is_applied(): void
+    #[DataProvider('billableSubjects')]
+    public function test_a_same_instant_upgrade_on_the_same_rail_is_applied(string $subject): void
     {
         Log::spy();
 
         $eventAt = Carbon::parse('2026-08-22 12:00:00');
 
-        $billable = $this->makeBillable([
+        $billable = $this->makeBillable($subject, [
             'plan' => 'pro',
             'plan_status' => PlanStatus::ACTIVE->value,
             'plan_provider' => BillingProvider::STRIPE->value,
@@ -558,13 +656,14 @@ class WriteEntitlementTest extends TestCase
      * the other column. Access is what is being arbitrated, so the tie-break
      * asks about access.
      */
-    public function test_a_same_instant_status_only_revocation_on_the_same_rail_is_dropped(): void
+    #[DataProvider('billableSubjects')]
+    public function test_a_same_instant_status_only_revocation_on_the_same_rail_is_dropped(string $subject): void
     {
         Log::spy();
 
         $grantedAt = Carbon::parse('2026-08-22 12:00:00');
 
-        $billable = $this->makeBillable([
+        $billable = $this->makeBillable($subject, [
             'plan' => 'business',
             'plan_status' => PlanStatus::ACTIVE->value,
             'plan_provider' => BillingProvider::STRIPE->value,
@@ -603,13 +702,14 @@ class WriteEntitlementTest extends TestCase
      * team ends on free while the rail that was actually billing it never
      * stopped.
      */
-    public function test_a_cross_rail_same_tier_write_cannot_take_over_provenance(): void
+    #[DataProvider('billableSubjects')]
+    public function test_a_cross_rail_same_tier_write_cannot_take_over_provenance(string $subject): void
     {
         Log::spy();
 
         $grantedAt = Carbon::parse('2026-08-22 12:00:00');
 
-        $billable = $this->makeBillable([
+        $billable = $this->makeBillable($subject, [
             'plan' => 'business',
             'plan_status' => PlanStatus::ACTIVE->value,
             'plan_provider' => BillingProvider::APP_STORE->value,
@@ -658,13 +758,14 @@ class WriteEntitlementTest extends TestCase
      * the writer's standing is the ONLY thing separating a dropped projection
      * from an honoured handover, so the pair isolates it.
      */
-    public function test_an_authoritative_cross_rail_same_tier_write_takes_over_provenance(): void
+    #[DataProvider('billableSubjects')]
+    public function test_an_authoritative_cross_rail_same_tier_write_takes_over_provenance(string $subject): void
     {
         Log::spy();
 
         $grantedAt = Carbon::parse('2026-08-22 12:00:00');
 
-        $billable = $this->makeBillable([
+        $billable = $this->makeBillable($subject, [
             'plan' => 'business',
             'plan_status' => PlanStatus::ACTIVE->value,
             'plan_provider' => BillingProvider::STRIPE->value,
@@ -705,13 +806,14 @@ class WriteEntitlementTest extends TestCase
      * is the cost; letting a stale row move provenance is the defect rule 2b
      * closes.
      */
-    public function test_a_projected_cross_rail_upgrade_is_dropped(): void
+    #[DataProvider('billableSubjects')]
+    public function test_a_projected_cross_rail_upgrade_is_dropped(string $subject): void
     {
         Log::spy();
 
         $grantedAt = Carbon::parse('2026-08-22 12:00:00');
 
-        $billable = $this->makeBillable([
+        $billable = $this->makeBillable($subject, [
             'plan' => 'pro',
             'plan_status' => PlanStatus::ACTIVE->value,
             'plan_provider' => BillingProvider::APP_STORE->value,
@@ -748,13 +850,14 @@ class WriteEntitlementTest extends TestCase
      * than the defect rule 2b closes. A lapsed record is not an entitlement
      * another rail can take over, it is a slot another rail can fill.
      */
-    public function test_a_cross_rail_same_tier_write_applies_when_the_stored_rail_has_lapsed(): void
+    #[DataProvider('billableSubjects')]
+    public function test_a_cross_rail_same_tier_write_applies_when_the_stored_rail_has_lapsed(string $subject): void
     {
         Log::spy();
 
         $grantedAt = Carbon::parse('2026-08-22 12:00:00');
 
-        $billable = $this->makeBillable([
+        $billable = $this->makeBillable($subject, [
             'plan' => 'business',
             'plan_status' => PlanStatus::EXPIRED->value,
             'plan_provider' => BillingProvider::STRIPE->value,
@@ -788,13 +891,14 @@ class WriteEntitlementTest extends TestCase
      * through a web-to-store migration, where BOTH rails legitimately hold a
      * record of the same customer and only one of them is still being paid.
      */
-    public function test_a_cross_rail_downgrade_is_dropped(): void
+    #[DataProvider('billableSubjects')]
+    public function test_a_cross_rail_downgrade_is_dropped(string $subject): void
     {
         Log::spy();
 
         $grantedAt = Carbon::parse('2026-08-22 12:00:00');
 
-        $billable = $this->makeBillable([
+        $billable = $this->makeBillable($subject, [
             'plan' => 'business',
             'plan_status' => PlanStatus::ACTIVE->value,
             'plan_provider' => BillingProvider::APP_STORE->value,
@@ -839,13 +943,15 @@ class WriteEntitlementTest extends TestCase
      * with a strictly newer event, so rules 1 and 1b cannot see it and only
      * rule 2 can decide it.
      */
-    public function test_an_authoritative_cross_rail_same_tier_write_with_a_lapsed_status_is_dropped(): void
-    {
+    #[DataProvider('billableSubjects')]
+    public function test_an_authoritative_cross_rail_same_tier_write_with_a_lapsed_status_is_dropped(
+        string $subject,
+    ): void {
         Log::spy();
 
         $grantedAt = Carbon::parse('2026-08-22 12:00:00');
 
-        $billable = $this->makeBillable([
+        $billable = $this->makeBillable($subject, [
             'plan' => 'business',
             'plan_status' => PlanStatus::ACTIVE->value,
             'plan_provider' => BillingProvider::APP_STORE->value,
@@ -888,14 +994,15 @@ class WriteEntitlementTest extends TestCase
      * is invisible until the customer notices, and an operator has to be told
      * to go and cancel one side by hand.
      */
-    public function test_a_cross_rail_upgrade_is_honoured_and_warns(): void
+    #[DataProvider('billableSubjects')]
+    public function test_a_cross_rail_upgrade_is_honoured_and_warns(string $subject): void
     {
         Log::spy();
 
         $grantedAt = Carbon::parse('2026-08-22 12:00:00');
         $eventAt = $grantedAt->copy()->addMinute();
 
-        $billable = $this->makeBillable([
+        $billable = $this->makeBillable($subject, [
             'plan' => 'pro',
             'plan_status' => PlanStatus::ACTIVE->value,
             'plan_provider' => BillingProvider::STRIPE->value,
@@ -944,7 +1051,8 @@ class WriteEntitlementTest extends TestCase
      * asserting silence on the ordinary path is what makes those warnings mean
      * something.
      */
-    public function test_a_newer_write_on_the_same_rail_applies_every_column(): void
+    #[DataProvider('billableSubjects')]
+    public function test_a_newer_write_on_the_same_rail_applies_every_column(string $subject): void
     {
         Log::spy();
 
@@ -953,7 +1061,7 @@ class WriteEntitlementTest extends TestCase
         $periodEnd = Carbon::parse('2026-09-22 12:00:00');
         $graceEnd = Carbon::parse('2026-09-29 12:00:00');
 
-        $billable = $this->makeBillable([
+        $billable = $this->makeBillable($subject, [
             'plan' => 'pro',
             'plan_status' => PlanStatus::ACTIVE->value,
             'plan_provider' => BillingProvider::STRIPE->value,
@@ -999,6 +1107,52 @@ class WriteEntitlementTest extends TestCase
         $this->assertSame('https://example.test/manage/abc', $billable->plan_manage_url);
 
         Log::shouldNotHaveReceived('warning');
+
+        // The write landed in the table the TOKEN selected, read back by name.
+        //
+        // Running every case twice cannot prove this about itself. A helper that
+        // ignored the token would satisfy every assertion above on both passes,
+        // and the file would claim two subjects while exercising one. So the
+        // oracle is {@see self::SUBJECT_TABLES} rather than anything the
+        // resolution under test produces, and the OTHER subject's table is
+        // asserted empty: a row in both would mean the token picked one table
+        // and the model wrote to another.
+        $this->assertSame(self::SUBJECT_TABLES[$subject], $billable->getTable());
+
+        foreach (self::SUBJECT_TABLES as $token => $table) {
+            $this->assertSame(
+                $token === $subject ? 1 : 0,
+                DB::table($table)->where('plan', 'business')->count(),
+                sprintf('Expected the [%s] run to write into [%s] only.', $subject, self::SUBJECT_TABLES[$subject]),
+            );
+        }
+
+        // And the provider really does name two DIFFERENT subjects.
+        //
+        // Everything above is blind to the sharpest form of the trap, which was
+        // measured rather than reasoned: a provider yielding `'user' => ['team']`
+        // hands each case a CONSISTENT team token twice, so every expectation
+        // here holds, the table read-back agrees with itself, and the run
+        // reports 43 green tests while the user subject is never touched. Only
+        // the yielded set can catch that, so it is asserted against the same
+        // oracle: one run per subject, each carrying the subject it is named
+        // for.
+        $yielded = [];
+
+        foreach (self::billableSubjects() as $name => $arguments) {
+            $yielded[$name] = $arguments[0];
+        }
+
+        $this->assertSame(
+            array_keys(self::SUBJECT_TABLES),
+            array_keys($yielded),
+            'Every billable subject must get a run of its own.',
+        );
+        $this->assertSame(
+            array_keys(self::SUBJECT_TABLES),
+            array_values($yielded),
+            'A run named for one subject must carry that subject.',
+        );
     }
 
     /**
@@ -1011,7 +1165,8 @@ class WriteEntitlementTest extends TestCase
      * which is the exact loss rule 2 exists to prevent. The customer keeps what
      * they have and an operator gets a log line naming the gap.
      */
-    public function test_a_cross_rail_write_of_a_tier_missing_from_the_catalogue_is_dropped(): void
+    #[DataProvider('billableSubjects')]
+    public function test_a_cross_rail_write_of_a_tier_missing_from_the_catalogue_is_dropped(string $subject): void
     {
         Log::spy();
 
@@ -1021,7 +1176,7 @@ class WriteEntitlementTest extends TestCase
 
         $grantedAt = Carbon::parse('2026-08-22 12:00:00');
 
-        $billable = $this->makeBillable([
+        $billable = $this->makeBillable($subject, [
             'plan' => 'business',
             'plan_status' => PlanStatus::ACTIVE->value,
             'plan_provider' => BillingProvider::APP_STORE->value,
@@ -1068,15 +1223,17 @@ class WriteEntitlementTest extends TestCase
      * and would be certifying nothing. A plan swap down to a cheaper tier is
      * `active` on the new tier, so only the direction can decide it.
      */
-    public function test_a_cross_rail_write_against_a_held_tier_is_dropped_when_no_tier_order_is_published(): void
-    {
+    #[DataProvider('billableSubjects')]
+    public function test_a_cross_rail_write_against_a_held_tier_is_dropped_when_no_tier_order_is_published(
+        string $subject,
+    ): void {
         Log::spy();
 
         config(['magic-starter.billing.tier_order' => []]);
 
         $grantedAt = Carbon::parse('2026-08-22 12:00:00');
 
-        $billable = $this->makeBillable([
+        $billable = $this->makeBillable($subject, [
             'plan' => 'business',
             'plan_status' => PlanStatus::ACTIVE->value,
             'plan_provider' => BillingProvider::APP_STORE->value,
@@ -1125,15 +1282,17 @@ class WriteEntitlementTest extends TestCase
      * lapsed and whose tier was already revoked to absence, and the customer is
      * now buying on the card rail. Rule 2 is the only rule that can see it.
      */
-    public function test_a_cross_rail_write_applies_when_nothing_is_held_and_no_tier_order_is_published(): void
-    {
+    #[DataProvider('billableSubjects')]
+    public function test_a_cross_rail_write_applies_when_nothing_is_held_and_no_tier_order_is_published(
+        string $subject,
+    ): void {
         Log::spy();
 
         config(['magic-starter.billing.tier_order' => []]);
 
         $lapsedAt = Carbon::parse('2026-08-22 12:00:00');
 
-        $billable = $this->makeBillable([
+        $billable = $this->makeBillable($subject, [
             'plan' => null,
             'plan_status' => PlanStatus::EXPIRED->value,
             'plan_provider' => BillingProvider::APP_STORE->value,
@@ -1174,13 +1333,14 @@ class WriteEntitlementTest extends TestCase
      * maybe, and a revocation is not a maybe. So this pins `downgrade` rather
      * than pinning the drop alone.
      */
-    public function test_an_incoming_null_plan_ranks_as_a_downgrade_against_a_held_tier(): void
+    #[DataProvider('billableSubjects')]
+    public function test_an_incoming_null_plan_ranks_as_a_downgrade_against_a_held_tier(string $subject): void
     {
         Log::spy();
 
         $grantedAt = Carbon::parse('2026-08-22 12:00:00');
 
-        $billable = $this->makeBillable([
+        $billable = $this->makeBillable($subject, [
             'plan' => 'business',
             'plan_status' => PlanStatus::ACTIVE->value,
             'plan_provider' => BillingProvider::APP_STORE->value,
@@ -1217,13 +1377,14 @@ class WriteEntitlementTest extends TestCase
      * proven. Same rail and a strictly newer event, so no rule can decide it
      * and only the write itself is under test.
      */
-    public function test_a_revocation_from_the_rail_on_record_writes_an_absent_plan(): void
+    #[DataProvider('billableSubjects')]
+    public function test_a_revocation_from_the_rail_on_record_writes_an_absent_plan(string $subject): void
     {
         Log::spy();
 
         $grantedAt = Carbon::parse('2026-08-22 12:00:00');
 
-        $billable = $this->makeBillable([
+        $billable = $this->makeBillable($subject, [
             'plan' => 'business',
             'plan_status' => PlanStatus::ACTIVE->value,
             'plan_provider' => BillingProvider::STRIPE->value,
@@ -1249,7 +1410,7 @@ class WriteEntitlementTest extends TestCase
     }
 
     /**
-     * A first grant onto a team with no entitlement on record applies.
+     * A first grant onto a billable with no entitlement on record applies.
      *
      * Nothing is stored, so no write can take anything away, and rule 2 has
      * nothing to protect. Pinned because an implementation that treated an
@@ -1257,11 +1418,12 @@ class WriteEntitlementTest extends TestCase
      * customer's FIRST purchase, which is the loudest possible version of the
      * wrong error direction.
      */
-    public function test_a_first_grant_on_a_team_with_no_entitlement_applies(): void
+    #[DataProvider('billableSubjects')]
+    public function test_a_first_grant_on_a_billable_with_no_entitlement_applies(string $subject): void
     {
         Log::spy();
 
-        $billable = $this->makeBillable([]);
+        $billable = $this->makeBillable($subject, []);
 
         $applied = $this->write(
             billable: $billable,
@@ -1281,7 +1443,7 @@ class WriteEntitlementTest extends TestCase
     }
 
     /**
-     * Rule 2 stays armed on a team model that CASTS its plan column to an enum.
+     * Rule 2 stays armed on a billable that CASTS its plan column to an enum.
      *
      * This is not a hypothetical model. A consuming application owns the tier
      * vocabulary, so casting `plan` to its own backed enum is the natural thing
@@ -1294,23 +1456,21 @@ class WriteEntitlementTest extends TestCase
      * The scenario is otherwise identical to the plain-string cross-rail
      * downgrade above, so the cast is the only difference between them.
      */
-    public function test_rule_two_survives_a_plan_column_cast_to_an_enum(): void
+    #[DataProvider('billableSubjects')]
+    public function test_rule_two_survives_a_plan_column_cast_to_an_enum(string $subject): void
     {
         Log::spy();
 
         $grantedAt = Carbon::parse('2026-08-22 12:00:00');
 
-        $billable = new EnumCastingTeam;
-
-        $billable->forceFill([
-            'user_id' => (string) Str::orderedUuid(),
-            'name' => 'Ops Team',
-            'personal_team' => true,
+        // The casting model is the subject's own, so the cast is exercised on
+        // whichever thing the application bills rather than only on a team.
+        $billable = $this->makeBillable($subject, [
             'plan' => 'business',
             'plan_status' => PlanStatus::ACTIVE->value,
             'plan_provider' => BillingProvider::APP_STORE->value,
             'plan_source_event_at' => $grantedAt,
-        ])->save();
+        ], self::ENUM_CASTING_MODELS[$subject]);
 
         $this->assertInstanceOf(TestPlan::class, $billable->refresh()->plan);
 
@@ -1418,25 +1578,88 @@ class WriteEntitlementTest extends TestCase
     }
 
     /**
-     * A billable carrying whatever entitlement provenance the scenario needs.
+     * A billable of the parameterised subject, carrying whatever entitlement
+     * provenance the scenario needs.
      *
-     * A team here because a team is what the fixture models; the action reads it
-     * through `Model` and never asks what kind of subject it is.
+     * The class comes from `MagicStarter::billableModel()` rather than from a
+     * map in this file, so the token travels the same resolution an adopter's
+     * does (through `userModel()` / `teamModel()`, published overrides
+     * included). A map here would select the model without the package's
+     * agreement and the parameterisation would prove less than it looks like.
      *
      * @param  array<string, mixed>  $attributes
+     * @param  class-string<Model>|null  $modelClass  Overrides the resolution
+     *                                                above. Exists for the
+     *                                                enum-cast case, whose
+     *                                                model is a consumer-shaped
+     *                                                subclass the package
+     *                                                cannot resolve.
      */
-    protected function makeBillable(array $attributes): Model
+    protected function makeBillable(string $subject, array $attributes, ?string $modelClass = null): Model
     {
-        $billable = new ConcreteTeam;
+        $this->declareBillableSubject($subject);
+
+        $class = $modelClass ?? MagicStarter::billableModel();
+        $billable = new $class;
+
+        $this->assertInstanceOf(Model::class, $billable);
 
         $billable->forceFill([
-            'user_id' => (string) Str::orderedUuid(),
-            'name' => 'Ops Team',
-            'personal_team' => true,
+            ...$this->identityAttributes($subject),
             ...$attributes,
         ])->save();
 
         return $billable;
+    }
+
+    /**
+     * Declare which subject this run bills.
+     *
+     * The teams feature travels with the `'team'` token because the package
+     * REFUSES to boot on that token with teams off (there would be no team to
+     * hold an entitlement), so a run configured the other way is a state no
+     * adopter can have. Nothing in the arbitration path reads either value:
+     * exercising the refusal itself belongs to tests/MagicStarterBillableTest,
+     * and what this buys here is that every case runs under a configuration the
+     * package would have accepted.
+     */
+    private function declareBillableSubject(string $subject): void
+    {
+        config([
+            'magic-starter.billing.billable' => $subject,
+            'magic-starter.features' => $subject === 'team'
+                ? [Features::billing(), Features::teams()]
+                : [Features::billing()],
+        ]);
+    }
+
+    /**
+     * The identity columns a subject needs before a row of it can exist.
+     *
+     * The only place in this file that knows the two subjects apart, and it
+     * knows them apart about their own identity rather than about billing: a
+     * team row needs an owner and a personal flag, and a user row has neither
+     * column. No arbitration expectation may live here or in any case; one that
+     * had to would be a leak in the action.
+     *
+     * @return array<string, mixed>
+     */
+    private function identityAttributes(string $subject): array
+    {
+        return match ($subject) {
+            'team' => [
+                'user_id' => (string) Str::orderedUuid(),
+                'name' => 'Ops Team',
+                'personal_team' => true,
+            ],
+            'user' => [
+                'name' => 'Ops Owner',
+            ],
+            default => throw new RuntimeException(sprintf(
+                'Unknown billable subject [%s]; see self::billableSubjects().',
+                $subject,
+            )),
+        };
     }
 
     /**
@@ -1524,6 +1747,33 @@ class EnumCastingTeam extends ConcreteTeam
     {
         return [
             'personal_team' => 'boolean',
+            'plan' => TestPlan::class,
+            'plan_source_event_at' => 'datetime',
+        ];
+    }
+}
+
+/**
+ * The same cast on the USER subject.
+ *
+ * A consuming application that bills users casts `plan` to its own tier enum
+ * exactly as one billing teams does, and the enum-cast test runs under both
+ * tokens, so it needs one of these per subject. It extends the SUITE's user
+ * fixture rather than replacing or re-registering it: `ConcreteUser` is already
+ * the registered user model and eleven other test files depend on it as it is.
+ */
+class EnumCastingUser extends ConcreteUser
+{
+    protected $table = 'users';
+
+    /**
+     * Get the attributes that should be cast.
+     *
+     * @return array<string, string>
+     */
+    protected function casts(): array
+    {
+        return [
             'plan' => TestPlan::class,
             'plan_source_event_at' => 'datetime',
         ];
