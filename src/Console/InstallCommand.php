@@ -115,13 +115,17 @@ class InstallCommand extends Command
         'timezones' => [
             'add_timezone_to_users_table.php',
         ],
-        // Entitlement provenance lands on the teams table, so this migration is
-        // only meaningful alongside the teams feature. It is listed here rather
-        // than in CONDITIONAL_MIGRATIONS because the migration guards itself on
-        // Schema::hasTable('teams'): a billing-without-teams selection is a
-        // no-op rather than a broken `migrate`.
+        // Entitlement provenance lands on whichever table
+        // `magic-starter.billing.billable` names, which is `users` by default
+        // and `teams` for an application that bills a team. So this migration
+        // needs no companion feature and is NOT in CONDITIONAL_MIGRATIONS: the
+        // users table is a core migration, and a team billable already requires
+        // the teams feature (the provider refuses to boot otherwise). It is
+        // declared LAST in this array on purpose: publishMigrations() honours
+        // this declaration order, so the table it alters is always created by an
+        // earlier timestamp. It throws rather than skipping when it is not.
         'billing' => [
-            'add_entitlement_provenance_to_teams_table.php',
+            'add_entitlement_provenance_to_billable_table.php',
         ],
     ];
 
@@ -414,9 +418,16 @@ class InstallCommand extends Command
     {
         $files = self::CORE_MIGRATIONS;
 
-        // Add feature-specific migrations.
-        foreach ($features as $feature) {
-            $files = array_merge($files, self::FEATURE_MIGRATIONS[$feature] ?? []);
+        // Add feature-specific migrations, in the order THIS class declares them
+        // rather than the order the operator named the features in. The published
+        // timestamp is the run order, and one of these migrations alters a table
+        // another one creates: `--features=billing,teams` would otherwise publish
+        // the entitlement provenance ahead of the teams table it lands on, and
+        // that migration now throws on an absent table instead of skipping it.
+        foreach (self::FEATURE_MIGRATIONS as $feature => $migrations) {
+            if (in_array($feature, $features, true)) {
+                $files = array_merge($files, $migrations);
+            }
         }
 
         // Add conditional migrations where ALL required features are selected.

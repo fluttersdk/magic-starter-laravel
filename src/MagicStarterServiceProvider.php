@@ -12,6 +12,7 @@ use Illuminate\Support\Facades\Gate;
 use Illuminate\Support\Facades\RateLimiter;
 use Illuminate\Support\ServiceProvider;
 use Laravel\Sanctum\Sanctum;
+use RuntimeException;
 
 /**
  * Service provider for the Magic Starter package.
@@ -63,7 +64,7 @@ class MagicStarterServiceProvider extends ServiceProvider
         // feature gates the SCHEMA (see InstallCommand), not the arbitration
         // contract. A consumer has to be able to bind its own entitlement
         // writer before it decides to switch billing on.
-        $this->app->bind(Contracts\WritesTeamEntitlement::class, Actions\WriteTeamEntitlement::class);
+        $this->app->bind(Contracts\WritesEntitlement::class, Actions\WriteEntitlement::class);
 
         // OneSignal SDK client singleton (resolved lazily, only when injected).
         $this->app->singleton(\onesignal\client\api\DefaultApi::class, function (): \onesignal\client\api\DefaultApi {
@@ -88,6 +89,9 @@ class MagicStarterServiceProvider extends ServiceProvider
      */
     public function boot(): void
     {
+        // 0. Refuse a billable subject the rest of this boot cannot serve.
+        $this->guardBillableSubject();
+
         // 1. Register named rate limiters for package endpoints.
         $this->configureRateLimiting();
 
@@ -198,6 +202,46 @@ class MagicStarterServiceProvider extends ServiceProvider
             ], 'magic-starter-factories');
 
         }
+    }
+
+    /**
+     * Refuse to boot when the declared billable subject cannot exist.
+     *
+     * `magic-starter.billing.billable` names WHAT this application bills, and
+     * `'team'` is only answerable while the teams feature is on: with teams off
+     * this provider registers no personal-team listener (step 3 below), so there
+     * is no team at all, not even a personal one, and every entitlement write
+     * would have nothing to land on. Saying so here costs one boot; saying it at
+     * the first payment costs a customer their tier.
+     *
+     * The phase is deliberate. Config is loaded before any provider registers,
+     * so both phases could read the token, and the choice is about ORDER of use
+     * instead: nothing in `register()` reads the subject, while this provider's
+     * own first model resolution (the teams gate's `Gate::policy`) happens
+     * further down this method, so a refusal at the top of `boot()` is strictly
+     * earlier than any use of it. A future reader in `register()` (Cashier
+     * requires `useCustomerModel()` there) has to carry the same guard beside
+     * it, because `boot()` would then be too late to stop the wrong model being
+     * handed over.
+     *
+     * @throws RuntimeException
+     */
+    private function guardBillableSubject(): void
+    {
+        if (config('magic-starter.billing.billable') !== 'team') {
+            return;
+        }
+
+        if (Features::hasTeamFeatures()) {
+            return;
+        }
+
+        throw new RuntimeException(sprintf(
+            "[magic-starter.billing.billable] is set to 'team', which requires the [%s] feature: "
+            . 'with teams off no team exists to hold an entitlement, so nothing could be billed. '
+            . "Enable it in [magic-starter.features], or bill the 'user' subject instead.",
+            Features::teams(),
+        ));
     }
 
     /**

@@ -1,13 +1,21 @@
 <?php
 
+use FlutterSdk\MagicStarter\MagicStarter;
 use Illuminate\Database\Migrations\Migration;
 use Illuminate\Database\Schema\Blueprint;
 use Illuminate\Support\Facades\Schema;
 
 /**
- * Gives a team's entitlement the provenance and ordering discipline a SECOND
- * billing rail requires, and gives a provider-neutral billing wire a source for
- * every field it promises.
+ * Gives the BILLABLE SUBJECT's entitlement the provenance and ordering discipline
+ * a SECOND billing rail requires, and gives a provider-neutral billing wire a
+ * source for every field it promises.
+ *
+ * Which subject that is comes from `magic-starter.billing.billable` through
+ * {@see MagicStarter::billableModel()}, and this file resolves the table from it
+ * ONCE: `users` for an application that bills a user, `teams` (or a published
+ * App\Models\Team's own table) for one that bills a team. The subject is a closed
+ * token rather than a table name because the package has to know what KIND of
+ * thing it is billing, and a table name cannot say.
  *
  * The tier itself (`plan`) and its neutral lifecycle (`plan_status`) belong to
  * the consuming application, because the tier vocabulary does: this package has
@@ -49,10 +57,15 @@ use Illuminate\Support\Facades\Schema;
  * ordering rule that compares two instants cannot afford either of them to be
  * zone-ambiguous.
  *
- * No key column is added here, so MigrationHelper is not involved. The
- * `hasTable` guard is: entitlement is per-team, so this migration is meaningful
- * only where the teams feature created that table, and a billing feature
- * selected without teams must be a no-op rather than a failed `migrate`.
+ * No key column is added here, so MigrationHelper is not involved. A resolved
+ * table that does not exist THROWS, and that is a deliberate reversal of the
+ * first shape of this file: it hardcoded `teams` in every guard and returned
+ * early when that table was absent, so an adopter billing anything else got a
+ * `migrate` that reported success, added nothing, and surfaced as a
+ * missing-column error on their first payment. A table the token names and the
+ * database does not have is a configuration mistake, and `migrate` is the
+ * cheapest place to say so. Idempotency is carried by the `hasColumn` guards
+ * instead, which is the only thing the early return was legitimately doing.
  */
 return new class extends Migration
 {
@@ -63,19 +76,21 @@ return new class extends Migration
      */
     public function up(): void
     {
-        if (! Schema::hasTable('teams') || Schema::hasColumn('teams', 'plan_provider')) {
+        $table = $this->billableTable();
+
+        if (Schema::hasColumn($table, 'plan_provider')) {
             return;
         }
 
-        Schema::table('teams', function (Blueprint $table): void {
-            $table->string('plan_provider')->nullable();
-            $table->timestampTz('plan_source_event_at')->nullable();
-            $table->string('plan_provider_status')->nullable();
-            $table->string('plan_product_id')->nullable();
-            $table->timestampTz('plan_current_period_end')->nullable();
-            $table->boolean('plan_renews')->nullable();
-            $table->timestampTz('plan_grace_period_ends_at')->nullable();
-            $table->string('plan_manage_url', 2048)->nullable();
+        Schema::table($table, function (Blueprint $blueprint): void {
+            $blueprint->string('plan_provider')->nullable();
+            $blueprint->timestampTz('plan_source_event_at')->nullable();
+            $blueprint->string('plan_provider_status')->nullable();
+            $blueprint->string('plan_product_id')->nullable();
+            $blueprint->timestampTz('plan_current_period_end')->nullable();
+            $blueprint->boolean('plan_renews')->nullable();
+            $blueprint->timestampTz('plan_grace_period_ends_at')->nullable();
+            $blueprint->string('plan_manage_url', 2048)->nullable();
         });
 
         // The entitlement ITSELF, added only where a consumer has not already
@@ -96,13 +111,13 @@ return new class extends Migration
         // `plan_status` is this package's own vocabulary ({@see PlanStatus}) and
         // is still stored as a string rather than cast, so a status a newer
         // release introduces cannot break reads on an older one.
-        Schema::table('teams', function (Blueprint $table): void {
-            if (! Schema::hasColumn('teams', 'plan')) {
-                $table->string('plan')->nullable();
+        Schema::table($table, function (Blueprint $blueprint) use ($table): void {
+            if (! Schema::hasColumn($table, 'plan')) {
+                $blueprint->string('plan')->nullable();
             }
 
-            if (! Schema::hasColumn('teams', 'plan_status')) {
-                $table->string('plan_status')->nullable();
+            if (! Schema::hasColumn($table, 'plan_status')) {
+                $blueprint->string('plan_status')->nullable();
             }
         });
     }
@@ -119,12 +134,14 @@ return new class extends Migration
      */
     public function down(): void
     {
-        if (! Schema::hasTable('teams') || ! Schema::hasColumn('teams', 'plan_provider')) {
+        $table = $this->billableTable();
+
+        if (! Schema::hasColumn($table, 'plan_provider')) {
             return;
         }
 
-        Schema::table('teams', function (Blueprint $table): void {
-            $table->dropColumn([
+        Schema::table($table, function (Blueprint $blueprint): void {
+            $blueprint->dropColumn([
                 'plan_provider',
                 'plan_source_event_at',
                 'plan_provider_status',
@@ -135,5 +152,33 @@ return new class extends Migration
                 'plan_manage_url',
             ]);
         });
+    }
+
+    /**
+     * Resolve the table the entitlement lives on, refusing an absent one.
+     *
+     * The single resolution point for both directions, so `up()` and `down()`
+     * cannot drift onto two different tables.
+     *
+     * @throws RuntimeException
+     */
+    private function billableTable(): string
+    {
+        $model = MagicStarter::billableModel();
+        $table = (new $model)->getTable();
+
+        if (! Schema::hasTable($table)) {
+            throw new RuntimeException(sprintf(
+                'Cannot add entitlement provenance: table [%s] does not exist. It is resolved from '
+                . '[magic-starter.billing.billable] through MagicStarter::billableModel(), which '
+                . 'answered [%s]. Either that key names a subject this application does not have, or '
+                . 'the migration creating [%s] has not run yet.',
+                $table,
+                $model,
+                $table,
+            ));
+        }
+
+        return $table;
     }
 };

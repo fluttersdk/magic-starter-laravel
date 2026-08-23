@@ -56,7 +56,7 @@ Stop rebuilding authentication, profile management, and team features from scrat
 | :globe_with_meridians: | **Timezones** | Timezone listing API for extended profile |
 | :camera: | **Profile Photos** | Upload and delete for users and teams |
 | :desktop_computer: | **Sessions** | Active session listing and revocation |
-| :credit_card: | **Billing** | Team entitlement columns plus one guarded write path, so more than one payment rail can claim a tier without racing |
+| :credit_card: | **Billing** | Entitlement columns on the subject you bill, a user or a team, plus one guarded write path so more than one payment rail can claim a tier without racing |
 
 ---
 
@@ -181,7 +181,7 @@ All 14 features are opt-in. Enable them by uncommenting in `config/magic-starter
 | `phone-otp` | Phone-based OTP send/verify login flow |
 | `timezones` | Timezone listing API endpoint |
 | `onesignal` | OneSignal push channel for the notification features |
-| `billing` | Team entitlement columns and the arbitration contract that writes them |
+| `billing` | Entitlement columns on the declared billable subject (`billing.billable`, a user or a team) and the arbitration contract that writes them |
 
 ---
 

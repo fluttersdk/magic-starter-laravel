@@ -8,14 +8,20 @@ use FlutterSdk\MagicStarter\Enums\PlanStatus;
 use Illuminate\Database\Eloquent\Model;
 
 /**
- * Contract for the single code path that writes a team's entitlement.
+ * Contract for the single code path that writes a billable's entitlement.
  *
- * A team's tier is one column, and more than one payment rail can feed it. Two
- * feeders writing the same column unconditionally is not two features, it is a
- * race: whichever event is delivered last wins, and delivery order is a
+ * A billable's tier is one column, and more than one payment rail can feed it.
+ * Two feeders writing the same column unconditionally is not two features, it is
+ * a race: whichever event is delivered last wins, and delivery order is a
  * property of the internet rather than of the truth. Every feeder therefore
  * goes through an implementation of this contract, which owns the ordering
  * decision so no feeder has to.
+ *
+ * The subject is a plain `Model`, and it is named for the ROLE it plays rather
+ * than for any one kind of record, because which kind an application bills is
+ * the application's own decision: a team on one deployment, a user on another.
+ * Nothing here reads a team relation, a membership or an owner, so nothing here
+ * has to know which it was handed.
  *
  * The tier arrives as a STRING plan id, never an enum, because the tier
  * vocabulary belongs to the consuming application: this package has no opinion
@@ -25,21 +31,33 @@ use Illuminate\Database\Eloquent\Model;
  * that every reader downstream gates on. A rail's own word is mapped by the
  * feeder that speaks it and survives verbatim in `$providerStatus`.
  *
- * @see \FlutterSdk\MagicStarter\Actions\WriteTeamEntitlement the default
- *      implementation and the two ordering rules it enforces
+ * @see \FlutterSdk\MagicStarter\Actions\WriteEntitlement the default
+ *      implementation and the four ordering rules it enforces
  */
-interface WritesTeamEntitlement
+interface WritesEntitlement
 {
     /**
-     * Apply one rail's claim to the given team's entitlement columns.
+     * Apply one rail's claim to the given billable's entitlement columns.
      *
-     * CALL THIS WITH NAMED ARGUMENTS. Six of the twelve parameters are
-     * nullable, three of them are strings and two are timestamps, so a
+     * CALL THIS WITH NAMED ARGUMENTS. Seven of the twelve parameters are
+     * nullable, four of them are strings and two are timestamps, so a
      * positional call site can transpose a pair without any type error to show
      * for it. Named arguments are what makes that impossible.
      *
-     * @param  Model  $team  The team whose entitlement this claim is about.
-     * @param  string  $plan  The consumer-defined plan id the rail says is owed.
+     * @param  Model  $billable  The subject whose entitlement this claim is
+     *                           about, whatever an application bills.
+     * @param  string|null  $plan  The consumer-defined plan id the rail says is
+     *                             owed, or NULL for a rail saying nothing is
+     *                             owed at all. Null is how a revocation says
+     *                             what it means. The alternative is naming a
+     *                             free-tier id, which this package cannot know
+     *                             (the vocabulary is the consumer's), and an
+     *                             implementation that invents one gets the
+     *                             comparison wrong in both directions at once:
+     *                             no change against a billable already on that
+     *                             tier, and unrankable in a catalogue that
+     *                             publishes no such row. Both readings let a
+     *                             cross-rail cancellation through.
      * @param  PlanStatus  $status  Where that tier stands, in neutral words.
      * @param  BillingProvider  $provider  The rail making the claim.
      * @param  CarbonInterface  $eventAt  The SOURCE event's own timestamp, not
@@ -59,8 +77,8 @@ interface WritesTeamEntitlement
      *                               claim assembled from a local row, which can
      *                               be a whole period behind while looking
      *                               exactly like a fresh one. Only an
-     *                               authoritative claim may move a team from one
-     *                               rail to another.
+     *                               authoritative claim may move a billable from
+     *                               one rail to another.
      * @param  string|null  $providerStatus  The rail's own status word, verbatim.
      * @param  string|null  $productId  The rail-native product or price id.
      * @param  CarbonInterface|null  $currentPeriodEnd  When the paid period ends,
@@ -76,8 +94,8 @@ interface WritesTeamEntitlement
      *              rule dropped the write. Every false return has logged why.
      */
     public function write(
-        Model $team,
-        string $plan,
+        Model $billable,
+        ?string $plan,
         PlanStatus $status,
         BillingProvider $provider,
         CarbonInterface $eventAt,
