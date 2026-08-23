@@ -2,9 +2,11 @@
 
 namespace FlutterSdk\MagicStarter\Console;
 
+use Carbon\CarbonInterface;
 use FlutterSdk\MagicStarter\MagicStarterServiceProvider;
 use Illuminate\Console\Command;
 use Illuminate\Filesystem\Filesystem;
+use Illuminate\Support\Carbon;
 use Symfony\Component\Console\Attribute\AsCommand;
 
 use function Laravel\Prompts\confirm;
@@ -793,29 +795,31 @@ class InstallCommand extends Command
             }
         }
 
-        // `Y_m_d_His` plus a per-file second, rather than a date plus this
-        // batch's position. The position restarts at zero on every invocation, so
-        // two installs on the SAME DAY with different feature sets handed out the
-        // same sequence: `--features=teams` gave `create_teams_table` a number,
-        // and a later `--features=billing` gave the provenance migration the same
-        // one, where it sorts first alphabetically and runs BEFORE the table it
-        // alters. That used to be a silent no-op; the provenance migration now
-        // throws on an absent table, so it became a hard `migrate` failure for a
-        // team-billing adopter who installed in two passes. Ordering within one
-        // run still comes from the declaration order this method is called in.
-        // The `$index` suffix is what actually closes the collision, and the
-        // seconds offset alone did not. `CORE_MIGRATIONS` holds three files and
-        // `teams` is the first feature, so `create_teams_table` takes index 3 in
-        // a `--features=teams` run and the provenance migration takes index 3 in
-        // a later `--features=billing` run: two scripted installs landing in the
-        // same wall-clock second produced identical prefixes, and
-        // `add_entitlement...` sorts before `create_teams_table`, so `migrate`
-        // ran the ALTER before the CREATE. Appending the index breaks that tie
-        // deterministically, and keeping the seconds offset keeps a single run's
-        // files in declaration order.
-        $timestamp = now()->addSeconds($index)->format('Y_m_d_His');
-        $sequence = str_pad((string) $index, 3, '0', STR_PAD_LEFT);
-        $destination = database_path("migrations/{$timestamp}_{$sequence}_{$filename}");
+        // The stamp has to order files WITHIN a run and ACROSS runs, and getting
+        // there took two wrong turns worth recording, because the failure it
+        // guards is a hard one: the provenance migration now throws on an absent
+        // table, so a provenance file sorting before `create_teams_table` is a
+        // failed `migrate` rather than the silent no-op it used to be.
+        //
+        // The first shape was a date plus this batch's position, and the position
+        // restarts at zero every invocation: `--features=teams` and a later
+        // same-day `--features=billing` both handed index 3 to their respective
+        // files, and `add_entitlement...` sorts first alphabetically.
+        //
+        // The second shape added `Y_m_d_His` and then an `$index` suffix, and
+        // that suffix was DEAD. It and the seconds offset are two encodings of
+        // the same number, so two files with equal indices got the same
+        // timestamp and the same suffix, and files with different indices were
+        // already separated by the offset. It closed nothing while reading as if
+        // it did.
+        //
+        // What actually closes it is anchoring the base on what this package has
+        // ALREADY published, so a second run cannot start where the first one
+        // ended. The offset then orders the run's own files by declaration order.
+        $timestamp = $this->migrationTimestampBase()
+            ->addSeconds($index)
+            ->format('Y_m_d_His');
+        $destination = database_path("migrations/{$timestamp}_{$filename}");
 
         $source = $this->migrationSourcePath() . "/{$filename}";
 
@@ -866,5 +870,43 @@ class InstallCommand extends Command
     private function migrationSourcePath(): string
     {
         return __DIR__ . '/../../database/migrations';
+    }
+
+    /**
+     * The second this run's migration stamps start from.
+     *
+     * `now()`, unless this package has already published a migration stamped at
+     * or after it, in which case one second later than the latest of those. That
+     * is what makes two installs orderable: without it a second run restarts at
+     * the current second and can hand a file a stamp that sorts before a file the
+     * first run published, and the provenance migration sorting before the table
+     * it alters is a failed `migrate` rather than a cosmetic problem.
+     *
+     * Only this package's own filenames are consulted, so an application's
+     * unrelated migrations cannot push the base forward.
+     */
+    private function migrationTimestampBase(): CarbonInterface
+    {
+        $latest = null;
+
+        foreach (glob($this->migrationSourcePath() . '/*.php') ?: [] as $source) {
+            foreach (glob(database_path('migrations/*_' . basename($source))) ?: [] as $published) {
+                if (preg_match('/^(\d{4}_\d{2}_\d{2}_\d{6})_/', basename($published), $matches) !== 1) {
+                    continue;
+                }
+
+                $stamp = Carbon::createFromFormat('Y_m_d_His', $matches[1]);
+
+                if ($stamp instanceof Carbon && ($latest === null || $stamp->greaterThan($latest))) {
+                    $latest = $stamp;
+                }
+            }
+        }
+
+        $now = now();
+
+        return $latest !== null && $latest->greaterThanOrEqualTo($now)
+            ? $latest->addSecond()
+            : $now;
     }
 }
