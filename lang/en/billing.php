@@ -39,4 +39,15 @@ return [
         'paused' => 'Paused',
     ],
 
+    /*
+     * Refusal sentences the billing actions and endpoints raise, keyed by a
+     * short reason. Shipped here rather than inlined so every reader gets the
+     * same wording in their own locale, and so a redeclaration-guard test can
+     * assert the two locales actually differ instead of one silently
+     * inheriting the other's text.
+     */
+    'refusals' => [
+        'store_subscription_active' => 'A store subscription is still billing this team. Cancel it in the store account that bought it first: deleting the team now would remove the plan and leave the store charging you, and this app cannot cancel it for you.',
+    ],
+
 ];

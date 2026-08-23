@@ -3,6 +3,7 @@
 use FlutterSdk\MagicStarter\Models\Team;
 use FlutterSdk\MagicStarter\Models\TeamInvitation;
 use FlutterSdk\MagicStarter\Models\TeamUser;
+use FlutterSdk\MagicStarter\Support\RevenueCatClient;
 
 return [
     /*
@@ -376,6 +377,44 @@ return [
     | is a perfectly valid one. Before the Cashier tables shipped this cost one
     | mis-targeted ALTER; it now costs the whole billing schema.
     |
+    | 'revenuecat' configures the STORE rail: Apple App Store and Google Play
+    | subscriptions, reaching the application as webhook deliveries that are
+    | only ever a SIGNAL. What a subscriber is actually entitled to is read
+    | back from RevenueCat's API by
+    | \FlutterSdk\MagicStarter\Support\RevenueCatClient, so both halves of the
+    | rail need configuration here: the secret that authenticates an inbound
+    | delivery, and the key that authenticates the outbound read.
+    |
+    | It lives under a PACKAGE-OWNED key rather than under 'cashier', because
+    | RevenueCat has no Laravel vendor package at all here: there is no default
+    | to defer to and no adopter dashboard that already points at some other
+    | path, unlike the Stripe webhook, which keeps reading Cashier's own
+    | 'cashier.path'.
+    |
+    | The five ENV VAR NAMES below are NOT this package's to rename, even
+    | though the config key that reads them is. An adopter migrating from a
+    | hand-rolled RevenueCat integration already has these set on their server,
+    | and keeping the names means adopting this package is a config-file change
+    | rather than a server .env edit with a window where deliveries fail.
+    |
+    | BOTH SECRETS ARE EMPTY BY DEFAULT AND THE RAIL FAILS CLOSED ON EITHER.
+    | With no webhook secret the endpoint refuses every delivery, because it
+    | cannot tell RevenueCat apart from anybody who found the URL and an
+    | endpoint that queues a tier change must not accept an unauthenticated
+    | one. With no API key the authoritative read raises rather than answering
+    | "nothing is owed", which would revoke every paying team. Neither has a
+    | fallback: a default would be either a secret in a public repository or a
+    | value that authenticates as nobody.
+    |
+    | 'operation_budget_seconds' bounds the WHOLE retried read, not one call: a
+    | per-call timeout sized against a wall breaks the moment anything retries.
+    |
+    | 'accept_sandbox' is whether this deployment may act on sandbox purchases
+    | at all. FALSE in production, always: a sandbox purchase granting a real
+    | paid tier is money out of the door, and a store's sandbox is trivially
+    | reachable by anybody with a developer account. It only WIDENS what an
+    | inbound event is allowed to say; it is never read instead of it.
+    |
     */
 
     'billing' => [
@@ -390,6 +429,14 @@ return [
         'prices' => [
             // env('CASHIER_PRICE_PRO') => 'pro',
             // env('CASHIER_PRICE_BUSINESS') => 'business',
+        ],
+
+        'revenuecat' => [
+            'webhook_secret' => env('REVENUECAT_WEBHOOK_SECRET'),
+            'secret_api_key' => env('REVENUECAT_SECRET_API_KEY'),
+            'base_url' => env('REVENUECAT_BASE_URL', RevenueCatClient::DEFAULT_BASE_URL),
+            'operation_budget_seconds' => env('REVENUECAT_OPERATION_BUDGET_SECONDS', 10),
+            'accept_sandbox' => (bool) env('REVENUECAT_ACCEPT_SANDBOX', false),
         ],
     ],
 
