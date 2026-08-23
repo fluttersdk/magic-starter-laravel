@@ -793,9 +793,18 @@ class InstallCommand extends Command
             }
         }
 
-        $timestamp = now()->format('Y_m_d');
-        $sequence = str_pad((string) ($index + 1), 6, '0', STR_PAD_LEFT);
-        $destination = database_path("migrations/{$timestamp}_{$sequence}_{$filename}");
+        // `Y_m_d_His` plus a per-file second, rather than a date plus this
+        // batch's position. The position restarts at zero on every invocation, so
+        // two installs on the SAME DAY with different feature sets handed out the
+        // same sequence: `--features=teams` gave `create_teams_table` a number,
+        // and a later `--features=billing` gave the provenance migration the same
+        // one, where it sorts first alphabetically and runs BEFORE the table it
+        // alters. That used to be a silent no-op; the provenance migration now
+        // throws on an absent table, so it became a hard `migrate` failure for a
+        // team-billing adopter who installed in two passes. Ordering within one
+        // run still comes from the declaration order this method is called in.
+        $timestamp = now()->addSeconds($index)->format('Y_m_d_His');
+        $destination = database_path("migrations/{$timestamp}_{$filename}");
 
         $source = $this->migrationSourcePath() . "/{$filename}";
 

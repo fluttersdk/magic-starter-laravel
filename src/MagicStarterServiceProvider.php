@@ -228,7 +228,30 @@ class MagicStarterServiceProvider extends ServiceProvider
      */
     private function guardBillableSubject(): void
     {
-        if (config('magic-starter.billing.billable') !== 'team') {
+        $subject = config('magic-starter.billing.billable');
+
+        // The token is validated EXHAUSTIVELY here and not only on the 'team'
+        // branch below, because an unrecognised value is the failure this guard
+        // exists to make early. Left to the lazy path it boots cleanly and throws
+        // at whatever first resolves the billable, which from the moment a rail
+        // ships is a payment webhook: money taken, entitlement unwritten, and a
+        // typo like 'teams' as the cause. The migration was rescued from exactly
+        // this shape of deferred failure, so the guard must not reintroduce it.
+        // NULL is ABSENCE, not a wrong value, and the two get different answers.
+        // `mergeConfigFrom` is a shallow merge, so a consumer who published a
+        // `billing` block before this key existed has no key at all, and the
+        // accessor's `'user'` default is what serves them; refusing to boot over
+        // that would break every such adopter on upgrade. A value that is present
+        // and unrecognised is the typo below.
+        if ($subject !== null && ! in_array($subject, ['user', 'team'], true)) {
+            throw new RuntimeException(sprintf(
+                '[magic-starter.billing.billable] is [%s], which is not a billable subject. '
+                . "Set it to 'user' or to 'team'.",
+                is_string($subject) ? $subject : get_debug_type($subject),
+            ));
+        }
+
+        if ($subject !== 'team') {
             return;
         }
 
@@ -239,7 +262,10 @@ class MagicStarterServiceProvider extends ServiceProvider
         throw new RuntimeException(sprintf(
             "[magic-starter.billing.billable] is set to 'team', which requires the [%s] feature: "
             . 'with teams off no team exists to hold an entitlement, so nothing could be billed. '
-            . "Enable it in [magic-starter.features], or bill the 'user' subject instead.",
+            . "Enable it in [magic-starter.features], or bill the 'user' subject instead. "
+            . 'This throws from boot, so artisan is down while it holds: if the value came from a '
+            . 'cached config, delete bootstrap/cache/config.php by hand, because config:clear '
+            . 'cannot run either.',
             Features::teams(),
         ));
     }

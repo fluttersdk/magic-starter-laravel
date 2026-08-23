@@ -143,6 +143,37 @@ class MagicStarterBillableTest extends TestCase
     }
 
     /**
+     * An unrecognised token is refused at BOOT, not at first resolution.
+     *
+     * `test_an_unsupported_token_is_refused_naming_the_key` above proves the
+     * throw through `billableModel()`, which is the LAZY path: nothing in
+     * production resolves the billable until something needs it. So a typo like
+     * `teams` used to boot cleanly and surface at whatever first asked, and from
+     * the moment a rail ships that is a payment webhook, which means money taken
+     * and no entitlement written with a plural as the cause. This is the same
+     * shape of deferred failure the provenance migration was rescued from, so the
+     * guard validates the whole token set rather than only the `team` branch.
+     */
+    public function test_booting_with_an_unrecognised_token_is_refused(): void
+    {
+        config([
+            'magic-starter.features' => [Features::billing()],
+            // A plural, which is the typo this catches, and which the team branch
+            // alone would have waved through.
+            'magic-starter.billing.billable' => 'teams',
+        ]);
+
+        try {
+            (new MagicStarterServiceProvider($this->app))->boot();
+
+            $this->fail('Booting an unrecognised billable token must be refused.');
+        } catch (RuntimeException $exception) {
+            $this->assertStringContainsString('magic-starter.billing.billable', $exception->getMessage());
+            $this->assertStringContainsString('teams', $exception->getMessage());
+        }
+    }
+
+    /**
      * Limb two: the same token with the teams feature ON boots and resolves.
      */
     public function test_booting_with_the_team_token_and_teams_on_is_allowed(): void
