@@ -14,6 +14,7 @@ use FlutterSdk\MagicStarter\Models\ProcessedWebhookEvent;
 use FlutterSdk\MagicStarter\Support\EntitlementWrite;
 use FlutterSdk\MagicStarter\Support\RevenueCatClient;
 use FlutterSdk\MagicStarter\Tests\Fixtures\ConcreteUser;
+use FlutterSdk\MagicStarter\Tests\Support\FeederInvariantWriter;
 use FlutterSdk\MagicStarter\Tests\TestCase;
 use GuzzleHttp\Promise\PromiseInterface;
 use Illuminate\Database\Eloquent\Model;
@@ -130,6 +131,19 @@ class SyncRevenueCatEntitlementTest extends TestCase
     protected function setUp(): void
     {
         parent::setUp();
+
+        // Every claim any scenario in this file produces is checked against the
+        // feeder invariant, which is the pairing WriteEntitlement's rule 2
+        // depends on and has no guard for. It goes in setUp() and not beside the
+        // recorder below on purpose: the recorder is opt-in, so wrapping it
+        // would check only the scenarios that asked to be recorded, and the
+        // revocation paths worth checking are the ones nobody enumerated.
+        FeederInvariantWriter::reset();
+
+        $this->app->extend(
+            WritesEntitlement::class,
+            fn (WritesEntitlement $inner): WritesEntitlement => new FeederInvariantWriter($inner),
+        );
 
         // Every fixture below decides "is this subscription still live" against
         // `now()`, so the clock is pinned to the moment the entitlement on

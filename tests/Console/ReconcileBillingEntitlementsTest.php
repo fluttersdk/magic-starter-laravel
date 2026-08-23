@@ -4,6 +4,7 @@ namespace FlutterSdk\MagicStarter\Tests\Console;
 
 use Carbon\CarbonImmutable;
 use FlutterSdk\MagicStarter\Console\ReconcileBillingEntitlements;
+use FlutterSdk\MagicStarter\Contracts\WritesEntitlement;
 use FlutterSdk\MagicStarter\Enums\BillingProvider;
 use FlutterSdk\MagicStarter\Enums\PlanStatus;
 use FlutterSdk\MagicStarter\Features;
@@ -11,6 +12,7 @@ use FlutterSdk\MagicStarter\MagicStarter;
 use FlutterSdk\MagicStarter\Models\Subscription;
 use FlutterSdk\MagicStarter\Support\RevenueCatClient;
 use FlutterSdk\MagicStarter\Tests\Fixtures\ConcreteUser;
+use FlutterSdk\MagicStarter\Tests\Support\FeederInvariantWriter;
 use FlutterSdk\MagicStarter\Tests\TestCase;
 use GuzzleHttp\Promise\PromiseInterface;
 use Illuminate\Console\Scheduling\Event as ScheduledEvent;
@@ -186,6 +188,19 @@ class ReconcileBillingEntitlementsTest extends TestCase
         // that test's application. Pinned rather than assumed.
         Cashier::useSubscriptionModel(Subscription::class);
 
+        // Every claim this sweep issues is checked against the feeder invariant,
+        // which is the pairing WriteEntitlement's rule 2 depends on and has no
+        // guard for. A decorator rather than a test of its own, because the
+        // revocation paths worth checking are the ones nobody enumerated: this
+        // way every scenario below is an invariant check without having to
+        // remember to make it one.
+        FeederInvariantWriter::reset();
+
+        $this->app->extend(
+            WritesEntitlement::class,
+            fn (WritesEntitlement $inner): WritesEntitlement => new FeederInvariantWriter($inner),
+        );
+
         // Every fixture below decides "is this subscription still live" against
         // `now()`, and the reconciler stamps its own claims with `now()` too, so
         // the clock is pinned to the moment the entitlement on record was
@@ -237,6 +252,64 @@ class ReconcileBillingEntitlementsTest extends TestCase
         $this->assertSame(PlanStatus::ACTIVE->value, $billable->getAttribute('plan_status'));
         $this->assertSame(BillingProvider::STRIPE->value, $billable->getAttribute('plan_provider'));
         $this->assertSame('price_business', $billable->getAttribute('plan_product_id'));
+    }
+
+    /**
+     * A local row that says the subscription finished revokes the tier, and
+     * revokes it by NULLING it.
+     *
+     * The sweep's revocation branch, which nothing else here reached. It is the
+     * expensive direction to get wrong in both senses: this is the only path
+     * where a scheduled fleet-wide walk TAKES a tier away, and the shape of the
+     * claim it writes is what the feeder invariant is about. A non-granting
+     * status has to arrive with a null tier, because rule 2 reads that pairing to
+     * decide whether a cross-rail write is taking access away and has no guard
+     * for the pairing being wrong.
+     *
+     * Asserted twice over, deliberately. The columns below are the outcome, and
+     * {@see FeederInvariantWriter}, installed over the contract in setUp, is what
+     * inspects the claim on its way through: measured, with `plan: null` in the
+     * command's revocation branch changed to a tier, the column assertions here
+     * fail AND the invariant guard names the violation. Before this test existed
+     * that mutation was invisible in this file, because every other scenario
+     * either converges a tier or declines to walk at all.
+     */
+    public function test_a_finished_local_subscription_revokes_the_tier_and_nulls_it(): void
+    {
+        $billable = $this->makeBillable([
+            'plan' => 'business',
+            'plan_status' => PlanStatus::ACTIVE->value,
+            'plan_provider' => BillingProvider::STRIPE->value,
+            'plan_source_event_at' => $this->grantedAt()->subDay(),
+        ]);
+
+        // A positive statement that it finished, rather than an absent row: the
+        // command treats those two differently and only this one revokes.
+        $this->makeSubscription($billable, 'price_business', status: 'canceled');
+
+        $this->artisan(ReconcileBillingEntitlements::NAME)
+            ->expectsOutputToContain('Reconciled 1 billable(s): 1 corrected, 0 unreadable.')
+            ->assertExitCode(0)
+            ->run();
+
+        $billable->refresh();
+        $this->assertNull(
+            $billable->getAttribute('plan'),
+            'A finished subscription owes nothing, so the tier is nulled rather than renamed to a '
+            . 'free one: the package ships no tier vocabulary and cannot know what a free tier is called.',
+        );
+        $this->assertFalse(
+            PlanStatus::fromWire($billable->getAttribute('plan_status'))->grants(),
+            'The status has to stop granting, or the row still entitles the customer to what the '
+            . 'rail just said they no longer have.',
+        );
+        $this->assertSame(BillingProvider::STRIPE->value, $billable->getAttribute('plan_provider'));
+
+        $this->assertGreaterThan(
+            0,
+            FeederInvariantWriter::$checked,
+            'The invariant guard saw no claims, so its silence above proves nothing.',
+        );
     }
 
     /**

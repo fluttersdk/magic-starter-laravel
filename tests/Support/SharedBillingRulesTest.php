@@ -2,15 +2,21 @@
 
 namespace FlutterSdk\MagicStarter\Tests\Support;
 
+use Carbon\CarbonImmutable;
 use Carbon\CarbonInterface;
 use Carbon\Exceptions\InvalidFormatException;
 use FlutterSdk\MagicStarter\Actions\WriteEntitlement;
+use FlutterSdk\MagicStarter\Contracts\WritesEntitlement;
+use FlutterSdk\MagicStarter\Enums\BillingProvider;
 use FlutterSdk\MagicStarter\Enums\PlanStatus;
+use FlutterSdk\MagicStarter\Support\EntitlementWrite;
 use FlutterSdk\MagicStarter\Support\ReadsBillableAttributes;
 use FlutterSdk\MagicStarter\Support\StripeSubscriptionState;
 use FlutterSdk\MagicStarter\Support\TeamKey;
+use FlutterSdk\MagicStarter\Tests\Fixtures\ConcreteUser;
 use FlutterSdk\MagicStarter\Tests\TestCase;
 use Illuminate\Database\Eloquent\Model;
+use PHPUnit\Framework\AssertionFailedError;
 
 /**
  * The rules more than one billing feeder applies, pinned where they are shared.
@@ -109,6 +115,76 @@ class SharedBillingRulesTest extends TestCase
                 );
             }
         }
+    }
+
+    /**
+     * The feeder invariant, and proof that the thing enforcing it has teeth.
+     *
+     * The invariant is that no feeder pairs a non-granting status with a
+     * non-null tier. {@see \FlutterSdk\MagicStarter\Actions\WriteEntitlement}'s
+     * rule 2 depends on it and has no guard for its absence, and rule 2's own
+     * tests SUPPLY the pairing rather than checking it, so a feeder that revoked
+     * without nulling the tier would pass every test in the package.
+     *
+     * It is enforced by {@see FeederInvariantWriter}, a decorator installed over
+     * the contract in all three writing feeders' own suites, so every revocation
+     * scenario those files already drive checks it. That is the coverage; this
+     * test is the thing that stops the coverage from being imaginary. An assertion
+     * that never fires is indistinguishable from one that passes, so here the
+     * decorator is handed a violating claim directly and required to reject it.
+     *
+     * The three suites it is installed in, by execution and not by inspection:
+     * `tests/Http/Controllers/StripeWebhookTest.php`,
+     * `tests/Jobs/SyncRevenueCatEntitlementTest.php`,
+     * `tests/Console/ReconcileBillingEntitlementsTest.php`. The RevenueCat
+     * webhook controller is not among them because it writes no entitlement at
+     * all; it verifies, claims an event id and dispatches.
+     */
+    public function test_the_feeder_invariant_guard_rejects_a_revocation_that_keeps_its_tier(): void
+    {
+        $accepted = new class implements WritesEntitlement
+        {
+            public function write(EntitlementWrite $write): bool
+            {
+                return true;
+            }
+        };
+
+        $guard = new FeederInvariantWriter($accepted);
+        FeederInvariantWriter::reset();
+
+        // A proper revocation: the status grants nothing and the tier is gone.
+        $this->assertTrue($guard->write($this->claim(PlanStatus::CANCELED, null)));
+
+        // A grant: the tier is named and the status grants, so the invariant has
+        // nothing to say about it.
+        $this->assertTrue($guard->write($this->claim(PlanStatus::ACTIVE, 'pro')));
+
+        $this->assertSame(2, FeederInvariantWriter::$checked, 'The guard did not see the claims it was handed.');
+
+        // The violation: revoking while still naming a tier.
+        try {
+            $guard->write($this->claim(PlanStatus::CANCELED, 'pro'));
+
+            $this->fail('The guard accepted a claim that revokes while still naming a tier.');
+        } catch (AssertionFailedError $failure) {
+            $this->assertStringContainsString('FEEDER INVARIANT VIOLATED', $failure->getMessage());
+        }
+    }
+
+    /**
+     * One claim, for the invariant test above.
+     */
+    private function claim(PlanStatus $status, ?string $plan): EntitlementWrite
+    {
+        return new EntitlementWrite(
+            billable: new ConcreteUser,
+            plan: $plan,
+            status: $status,
+            provider: BillingProvider::STRIPE,
+            eventAt: CarbonImmutable::parse(self::STORED_AT),
+            authoritative: true,
+        );
     }
 
     /**

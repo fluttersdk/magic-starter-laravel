@@ -14,6 +14,7 @@ use FlutterSdk\MagicStarter\MagicStarterServiceProvider;
 use FlutterSdk\MagicStarter\Models\ProcessedWebhookEvent;
 use FlutterSdk\MagicStarter\Support\EntitlementWrite;
 use FlutterSdk\MagicStarter\Tests\Fixtures\ConcreteUser;
+use FlutterSdk\MagicStarter\Tests\Support\FeederInvariantWriter;
 use FlutterSdk\MagicStarter\Tests\TestCase;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Http\Request;
@@ -134,6 +135,19 @@ class StripeWebhookTest extends TestCase
     protected function setUp(): void
     {
         parent::setUp();
+
+        // Every claim any scenario in this file produces is checked against the
+        // feeder invariant, which is the pairing WriteEntitlement's rule 2
+        // depends on and has no guard for. It goes in setUp() and not beside the
+        // recorder below on purpose: the recorder is opt-in, so wrapping it
+        // would check only the scenarios that asked to be recorded, and the
+        // revocation paths worth checking are the ones nobody enumerated.
+        FeederInvariantWriter::reset();
+
+        $this->app->extend(
+            WritesEntitlement::class,
+            fn (WritesEntitlement $inner): WritesEntitlement => new FeederInvariantWriter($inner),
+        );
 
         // The parent registers its own fixture models AFTER the application has
         // booted, so clear them again: everything below resolves the billable
