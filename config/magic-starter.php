@@ -488,6 +488,38 @@ return [
     | reachable by anybody with a developer account. It only WIDENS what an
     | inbound event is allowed to say; it is never read instead of it.
     |
+    | 'reconcile' configures the SWEEP that heals a dropped webhook. Both rails
+    | abandon a delivery (RevenueCat after five retries inside about three
+    | hours, Stripe after roughly three days) and after that the drift is
+    | permanent and silent, so `billing:reconcile` re-reads each rail and
+    | corrects what moved. The package registers the schedule itself, under the
+    | billing feature, because a rail that only heals when the adopter
+    | remembered to schedule something is a rail that does not heal.
+    |
+    | THE DEFAULT IS DAILY, and that is a deliberate softening of the cadence
+    | the application this rail came from runs. The sweep makes one
+    | authoritative RevenueCat read per store subject per run, so hourly against
+    | a large store fleet is an API bill an adopter never agreed to, and this
+    | package ships the schedule whether or not they thought about it. Daily
+    | still heals inside Stripe's three-day window; it can be a day behind a
+    | store expiry. An adopter selling mostly through the stores should set this
+    | to 'hourly', which is what heals inside the window the damage arrives in.
+    |
+    | The value is a frequency WORD from the list the reconciler's registration
+    | recognises, or any cron expression, which is the escape hatch for a
+    | cadence no word names (a staggered sweep, or four times a day at hours you
+    | choose). A word that is not on the list and is not a valid cron expression
+    | raises from `schedule:run` rather than silently never running.
+    |
+    | The registration carries `withoutOverlapping()` and `onOneServer()`.
+    | onOneServer() is NOT fleet-wide protection on every cache store: it takes
+    | a lock through the default cache, and the `file` and `array` stores both
+    | implement locking LOCALLY (a file on that server's own disk, an array in
+    | that process's own memory), so every server acquires its own lock and runs
+    | its own sweep. Nothing raises and nothing warns. Point the default cache
+    | at a shared store (redis, memcached, database, dynamodb) if one sweep per
+    | fleet is what you need; otherwise expect one per server.
+    |
     */
 
     'billing' => [
@@ -526,6 +558,10 @@ return [
         'store_products' => [
             // 'com.example.app.pro.monthly' => 'pro',
             // 'business_monthly:business-base' => 'business',
+        ],
+
+        'reconcile' => [
+            'cadence' => env('MAGIC_STARTER_BILLING_RECONCILE_CADENCE', 'daily'),
         ],
 
         'revenuecat' => [

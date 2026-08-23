@@ -3,9 +3,15 @@
 namespace FlutterSdk\MagicStarter;
 
 use FlutterSdk\MagicStarter\Console\InstallCommand;
+use FlutterSdk\MagicStarter\Console\ReconcileBillingEntitlements;
 use Illuminate\Auth\Events\Registered;
 use Illuminate\Auth\Notifications\ResetPassword;
 use Illuminate\Cache\RateLimiting\Limit;
+// Aliased because this file already imports the `Event` FACADE below, and the
+// scheduler's Event is a different thing entirely: one dispatches listeners, the
+// other is a single entry on the schedule.
+use Illuminate\Console\Scheduling\Event as ScheduledEvent;
+use Illuminate\Console\Scheduling\Schedule;
 use Illuminate\Notifications\Events\NotificationSending;
 use Illuminate\Support\Facades\Event;
 use Illuminate\Support\Facades\Gate;
@@ -205,6 +211,16 @@ class MagicStarterServiceProvider extends ServiceProvider
             // registered, since the route file withholds it on this exact
             // condition.
             $this->warnAboutHalfConfiguredStoreRail();
+
+            // 3.4c. Schedule the sweep that heals a dropped webhook.
+            //
+            // Registered by the PACKAGE rather than left to the adopter, because
+            // a rail that only heals when somebody remembered to schedule
+            // something is a rail that does not heal, and the two failures it
+            // repairs are both silent: a dropped expiry is a paid tier held for
+            // free forever, and a dropped purchase is a paying customer stuck on
+            // the free tier with no self-serve way out.
+            $this->scheduleEntitlementReconciler();
         }
 
         // 3.5. Auto-gate notification channels when notification feature is enabled.
@@ -263,6 +279,17 @@ class MagicStarterServiceProvider extends ServiceProvider
             $this->commands([
                 InstallCommand::class,
             ]);
+
+            // The reconciler is registered with the feature it belongs to, so an
+            // application that does not bill has no `billing:reconcile` in its
+            // artisan list at all. The schedule above runs it as a SEPARATE
+            // artisan process, which boots this provider again and reaches this
+            // same gate, so the two registrations cannot disagree.
+            if (Features::hasBillingFeatures()) {
+                $this->commands([
+                    ReconcileBillingEntitlements::class,
+                ]);
+            }
 
             $this->publishes([
                 __DIR__ . '/../config/magic-starter.php' => config_path('magic-starter.php'),
@@ -413,6 +440,85 @@ class MagicStarterServiceProvider extends ServiceProvider
                 'path' => config('magic-starter.billing.revenuecat.path', 'webhooks/revenuecat'),
             ],
         );
+    }
+
+    /**
+     * Put `billing:reconcile` on the schedule, at the adopter's cadence.
+     *
+     * Attached through `callAfterResolving()` rather than from `$this->app->
+     * booted()`, so the scheduler is touched only by the processes that actually
+     * consult it (`schedule:run`, `schedule:list`, `schedule:work`) instead of
+     * being built on every web request for a task no web request runs.
+     *
+     * `withoutOverlapping()` is not boilerplate here: the sweep makes one network
+     * read per store subject, so it can outlive its own tick, and two of them
+     * would re-read the same subscriber and write the same row twice.
+     *
+     * `onOneServer()` IS NOT FLEET-WIDE PROTECTION ON EVERY CACHE STORE, and
+     * saying so is the whole reason this docblock exists. Laravel takes the
+     * once-per-fleet lock through the default cache store
+     * ({@see \Illuminate\Console\Scheduling\CacheSchedulingMutex::create()}), and
+     * both the `file` and the `array` store implement `LockProvider` LOCALLY: a
+     * file on that server's own disk, an array in that process's own memory. So
+     * on either of them every server acquires its own lock, every server runs its
+     * own sweep, and nothing raises or warns. An adopter who needs one sweep per
+     * fleet points the default cache at a shared store (redis, memcached,
+     * database, dynamodb); an adopter who does not gets one sweep per server,
+     * which costs one authoritative store read per subject per server.
+     */
+    private function scheduleEntitlementReconciler(): void
+    {
+        $this->callAfterResolving(Schedule::class, function (Schedule $schedule): void {
+            $this->applyReconcilerCadence(
+                $schedule->command(ReconcileBillingEntitlements::NAME)
+                    ->name(ReconcileBillingEntitlements::NAME)
+                    ->withoutOverlapping()
+                    ->onOneServer(),
+            );
+        });
+    }
+
+    /**
+     * Apply the configured cadence to the reconciler's schedule entry.
+     *
+     * DAILY BY DEFAULT, and the default is the only lever this package has over
+     * what the sweep costs. The application this rail was extracted from runs it
+     * hourly, which heals inside the window the damage arrives in; but the sweep
+     * makes one authoritative RevenueCat read per store subject per run, and this
+     * package registers the schedule for every adopter who switches billing on,
+     * including ones who never thought about the cadence. An hourly fleet walk is
+     * an API bill nobody agreed to, so the shipped value is the conservative one
+     * and an adopter selling mostly through the stores sets `hourly` themselves.
+     * Daily is still comfortably inside Stripe's roughly three-day abandonment
+     * window; what it can be a day behind is a store expiry.
+     *
+     * A word from the table below, or ANY cron expression, which is the escape
+     * hatch for a cadence no word names. An unrecognised word therefore falls to
+     * `cron()` and raises from `schedule:run` when it is not a valid expression,
+     * which is the loud failure; it is never quietly reinterpreted as the
+     * default. The one value that DOES read as the default is an absent, null or
+     * non-string key, because `mergeConfigFrom` is a shallow merge and an adopter
+     * who published the `billing` block before this key existed has no key at all.
+     */
+    private function applyReconcilerCadence(ScheduledEvent $event): void
+    {
+        $configured = config('magic-starter.billing.reconcile.cadence', 'daily');
+        $cadence = is_string($configured) ? trim($configured) : '';
+
+        match ($cadence) {
+            'everyMinute' => $event->everyMinute(),
+            'everyFiveMinutes' => $event->everyFiveMinutes(),
+            'everyTenMinutes' => $event->everyTenMinutes(),
+            'everyFifteenMinutes' => $event->everyFifteenMinutes(),
+            'everyThirtyMinutes' => $event->everyThirtyMinutes(),
+            'hourly' => $event->hourly(),
+            'everyTwoHours' => $event->everyTwoHours(),
+            'everySixHours' => $event->everySixHours(),
+            'twiceDaily' => $event->twiceDaily(),
+            'daily', '' => $event->daily(),
+            'weekly' => $event->weekly(),
+            default => $event->cron($cadence),
+        };
     }
 
     /**
