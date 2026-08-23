@@ -362,6 +362,27 @@ return [
     | code: addPublishGroup() is additive and Laravel exposes no removal, so
     | Cashier's groups stay listed under vendor:publish.
     |
+    | THE STRIPE WEBHOOK KEEPS CASHIER'S PATH AND CASHIER'S SECRET, and both are
+    | deliberate exceptions to the package-owned-key rule 'prices' follows above.
+    |
+    | The package serves the webhook itself (src/routes/webhooks.php, loaded from
+    | its own loadRoutesFrom under the billing feature), and it registers the
+    | route under config('cashier.path'), which defaults to 'stripe'. So the
+    | served path is `stripe/webhook`: exactly what Cashier serves, exactly what
+    | an adopter arriving from Cashier already has in their Stripe dashboard.
+    | That file is separate from src/routes/api.php because nothing here may
+    | inherit 'route_prefix' above: an API prefix moves with a deploy, and a
+    | webhook URL registered in a vendor dashboard cannot, so inheriting it would
+    | 404 every delivery until somebody edited the dashboard by hand.
+    |
+    | config('cashier.webhook.secret') stays Cashier's key for a stricter reason
+    | than convention: Cashier's own WebhookController::__construct() is what
+    | reads it, and it attaches the signature middleware only when it is set.
+    | Moving it under a package key would leave that constructor reading an empty
+    | value and would silently UNSIGN the endpoint. 'prices' moved precisely
+    | because the opposite is true of it: 'cashier.plans' was never a Cashier key
+    | at all, so nothing in Cashier reads it.
+    |
     | DO NOT RUN `vendor:publish --tag=cashier-migrations`. That is the residual
     | cost turning into a broken schema, and it is the one instruction here that
     | can only be written down. Cashier's five migrations hardcode

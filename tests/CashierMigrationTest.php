@@ -232,12 +232,15 @@ class CashierMigrationTest extends TestCase
      * this migration adds it matches nobody, so money moves and no entitlement
      * is ever written.
      *
-     * The customer model is pointed at the resolved billable HERE rather than by
-     * the service provider, because `Cashier::useCustomerModel()` is the one
+     * The customer model is pointed at the resolved billable HERE, and by now the
+     * service provider does it too: `Cashier::useCustomerModel()` is the one
      * accessor that has to resolve the billable subject in `register()`, and the
-     * provider's `guardBillableSubject()` docblock requires a guard beside any
-     * such reader. The Stripe rail is what will carry both; this step ships the
-     * column the lookup needs.
+     * provider carries the guard beside it as of the Stripe rail. The local call
+     * stays because this test is about the COLUMN and not about the wiring: it
+     * has to hold whichever subject the data provider names, on a bare migration
+     * run, without depending on a provider phase to have fired first. The wiring
+     * has its own coverage in `StripeWebhookTest`, where removing the provider's
+     * call turns sixteen tests red.
      */
     #[DataProvider('billableSubjects')]
     public function test_cashier_resolves_the_billable_by_its_stripe_id(

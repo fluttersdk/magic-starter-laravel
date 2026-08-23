@@ -93,19 +93,27 @@ class MagicStarterServiceProvider extends ServiceProvider
         // statics from its own boot() onwards, so register() is the last phase
         // that still lands.
         //
-        // Both calls hand over a CLASS NAME the package owns outright, and
-        // neither instantiates a model nor reads the billable subject, which is
-        // what keeps them compatible with guardBillableSubject() running down in
-        // boot(). Cashier's third accessor, useCustomerModel(), is the one that
-        // WOULD have to resolve the billable here, and it is deliberately not
-        // called yet: it needs the guard beside it (see that method's docblock),
-        // and nothing in the package resolves a Stripe customer until the rail
-        // ships. The subscription models need no such thing.
+        // The two subscription calls hand over a CLASS NAME the package owns
+        // outright, and neither instantiates a model nor reads the billable
+        // subject. useCustomerModel() is the one that DOES resolve the billable,
+        // which is why the guard runs beside it here rather than only in boot():
+        // by boot() Cashier has already been handed a model, so a refusal there
+        // would come after the wrong one was accepted.
+        //
+        // Wiring it is not optional now that the Stripe rail ships. Cashier's
+        // findBillable() reads this static, and left at its 'App\Models\User'
+        // default it searches the users table on a team-billing application and
+        // matches nobody: every delivery resolves no customer, returns 200, and
+        // writes no entitlement.
         if (Features::hasBillingFeatures()) {
             Cashier::ignoreRoutes();
 
             Cashier::useSubscriptionModel(Models\Subscription::class);
             Cashier::useSubscriptionItemModel(Models\SubscriptionItem::class);
+
+            $this->guardBillableSubject();
+
+            Cashier::useCustomerModel(MagicStarter::billableModel());
         }
 
         // OneSignal SDK client singleton (resolved lazily, only when injected).
@@ -225,6 +233,16 @@ class MagicStarterServiceProvider extends ServiceProvider
         // 4. Load package routes unless explicitly ignored.
         if (! MagicStarter::shouldIgnoreRoutes()) {
             $this->loadRoutesFrom(__DIR__ . '/routes/api.php');
+
+            // 4b. The vendor webhook routes, loaded from a SEPARATE file with a
+            // separate gate. Everything in api.php sits under
+            // `magic-starter.route_prefix`, which an adopter may move with a
+            // deploy; a webhook URL is registered in a vendor dashboard and
+            // cannot move at all, so it must not inherit that prefix. The file
+            // groups each rail under its own key and carries the reasoning.
+            if (Features::hasBillingFeatures()) {
+                $this->loadRoutesFrom(__DIR__ . '/routes/webhooks.php');
+            }
         }
 
         // 5. Console-only: publish config, migrations, and stubs.
@@ -276,15 +294,19 @@ class MagicStarterServiceProvider extends ServiceProvider
      * would have nothing to land on. Saying so here costs one boot; saying it at
      * the first payment costs a customer their tier.
      *
-     * The phase is deliberate. Config is loaded before any provider registers,
-     * so both phases could read the token, and the choice is about ORDER of use
-     * instead: nothing in `register()` reads the subject, while this provider's
-     * own first model resolution (the teams gate's `Gate::policy`) happens
-     * further down this method, so a refusal at the top of `boot()` is strictly
-     * earlier than any use of it. A future reader in `register()` (Cashier
-     * requires `useCustomerModel()` there) has to carry the same guard beside
-     * it, because `boot()` would then be too late to stop the wrong model being
-     * handed over.
+     * CALLED FROM BOTH PHASES, and neither call is redundant. Config is loaded
+     * before any provider registers, so both phases can read the token, and what
+     * decides where the guard belongs is ORDER OF USE. In `boot()` the first use
+     * is the teams gate's `Gate::policy` further down this method, so a refusal
+     * at the top of it is strictly earlier. In `register()` the first use is
+     * `Cashier::useCustomerModel(MagicStarter::billableModel())`, which Cashier
+     * requires in that phase, and `boot()` would be too late to stop the wrong
+     * model being handed over. The `register()` call sits inside the billing
+     * gate with the reader it protects; this one covers every application that
+     * has teams and no billing at all.
+     *
+     * The method is idempotent by construction: it reads config and either
+     * throws or returns, so calling it twice costs two config reads.
      *
      * @throws RuntimeException
      */
