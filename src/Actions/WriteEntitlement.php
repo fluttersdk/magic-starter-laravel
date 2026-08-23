@@ -8,6 +8,7 @@ use DateTimeInterface;
 use FlutterSdk\MagicStarter\Contracts\WritesEntitlement;
 use FlutterSdk\MagicStarter\Enums\BillingProvider;
 use FlutterSdk\MagicStarter\Enums\PlanStatus;
+use FlutterSdk\MagicStarter\Support\EntitlementWrite;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\Log;
@@ -143,65 +144,38 @@ class WriteEntitlement implements WritesEntitlement
      * Returns true when the columns were written, false when a rule dropped the
      * write. Every false return has logged why.
      *
-     * @param  Model  $billable  The subject whose entitlement this claim is
-     *                           about, whatever an application bills.
-     * @param  string|null  $plan  The consumer-defined plan id the rail says is
-     *                             owed, or null for a rail saying nothing is
-     *                             owed; {@see WritesEntitlement} for why absence
-     *                             is written rather than a free-tier id.
-     * @param  PlanStatus  $status  Where that tier stands, in neutral words.
-     * @param  BillingProvider  $provider  The rail making the claim.
-     * @param  CarbonInterface  $eventAt  The source event's own timestamp.
-     * @param  bool  $authoritative  Whether the rail is speaking NOW (a webhook
-     *                               payload, or a re-read of its API) or the
-     *                               claim was projected from a row the rail
-     *                               wrote here earlier. Only an authoritative
-     *                               claim may move a billable from one rail to
-     *                               another; {@see WritesEntitlement} for
-     *                               why it carries no default.
-     * @param  string|null  $providerStatus  The rail's own status word, verbatim.
-     * @param  string|null  $productId  The rail-native product or price id.
-     * @param  CarbonInterface|null  $currentPeriodEnd  End of the paid period.
-     * @param  bool|null  $renews  Auto-renew state; null means unknown.
-     * @param  CarbonInterface|null  $gracePeriodEndsAt  End of a dunning window.
-     * @param  string|null  $manageUrl  Durable subscription management URL.
+     * @param  EntitlementWrite  $write  One rail's complete claim. Every field
+     *                                   it carries is documented on the value
+     *                                   object itself, including why the tier is
+     *                                   a plain string, why `plan` may be null,
+     *                                   and why `authoritative` has no default.
      */
-    public function write(
-        Model $billable,
-        ?string $plan,
-        PlanStatus $status,
-        BillingProvider $provider,
-        CarbonInterface $eventAt,
-        bool $authoritative,
-        ?string $providerStatus = null,
-        ?string $productId = null,
-        ?CarbonInterface $currentPeriodEnd = null,
-        ?bool $renews = null,
-        ?CarbonInterface $gracePeriodEndsAt = null,
-        ?string $manageUrl = null,
-    ): bool {
+    public function write(EntitlementWrite $write): bool
+    {
+        $billable = $write->billable;
+
         // 1. Read what is already on record, and rank the move it would make.
         $storedProvider = BillingProvider::fromWire($this->stringAttribute($billable, 'plan_provider'));
         $storedPlan = $this->stringAttribute($billable, 'plan');
         $storedEventAt = $this->storedEventAt($billable);
         $tierOrder = $this->tierOrder();
-        $direction = $this->direction($plan, $storedPlan, $tierOrder);
+        $direction = $this->direction($write->plan, $storedPlan, $tierOrder);
 
         $context = [
             'billable_id' => $billable->getKey(),
             'stored_provider' => $storedProvider->value,
-            'incoming_provider' => $provider->value,
+            'incoming_provider' => $write->provider->value,
             'stored_event_at' => $storedEventAt?->toIso8601String(),
-            'incoming_event_at' => $eventAt->toIso8601String(),
+            'incoming_event_at' => $write->eventAt->toIso8601String(),
             'stored_plan' => $storedPlan,
-            'incoming_plan' => $plan,
+            'incoming_plan' => $write->plan,
             'direction' => $direction,
         ];
 
         // 2. RULE 1, monotonic per rail. An event OLDER than the one already on
         // record from the SAME rail is a late or re-ordered delivery, and the
         // record it would overwrite was written from a fresher truth.
-        if ($storedProvider === $provider && $this->isOlderThanStored($eventAt, $storedEventAt)) {
+        if ($storedProvider === $write->provider && $this->isOlderThanStored($write->eventAt, $storedEventAt)) {
             $this->logDrop('stale', $context);
 
             return false;
@@ -223,9 +197,9 @@ class WriteEntitlement implements WritesEntitlement
         // granting one to a lapsed one ranked as SAME and applied: the guard
         // held for a downgrade and not for a cancellation, which is the same
         // loss arriving through a different column.
-        if ($storedProvider === $provider
-            && $this->isSameInstantAsStored($eventAt, $storedEventAt)
-            && $this->reducesAccess($direction, $status, $billable)
+        if ($storedProvider === $write->provider
+            && $this->isSameInstantAsStored($write->eventAt, $storedEventAt)
+            && $this->reducesAccess($direction, $write->status, $billable)
         ) {
             $this->logDrop('same-instant revocation', $context);
 
@@ -247,7 +221,7 @@ class WriteEntitlement implements WritesEntitlement
         // speaking for itself, which is the standing rule 2b exists to honour.
         // The write then put a lapsed status over a rail that is still billing
         // and every reader gating on `plan_status` cut off a paying customer.
-        if ($storedProvider !== $provider && $this->takesAccessAway($direction, $status, $billable)) {
+        if ($storedProvider !== $write->provider && $this->takesAccessAway($direction, $write->status, $billable)) {
             // One line, not two, and which one depends on WHY the direction
             // could not be proven. An operator whose only config gap is the
             // unpublished catalogue needs the key named; the generic drop line
@@ -306,10 +280,10 @@ class WriteEntitlement implements WritesEntitlement
         // genuine purchase from a billable whose LAPSED record on another rail
         // still names the same tier, and the customer would pay and receive
         // nothing.
-        if ($storedProvider !== $provider
+        if ($storedProvider !== $write->provider
             && $storedProvider->grants()
             && $this->storedStatusStillGrants($billable)
-            && ! $authoritative
+            && ! $write->authoritative
         ) {
             $this->logDrop('projected cross-rail takeover', $context);
 
@@ -326,22 +300,22 @@ class WriteEntitlement implements WritesEntitlement
         // unpublished order now REFUSES a cross-rail write against a held tier,
         // and the only writes that still reach this point with no order
         // published are the ones that had nothing to compare against anyway.
-        if ($storedProvider !== $provider && $storedProvider->grants()) {
+        if ($storedProvider !== $write->provider && $storedProvider->grants()) {
             $this->warnCrossRailGrant($context);
         }
 
         // 5. Persist the claim plus the provenance the next write reasons about.
         $billable->forceFill([
-            'plan' => $plan,
-            'plan_status' => $status->value,
-            'plan_provider' => $provider->value,
-            'plan_source_event_at' => $eventAt,
-            'plan_provider_status' => $providerStatus,
-            'plan_product_id' => $productId,
-            'plan_current_period_end' => $currentPeriodEnd,
-            'plan_renews' => $renews,
-            'plan_grace_period_ends_at' => $gracePeriodEndsAt,
-            'plan_manage_url' => $manageUrl,
+            'plan' => $write->plan,
+            'plan_status' => $write->status->value,
+            'plan_provider' => $write->provider->value,
+            'plan_source_event_at' => $write->eventAt,
+            'plan_provider_status' => $write->providerStatus,
+            'plan_product_id' => $write->productId,
+            'plan_current_period_end' => $write->currentPeriodEnd,
+            'plan_renews' => $write->renews,
+            'plan_grace_period_ends_at' => $write->gracePeriodEndsAt,
+            'plan_manage_url' => $write->manageUrl,
         ])->save();
 
         return true;
