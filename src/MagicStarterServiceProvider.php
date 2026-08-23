@@ -11,6 +11,7 @@ use Illuminate\Support\Facades\Event;
 use Illuminate\Support\Facades\Gate;
 use Illuminate\Support\Facades\RateLimiter;
 use Illuminate\Support\ServiceProvider;
+use Laravel\Cashier\Cashier;
 use Laravel\Sanctum\Sanctum;
 use RuntimeException;
 
@@ -65,6 +66,23 @@ class MagicStarterServiceProvider extends ServiceProvider
         // contract. A consumer has to be able to bind its own entitlement
         // writer before it decides to switch billing on.
         $this->app->bind(Contracts\WritesEntitlement::class, Actions\WriteEntitlement::class);
+
+        // Cashier is wired HERE and never in boot(), because boot() is already
+        // too late: CashierServiceProvider::boot() registers the stripe/webhook
+        // route under config('cashier.path') the moment it runs, and every
+        // provider's register() runs before any provider's boot(), so this is
+        // the only phase that can still refuse those routes (maintainer
+        // confirmed, laravel/cashier#1739). The package serves the webhook
+        // itself, under a key of its own, so Cashier's copy would be a second
+        // endpoint on the same events.
+        //
+        // The gate is the billing feature and not the mere presence of Cashier,
+        // because the require is unconditional (see the Billing block in
+        // config/magic-starter.php): an adopter who installs this package and
+        // drives Cashier directly keeps Cashier's own routes untouched.
+        if (Features::hasBillingFeatures()) {
+            Cashier::ignoreRoutes();
+        }
 
         // OneSignal SDK client singleton (resolved lazily, only when injected).
         $this->app->singleton(\onesignal\client\api\DefaultApi::class, function (): \onesignal\client\api\DefaultApi {

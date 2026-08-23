@@ -291,6 +291,27 @@ return [
     | safe for a fresh install and is not safe once you sell something on more
     | than one rail: publish the order then.
     |
+    | WHY laravel/cashier IS A HARD REQUIRE. It is the one dependency in this
+    | package that needed an argument. The four SDKs already in the require
+    | block (Sanctum, Socialite, google2fa, OneSignal) are libraries: they cost
+    | an adopter nothing until something resolves them. Cashier is a package
+    | with a service provider, and CashierServiceProvider::boot() runs for every
+    | adopter whether or not they bill, registering the stripe/webhook route
+    | under config('cashier.path'), merging a cashier config, and adding a
+    | vendor:publish group.
+    |
+    | Cashier::ignoreRoutes() is what makes that acceptable. The provider calls
+    | it from register() under the billing feature gate, which is the only phase
+    | early enough: every provider's register() runs before any provider's
+    | boot(), so by the time Cashier boots the refusal is already in place. With
+    | billing on, the package serves the webhook under a key of its own and
+    | Cashier's route never appears; with billing off, nothing here touches
+    | Cashier and an adopter driving it directly keeps their own routes.
+    |
+    | The publish group is the one residual cost and it cannot be vetoed in
+    | code: addPublishGroup() is additive and Laravel exposes no removal, so
+    | Cashier's groups stay listed under vendor:publish.
+    |
     */
 
     'billing' => [
