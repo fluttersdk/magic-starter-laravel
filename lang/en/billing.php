@@ -48,6 +48,17 @@ return [
      */
     'refusals' => [
         'store_subscription_active' => 'A store subscription is still billing this team. Cancel it in the store account that bought it first: deleting the team now would remove the plan and leave the store charging you, and this app cannot cancel it for you.',
+
+        /*
+         * The two 409 sentences the billing endpoints raise, and they are
+         * deliberately two rather than one. "Manage this where you bought it"
+         * and "there is nothing to manage yet" are opposite instructions, so a
+         * single shared sentence would leave the customer guessing which of
+         * them they had been given. Each travels beside a machine-readable
+         * reason so the client never has to parse the prose to decide.
+         */
+        'managed_by_store' => 'This subscription is managed by the store that sold it and cannot be changed here.',
+        'no_billing_account' => 'There is no billing account to manage yet.',
     ],
 
 ];

@@ -45,6 +45,17 @@ return [
      */
     'refusals' => [
         'store_subscription_active' => 'Bu takımı hâlâ bir mağaza aboneliği faturalandırıyor. Önce satın aldığınız mağaza hesabından aboneliği iptal edin: takımı şimdi silmek planı kaldırır, mağaza ise sizi ücretlendirmeye devam eder ve bu uygulama bunu sizin yerinize iptal edemez.',
+
+        /*
+         * The two 409 sentences the billing endpoints raise, and they are
+         * deliberately two rather than one: "manage this where you bought it"
+         * and "there is nothing to manage yet" are opposite instructions, so a
+         * shared sentence would leave the customer guessing which one they got.
+         * Each travels beside a machine-readable reason, so the client never
+         * parses the prose to decide.
+         */
+        'managed_by_store' => 'Bu abonelik onu satan mağaza tarafından yönetiliyor ve buradan değiştirilemez.',
+        'no_billing_account' => 'Yönetilecek bir ödeme hesabı henüz yok.',
     ],
 
 ];
