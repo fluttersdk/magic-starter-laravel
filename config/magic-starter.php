@@ -448,11 +448,27 @@ return [
     | path, unlike the Stripe webhook, which keeps reading Cashier's own
     | 'cashier.path'.
     |
-    | The five ENV VAR NAMES below are NOT this package's to rename, even
-    | though the config key that reads them is. An adopter migrating from a
-    | hand-rolled RevenueCat integration already has these set on their server,
-    | and keeping the names means adopting this package is a config-file change
-    | rather than a server .env edit with a window where deliveries fail.
+    | The five SECRET AND TUNING ENV VAR NAMES below are NOT this package's to
+    | rename, even though the config key that reads them is. An adopter migrating
+    | from a hand-rolled RevenueCat integration already has these set on their
+    | server, and keeping the names means adopting this package is a config-file
+    | change rather than a server .env edit with a window where deliveries fail.
+    |
+    | 'path' is the WHOLE served path of the inbound webhook, and its default is
+    | constrained by the same fact: `webhooks/revenuecat` is the path the
+    | application this rail was extracted from already serves and already has
+    | registered in the RevenueCat dashboard. A webhook URL cannot move with a
+    | deploy, so any other default would make adopting this package a manual
+    | dashboard edit with a window in which every delivery 404s. Change it only
+    | when you are changing the dashboard in the same breath.
+    |
+    | THE ROUTE IS WITHHELD ON A HALF-CONFIGURED RAIL. When the store rail is
+    | configured (an API key or a store product map) and 'webhook_secret' is not,
+    | the endpoint could not authenticate anybody, so it is not registered at all:
+    | the provider logs the reason once at boot and `magic-starter:install`
+    | refuses to complete. The application keeps serving; only the store rail is
+    | held back, because an endpoint that refuses every delivery would spend
+    | RevenueCat's five retries on a configuration no retry can fix.
     |
     | BOTH SECRETS ARE EMPTY BY DEFAULT AND THE RAIL FAILS CLOSED ON EITHER.
     | With no webhook secret the endpoint refuses every delivery, because it
@@ -513,6 +529,7 @@ return [
         ],
 
         'revenuecat' => [
+            'path' => env('REVENUECAT_WEBHOOK_PATH', 'webhooks/revenuecat'),
             'webhook_secret' => env('REVENUECAT_WEBHOOK_SECRET'),
             'secret_api_key' => env('REVENUECAT_SECRET_API_KEY'),
             'base_url' => env('REVENUECAT_BASE_URL', RevenueCatClient::DEFAULT_BASE_URL),

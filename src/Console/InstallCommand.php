@@ -4,6 +4,7 @@ namespace FlutterSdk\MagicStarter\Console;
 
 use Carbon\CarbonInterface;
 use FlutterSdk\MagicStarter\MagicStarterServiceProvider;
+use FlutterSdk\MagicStarter\Support\StoreRailConfiguration;
 use Illuminate\Console\Command;
 use Illuminate\Filesystem\Filesystem;
 use Illuminate\Support\Carbon;
@@ -164,6 +165,18 @@ class InstallCommand extends Command
         // 3. Resolve which features to enable.
         $features = $this->resolveFeatures();
 
+        // 3.5. Refuse a billing install whose store rail cannot authenticate a
+        //      delivery. Checked BEFORE anything is published so a re-run after
+        //      setting the secret is a clean first install rather than a repair,
+        //      and it only fires on a rail the operator has already half
+        //      configured: a fresh install that has never heard of RevenueCat
+        //      passes straight through.
+        if (in_array('billing', $features, true) && StoreRailConfiguration::isMisconfigured()) {
+            $this->refuseHalfConfiguredStoreRail();
+
+            return self::FAILURE;
+        }
+
         // 4. Resolve route prefix for package routes.
         $routePrefix = $this->resolveRoutePrefix();
 
@@ -219,6 +232,33 @@ class InstallCommand extends Command
         );
 
         return 0;
+    }
+
+    /**
+     * Explain the store rail the operator half configured, and why this command
+     * stopped rather than publishing over it.
+     *
+     * Stopping is the useful behaviour rather than the strict one. The rail is
+     * unusable either way ({@see StoreRailConfiguration::isMisconfigured()}
+     * withholds the route and the provider logs it once at boot), so an install
+     * that reported success here would hand the operator a green summary for a
+     * billing surface that silently cannot take a store payment, and the first
+     * symptom would be a customer who paid Apple and stayed on the free tier.
+     * A non-zero exit is also the only shape a CI pipeline can see.
+     */
+    private function refuseHalfConfiguredStoreRail(): void
+    {
+        $this->components->error('The RevenueCat store rail has no webhook signing secret.');
+
+        $this->components->bulletList([
+            'Nothing was published; this command made no changes.',
+            'Set REVENUECAT_WEBHOOK_SECRET to the signing secret from your RevenueCat dashboard webhook '
+            . 'integration, then run this command again.',
+            'The secret is what authenticates an inbound delivery. Without it the webhook route is not '
+            . 'registered at all, so no store purchase can reach this application.',
+            'Selling through a store is optional: drop REVENUECAT_SECRET_API_KEY and '
+            . '[magic-starter.billing.store_products] to install billing with the card rail alone.',
+        ]);
     }
 
     /**

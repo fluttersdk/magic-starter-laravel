@@ -9,6 +9,7 @@ use Illuminate\Cache\RateLimiting\Limit;
 use Illuminate\Notifications\Events\NotificationSending;
 use Illuminate\Support\Facades\Event;
 use Illuminate\Support\Facades\Gate;
+use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\RateLimiter;
 use Illuminate\Support\ServiceProvider;
 use Laravel\Cashier\Cashier;
@@ -192,6 +193,18 @@ class MagicStarterServiceProvider extends ServiceProvider
         // two registrations sit where a reader sees them together.
         if (Features::hasBillingFeatures()) {
             Gate::define('manageBilling', [Policies\BillingPolicy::class, 'manage']);
+
+            // 3.4b. Say ONCE that a configured store rail has no signing secret.
+            //
+            // Boot rather than per request, and a log line rather than a throw,
+            // because the proportion matters: the rail cannot work, and nothing
+            // else about the application is broken by it. A throw here would take
+            // artisan down with the web surface (see guardBillableSubject() for
+            // what that costs), and a per-request warning would say the same
+            // thing once per delivery of an endpoint that is not even
+            // registered, since the route file withholds it on this exact
+            // condition.
+            $this->warnAboutHalfConfiguredStoreRail();
         }
 
         // 3.5. Auto-gate notification channels when notification feature is enabled.
@@ -360,6 +373,46 @@ class MagicStarterServiceProvider extends ServiceProvider
             . 'cannot run either.',
             Features::teams(),
         ));
+    }
+
+    /**
+     * Log, once per boot, that the store rail is configured without the secret
+     * that authenticates its deliveries.
+     *
+     * ERROR level rather than warning, and the distinction is the point: a
+     * warning is a decision not to act on something a rail said, and this is a
+     * rail that cannot say anything at all. The whole store surface is inert
+     * while it holds, and nothing else in the application will ever mention it.
+     *
+     * The `reason` is DISTINCT from the per-request `unconfigured_secret` the
+     * controller refuses a delivery with, deliberately. The two describe
+     * different failures: this one is a rail that was never registered, that one
+     * is a registered endpoint refusing a caller it cannot identify, which is
+     * what an adopter who configured nothing but the route still gets. A shared
+     * reason would make a boot-time misconfiguration indistinguishable from a
+     * forged delivery in the log.
+     *
+     * {@see StoreRailConfiguration::isMisconfigured()} is the one predicate
+     * behind this line, the route file's registration and the installer's
+     * refusal, so the three cannot drift into disagreeing about what a
+     * configured rail is.
+     */
+    private function warnAboutHalfConfiguredStoreRail(): void
+    {
+        if (! Support\StoreRailConfiguration::isMisconfigured()) {
+            return;
+        }
+
+        Log::error(
+            'The RevenueCat store rail is configured without a webhook signing secret, so its endpoint is '
+            . 'not registered and no store purchase can reach this application. Set REVENUECAT_WEBHOOK_SECRET '
+            . '(or [magic-starter.billing.revenuecat.webhook_secret]) to the secret from the RevenueCat '
+            . 'dashboard webhook integration.',
+            [
+                'reason' => 'store_rail_without_webhook_secret',
+                'path' => config('magic-starter.billing.revenuecat.path', 'webhooks/revenuecat'),
+            ],
+        );
     }
 
     /**

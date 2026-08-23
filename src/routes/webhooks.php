@@ -19,7 +19,9 @@
  * be a 419 until somebody remembered to exempt the exact path.
  */
 
+use FlutterSdk\MagicStarter\Http\Controllers\RevenueCatWebhookController;
 use FlutterSdk\MagicStarter\Http\Controllers\StripeWebhookController;
+use FlutterSdk\MagicStarter\Support\StoreRailConfiguration;
 use Illuminate\Support\Facades\Route;
 
 /*
@@ -44,12 +46,47 @@ use Illuminate\Support\Facades\Route;
  * registered; adding a route-level middleware instead would leave the endpoint
  * unsigned the moment somebody registers the controller elsewhere.
  *
- * The RevenueCat rail is the opposite case and belongs under a package-owned key
- * when it lands: it has no vendor default and no dashboard already pointing at
- * some other path, so there is nothing to stay compatible with.
+ * The RevenueCat rail below is the opposite case and sits under a package-owned
+ * key: it has no vendor default and no Cashier config to defer to.
  */
 Route::prefix((string) config('cashier.path', 'stripe'))
     ->group(function (): void {
         Route::post('webhook', [StripeWebhookController::class, 'handleWebhook'])
             ->name('cashier.webhook');
     });
+
+/*
+ * The store rail, under a PACKAGE-OWNED key whose default is not free to choose.
+ *
+ * RevenueCat ships no Laravel package, so there is no vendor default to inherit
+ * and the key is this package's to own: `magic-starter.billing.revenuecat.path`,
+ * one key holding the WHOLE path rather than a prefix, because RevenueCat's URL
+ * has no vendor-fixed second segment for a prefix to sit in front of.
+ *
+ * The DEFAULT is the constrained half, and it is constrained the same way
+ * `cashier.path` above is even though the mechanism is opposite. `webhooks/revenuecat`
+ * is the path the application this rail was extracted from already serves and
+ * already has registered in the RevenueCat dashboard. A webhook URL lives in a
+ * vendor dashboard and cannot move with a deploy, so minting any other default
+ * would turn adopting this package into a manual dashboard edit with a window in
+ * which every delivery 404s and entitlements silently stop moving.
+ *
+ * The signature check is inside the controller, over the RAW request bytes, and
+ * it belongs there rather than in a route middleware for the same reason the
+ * Stripe rail's belongs in Cashier's constructor: it must travel with the
+ * controller however the route is registered.
+ *
+ * REGISTERED ONLY WHEN THE RAIL CAN AUTHENTICATE ANYBODY. A deployment that
+ * configured the store rail without a signing secret cannot tell RevenueCat from
+ * whoever else found the URL, so this endpoint would refuse every delivery it
+ * received and spend RevenueCat's five retries on a configuration no retry can
+ * fix. Withholding the route is the proportionate answer: the application keeps
+ * serving, the provider logs the reason once at boot, and `magic-starter:install`
+ * refuses to complete until the secret is set.
+ */
+if (! StoreRailConfiguration::isMisconfigured()) {
+    Route::post(
+        (string) config('magic-starter.billing.revenuecat.path', 'webhooks/revenuecat'),
+        RevenueCatWebhookController::class,
+    )->name('magic-starter.webhooks.revenuecat');
+}
