@@ -174,6 +174,34 @@ class MagicStarterBillableTest extends TestCase
     }
 
     /**
+     * An EXPLICIT null is refused at boot; an ABSENT key is not.
+     *
+     * `config()`'s default fires only for a missing key, because `Arr::get`
+     * treats a null value as present, so `billableModel()` throws on an explicit
+     * null while falling back to `'user'` for an absent one. A guard exempting
+     * null rather than absence would boot green here and defer that throw to
+     * whatever first resolves the billable, which is what the guard exists to
+     * stop. The absent-key case is covered by
+     * `test_a_billing_config_without_the_key_falls_back_to_the_user_subject`, and
+     * the two together are what pin the distinction rather than one of them.
+     */
+    public function test_booting_with_an_explicitly_null_token_is_refused(): void
+    {
+        config([
+            'magic-starter.features' => [Features::billing()],
+            'magic-starter.billing' => ['billable' => null],
+        ]);
+
+        try {
+            (new MagicStarterServiceProvider($this->app))->boot();
+
+            $this->fail('Booting an explicitly null billable token must be refused.');
+        } catch (RuntimeException $exception) {
+            $this->assertStringContainsString('magic-starter.billing.billable', $exception->getMessage());
+        }
+    }
+
+    /**
      * Limb two: the same token with the teams feature ON boots and resolves.
      */
     public function test_booting_with_the_team_token_and_teams_on_is_allowed(): void

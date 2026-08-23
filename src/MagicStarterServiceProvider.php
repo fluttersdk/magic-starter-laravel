@@ -237,13 +237,21 @@ class MagicStarterServiceProvider extends ServiceProvider
         // ships is a payment webhook: money taken, entitlement unwritten, and a
         // typo like 'teams' as the cause. The migration was rescued from exactly
         // this shape of deferred failure, so the guard must not reintroduce it.
-        // NULL is ABSENCE, not a wrong value, and the two get different answers.
+        // ABSENCE is exempt, not NULL, and the distinction is the whole point.
         // `mergeConfigFrom` is a shallow merge, so a consumer who published a
-        // `billing` block before this key existed has no key at all, and the
-        // accessor's `'user'` default is what serves them; refusing to boot over
-        // that would break every such adopter on upgrade. A value that is present
-        // and unrecognised is the typo below.
-        if ($subject !== null && ! in_array($subject, ['user', 'team'], true)) {
+        // `billing` block before this key existed has no key at all, and
+        // `billableModel()`'s `'user'` default is what serves them; refusing to
+        // boot over that would break every such adopter on upgrade.
+        //
+        // But an EXPLICIT null is a present key, and `config()`'s default only
+        // fires for a missing one (`Arr::get` treats a null value as existing),
+        // so `billableModel()` throws on it. Exempting null here rather than
+        // absence would therefore boot green and defer that throw to whatever
+        // first resolves the billable, which is the exact deferral this guard
+        // exists to remove. `has()` is what tells the two apart.
+        if (config()->has('magic-starter.billing.billable')
+            && ! in_array($subject, ['user', 'team'], true)
+        ) {
             throw new RuntimeException(sprintf(
                 '[magic-starter.billing.billable] is [%s], which is not a billable subject. '
                 . "Set it to 'user' or to 'team'.",

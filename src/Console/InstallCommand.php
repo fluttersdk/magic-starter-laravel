@@ -803,8 +803,19 @@ class InstallCommand extends Command
         // throws on an absent table, so it became a hard `migrate` failure for a
         // team-billing adopter who installed in two passes. Ordering within one
         // run still comes from the declaration order this method is called in.
+        // The `$index` suffix is what actually closes the collision, and the
+        // seconds offset alone did not. `CORE_MIGRATIONS` holds three files and
+        // `teams` is the first feature, so `create_teams_table` takes index 3 in
+        // a `--features=teams` run and the provenance migration takes index 3 in
+        // a later `--features=billing` run: two scripted installs landing in the
+        // same wall-clock second produced identical prefixes, and
+        // `add_entitlement...` sorts before `create_teams_table`, so `migrate`
+        // ran the ALTER before the CREATE. Appending the index breaks that tie
+        // deterministically, and keeping the seconds offset keeps a single run's
+        // files in declaration order.
         $timestamp = now()->addSeconds($index)->format('Y_m_d_His');
-        $destination = database_path("migrations/{$timestamp}_{$filename}");
+        $sequence = str_pad((string) $index, 3, '0', STR_PAD_LEFT);
+        $destination = database_path("migrations/{$timestamp}_{$sequence}_{$filename}");
 
         $source = $this->migrationSourcePath() . "/{$filename}";
 

@@ -270,7 +270,9 @@ return [
     | install there is no team to bill, not even a personal one. Selecting 'team'
     | therefore REQUIRES the teams feature, and the provider refuses to boot
     | rather than letting an entitlement be written to a subject that does not
-    | exist. Any other value is refused when the model is resolved.
+    | exist. Any other PRESENT value, including an explicit null, is refused at
+    | boot for the same reason. Leaving the key out entirely is not: an older
+    | published config has no key at all, and 'user' is the answer for it.
     |
     | 'tier_order' is your plan catalogue, CHEAPEST FIRST. The tier vocabulary
     | belongs to your application, so this package never guesses it; list your
