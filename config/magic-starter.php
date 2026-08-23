@@ -292,6 +292,31 @@ return [
     | safe for a fresh install and is not safe once you sell something on more
     | than one rail: publish the order then.
     |
+    | 'plans' is the CATALOGUE the billing screen renders: one entry per tier,
+    | cheapest first, served verbatim under a 'data' envelope by
+    | GET billing/plans. It is display data and gating data, never Stripe price
+    | ids (those are 'prices' below).
+    |
+    | The package names only the fields every billing screen needs: 'id', 'name',
+    | 'tagline', 'monthly', 'annual', 'currency', 'features', 'recommended'. Every
+    | other key you put on an entry travels to the client UNTOUCHED, which is
+    | where anything product-specific belongs: what a tier caps, what it unlocks,
+    | the copy for a capability only your product has. This package cannot know
+    | those and does not try, exactly as it delegates counting to ReportsUsage
+    | and the tier vocabulary to the list below. A null price means "contact us";
+    | what a null LIMIT means is your application's business, not this package's.
+    |
+    | A bullet in 'features' is a promise made to somebody holding a credit card,
+    | so it may only name something that works today.
+    |
+    | ORDER AND RANKING. When 'tier_order' below is published it is the ranking,
+    | full stop, and this catalogue is only display. When it is NOT published the
+    | order is taken from these entries' ids instead, so an adopter who publishes
+    | one list gets both behaviours rather than a working screen beside an
+    | undecidable cross-rail write. Publishing both and having them disagree
+    | means the explicit list wins, because it is the more specific declaration;
+    | there is no reason to write two orders, so write one.
+    |
     | 'prices' is which Stripe PRICE sells which of those tiers, as a plain
     | ['price_id' => 'tier_id'] map. The Stripe rail reads it in both directions:
     | a webhook asks which tier the price on a subscription sells, and a checkout
@@ -419,6 +444,25 @@ return [
 
     'billing' => [
         'billable' => 'user',
+
+        'plans' => [
+            // [
+            //     'id' => 'free',
+            //     'name' => 'Free',
+            //     'tagline' => 'Kick the tires.',
+            //     'monthly' => 0,
+            //     'annual' => 0,
+            //     'currency' => 'usd',
+            //     'features' => [
+            //         'Everything you need to try it',
+            //     ],
+            //     'recommended' => false,
+            //     // Anything below this line is yours and travels untouched.
+            //     'limits' => [
+            //         'seats' => 1,
+            //     ],
+            // ],
+        ],
 
         'tier_order' => [
             // 'free',

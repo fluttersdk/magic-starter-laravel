@@ -120,14 +120,27 @@ class BillingController
      *
      * Served from config with no rail call and no per-subject state, so it is
      * safe on the hot path, and read through
-     * {@see ReadsBillableAttributes::tierOrder()} rather than straight from
+     * {@see ReadsBillableAttributes::planCatalogue()} rather than straight from
      * `config()` so that the endpoint, the checkout validation and the paid-tier
-     * floor all rank against exactly the same sanitised list.
+     * floor all read exactly the same sanitised catalogue.
+     *
+     * Entries reach the client VERBATIM. The package names the fields every
+     * billing screen needs (`id`, `name`, `tagline`, `monthly`, `annual`,
+     * `currency`, `features`, `recommended`) and passes everything else through
+     * untouched, which is where a tier's limits and any capability copy live. A
+     * schema for those would mean this package owning product knowledge it does
+     * not have, the same reason counting leaves through {@see ReportsUsage} and
+     * the tier vocabulary is the consumer's throughout.
+     *
+     * An adopter who has published nothing gets an empty list rather than a 404.
+     * The catalogue being empty is a legitimate state (a fresh install sells
+     * nothing yet) and it is not the same fact as "this endpoint is not wired",
+     * which is what `billing/usage` reports when nobody has bound its contract.
      */
     public function plans(): JsonResponse
     {
         return response()->json([
-            'data' => $this->tierOrder(),
+            'data' => $this->planCatalogue(),
         ]);
     }
 
