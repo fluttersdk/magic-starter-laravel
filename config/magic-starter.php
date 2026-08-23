@@ -328,6 +328,17 @@ return [
     | would never create one, every price would resolve to no tier, and no
     | webhook would ever grant anything, with no error anywhere to say why.
     |
+    | 'store_products' is the same question for the STORE rail: which App Store
+    | or Play product sells which tier, as a ['product_id' => 'tier_id'] map. The
+    | store rail cannot grant anything until it is filled, and an unmapped
+    | product is logged and written nowhere, which is the direction that cannot
+    | hand out a tier nobody bought.
+    |
+    | KEY IT ON THE WHOLE PRODUCT ID GOOGLE SENDS. Play reports a subscription as
+    | '<subscription_id>:<base_plan_id>', so a map keyed on the bare subscription
+    | id misses on every Android renewal and warns instead of granting. Apple
+    | sends the plain product id and needs no such care.
+    |
     | An unmapped price is a CONFIG GAP and never a downgrade: a rail that cannot
     | name the tier a paying subscription sells leaves the entitlement alone and
     | warns, because the alternative is taking a tier away from somebody whose
@@ -494,6 +505,11 @@ return [
         'prices' => [
             // env('CASHIER_PRICE_PRO') => 'pro',
             // env('CASHIER_PRICE_BUSINESS') => 'business',
+        ],
+
+        'store_products' => [
+            // 'com.example.app.pro.monthly' => 'pro',
+            // 'business_monthly:business-base' => 'business',
         ],
 
         'revenuecat' => [
