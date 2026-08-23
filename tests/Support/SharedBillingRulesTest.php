@@ -44,6 +44,87 @@ class SharedBillingRulesTest extends TestCase
      */
     private const STORED_AT = '2026-08-20 10:00:00';
 
+    /**
+     * Every file that must not carry its own copy, and the members it must not
+     * redeclare.
+     *
+     * Deliberately UNTYPED: this file is the guard that checks the package
+     * ships no typed class constant anywhere, and typing this one would be the
+     * one exception nobody could point at.
+     *
+     * @var array<string, array<int, string>>
+     */
+    private const MUST_NOT_REDECLARE = [
+        'src/Http/Controllers/StripeWebhookController.php' => [
+            'GRANTING_STATUSES',
+            'function grants(',
+            'function planStatusFor(',
+            'function planForPrice(',
+        ],
+        'src/Console/ReconcileBillingEntitlements.php' => [
+            'GRANTING_STATUSES',
+            'function grants(',
+            'function planStatusFor(',
+            'function planForPrice(',
+            'function looksLikeOne(',
+        ],
+        'src/Jobs/SyncRevenueCatEntitlement.php' => [
+            'function looksLikeOne(',
+        ],
+    ];
+
+    public function test_no_feeder_carries_its_own_copy_of_a_shared_rule(): void
+    {
+        foreach (self::MUST_NOT_REDECLARE as $path => $members) {
+            $absolute = self::packageRoot() . '/' . $path;
+
+            // Vacuity guards, and there are three because the failure they
+            // prevent is silent. A renamed or deleted path satisfies every
+            // assertion below, since `assertStringNotContainsString()` is happy
+            // to accept an empty haystack as "the member is absent". The
+            // existence check comes FIRST because `file_get_contents()` on a
+            // missing path raises a warning rather than reaching the assertion
+            // after it, so a message about vacuity would never be the one
+            // printed. The `class ` check then catches a path that exists and is
+            // not the source file it was supposed to be.
+            $this->assertFileExists(
+                $absolute,
+                "{$path} is not there, so the redeclaration guard would pass on an empty haystack. "
+                . 'Either the file moved and this list needs updating, or it was deleted and the '
+                . 'rule it was being held to no longer has an owner.',
+            );
+
+            $source = file_get_contents($absolute);
+
+            $this->assertIsString($source, "{$path} could not be read; the redeclaration guard would be vacuous.");
+            $this->assertStringContainsString('class ', (string) $source);
+
+            foreach ($members as $member) {
+                $this->assertStringNotContainsString(
+                    $member,
+                    (string) $source,
+                    "{$path} declares [{$member}] itself. That rule is shared through "
+                    . 'StripeSubscriptionState or TeamKey, and a second copy is free to disagree with '
+                    . 'the first with every test on both sides still passing.',
+                );
+            }
+        }
+    }
+
+    /**
+     * Where the package's own source lives, for the guard above.
+     *
+     * Derived from this file's location rather than from `base_path()`, which
+     * under Testbench points at the skeleton application and not at the package.
+     * A guard reading its feeder files from there would find nothing and pass on
+     * an empty haystack, which is exactly what the `assertIsString()` call above
+     * is there to catch.
+     */
+    private static function packageRoot(): string
+    {
+        return dirname(__DIR__, 2);
+    }
+
     public function test_the_granting_statuses_are_the_three_stripe_grants_under(): void
     {
         // Pinned as a VALUE, not just as a shared reference: the point of the
