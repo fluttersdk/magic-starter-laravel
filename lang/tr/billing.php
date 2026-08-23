@@ -56,6 +56,21 @@ return [
          */
         'managed_by_store' => 'Bu abonelik onu satan mağaza tarafından yönetiliyor ve buradan değiştirilemez.',
         'no_billing_account' => 'Yönetilecek bir ödeme hesabı henüz yok.',
+
+        /*
+         * The three refusals the card-rail WRITES raise. Two of them describe a
+         * gap in the adopter's own configuration rather than a fault in the
+         * request, so they name the key that closes it; the key names stay in
+         * their original form because they are literal config paths and a
+         * translated one would point at nothing.
+         *
+         * 'no_published_catalogue' names BOTH keys because either one answers:
+         * the ranking falls back to the catalogue's entry ids when no explicit
+         * order is published.
+         */
+        'no_published_catalogue' => 'Yayımlanmış bir plan yok, dolayısıyla henüz satın alınabilecek bir şey de yok. Bir plan satmak için magic-starter.billing.plans ya da magic-starter.billing.tier_order anahtarını yayımlayın.',
+        'unmapped_price' => 'Bu planı satan bir Stripe fiyatı yok. Satışa sunmadan önce magic-starter.billing.prices altında bir fiyat tanımlayın.',
+        'no_subscription' => 'Değiştirilecek etkin bir abonelik yok.',
     ],
 
 ];

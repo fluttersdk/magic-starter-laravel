@@ -181,6 +181,18 @@ Route::prefix((string) config('magic-starter.route_prefix', ''))
                 if (app()->bound(ReportsUsage::class)) {
                     Route::get('billing/usage', [BillingController::class, 'usage']);
                 }
+
+                // The three card-rail WRITES. Registered beside the reads and
+                // gated the same way, because what separates them is not the
+                // route file: they are the OWNER's while the reads are open to
+                // any member, and that gate lives on the policy the controller
+                // asks rather than on a middleware here. They act on a tier the
+                // adopter publishes, so an application that has published no
+                // catalogue serves these routes and refuses every call to them,
+                // which is a different fact from the route being absent.
+                Route::post('billing/checkout', [BillingController::class, 'checkout']);
+                Route::post('billing/swap', [BillingController::class, 'swap']);
+                Route::post('billing/cancel', [BillingController::class, 'cancel']);
             }
         });
 

@@ -10,6 +10,7 @@ use FlutterSdk\MagicStarter\Http\Resources\SubscriptionResource;
 use FlutterSdk\MagicStarter\MagicStarter;
 use FlutterSdk\MagicStarter\Policies\BillingPolicy;
 use FlutterSdk\MagicStarter\Support\ReadsBillableAttributes;
+use FlutterSdk\MagicStarter\Support\StripeSubscriptionState;
 use Illuminate\Contracts\Auth\Authenticatable;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Http\Exceptions\HttpResponseException;
@@ -17,6 +18,8 @@ use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Gate;
 use Illuminate\Support\Facades\Log;
+use Illuminate\Validation\Rule;
+use Illuminate\Validation\ValidationException;
 use Laravel\Cashier\Invoice;
 use Laravel\Cashier\PaymentMethod;
 use Stripe\Exception\ApiErrorException;
@@ -26,7 +29,7 @@ use Symfony\Component\HttpFoundation\Response as HttpResponse;
 /**
  * The billing subject's own endpoints: the entitlement read, the catalogue, the
  * usage report, the invoice page, the card, the store-conflict check and the
- * portal session.
+ * portal session, plus the three card-rail writes (checkout, swap, cancel).
  *
  * Every action resolves the SUBJECT from the acting user rather than from a
  * route parameter, and what that subject is depends on
@@ -53,6 +56,14 @@ use Symfony\Component\HttpFoundation\Response as HttpResponse;
  *   behind the subject at all. A distinct fact from the one above and it leads
  *   somewhere else entirely: "manage this where you bought it" and "there is
  *   nothing to manage yet" are opposite instructions.
+ * - 404 from a write, there is no card-rail subscription to change. Reached only
+ *   AFTER the store guard, so it can never claim there is nothing to cancel
+ *   while a store is still charging the customer every month.
+ * - 422, the request named a tier the adopter does not sell, or named one they
+ *   sell and have mapped no Stripe price to, or the adopter has published no
+ *   tiers at all. Three faults in one channel because they share one remedy
+ *   shape (fix the config, or ask for a tier that exists) and each carries its
+ *   own sentence naming which of the three it is.
  *
  * EVERY CASHIER CALL SITS BEHIND `method_exists()`, and that is not defensive
  * padding. This package ships the billing COLUMNS and the endpoints, not the
@@ -111,12 +122,6 @@ class BillingController
 
     /**
      * Return the adopter's published tier catalogue, cheapest tier first.
-     *
-     * The catalogue this package HAS is `magic-starter.billing.tier_order`, an
-     * ordered list of the adopter's own tier ids, and that is all this endpoint
-     * can honestly serve. The package ships no tier vocabulary at all, so it has
-     * no name, no price and no limit for any tier: those live in the consuming
-     * application, which is also the only place that knows what a tier caps.
      *
      * Served from config with no rail call and no per-subject state, so it is
      * safe on the hot path, and read through
@@ -356,6 +361,151 @@ class BillingController
     }
 
     /**
+     * Begin a Stripe Checkout session for a tier the adopter publishes,
+     * unwrapped to a JSON `{checkout_url, session_id}` shape.
+     *
+     * Cashier's `Checkout` object is never returned or redirected to directly.
+     * It is `Responsable` and renders an HTML redirect, which is not an answer a
+     * JSON client can follow, so only its two useful fields travel.
+     *
+     * WHAT MAY BE BOUGHT is the adopter's own published ranking and nothing
+     * else. The application this was ported from validated against two literal
+     * cases of a tier enum it owned; this package ships no tier vocabulary, so
+     * naming one here would be inventing product knowledge it does not have. The
+     * FLOOR tier is sellable like any other, because deciding that an adopter's
+     * cheapest tier costs nothing is the same invention from the other end.
+     */
+    public function checkout(Request $request): JsonResponse
+    {
+        // 1. Authorized before the body is read: an unauthorized caller's input
+        //    is not worth validating, and a 422 ahead of the 403 would tell them
+        //    the request shape was the only thing wrong with it.
+        $billable = $this->resolveBillableForBillingChange($request);
+
+        // 2. A store already charging this subject must not be able to acquire a
+        //    second, parallel Stripe subscription. The entitlement writer warns
+        //    when two rails claim one billable, but a warning arrives after the
+        //    money has moved; this refuses at the point of sale. The client hides
+        //    its CTA too, and a client gate is an affordance rather than the
+        //    enforcement.
+        $this->guardStoreOwnedSubscription($billable);
+
+        // 3. Rail facts before input facts. A subject whose application never
+        //    applied Cashier's trait has no card rail to check out on, and a
+        //    direct call on such a model is a fatal `Error` on the billing screen
+        //    rather than a refusal the client can render.
+        if (! method_exists($billable, 'checkout')) {
+            $this->abortWithBillingConflict(
+                self::REASON_NO_BILLING_ACCOUNT,
+                BillingProvider::fromWire($this->stringAttribute($billable, 'plan_provider')),
+                __('magic-starter::billing.refusals.no_billing_account'),
+            );
+        }
+
+        // 4. The tier must be one the adopter sells; the two URLs are where
+        //    Stripe sends the customer back and are the client's to choose.
+        $validated = $request->validate([
+            'plan' => ['required', 'string', Rule::in($this->sellableTiers())],
+            'success_url' => ['required', 'string', 'url'],
+            'cancel_url' => ['required', 'string', 'url'],
+        ]);
+
+        // 5. A sellable tier with no price behind it is a config gap and not a
+        //    client fault, so it is refused with its own sentence rather than
+        //    checked out against nothing.
+        $priceId = $this->resolvePriceId($validated['plan']);
+
+        abort_if(
+            $priceId === null,
+            HttpResponse::HTTP_UNPROCESSABLE_ENTITY,
+            __('magic-starter::billing.refusals.unmapped_price'),
+        );
+
+        // 6. One unit of one price. Quantity is not the client's to send: a
+        //    request body carrying it would let a caller decide what they are
+        //    charged.
+        $checkout = $billable->checkout([$priceId => 1], [
+            'success_url' => $validated['success_url'],
+            'cancel_url' => $validated['cancel_url'],
+        ]);
+
+        return response()->json([
+            'checkout_url' => $checkout->url,
+            'session_id' => $checkout->id,
+        ]);
+    }
+
+    /**
+     * Swap the billable's default subscription onto a different tier's price.
+     *
+     * The entitlement on the wire afterwards is still the LOCAL one, because a
+     * swap is a Stripe write and the provenance columns are written by the
+     * webhook that follows it. That is deliberate: this endpoint returning a
+     * hand-patched tier would make the billing screen disagree with the rail for
+     * as long as it took the event to arrive, and disagree permanently if it
+     * never did.
+     */
+    public function swap(Request $request): SubscriptionResource
+    {
+        // 1. Authorized first, for the reason checkout gives.
+        $billable = $this->resolveBillableForBillingChange($request);
+
+        // 2. The rail before the input, which is the order the application this
+        //    was ported from used on two of its three writes and not on this
+        //    one. Normalised rather than preserved: a store-billed customer told
+        //    their request body was malformed learns nothing they can act on, and
+        //    which rail owns the subscription does not depend on the body.
+        $this->guardStoreOwnedSubscription($billable);
+
+        $validated = $request->validate([
+            'plan' => ['required', 'string', Rule::in($this->sellableTiers())],
+        ]);
+
+        // 3. Reached only on a rail this application controls, so an absent
+        //    subscription really does mean there is nothing to swap.
+        $subscription = $this->actionableSubscription($billable, 'swap');
+
+        // 4. Same config gap as checkout's, refused the same way.
+        $priceId = $this->resolvePriceId($validated['plan']);
+
+        abort_if(
+            $priceId === null,
+            HttpResponse::HTTP_UNPROCESSABLE_ENTITY,
+            __('magic-starter::billing.refusals.unmapped_price'),
+        );
+
+        $subscription->swap($priceId);
+
+        return SubscriptionResource::make($billable);
+    }
+
+    /**
+     * Cancel the billable's default subscription at the end of the period it has
+     * already paid for.
+     *
+     * `cancel()` and not `cancelNow()`: the customer has bought the period they
+     * are in, and taking it away the moment they click is a refund this
+     * application is not offering.
+     */
+    public function cancel(Request $request): SubscriptionResource
+    {
+        // 1. Authorized first, for the reason checkout gives.
+        $billable = $this->resolveBillableForBillingChange($request);
+
+        // 2. Before the subscription read, always. Without it a store-billed
+        //    subject falls through to the 404 below, which tells a customer a
+        //    store is charging every month that they have nothing to cancel.
+        $this->guardStoreOwnedSubscription($billable);
+
+        // 3. So the 404 here is honest: this rail has nothing to cancel.
+        $subscription = $this->actionableSubscription($billable, 'cancel');
+
+        $subscription->cancel();
+
+        return SubscriptionResource::make($billable);
+    }
+
+    /**
      * Resolve the subject this request bills, 404-ing when there is none to act
      * on.
      *
@@ -447,6 +597,100 @@ class BillingController
             $provider,
             __('magic-starter::billing.refusals.managed_by_store'),
         );
+    }
+
+    /**
+     * The tier ids a checkout or a swap may name, refusing when the adopter has
+     * published none.
+     *
+     * Read through {@see ReadsBillableAttributes::tierOrder()} and never
+     * straight from `magic-starter.billing.tier_order`, which is the key the
+     * plan for this port named. The difference is not cosmetic: that reader
+     * falls back to the CATALOGUE's entry ids when no explicit ranking is
+     * published, because a catalogue carries the same cheapest-first convention
+     * and publishing one is already a declaration of order. A reader that went
+     * to the raw key would refuse every tier such an adopter sells while their
+     * own billing screen rendered all of them, and the fault would look like the
+     * client's.
+     *
+     * The empty case is the whole reason this method exists rather than a bare
+     * `Rule::in()` at each call site. `Rule::in([])` refuses too, but with the
+     * validator's generic sentence, which sends an adopter reading their
+     * client's request body for a fault that is in their config. So the refusal
+     * NAMES the situation and both keys that resolve it. Naming only one would
+     * be wrong half the time now that either list answers.
+     *
+     * A tier is never named here. Which tiers exist and which of them cost money
+     * is the adopter's knowledge, so an empty list refuses everything rather
+     * than falling back to a default this package would have had to invent.
+     *
+     * @return list<string>
+     *
+     * @throws ValidationException When the adopter has published no tiers at all.
+     */
+    protected function sellableTiers(): array
+    {
+        $tiers = $this->tierOrder();
+
+        if ($tiers === []) {
+            throw ValidationException::withMessages([
+                'plan' => [__('magic-starter::billing.refusals.no_published_catalogue')],
+            ]);
+        }
+
+        return $tiers;
+    }
+
+    /**
+     * The card-rail subscription a write acts on, 404-ing when there is none.
+     *
+     * The 404 is a DIFFERENT fact from the store 409 rather than a milder
+     * version of it: one says a subscription exists on a rail this application
+     * cannot act on, the other says none exists here at all. Both callers run
+     * the store guard first, which is what keeps this answer honest; reversed,
+     * it would tell a customer a store is billing every month that they have
+     * nothing to cancel.
+     *
+     * The verb check sits beside the null check because the subscription model
+     * is resolvable by the consuming application, so a model that does not carry
+     * the verb would be a fatal on the billing screen rather than a refusal. It
+     * reads as "there is nothing here to change", which is what a subject with
+     * no such rail actually has.
+     *
+     * @param  string  $method  The Cashier verb the caller is about to invoke.
+     */
+    protected function actionableSubscription(Model $billable, string $method): Model
+    {
+        $subscription = $this->defaultSubscription($billable);
+
+        if ($subscription === null || ! method_exists($subscription, $method)) {
+            abort(HttpResponse::HTTP_NOT_FOUND, __('magic-starter::billing.refusals.no_subscription'));
+        }
+
+        return $subscription;
+    }
+
+    /**
+     * The Stripe price id that sells [$tier], or null when none does.
+     *
+     * The reverse direction of {@see StripeSubscriptionState::planForPrice()},
+     * and it goes through that class's own reader rather than through `config()`
+     * a second time. The application this was ported from kept the map under
+     * `cashier.plans` and read it from two places: a webhook asking which tier a
+     * price sells, and this one asking which price sells a tier. Two readers of
+     * one key each decide for themselves what an unusable entry means, and only
+     * one of them has to decide it wrong for an empty price id to become the
+     * price of a paid tier. `prices()` strips those once, for both directions.
+     *
+     * The cast is not decorative. PHP stores a numeric-looking array key as an
+     * INT, so a price id that happens to look like a number comes back from the
+     * reverse lookup as one.
+     */
+    protected function resolvePriceId(string $tier): ?string
+    {
+        $priceId = array_search($tier, StripeSubscriptionState::prices(), true);
+
+        return $priceId === false ? null : (string) $priceId;
     }
 
     /**

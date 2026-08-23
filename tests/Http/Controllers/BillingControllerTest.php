@@ -592,6 +592,18 @@ class BillingControllerTest extends TestCase
      */
     public function test_a_billable_with_no_cashier_trait_answers_instead_of_fataling(): void
     {
+        // LOAD-BEARING, and it looks redundant beside the CashierlessTeam rows
+        // below, which is exactly why it is worth a comment. The controller does
+        // not receive the model this test builds: it resolves the subject through
+        // `MagicStarter::teamModel()`, so without this line the row is written by
+        // the Cashierless class and hydrated straight back into the one that HAS
+        // the trait. Measured: with the line removed, `defaultCard()`'s
+        // `method_exists()` guard can be disabled outright and this test still
+        // passes all eight assertions, because the rail fixture answers empty on
+        // these three endpoints anyway. With it, disabling the guard fails at the
+        // payment-method assertion, which is the whole claim in the method name.
+        config(['magic-starter.models.team' => CashierlessTeam::class]);
+
         $this->bootBillingRoutes('team');
 
         $owner = $this->createUser('no-cashier@example.test');
@@ -606,6 +618,12 @@ class BillingControllerTest extends TestCase
         $this->setCurrentTeam($owner, $team);
 
         $this->assertFalse(method_exists($team, 'defaultPaymentMethod'));
+        $this->assertSame(
+            CashierlessTeam::class,
+            MagicStarter::billableModel(),
+            'The subject the controller resolves is the one without the trait, which is what '
+            . 'makes the assertions below about an absent trait rather than about an empty rail.',
+        );
 
         $this->ask($owner, '/billing/invoices')
             ->assertOk()

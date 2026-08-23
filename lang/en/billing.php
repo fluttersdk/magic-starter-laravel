@@ -59,6 +59,24 @@ return [
          */
         'managed_by_store' => 'This subscription is managed by the store that sold it and cannot be changed here.',
         'no_billing_account' => 'There is no billing account to manage yet.',
+
+        /*
+         * The three refusals the card-rail WRITES raise. Two of them describe a
+         * gap in the adopter's own configuration rather than a fault in the
+         * request, and they name the key that closes it: without that, an
+         * adopter reads their client's request body looking for a problem that
+         * is in their config file.
+         *
+         * 'no_published_catalogue' names BOTH keys because either one answers.
+         * The ranking is read cheapest-first from 'tier_order' when it is
+         * published and from the catalogue's entry ids when it is not, so an
+         * adopter who has published only the catalogue already has a valid list
+         * and naming the other key alone would send half of them to the wrong
+         * file.
+         */
+        'no_published_catalogue' => 'No plans are published, so there is nothing to buy yet. Publish magic-starter.billing.plans or magic-starter.billing.tier_order to sell one.',
+        'unmapped_price' => 'No Stripe price sells this plan. Map one under magic-starter.billing.prices before offering it.',
+        'no_subscription' => 'There is no active subscription to change.',
     ],
 
 ];
