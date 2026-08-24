@@ -767,6 +767,13 @@ class StripeWebhookTest extends TestCase
             ),
         )->assertOk();
 
+        // It did not GRANT either, which is the other half of the same rule and
+        // the reason the grant path is scoped too: a tier written from a `seats`
+        // subscription is one no guard and no reconciler will ever maintain, so
+        // it survives until the next `default` event and then vanishes. The
+        // billable is still on the tier its `default` subscription bought.
+        $this->assertSame('pro', $billable->refresh()->getAttribute('plan'));
+
         $this->postSignedWebhook(
             $this->subscriptionEvent(
                 'evt_default_deleted',

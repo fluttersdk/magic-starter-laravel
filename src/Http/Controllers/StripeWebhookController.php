@@ -220,6 +220,20 @@ class StripeWebhookController extends CashierWebhookController
     /**
      * Project a subscription object onto the billable's entitlement columns.
      *
+     * Scoped to {@see StripeSubscriptionState::SUBSCRIPTION_TYPE}, the last of
+     * the four feeders to be: the two guards and the reconciler read `default`
+     * only, so a grant written from a `seats` subscription put a tier on the
+     * billable that nothing downstream would ever maintain. It would survive
+     * until the next `default` event or the next reconciler run and then vanish,
+     * which reads as the entitlement flickering rather than as a config gap.
+     *
+     * The type is resolved exactly as Cashier resolves it on the same payload
+     * (`vendor/laravel/cashier/src/Http/Controllers/WebhookController.php:86`):
+     * `metadata.type`, then the legacy `metadata.name`, then `default`. It is
+     * read from the EVENT rather than from the local row on purpose, because
+     * `customer.subscription.created` is the event that creates that row and it
+     * may not exist yet.
+     *
      * @param  array<string, mixed>  $object
      */
     protected function syncEntitlementFromSubscription(array $object, CarbonInterface $eventAt): void
@@ -227,6 +241,10 @@ class StripeWebhookController extends CashierWebhookController
         $billable = $this->resolveBillable($object['customer'] ?? null);
 
         if ($billable === null) {
+            return;
+        }
+
+        if ($this->subscriptionType($object) !== StripeSubscriptionState::SUBSCRIPTION_TYPE) {
             return;
         }
 
@@ -262,6 +280,32 @@ class StripeWebhookController extends CashierWebhookController
     }
 
     /**
+     * The Cashier subscription type a webhook payload declares.
+     *
+     * Mirrors Cashier's own resolution order on this payload so that a
+     * subscription this package skips is exactly one Cashier would file under
+     * another type: `metadata.type` first, the legacy `metadata.name` second,
+     * and `default` when neither is present, which is what an adopter's
+     * subscription created before Cashier wrote metadata looks like.
+     *
+     * @param  array<string, mixed>  $object
+     */
+    protected function subscriptionType(array $object): string
+    {
+        $metadata = $object['metadata'] ?? [];
+
+        if (! is_array($metadata)) {
+            return StripeSubscriptionState::SUBSCRIPTION_TYPE;
+        }
+
+        $type = $metadata['type'] ?? $metadata['name'] ?? null;
+
+        return is_string($type) && $type !== ''
+            ? $type
+            : StripeSubscriptionState::SUBSCRIPTION_TYPE;
+    }
+
+    /**
      * A paid subscription invoice re-affirms the active entitlement tier read
      * from the billable's synced Cashier subscription price.
      *
@@ -285,7 +329,7 @@ class StripeWebhookController extends CashierWebhookController
             return;
         }
 
-        $subscription = $billable->subscription('default');
+        $subscription = $billable->subscription(StripeSubscriptionState::SUBSCRIPTION_TYPE);
 
         if (! $subscription instanceof Model) {
             return;
@@ -433,7 +477,7 @@ class StripeWebhookController extends CashierWebhookController
             // out of step: this feeder would keep the tier and the reconciler
             // would take it away on its next hourly run, against the same
             // subject, with neither of them wrong on its own terms.
-            if ($subscription->type !== 'default') {
+            if ($subscription->type !== StripeSubscriptionState::SUBSCRIPTION_TYPE) {
                 continue;
             }
 

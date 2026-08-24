@@ -52,6 +52,22 @@ final class StripeSubscriptionState
     public const CYCLES = [self::CYCLE_MONTHLY, self::CYCLE_ANNUAL];
 
     /**
+     * The Cashier subscription TYPE this package's Stripe rail acts on.
+     *
+     * Cashier's named types are an adopter-facing feature and a subject may
+     * legitimately hold several, so every feeder here has to agree on which one
+     * it means: the checkout guard refuses on it, the revocation guard holds a
+     * tier open for it, the reconciler resolves it, and `swap` and `cancel` both
+     * reach it through `subscription()`. They agreed by having the same literal
+     * written out in three files, with comments in each arguing that the three
+     * must match, which is the arrangement this class exists to end (see the
+     * class docblock: the same thing happened to the granting-status list).
+     *
+     * Untyped like every other constant here, because the floor is PHP 8.2.
+     */
+    public const SUBSCRIPTION_TYPE = 'default';
+
+    /**
      * The Stripe statuses under which a subscription still entitles the billable.
      *
      * `past_due` grants on purpose: Stripe is still retrying the card, the

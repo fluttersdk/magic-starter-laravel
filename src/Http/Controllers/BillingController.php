@@ -549,7 +549,7 @@ class BillingController
         //    `cancel` below both act on `subscription('default')`, so a checkout
         //    opened under any other name would sell a subscription neither of
         //    them could reach.
-        $checkout = $billable->newSubscription('default', $priceId)->checkout([
+        $checkout = $billable->newSubscription(StripeSubscriptionState::SUBSCRIPTION_TYPE, $priceId)->checkout([
             'success_url' => $validated['success_url'],
             'cancel_url' => $validated['cancel_url'],
         ]);
@@ -787,7 +787,7 @@ class BillingController
             // nothing and answer 409 `no_subscription`, and that customer could
             // not buy at all. Cashier's named types are an adopter-facing
             // feature and a subject may legitimately hold one.
-            if ($subscription->type !== 'default') {
+            if ($subscription->type !== StripeSubscriptionState::SUBSCRIPTION_TYPE) {
                 continue;
             }
 
@@ -967,7 +967,7 @@ class BillingController
             return null;
         }
 
-        $subscription = $billable->subscription('default');
+        $subscription = $billable->subscription(StripeSubscriptionState::SUBSCRIPTION_TYPE);
 
         return $subscription instanceof Model ? $subscription : null;
     }
