@@ -282,17 +282,27 @@ class BillingController
         try {
             // 1. The renewal date favours the local trial end (a plain column
             //    read) and only falls back to the live period end when there is
-            //    no trial, which is the one retrieval on this path.
+            //    no trial, which is a rail retrieval.
+            //
+            //    This endpoint used to make exactly one, and the docblocks below
+            //    said so. It no longer does: on the common post-checkout state
+            //    it retrieves the customer (for the default payment method), the
+            //    subscription (for the card the checkout left there) and the
+            //    period per item. That is the cost of answering honestly for a
+            //    customer whose card Stripe filed on the subscription, and it is
+            //    still the only rail-live read on the billing screen.
             $subscription = $this->defaultSubscription($billable);
             $renewalDate = $subscription === null
                 ? null
                 : $this->dateAttribute($subscription, 'trial_ends_at') ?? $this->periodEnd($subscription);
 
-            // 2. Only a Cashier PaymentMethod exposes a card; a null default or
-            //    a legacy Stripe Source yields null card fields, and so does a
-            //    billable whose application never applied Cashier's trait. The
-            //    subscription is passed because a hosted checkout leaves the
-            //    card there rather than on the customer.
+            // 2. Only a Cashier PaymentMethod exposes a card, and a billable
+            //    whose application never applied Cashier's trait has none to
+            //    read. The subscription is passed because a hosted checkout
+            //    leaves the card there rather than on the customer, and a legacy
+            //    Stripe Source now falls THROUGH to it rather than yielding null
+            //    outright: a Source fails the `instanceof PaymentMethod` test,
+            //    which is the same door the customer-has-no-default case takes.
             $card = $this->defaultCard($billable, $subscription);
 
             // 3. The rail answered. Whether it had a card to show is the card
@@ -790,8 +800,8 @@ class BillingController
     /**
      * When the subscription's current paid period ends, read live from the rail.
      *
-     * The one retrieval on this endpoint, and the reason this endpoint is the
-     * only rail-live one: Cashier resolves the period per subscription ITEM, so
+     * One of this endpoint's rail retrievals, and the reason the endpoint is
+     * rail-live at all: Cashier resolves the period per subscription ITEM, so
      * there is no local column to read it from. It is guarded because the
      * subscription model is resolvable by the consuming application and a call
      * on a model that does not carry the accessor would be a fatal rather than a
@@ -856,9 +866,9 @@ class BillingController
      * retroactively rewrite the subscription's, so consulting the subscription
      * first would show the card the customer had just replaced.
      *
-     * Expanded in the one retrieval rather than fetched and then resolved: an
-     * unexpanded `default_payment_method` is a bare id, and turning that into a
-     * card would cost a second round trip on a read that already makes one.
+     * This is a NEW round trip, not a reuse of one already made. The `expand`
+     * is what stops it becoming two: an unexpanded `default_payment_method` is a
+     * bare id, and resolving that into a card would cost a further retrieve.
      */
     protected function subscriptionCard(Model $subscription): ?StripeObject
     {

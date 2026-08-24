@@ -1183,7 +1183,17 @@ class BillingTestSubscription extends Model
      */
     public function asStripeSubscription(array $expand = []): StripeSubscription
     {
-        $payload = ['id' => 'sub_test_1'];
+        // The key is ALWAYS present, null included, because Stripe always sends
+        // it. Omitting it on the no-card path made `$subscription->
+        // default_payment_method` an undefined property, which the SDK answers
+        // with `Stripe Notice: Undefined property of Stripe\Subscription
+        // instance` on stderr for every no-card read in the suite. A fixture
+        // that is missing a key the producer always emits is not a smaller
+        // fixture, it is a different payload.
+        $payload = [
+            'id' => 'sub_test_1',
+            'default_payment_method' => null,
+        ];
 
         if (BillingTestRail::$subscriptionPaymentMethod !== null) {
             $payload['default_payment_method'] = in_array('default_payment_method', $expand, true)
