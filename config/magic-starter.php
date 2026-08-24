@@ -305,6 +305,13 @@ return [
     | ['tier' => ..., 'cycle' => ...] on anything that is not monthly or every
     | screen will report the wrong interval over a real charge.
     |
+    | THE FIRST ENTRY MATCHING A (tier, cycle) PAIR WINS, in the order written
+    | here. The old shape had one entry per tier by construction and this one
+    | invites several: the realistic case is a grandfathered price kept mapped so
+    | its webhooks still grant the tier, and new checkouts then go to whichever
+    | of the two is listed higher, silently. List the price you want SOLD first
+    | and keep retired ones below it.
+    |
     | The package names only the fields every billing screen needs: 'id', 'name',
     | 'tagline', 'monthly', 'annual', 'currency', 'features', 'recommended'. Every
     | other key you put on an entry travels to the client UNTOUCHED, which is

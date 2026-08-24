@@ -75,7 +75,15 @@ return [
          * file.
          */
         'no_published_catalogue' => 'No plans are published, so there is nothing to buy yet. Publish magic-starter.billing.plans or magic-starter.billing.tier_order to sell one.',
-        'unmapped_price' => 'No Stripe price sells this plan. Map one under magic-starter.billing.prices before offering it.',
+        /*
+         * It names the CYCLE because the cycle is what fails. Since a checkout
+         * asks for a (tier, cycle) pair, an adopter selling `business` annually
+         * only meets this on EVERY monthly checkout, and the sentence used to
+         * tell them to map a price they had already mapped while never naming
+         * the dimension that did not match. The one thing the reader needs was
+         * the one thing it omitted.
+         */
+        'unmapped_price' => 'No Stripe price sells this plan on a :cycle cycle. Map one under magic-starter.billing.prices, or offer the other cycle.',
         'no_subscription' => 'There is no active subscription to change.',
     ],
 

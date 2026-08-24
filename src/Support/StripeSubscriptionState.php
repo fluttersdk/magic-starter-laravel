@@ -185,6 +185,13 @@ final class StripeSubscriptionState
      * which is precisely the mismatch this lookup exists to prevent. An adopter
      * who sells a tier one way only therefore refuses the other way with a 422
      * rather than quietly billing the wrong figure.
+     *
+     * Two entries declaring the SAME pair resolve to whichever is written first
+     * in the config, silently. That was true of the old flat map as well, but it
+     * had one entry per tier by construction and this shape invites several: a
+     * grandfathered price kept mapped so its webhooks still grant the tier is
+     * the ordinary case. The config comment tells the adopter to list the price
+     * they want SOLD first and keep retired ones below it.
      */
     public static function priceFor(string $tier, string $cycle): ?string
     {

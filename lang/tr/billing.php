@@ -69,7 +69,7 @@ return [
          * order is published.
          */
         'no_published_catalogue' => 'Yayımlanmış bir plan yok, dolayısıyla henüz satın alınabilecek bir şey de yok. Bir plan satmak için magic-starter.billing.plans ya da magic-starter.billing.tier_order anahtarını yayımlayın.',
-        'unmapped_price' => 'Bu planı satan bir Stripe fiyatı yok. Satışa sunmadan önce magic-starter.billing.prices altında bir fiyat tanımlayın.',
+        'unmapped_price' => 'Bu planı :cycle döngüsünde satan bir Stripe fiyatı yok. magic-starter.billing.prices altında bir fiyat tanımlayın veya diğer döngüyü sunun.',
         'no_subscription' => 'Değiştirilecek etkin bir abonelik yok.',
     ],
 

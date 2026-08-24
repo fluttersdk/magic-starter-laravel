@@ -145,8 +145,51 @@ class BillingController
     public function plans(): JsonResponse
     {
         return response()->json([
-            'data' => $this->planCatalogue(),
+            'data' => $this->sellableCatalogue(),
         ]);
+    }
+
+    /**
+     * The published catalogue, with each entry told which cycles it can be SOLD
+     * on.
+     *
+     * The catalogue and the price map are two independent config keys, and
+     * nothing on the wire related them. An adopter who fills in both display
+     * figures for a tier but maps only its monthly price therefore ships an
+     * annual button on every billing screen, and the customer learns that price
+     * does not exist from a 422 AFTER committing to buy. That is the same
+     * divergence between what a screen shows and what the rail will do that the
+     * cycle itself was added to close, moved one step later, so it is closed on
+     * the read the client already makes rather than at the point of sale.
+     *
+     * `cycles` is DERIVED and additive: every key the adopter wrote still
+     * travels untouched, which is the contract {@see self::plans()} states. An
+     * entry with no mapped price at all gets an empty list, which is the honest
+     * answer and the one a client needs to hide a tier's purchase affordance
+     * rather than offer a refusal.
+     *
+     * @return array<int, array<string, mixed>>
+     */
+    protected function sellableCatalogue(): array
+    {
+        $sellable = [];
+
+        foreach (StripeSubscriptionState::catalogue() as $entry) {
+            $sellable[$entry['tier']][$entry['cycle']] = true;
+        }
+
+        return array_map(
+            static function (array $entry) use ($sellable): array {
+                $id = is_string($entry['id'] ?? null) ? $entry['id'] : null;
+
+                $entry['cycles'] = $id === null
+                    ? []
+                    : array_keys($sellable[$id] ?? []);
+
+                return $entry;
+            },
+            $this->planCatalogue(),
+        );
     }
 
     /**
@@ -441,7 +484,7 @@ class BillingController
         abort_if(
             $priceId === null,
             HttpResponse::HTTP_UNPROCESSABLE_ENTITY,
-            __('magic-starter::billing.refusals.unmapped_price'),
+            __('magic-starter::billing.refusals.unmapped_price', ['cycle' => $validated['cycle']]),
         );
 
         // 6. One price, through the SUBSCRIPTION builder. Quantity is not the
@@ -513,7 +556,7 @@ class BillingController
         abort_if(
             $priceId === null,
             HttpResponse::HTTP_UNPROCESSABLE_ENTITY,
-            __('magic-starter::billing.refusals.unmapped_price'),
+            __('magic-starter::billing.refusals.unmapped_price', ['cycle' => $validated['cycle']]),
         );
 
         $subscription->swap($priceId);

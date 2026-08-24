@@ -364,7 +364,19 @@ class BillingWriteEndpointsTest extends TestCase
         $refused = $this->buy($user, 'business');
 
         $refused->assertStatus(422);
-        $this->assertSame($this->shippedLine('en', 'unmapped_price'), $refused->json('message'));
+
+        // The sentence NAMES the cycle, which is the dimension that failed. An
+        // adopter selling a tier one way only meets this on every checkout for
+        // the other, and a message that told them to map a price they had
+        // already mapped sent them to the right file looking for the wrong
+        // thing. Asserted against the shipped line with the placeholder filled,
+        // so dropping `:cycle` from the catalogue fails here rather than
+        // shipping a sentence with a literal `:cycle` in it.
+        $this->assertSame(
+            str_replace(':cycle', 'monthly', $this->shippedLine('en', 'unmapped_price')),
+            $refused->json('message'),
+        );
+        $this->assertStringContainsString('monthly', (string) $refused->json('message'));
         $this->assertNull(BillingWriteRail::$checkoutItems, 'No session may be opened against an unmapped tier.');
 
         // The disarming limb: the neighbouring tier IS mapped and sells, so the
