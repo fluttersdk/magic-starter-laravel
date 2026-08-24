@@ -2,6 +2,7 @@
 
 namespace FlutterSdk\MagicStarter\Notifications;
 
+use FlutterSdk\MagicStarter\Support\FrontendUrl;
 use Illuminate\Notifications\Messages\MailMessage;
 use Illuminate\Notifications\Notification;
 use Illuminate\Support\Carbon;
@@ -47,16 +48,15 @@ class VerifyEmailNotification extends Notification
             ],
         );
 
-        $frontendUrl = config('magic-starter.frontend_url');
+        // Only the PREDICATE is shared with the other two link builders. The swap
+        // itself stays here, because a signed route must keep its signature and only
+        // its host may change.
+        $frontendUrl = FrontendUrl::baseOrNull();
 
-        if (! is_string($frontendUrl) || trim($frontendUrl) === '') {
+        if ($frontendUrl === null) {
             return $signedUrl;
         }
 
-        return str_replace(
-            url('/'),
-            rtrim($frontendUrl, '/'),
-            $signedUrl,
-        );
+        return str_replace(url('/'), $frontendUrl, $signedUrl);
     }
 }
