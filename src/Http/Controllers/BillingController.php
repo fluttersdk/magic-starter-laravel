@@ -104,6 +104,17 @@ class BillingController
     public const REASON_NO_BILLING_ACCOUNT = 'no_billing_account';
 
     /**
+     * This card rail is already billing the subject, so a checkout would open a
+     * SECOND subscription beside the first.
+     *
+     * A third reason rather than reusing either above, because it leads
+     * somewhere neither of those does: the customer is not being told to go
+     * elsewhere and not being told there is nothing to manage, they are being
+     * told to CHANGE what they already have. The client's next step is `swap`.
+     */
+    public const REASON_SUBSCRIPTION_EXISTS = 'subscription_exists';
+
+    /**
      * How many invoices one page of the invoice list carries.
      *
      * Untyped on purpose: the package's PHP floor is 8.2 and a typed class
@@ -454,6 +465,25 @@ class BillingController
         //    enforcement.
         $this->guardStoreOwnedSubscription($billable);
 
+        // 2b. A subject this rail is ALREADY billing must not open a second
+        //     subscription beside the first. `newSubscription()` happily creates
+        //     one, so without this a customer who cancels and buys again ends up
+        //     holding two live Stripe subscriptions and paying both, and the
+        //     damage does not stop at the double charge: both rows carry
+        //     `type = 'default'`, so `subscription('default')` becomes ambiguous
+        //     for `swap`, `cancel` and the period read, and the eventual
+        //     deletion of the older one revokes the entitlement the newer one is
+        //     paying for. Measured end to end against a live Stripe test
+        //     account, on a cancelled-but-still-active subscription.
+        //
+        //     A CANCELLED subscription counts as live while it still grants,
+        //     which is the case this guard exists for: that is exactly when a
+        //     customer is most likely to buy again, and it is the one moment the
+        //     store guard above has nothing to say about. `swap` is the way to
+        //     change what such a customer is paying for, and it un-cancels as a
+        //     side effect, so nothing is unreachable behind this refusal.
+        $this->guardExistingCardSubscription($billable);
+
         // 3. Rail facts before input facts. A subject whose application never
         //    applied Cashier's trait has no card rail to check out on, and a
         //    direct call on such a model is a fatal `Error` on the billing screen
@@ -705,6 +735,47 @@ class BillingController
             $provider,
             __('magic-starter::billing.refusals.managed_by_store'),
         );
+    }
+
+    /**
+     * Refuse a checkout for a subject this card rail is already billing.
+     *
+     * `newSubscription()` does not care that one exists, so without this a
+     * customer who cancels and buys again holds TWO live Stripe subscriptions
+     * and pays both. The double charge is not the worst of it: Cashier stores
+     * both under `type = 'default'`, so `subscription('default')` becomes
+     * ambiguous for `swap`, `cancel` and the period read, and when the older one
+     * finally deletes, its event revokes the entitlement the newer one is paying
+     * for. Measured end to end against a live Stripe test account.
+     *
+     * A subscription counts as existing while it still GRANTS, which includes a
+     * cancelled one inside its paid period. That is the whole point: it is the
+     * moment a customer is most likely to buy again, and the only one the store
+     * guard above says nothing about. `swap` remains open to them and un-cancels
+     * as a side effect, so nothing is unreachable behind this refusal.
+     *
+     * The status is read from the LOCAL rows rather than from the rail: this runs
+     * on the checkout path, the rows are what Cashier's own webhook handlers keep
+     * in step, and a network read here would put a Stripe round trip in front of
+     * every purchase.
+     */
+    protected function guardExistingCardSubscription(Model $billable): void
+    {
+        if (! method_exists($billable, 'subscriptions')) {
+            return;
+        }
+
+        foreach ($billable->subscriptions as $subscription) {
+            $status = $subscription->stripe_status;
+
+            if (is_string($status) && StripeSubscriptionState::grants($status)) {
+                $this->abortWithBillingConflict(
+                    self::REASON_SUBSCRIPTION_EXISTS,
+                    BillingProvider::STRIPE,
+                    __('magic-starter::billing.refusals.subscription_exists'),
+                );
+            }
+        }
     }
 
     /**

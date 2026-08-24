@@ -75,6 +75,20 @@ return [
         'no_billing_account' => 'There is no billing account to manage yet.',
 
         /*
+         * The third, and it leads somewhere neither of those two does: the
+         * customer is not being sent elsewhere and not being told there is
+         * nothing to manage, they are being told to CHANGE what they already
+         * have. So the sentence names the action instead of the obstacle.
+         *
+         * It fires most often on a CANCELLED subscription inside its paid
+         * period, which is the moment a customer is most likely to buy again,
+         * so it has to read sensibly to somebody who believes they have already
+         * cancelled. "You already have a subscription" would sound like a
+         * contradiction to them; "still active" is the fact that reconciles it.
+         */
+        'subscription_exists' => 'Your subscription is still active, so change your plan instead of buying a second one.',
+
+        /*
          * The three refusals the card-rail WRITES raise. Two of them describe a
          * gap in the adopter's own configuration rather than a fault in the
          * request, and they name the key that closes it: without that, an
