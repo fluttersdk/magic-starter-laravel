@@ -43,6 +43,16 @@ return [
      * locales actually differ instead of one silently carrying the other's
      * text.
      */
+    /*
+     * Human names for the two billing cycles, keyed by the wire word. See the
+     * English file for why they exist: `unmapped_price` names the cycle, and the
+     * wire word is English.
+     */
+    'cycles' => [
+        'monthly' => 'aylık',
+        'annual' => 'yıllık',
+    ],
+
     'refusals' => [
         'store_subscription_active' => 'Bu takımı hâlâ bir mağaza aboneliği faturalandırıyor. Önce satın aldığınız mağaza hesabından aboneliği iptal edin: takımı şimdi silmek planı kaldırır, mağaza ise sizi ücretlendirmeye devam eder ve bu uygulama bunu sizin yerinize iptal edemez.',
 

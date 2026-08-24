@@ -385,6 +385,34 @@ class BillingWriteEndpointsTest extends TestCase
     }
 
     /**
+     * The cycle inside that sentence is translated, not passed through raw.
+     *
+     * The wire word is English and the sentence around it is not, so a
+     * substituted `monthly` left a Turkish adopter reading "Bu plani monthly
+     * dongusunde satan bir Stripe fiyati yok" with the one dimension the
+     * sentence exists to name in the wrong language. Invisible to the English
+     * case above, where the translated word and the wire word are the same
+     * string: this is the only assertion that can tell them apart.
+     */
+    public function test_the_refused_cycle_is_named_in_the_readers_language(): void
+    {
+        $this->bootBillingRoutes('user');
+
+        $user = $this->createUser('unpriced-tr@example.test');
+
+        app()->setLocale('tr');
+
+        try {
+            $message = (string) $this->buy($user, 'business')->assertStatus(422)->json('message');
+        } finally {
+            app()->setLocale('en');
+        }
+
+        $this->assertStringContainsString('aylık', $message);
+        $this->assertStringNotContainsString('monthly', $message);
+    }
+
+    /**
      * An empty price map is refused per tier and never resolved to an empty
      * price id.
      *

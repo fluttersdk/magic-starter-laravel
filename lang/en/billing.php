@@ -40,6 +40,20 @@ return [
     ],
 
     /*
+     * Human names for the two billing cycles, keyed by the wire word.
+     *
+     * They exist because `unmapped_price` NAMES the cycle, and the wire word is
+     * English: without this a Turkish adopter read "Bu plani monthly dongusunde
+     * satan bir Stripe fiyati yok", with the one dimension that sentence was
+     * rewritten to surface left untranslated. The wire word itself never
+     * changes; only what a human is shown.
+     */
+    'cycles' => [
+        'monthly' => 'monthly',
+        'annual' => 'annual',
+    ],
+
+    /*
      * Refusal sentences the billing actions and endpoints raise, keyed by a
      * short reason. Shipped here rather than inlined so every reader gets the
      * same wording in their own locale, and so a redeclaration-guard test can

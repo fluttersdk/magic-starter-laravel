@@ -313,9 +313,11 @@ return [
     | and keep retired ones below it.
     |
     | The package names only the fields every billing screen needs: 'id', 'name',
-    | 'tagline', 'monthly', 'annual', 'currency', 'features', 'recommended'. Every
-    | other key you put on an entry travels to the client UNTOUCHED, which is
-    | where anything product-specific belongs: what a tier caps, what it unlocks,
+    | 'tagline', 'monthly', 'annual', 'currency', 'features', 'recommended', plus
+    | 'cycles', which is RESERVED and derived: the endpoint computes it from the
+    | price map below and overwrites whatever an entry carries under that key, so
+    | do not write one. Every other key you put on an entry travels to the client
+    | UNTOUCHED, which is where anything product-specific belongs: what a tier caps, what it unlocks,
     | the copy for a capability only your product has. This package cannot know
     | those and does not try, exactly as it delegates counting to ReportsUsage
     | and the tier vocabulary to the list below. A null price means "contact us";
@@ -332,10 +334,12 @@ return [
     | means the explicit list wins, because it is the more specific declaration;
     | there is no reason to write two orders, so write one.
     |
-    | 'prices' is which Stripe PRICE sells which of those tiers, as a plain
-    | ['price_id' => 'tier_id'] map. The Stripe rail reads it in both directions:
-    | a webhook asks which tier the price on a subscription sells, and a checkout
-    | asks which price sells a tier the customer picked.
+    | 'prices' is which Stripe PRICE sells which tier ON WHICH CYCLE, in either
+    | of the two forms described above: a bare 'price_id' => 'tier_id' string,
+    | read as MONTHLY, or the explicit ['tier' => ..., 'cycle' => ...] entry. The
+    | Stripe rail reads it in both directions: a webhook asks which tier and
+    | cycle the price on a subscription sells, and a checkout asks which price
+    | sells the (tier, cycle) pair the customer picked.
     |
     | It lives here rather than under cashier.plans, which is where an earlier
     | application kept it. That key is NOT part of Cashier: Cashier's own config

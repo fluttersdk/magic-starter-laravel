@@ -129,10 +129,15 @@ class BillingController
      * `config()` so that the endpoint, the checkout validation and the paid-tier
      * floor all read exactly the same sanitised catalogue.
      *
-     * Entries reach the client VERBATIM. The package names the fields every
-     * billing screen needs (`id`, `name`, `tagline`, `monthly`, `annual`,
-     * `currency`, `features`, `recommended`) and passes everything else through
-     * untouched, which is where a tier's limits and any capability copy live. A
+     * Entries reach the client VERBATIM but for ONE key. The package names the
+     * fields every billing screen needs (`id`, `name`, `tagline`, `monthly`,
+     * `annual`, `currency`, `features`, `recommended`) and passes everything
+     * else through untouched, which is where a tier's limits and any capability
+     * copy live. The exception is `cycles`, which
+     * {@see self::sellableCatalogue()} DERIVES from the price map and writes
+     * over: it is a reserved key, said so in the config comment beside the
+     * catalogue, and an adopter carrying their own would otherwise have it
+     * silently replaced by a list computed from somewhere else. A
      * schema for those would mean this package owning product knowledge it does
      * not have, the same reason counting leaves through {@see ReportsUsage} and
      * the tier vocabulary is the consumer's throughout.
@@ -484,7 +489,14 @@ class BillingController
         abort_if(
             $priceId === null,
             HttpResponse::HTTP_UNPROCESSABLE_ENTITY,
-            __('magic-starter::billing.refusals.unmapped_price', ['cycle' => $validated['cycle']]),
+            __('magic-starter::billing.refusals.unmapped_price', [
+                // The cycle is the one dimension this sentence exists to name,
+                // so it is named in the reader's language rather than in the
+                // wire's. The wire word is unchanged and is what the lookup is
+                // keyed by; only what a human is shown goes through the
+                // catalogue.
+                'cycle' => __('magic-starter::billing.cycles.' . $validated['cycle']),
+            ]),
         );
 
         // 6. One price, through the SUBSCRIPTION builder. Quantity is not the
@@ -556,7 +568,14 @@ class BillingController
         abort_if(
             $priceId === null,
             HttpResponse::HTTP_UNPROCESSABLE_ENTITY,
-            __('magic-starter::billing.refusals.unmapped_price', ['cycle' => $validated['cycle']]),
+            __('magic-starter::billing.refusals.unmapped_price', [
+                // The cycle is the one dimension this sentence exists to name,
+                // so it is named in the reader's language rather than in the
+                // wire's. The wire word is unchanged and is what the lookup is
+                // keyed by; only what a human is shown goes through the
+                // catalogue.
+                'cycle' => __('magic-starter::billing.cycles.' . $validated['cycle']),
+            ]),
         );
 
         $subscription->swap($priceId);
