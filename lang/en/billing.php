@@ -84,9 +84,18 @@ return [
          * period, which is the moment a customer is most likely to buy again,
          * so it has to read sensibly to somebody who believes they have already
          * cancelled. "You already have a subscription" would sound like a
-         * contradiction to them; "still active" is the fact that reconciles it.
+         * contradiction to them; "has not ended yet" is the fact that
+         * reconciles it.
+         *
+         * "Still active" said the same thing and was wrong for one of the four
+         * states that reach here: `past_due` grants (see
+         * {@see StripeSubscriptionState::GRANTING_STATUSES}), so a customer
+         * whose card has just been declined would have been told their
+         * subscription is active while Stripe retries the charge. What is true
+         * of all four, cancelled-in-period included, is that the subscription
+         * has not ended, so that is what the sentence claims.
          */
-        'subscription_exists' => 'Your subscription is still active, so change your plan instead of buying a second one.',
+        'subscription_exists' => 'Your subscription has not ended yet, so change your plan instead of buying a second one.',
 
         /*
          * The three refusals the card-rail WRITES raise. Two of them describe a

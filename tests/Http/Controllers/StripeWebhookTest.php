@@ -735,6 +735,54 @@ class StripeWebhookTest extends TestCase
         $this->assertNotSame('canceled', $billable->getAttribute('plan_status'));
     }
 
+    /**
+     * A granting subscription of ANOTHER type does not suppress the revocation.
+     *
+     * The guard above scopes to `default` because that is the type every other
+     * feeder reads: the reconciler asks `subscription('default')` directly, so a
+     * `seats` subscription holding the tier open here would leave the two out of
+     * step, this one keeping the tier and the reconciler taking it away on its
+     * next hourly run, against the same subject and with neither wrong on its
+     * own terms.
+     *
+     * This is the negative control for the type scoping specifically, which the
+     * pair above cannot provide: both of its subscriptions are `default`, so an
+     * unscoped guard passes it.
+     */
+    public function test_a_granting_subscription_of_another_type_does_not_hold_the_tier_open(): void
+    {
+        $billable = $this->createBillable();
+
+        $this->seedActiveSubscription();
+
+        $this->postSignedWebhook(
+            $this->subscriptionEvent(
+                'evt_seats_sub',
+                'customer.subscription.created',
+                'price_business',
+                'active',
+                created: static::EVENT_AT + 30,
+                subscriptionId: 'sub_seats',
+                subscriptionType: 'seats',
+            ),
+        )->assertOk();
+
+        $this->postSignedWebhook(
+            $this->subscriptionEvent(
+                'evt_default_deleted',
+                'customer.subscription.deleted',
+                'price_pro',
+                'canceled',
+                created: static::EVENT_AT + 60,
+            ),
+        )->assertOk();
+
+        $billable->refresh();
+
+        $this->assertNull($billable->getAttribute('plan'));
+        $this->assertSame('canceled', $billable->getAttribute('plan_status'));
+    }
+
     public function test_a_paid_invoice_reaffirms_the_active_entitlement(): void
     {
         $billable = $this->createBillable();
@@ -1070,12 +1118,13 @@ class StripeWebhookTest extends TestCase
         ?int $currentPeriodEnd = null,
         ?bool $cancelAtPeriodEnd = null,
         string $subscriptionId = 'sub_webhook_test',
+        string $subscriptionType = 'default',
     ): array {
         $object = [
             'id' => $subscriptionId,
             'customer' => static::STRIPE_ID,
             'status' => $status,
-            'metadata' => ['type' => 'default'],
+            'metadata' => ['type' => $subscriptionType],
             'items' => [
                 'data' => [
                     [

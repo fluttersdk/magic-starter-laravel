@@ -758,6 +758,19 @@ class BillingController
      * on the checkout path, the rows are what Cashier's own webhook handlers keep
      * in step, and a network read here would put a Stripe round trip in front of
      * every purchase.
+     *
+     * The cost of that choice, stated because it is a REGRESSION in one case
+     * rather than merely a limitation: nothing in this package heals a local row
+     * that Stripe has moved past. {@see \FlutterSdk\MagicStarter\Console\ReconcileBillingEntitlements} re-reads
+     * the local subscription and never calls the Stripe API, so a dropped
+     * `customer.subscription.deleted` leaves `stripe_status = 'active'` here
+     * forever. Before this guard existed that customer could simply buy again;
+     * now they are refused, and `swap` fails at the API against a subscription
+     * that no longer exists, so they cannot buy at all. Rare (Stripe retries
+     * deliveries for days) but unrecoverable without operator action, so an
+     * adopter seeing a customer stuck behind `subscription_exists` should check
+     * Stripe before looking anywhere else, and the fix when the rail disagrees
+     * is to re-sync that row, not to loosen this guard.
      */
     protected function guardExistingCardSubscription(Model $billable): void
     {
@@ -766,6 +779,18 @@ class BillingController
         }
 
         foreach ($billable->subscriptions as $subscription) {
+            // SCOPED TO `default`, because that is the only subscription any
+            // other write in this package can reach: `swap` and `cancel` both
+            // resolve `subscription('default')`, which Cashier filters by type.
+            // Refusing on a granting subscription of some OTHER type would close
+            // the escape hatch this refusal points at, since `swap` would find
+            // nothing and answer 409 `no_subscription`, and that customer could
+            // not buy at all. Cashier's named types are an adopter-facing
+            // feature and a subject may legitimately hold one.
+            if ($subscription->type !== 'default') {
+                continue;
+            }
+
             $status = $subscription->stripe_status;
 
             if (is_string($status) && StripeSubscriptionState::grants($status)) {

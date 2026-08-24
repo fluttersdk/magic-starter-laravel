@@ -427,6 +427,16 @@ class StripeWebhookController extends CashierWebhookController
         }
 
         foreach ($billable->subscriptions as $subscription) {
+            // SCOPED TO `default`, the same type every other feeder reads. The
+            // reconciler asks `subscription('default')` directly, so a granting
+            // row of another type suppressing this revocation would put the two
+            // out of step: this feeder would keep the tier and the reconciler
+            // would take it away on its next hourly run, against the same
+            // subject, with neither of them wrong on its own terms.
+            if ($subscription->type !== 'default') {
+                continue;
+            }
+
             $status = $subscription->stripe_status;
 
             if (is_string($status) && StripeSubscriptionState::grants($status)) {

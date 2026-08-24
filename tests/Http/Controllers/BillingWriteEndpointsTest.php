@@ -170,7 +170,9 @@ class BillingWriteEndpointsTest extends TestCase
         // A CANCELLED subscription inside its paid period still grants, and it
         // is the case this guard exists for: it is when a customer is most
         // likely to buy again, and the store guard says nothing about it.
-        BillingWriteRail::$subscriptions = [(object) ['stripe_status' => 'active']];
+        BillingWriteRail::$subscriptions = [
+            (object) ['type' => 'default', 'stripe_status' => 'active'],
+        ];
 
         $this->buy($user, 'pro')
             ->assertStatus(409)
@@ -184,7 +186,23 @@ class BillingWriteEndpointsTest extends TestCase
 
         // The accepting limb: a subscription that no longer grants is not a
         // subscription, and this customer has to be able to buy again.
-        BillingWriteRail::$subscriptions = [(object) ['stripe_status' => 'canceled']];
+        BillingWriteRail::$subscriptions = [
+            (object) ['type' => 'default', 'stripe_status' => 'canceled'],
+        ];
+
+        $this->buy($user, 'pro')->assertOk();
+        $this->assertSame(['price_pro' => 1], BillingWriteRail::$checkoutItems);
+
+        // And a granting subscription of ANOTHER type does not block either.
+        // Cashier's named types are an adopter-facing feature, and every other
+        // write here resolves `subscription('default')`: refusing on a row those
+        // writes cannot reach would close the escape hatch this refusal points
+        // at, because `swap` would find nothing and answer 409 `no_subscription`
+        // and that customer could not buy at all.
+        BillingWriteRail::$checkoutItems = null;
+        BillingWriteRail::$subscriptions = [
+            (object) ['type' => 'seats', 'stripe_status' => 'active'],
+        ];
 
         $this->buy($user, 'pro')->assertOk();
         $this->assertSame(['price_pro' => 1], BillingWriteRail::$checkoutItems);
