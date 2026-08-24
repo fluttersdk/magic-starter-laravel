@@ -27,6 +27,7 @@ use RuntimeException;
 use Stripe\Exception\ApiConnectionException;
 use Stripe\Invoice as StripeInvoice;
 use Stripe\PaymentMethod as StripePaymentMethod;
+use Stripe\Subscription as StripeSubscription;
 
 /**
  * The seven billing READ endpoints, driven through the routes the package
@@ -214,6 +215,65 @@ class BillingControllerTest extends TestCase
         $this->assertSame(true, $card->json('available'));
         $this->assertSame(self::TRIAL_END_ISO, $card->json('renewal_date'));
         $this->assertSame('visa', $card->json('brand'));
+    }
+
+    /**
+     * A card a hosted CHECKOUT left on the subscription is reported, even though
+     * the customer carries no default payment method of its own.
+     *
+     * This is the state every web purchase lands in, and it was reported as "no
+     * card on file" to the customer who had just paid with one. Stripe Checkout
+     * attaches the payment method to the SUBSCRIPTION and leaves the customer's
+     * `invoice_settings.default_payment_method` null; Cashier's
+     * `defaultPaymentMethod()` reads only the customer, so it answered null for a
+     * card that was genuinely on file and about to be charged again.
+     *
+     * The PAIR is the test. The first limb is the checkout state (customer null,
+     * subscription set) and the second is the state a portal update leaves
+     * (customer set), because a reader that consulted only the subscription would
+     * pass the first limb and report a stale card in the second: after a portal
+     * change the customer's default is the new card while the subscription may
+     * still name the old one, so the customer has to keep precedence.
+     */
+    public function test_a_card_left_on_the_subscription_by_checkout_is_reported(): void
+    {
+        $this->bootBillingRoutes('team');
+
+        $owner = $this->createUser('checkout-card@example.test');
+        $team = $this->createTeam($owner, [
+            'plan' => 'pro',
+            'plan_status' => 'active',
+            'plan_provider' => 'stripe',
+            'stripe_id' => self::STRIPE_ID,
+        ]);
+        $this->setCurrentTeam($owner, $team);
+
+        BillingTestRail::$hasStripeId = true;
+        BillingTestRail::$subscription = new BillingTestSubscription;
+
+        // Limb one: what a hosted checkout leaves behind.
+        BillingTestRail::$paymentMethod = null;
+        BillingTestRail::$subscriptionPaymentMethod = StripePaymentMethod::constructFrom([
+            'id' => 'pm_test_checkout',
+            'card' => [
+                'brand' => 'visa',
+                'last4' => '4242',
+                'exp_month' => 12,
+                'exp_year' => 2034,
+            ],
+        ]);
+
+        $card = $this->ask($owner, '/billing/payment-method');
+        $this->assertSame(true, $card->json('available'));
+        $this->assertSame('visa', $card->json('brand'));
+        $this->assertSame('4242', $card->json('last4'));
+
+        // Limb two: the customer's own default wins when it exists, so a portal
+        // update is not shadowed by whatever the subscription still names.
+        BillingTestRail::$paymentMethod = $this->visaPaymentMethod($team);
+
+        $this->assertSame('4242', $this->ask($owner, '/billing/payment-method')->json('last4'));
+        $this->assertSame(2030, $this->ask($owner, '/billing/payment-method')->json('exp_year'));
     }
 
     /**
@@ -999,10 +1059,17 @@ final class BillingTestRail
 
     public static string $portalUrl = 'https://billing.stripe.test/session';
 
+    /**
+     * The Stripe payment method the SUBSCRIPTION carries, which is where a
+     * hosted checkout leaves the card, or null when it carries none.
+     */
+    public static ?StripePaymentMethod $subscriptionPaymentMethod = null;
+
     public static function reset(): void
     {
         self::$hasStripeId = false;
         self::$paymentMethod = null;
+        self::$subscriptionPaymentMethod = null;
         self::$failure = null;
         self::$subscription = null;
         self::$invoices = null;
@@ -1102,6 +1169,30 @@ class BillingTestSubscription extends Model
     protected $table = 'subscriptions';
 
     protected $guarded = [];
+
+    /**
+     * The live Stripe subscription, with `default_payment_method` expanded when
+     * the caller asks for it.
+     *
+     * This is the card a hosted CHECKOUT leaves behind. Checkout attaches the
+     * payment method to the subscription and does not touch the customer's
+     * `invoice_settings.default_payment_method`, so a card that is genuinely on
+     * file is invisible to a reader that consults the customer alone.
+     *
+     * @param  array<int, string>  $expand
+     */
+    public function asStripeSubscription(array $expand = []): StripeSubscription
+    {
+        $payload = ['id' => 'sub_test_1'];
+
+        if (BillingTestRail::$subscriptionPaymentMethod !== null) {
+            $payload['default_payment_method'] = in_array('default_payment_method', $expand, true)
+                ? BillingTestRail::$subscriptionPaymentMethod
+                : 'pm_test_subscription';
+        }
+
+        return StripeSubscription::constructFrom($payload);
+    }
 }
 
 /**
