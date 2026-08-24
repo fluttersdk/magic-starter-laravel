@@ -26,7 +26,8 @@ final class FrontendUrl
      *
      * Whitespace-only counts as none: `MAGIC_STARTER_FRONTEND_URL= ` is the same
      * operator mistake as leaving it blank, and it used to produce URLs with
-     * leading spaces. Trailing slashes are stripped so callers can concatenate.
+     * leading spaces. Slash-only counts as none too, for the reason below.
+     * Trailing slashes are stripped so callers can concatenate.
      *
      * Falls back to `app.frontend_url` explicitly, because the config() default
      * argument cannot: see the class docblock.
@@ -36,8 +37,23 @@ final class FrontendUrl
         foreach (['magic-starter.frontend_url', 'app.frontend_url'] as $key) {
             $value = config($key);
 
-            if (is_string($value) && trim($value) !== '') {
-                return rtrim(trim($value), '/');
+            if (! is_string($value)) {
+                continue;
+            }
+
+            // Emptiness is tested AFTER the rtrim, not only before it. This
+            // method's whole job is to answer null when there is no usable base,
+            // and `rtrim(trim('/'), '/')` is the EMPTY STRING, which is not null,
+            // so `MAGIC_STARTER_FRONTEND_URL=/` used to walk straight past every
+            // caller's `?? rtrim(url('/'), '/')` and rebuild the exact relative
+            // URL this class exists to prevent. Worse in VerifyEmailNotification,
+            // whose null check is explicit: an empty base reached
+            // `str_replace(url('/'), '', $signedUrl)` and stripped the host off a
+            // URL that was already absolute.
+            $base = rtrim(trim($value), '/');
+
+            if ($base !== '') {
+                return $base;
             }
         }
 

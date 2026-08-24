@@ -167,7 +167,7 @@ The package customizes the password reset notification URL in `boot()` so that i
 
 ```php
 ResetPassword::createUrlUsing(function (object $notifiable, string $token) {
-    $frontendUrl = config('magic-starter.frontend_url', config('app.frontend_url'));
+    $frontendUrl = FrontendUrl::baseOrNull() ?? rtrim(url('/'), '/');
 
     return "{$frontendUrl}/auth/reset-password?token={$token}&email="
         . $notifiable->getEmailForPasswordReset();
@@ -180,7 +180,12 @@ The URL is constructed as:
 {frontend_url}/auth/reset-password?token={token}&email={email}
 ```
 
-Config resolution falls back from `magic-starter.frontend_url` → `app.frontend_url`, so either key works.
+Config resolution falls back from `magic-starter.frontend_url` → `app.frontend_url`, so either key works, and the URL is absolute in every configuration: with neither key usable it falls back to the application root rather than emitting a host-less `/auth/reset-password?token=...` that no mail client can resolve.
+
+`Support\FrontendUrl::baseOrNull()` is the shared predicate behind all three link builders (this one, `TeamInvitationNotification`, `VerifyEmailNotification`). It answers `null` for four inputs, not one: a missing key, an empty string, a whitespace-only value, and a slash-only value.
+
+> [!WARNING]
+> This is why the fallback cannot be written as `config('magic-starter.frontend_url', config('app.frontend_url'))`, which is what this section used to show. `config()`'s default argument fires for an ABSENT key, and `MAGIC_STARTER_FRONTEND_URL=` makes the key present-and-EMPTY, so `app.frontend_url` was dead configuration and an operator who set it got nothing.
 
 > [!NOTE]
 > This customization is unconditional — it runs regardless of which features are enabled. If your application uses a different reset URL structure, override it after the package provider boots by calling `ResetPassword::createUrlUsing()` again in your own `AppServiceProvider::boot()`.

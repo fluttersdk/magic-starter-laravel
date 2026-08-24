@@ -128,6 +128,26 @@ final class TeamInvitationNotificationTest extends TestCase
         $this->assertStringStartsWith('https://api.example.test/', $mail->actionUrl);
     }
 
+    /**
+     * The third shape of "no base", and the sharpest of the three: `rtrim(trim('/'),
+     * '/')` is the EMPTY STRING rather than null, so a slash-only value used to pass
+     * straight through the `??` guard (which fires on null, not on `''`) and rebuild
+     * the relative accept link this test class exists to prevent.
+     */
+    public function test_a_slash_only_frontend_url_is_treated_as_absent(): void
+    {
+        config(['magic-starter.frontend_url' => '/', 'app.frontend_url' => null]);
+
+        $mail = (new TeamInvitationNotification(
+            new TeamInvitationNotificationTestInvitation('tok-123'),
+        ))->toMail(null);
+
+        $this->assertSame(
+            'https://api.example.test/invitations/tok-123/accept',
+            $mail->actionUrl,
+        );
+    }
+
     public function test_the_token_is_url_encoded(): void
     {
         config(['magic-starter.frontend_url' => 'https://app.example.test']);

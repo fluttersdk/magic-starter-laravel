@@ -26,6 +26,27 @@ final class VerifyEmailNotificationTest extends TestCase
         URL::forceRootUrl('https://api.example.test');
     }
 
+    /**
+     * The worst landing site for a slash-only value, because this call site's guard
+     * is an explicit `=== null` rather than a `??`.
+     *
+     * `rtrim(trim('/'), '/')` is the EMPTY STRING, so the guard missed it and
+     * `str_replace(url('/'), '', $signedUrl)` stripped the host off a URL that was
+     * ALREADY absolute, handing the customer `/email/verify/...`. The other two
+     * builders only failed to add a host; this one removed one.
+     */
+    public function test_a_slash_only_frontend_url_leaves_the_signed_url_absolute(): void
+    {
+        config(['magic-starter.frontend_url' => '/', 'app.frontend_url' => null]);
+        URL::forceScheme('https');
+
+        $mail = (new VerifyEmailNotification)->toMail(
+            new VerifyEmailNotificationTestUser(id: 'user-1', email: 'test@example.com'),
+        );
+
+        $this->assertStringStartsWith('https://api.example.test/', $mail->actionUrl);
+    }
+
     public function test_notification_is_sent_via_mail(): void
     {
         $notification = new VerifyEmailNotification;

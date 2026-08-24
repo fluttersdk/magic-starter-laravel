@@ -106,6 +106,38 @@ final class PasswordResetUrlTest extends TestCase
     }
 
     /**
+     * The third shape of "no base", and the sharpest of the three.
+     *
+     * `rtrim(trim('/'), '/')` is the EMPTY STRING rather than null, so a
+     * slash-only value used to pass straight through the `?? rtrim(url('/'), '/')`
+     * guard (`??` fires on null, not on `''`) and rebuild the exact relative URL
+     * this branch exists to remove. Empty and whitespace-only never reached that
+     * far, because they were rejected before the rtrim ran.
+     */
+    public function test_a_slash_only_frontend_url_is_treated_as_absent(): void
+    {
+        config(['magic-starter.frontend_url' => '/', 'app.frontend_url' => null]);
+
+        $this->assertSame(
+            'https://api.example.test/auth/reset-password?token=tok-123&email=ada@example.test',
+            $this->resetUrlFor('tok-123'),
+        );
+    }
+
+    public function test_a_slash_only_package_key_still_falls_back_to_the_app_key(): void
+    {
+        config([
+            'magic-starter.frontend_url' => '///',
+            'app.frontend_url' => 'https://fallback.example.test',
+        ]);
+
+        $this->assertSame(
+            'https://fallback.example.test/auth/reset-password?token=tok-123&email=ada@example.test',
+            $this->resetUrlFor('tok-123'),
+        );
+    }
+
+    /**
      * Build the URL the delivered mail would carry, through the notification itself
      * rather than by calling the closure directly, so the registration is covered too.
      */
