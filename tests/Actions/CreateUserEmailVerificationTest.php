@@ -8,12 +8,15 @@ use FlutterSdk\MagicStarter\MagicStarter;
 use FlutterSdk\MagicStarter\Notifications\VerifyEmailNotification;
 use FlutterSdk\MagicStarter\Tests\TestCase;
 use FlutterSdk\MagicStarter\Traits\MustVerifyEmail;
+use Illuminate\Auth\Events\Registered;
+use Illuminate\Auth\Listeners\SendEmailVerificationNotification;
 use Illuminate\Contracts\Auth\Authenticatable as AuthenticatableContract;
 use Illuminate\Contracts\Auth\MustVerifyEmail as MustVerifyEmailContract;
 use Illuminate\Database\Eloquent\Concerns\HasUuids;
 use Illuminate\Database\Schema\Blueprint;
 use Illuminate\Foundation\Auth\User as Authenticatable;
 use Illuminate\Notifications\Notifiable;
+use Illuminate\Support\Facades\Event;
 use Illuminate\Support\Facades\Notification;
 
 /**
@@ -77,6 +80,85 @@ final class CreateUserEmailVerificationTest extends TestCase
         ]);
 
         Notification::assertSentTo($user, VerifyEmailNotification::class);
+    }
+
+    /**
+     * THE REGRESSION. A real registration goes through BOTH send paths: the
+     * action sends explicitly (the case above), and `AuthController::register()`
+     * then fires `Registered`, whose framework listener
+     * (`Illuminate\Auth\Listeners\SendEmailVerificationNotification`) sends
+     * again. Measured live on a consumer app: two identical "Verify Email
+     * Address" mails, same signed URL, 47ms apart, on every sign-up.
+     *
+     * Both callers are legitimate and neither can simply go: the action owns the
+     * intent (and the three cases around this one test it in isolation), while
+     * `Registered` cannot stop firing because `CreatePersonalTeamListener` hangs
+     * off it too. So the invariant lives where both paths funnel:
+     * `MustVerifyEmail::sendEmailVerificationNotification()`.
+     */
+    public function test_a_registration_that_also_fires_registered_sends_exactly_one(): void
+    {
+        Notification::fake();
+
+        config(['magic-starter.features' => [Features::emailVerification()]]);
+
+        // Testbench's minimal app registers NO listeners for `Registered`, so the
+        // duplicate cannot reproduce here without wiring the one a real Laravel app
+        // has. That it is there in a real app is measured, not assumed: on the
+        // consumer app `artisan event:list` shows `Registered` carrying both
+        // `CreatePersonalTeamListener` and this framework listener.
+        Event::listen(Registered::class, SendEmailVerificationNotification::class);
+
+        $action = new CreateUser;
+
+        // The exact sequence AuthController::register() runs, including handing the
+        // SAME instance to the event, which is what the guard keys on.
+        $user = $action->create([
+            'name' => 'Erin',
+            'email' => 'erin@example.com',
+            'password' => 'Secret123!',
+        ]);
+        event(new Registered($user));
+
+        Notification::assertSentToTimes($user, VerifyEmailNotification::class, 1);
+    }
+
+    /**
+     * The guard is per-INSTANCE, and that boundary is the whole design.
+     *
+     * Two sends on ONE instance is the duplicate (the action plus the framework
+     * listener, both holding the object `create()` returned), so it collapses to
+     * one. A LATER request loads its own instance, which must still be able to
+     * send: `POST /email/verification-notification` exists precisely so a customer
+     * who lost the mail can ask again.
+     *
+     * A static keyed by user id would also kill the duplicate and would be WRONG
+     * here: static state survives between requests under Octane, so the resend
+     * would stay muted for the life of the worker.
+     */
+    public function test_the_guard_is_per_instance_so_a_later_request_can_resend(): void
+    {
+        Notification::fake();
+
+        config(['magic-starter.features' => [Features::emailVerification()]]);
+
+        // Built directly rather than through the action, so this test is about the
+        // trait's guard and nothing else.
+        $user = CreateUserVerificationTestUser::query()->create([
+            'name' => 'Frank',
+            'email' => 'frank@example.com',
+            'password' => 'irrelevant',
+        ]);
+
+        // Twice on the same instance: the duplicate's exact shape.
+        $user->sendEmailVerificationNotification();
+        $user->sendEmailVerificationNotification();
+        Notification::assertSentToTimes($user, VerifyEmailNotification::class, 1);
+
+        // A new instance is a new request, and it must not be muted.
+        $reloaded = CreateUserVerificationTestUser::query()->findOrFail($user->getKey());
+        $reloaded->sendEmailVerificationNotification();
+        Notification::assertSentToTimes($reloaded, VerifyEmailNotification::class, 2);
     }
 
     /**

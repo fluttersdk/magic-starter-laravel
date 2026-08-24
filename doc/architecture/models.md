@@ -413,7 +413,11 @@ Overrides Laravel's default `MustVerifyEmail` contract implementation with guest
 
 **`hasVerifiedEmail(): bool`** — guests are treated as verified (they have no email address, so the `verified` middleware must not block them). Internally calls `method_exists($this, 'isGuest')` before using `isGuest()` to avoid coupling to `HasGuestSupport`.
 
-**`sendEmailVerificationNotification(): void`** — dispatches `VerifyEmailNotification` (the package's own notification class, not Laravel's default).
+**`sendEmailVerificationNotification(): void`** — dispatches `VerifyEmailNotification` (the package's own notification class, not Laravel's default), **at most once per model instance**.
+
+A registration reaches this method twice: `Actions\CreateUser` sends explicitly, and `AuthController::register()` then fires `Registered`, whose framework listener calls it again on the same object. Neither caller can go (the action has direct invokers, and `CreatePersonalTeamListener` hangs off `Registered`), so the "one verification mail per registration" invariant is enforced here, at the seam both paths funnel through. A deliberate resend through `POST /email/verification-notification` is unaffected, since it arrives in its own request with its own instance.
+
+The guard is an instance property, never a static keyed by id: a static would survive between requests under Octane and mute a customer's later resend for the life of the worker. That also fixes its limit. A consumer who binds their own `CreatesUsers` and then fires `event(new Registered($user->fresh()))`, or reloads the model in between, hands the listener a different object with the flag unset and gets both mails again. Pass the same instance through.
 
 ---
 
