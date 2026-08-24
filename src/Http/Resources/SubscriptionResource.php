@@ -6,6 +6,7 @@ use FlutterSdk\MagicStarter\Actions\WriteEntitlement;
 use FlutterSdk\MagicStarter\Enums\BillingProvider;
 use FlutterSdk\MagicStarter\Enums\PlanStatus;
 use FlutterSdk\MagicStarter\Support\ReadsBillableAttributes;
+use FlutterSdk\MagicStarter\Support\StripeSubscriptionState;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Http\Request;
 use Illuminate\Http\Resources\Json\JsonResource;
@@ -76,6 +77,19 @@ class SubscriptionResource extends JsonResource
             // Nullable on purpose: null means the rail has not said whether this
             // subscription rolls over, which is not the claim `false` makes.
             'renews' => $this->booleanAttribute($billable, 'plan_renews'),
+            // How often the customer is charged, DERIVED from the price their
+            // subscription sits on rather than stored beside it, so it cannot
+            // drift from the price that is actually billing them.
+            //
+            // Null on three honest occasions and none of them defaulted: a
+            // billable on no rail, a price the adopter mapped without declaring
+            // its cycle, and a STORE subscription, whose `plan_product_id` is a
+            // store product id that this Stripe catalogue rightly cannot name.
+            // A default would put a billing claim on a screen that nothing
+            // verified, which is the defect this field exists to close.
+            'cycle' => StripeSubscriptionState::cycleForPrice(
+                $this->stringAttribute($billable, 'plan_product_id'),
+            ),
             'provider' => $provider->value,
             // Debug and support text only. It carries a rail's own word,
             // including words the neutral vocabulary has none for, so it must

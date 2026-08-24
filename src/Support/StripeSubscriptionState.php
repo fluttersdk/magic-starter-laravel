@@ -30,6 +30,28 @@ use FlutterSdk\MagicStarter\Enums\PlanStatus;
 final class StripeSubscriptionState
 {
     /**
+     * The two billing cycles a price can be charged on.
+     *
+     * The words match `magic_payments`' `BillingCycle` on the Dart side, which
+     * is what lets the client send one and read one back without a translation
+     * table in between. Two members and no more: an interval this package
+     * cannot name is refused rather than defaulted, because every default here
+     * is a statement about what somebody is being charged.
+     */
+    public const CYCLE_MONTHLY = 'monthly';
+
+    public const CYCLE_ANNUAL = 'annual';
+
+    /**
+     * Untyped, like every other constant here: this package's floor is PHP 8.2
+     * and typed class constants are 8.3, so a type annotation would be a syntax
+     * error on the oldest version CI builds against.
+     *
+     * @var array<int, string>
+     */
+    public const CYCLES = [self::CYCLE_MONTHLY, self::CYCLE_ANNUAL];
+
+    /**
      * The Stripe statuses under which a subscription still entitles the billable.
      *
      * `past_due` grants on purpose: Stripe is still retrying the card, the
@@ -128,24 +150,107 @@ final class StripeSubscriptionState
      */
     public static function prices(): array
     {
+        return array_map(
+            static fn (array $entry): string => $entry['tier'],
+            self::catalogue(),
+        );
+    }
+
+    /**
+     * The billing cycle a Stripe price is charged on, or null when the config
+     * does not say.
+     *
+     * Null is reported rather than guessed, and it reaches the client as an
+     * absent `cycle` that decodes to null there too. A tier is not a price: the
+     * same tier sold monthly and annually is two prices, and a screen that
+     * assumed one would tell a customer what they are paying on no evidence.
+     * That is the defect this pair of methods was added to close, where a
+     * billing screen rendered "billed annually" over a monthly charge.
+     */
+    public static function cycleForPrice(?string $priceId): ?string
+    {
+        if ($priceId === null || $priceId === '') {
+            return null;
+        }
+
+        return self::catalogue()[$priceId]['cycle'] ?? null;
+    }
+
+    /**
+     * The Stripe price that sells [$tier] on [$cycle], or null when none does.
+     *
+     * An exact pair match, never a nearest one. A checkout asks for the price
+     * behind the figure it just showed the customer, so answering with the
+     * tier's other price would charge an amount the screen did not display,
+     * which is precisely the mismatch this lookup exists to prevent. An adopter
+     * who sells a tier one way only therefore refuses the other way with a 422
+     * rather than quietly billing the wrong figure.
+     */
+    public static function priceFor(string $tier, string $cycle): ?string
+    {
+        foreach (self::catalogue() as $priceId => $entry) {
+            if ($entry['tier'] === $tier && $entry['cycle'] === $cycle) {
+                return $priceId;
+            }
+        }
+
+        return null;
+    }
+
+    /**
+     * The consumer's price map, normalised and with unusable entries stripped.
+     *
+     * Two forms are accepted, because a vendor selling one price per tier should
+     * not have to write a map to say so:
+     *
+     *     'price_pro'        => 'pro',
+     *     'price_pro_annual' => ['tier' => 'pro', 'cycle' => 'annual'],
+     *
+     * **A bare string is read as MONTHLY**, and that default is the one thing to
+     * get right in this config. It is a guess the package cannot verify: Stripe
+     * knows the interval and this array does not, and reading it would mean an
+     * API call per price on every request. So an adopter whose single mapped
+     * price is an ANNUAL one has to say so, or every screen will report a
+     * monthly cycle over an annual charge. Declaring the cycle is cheap and
+     * saying nothing is only safe when the price really is monthly.
+     *
+     * An unrecognised cycle word is dropped rather than defaulted, so a typo in
+     * `'cycle' => 'anual'` costs a 422 on that tier instead of a charge on the
+     * wrong price.
+     *
+     * @return array<string, array{tier: string, cycle: string}>
+     */
+    public static function catalogue(): array
+    {
         $configured = config('magic-starter.billing.prices', []);
 
         if (! is_array($configured)) {
             return [];
         }
 
-        $prices = [];
+        $catalogue = [];
 
-        foreach ($configured as $priceId => $tier) {
+        foreach ($configured as $priceId => $entry) {
             $priceId = (string) $priceId;
 
-            if ($priceId === '' || ! is_string($tier) || $tier === '') {
+            if ($priceId === '') {
                 continue;
             }
 
-            $prices[$priceId] = $tier;
+            $tier = is_array($entry) ? ($entry['tier'] ?? null) : $entry;
+            $cycle = is_array($entry) ? ($entry['cycle'] ?? self::CYCLE_MONTHLY) : self::CYCLE_MONTHLY;
+
+            if (! is_string($tier) || $tier === '') {
+                continue;
+            }
+
+            if (! in_array($cycle, self::CYCLES, true)) {
+                continue;
+            }
+
+            $catalogue[$priceId] = ['tier' => $tier, 'cycle' => $cycle];
         }
 
-        return $prices;
+        return $catalogue;
     }
 }

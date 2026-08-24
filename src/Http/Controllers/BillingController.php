@@ -410,14 +410,23 @@ class BillingController
         //    Stripe sends the customer back and are the client's to choose.
         $validated = $request->validate([
             'plan' => ['required', 'string', Rule::in($this->sellableTiers())],
+            // The cycle decides WHICH of the tier's prices is charged, so it is
+            // required rather than defaulted. A default would be the whole
+            // defect this parameter closes: a client showing an annual figure
+            // and a producer choosing the monthly price is how a customer gets
+            // billed an amount nothing on screen ever displayed.
+            'cycle' => ['required', 'string', Rule::in(StripeSubscriptionState::CYCLES)],
             'success_url' => ['required', 'string', 'url'],
             'cancel_url' => ['required', 'string', 'url'],
         ]);
 
-        // 5. A sellable tier with no price behind it is a config gap and not a
-        //    client fault, so it is refused with its own sentence rather than
-        //    checked out against nothing.
-        $priceId = $this->resolvePriceId($validated['plan']);
+        // 5. A sellable tier with no price behind THIS CYCLE is a config gap and
+        //    not a client fault, so it is refused with its own sentence rather
+        //    than checked out against the tier's other price. An adopter who
+        //    sells a tier one way only refuses the other way here, which is the
+        //    honest answer: the alternative is charging a figure the customer
+        //    was never shown.
+        $priceId = $this->resolvePriceId($validated['plan'], $validated['cycle']);
 
         abort_if(
             $priceId === null,
@@ -476,6 +485,12 @@ class BillingController
 
         $validated = $request->validate([
             'plan' => ['required', 'string', Rule::in($this->sellableTiers())],
+            // Required here as well as on checkout, and not because the two
+            // endpoints should look alike: moving a customer from monthly to
+            // annual on the SAME tier is a real change, and a swap that could
+            // not express the cycle would answer 200 while leaving them on the
+            // price they were trying to leave.
+            'cycle' => ['required', 'string', Rule::in(StripeSubscriptionState::CYCLES)],
         ]);
 
         // 3. Reached only on a rail this application controls, so an absent
@@ -483,7 +498,7 @@ class BillingController
         $subscription = $this->actionableSubscription($billable, 'swap');
 
         // 4. Same config gap as checkout's, refused the same way.
-        $priceId = $this->resolvePriceId($validated['plan']);
+        $priceId = $this->resolvePriceId($validated['plan'], $validated['cycle']);
 
         abort_if(
             $priceId === null,
@@ -703,11 +718,9 @@ class BillingController
      * INT, so a price id that happens to look like a number comes back from the
      * reverse lookup as one.
      */
-    protected function resolvePriceId(string $tier): ?string
+    protected function resolvePriceId(string $tier, string $cycle): ?string
     {
-        $priceId = array_search($tier, StripeSubscriptionState::prices(), true);
-
-        return $priceId === false ? null : (string) $priceId;
+        return StripeSubscriptionState::priceFor($tier, $cycle);
     }
 
     /**

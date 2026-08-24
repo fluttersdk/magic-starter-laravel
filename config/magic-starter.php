@@ -297,6 +297,14 @@ return [
     | GET billing/plans. It is display data and gating data, never Stripe price
     | ids (those are 'prices' below).
     |
+    | 'prices' maps a Stripe price id onto the tier AND the cycle it sells. A
+    | tier is not a price: sold monthly and annually it is two, and the checkout
+    | asks for a (tier, cycle) pair so the customer is charged the figure the
+    | screen showed them. A bare value ('price_x' => 'pro') names the tier and is
+    | read as MONTHLY, which is a guess this package cannot verify, so declare
+    | ['tier' => ..., 'cycle' => ...] on anything that is not monthly or every
+    | screen will report the wrong interval over a real charge.
+    |
     | The package names only the fields every billing screen needs: 'id', 'name',
     | 'tagline', 'monthly', 'annual', 'currency', 'features', 'recommended'. Every
     | other key you put on an entry travels to the client UNTOUCHED, which is
@@ -551,8 +559,17 @@ return [
         ],
 
         'prices' => [
+            // A bare value names the tier and is read as MONTHLY. Terse, and
+            // correct only when the price really is a monthly one.
             // env('CASHIER_PRICE_PRO') => 'pro',
-            // env('CASHIER_PRICE_BUSINESS') => 'business',
+            //
+            // Declare the cycle when you sell a tier both ways, which is the
+            // form that lets a customer buy the annual figure your billing
+            // screen is showing them. A checkout names a tier AND a cycle and
+            // gets the price behind that exact pair; a cycle you have not mapped
+            // is refused with a 422 rather than charged at the other price.
+            // env('CASHIER_PRICE_PRO_MONTHLY') => ['tier' => 'pro', 'cycle' => 'monthly'],
+            // env('CASHIER_PRICE_PRO_ANNUAL') => ['tier' => 'pro', 'cycle' => 'annual'],
         ],
 
         'store_products' => [
