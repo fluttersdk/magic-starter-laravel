@@ -26,6 +26,13 @@
 - Lookup is by device_id via firstOrCreate — re-calling with the same device_id returns the existing guest rather than creating a duplicate.
 - Conversion to a full account requires the consumer to supply email (or phone) plus password and call CreatesUsers::create(); guard all email/password reads with null checks.
 
+### One verification mail per registration, guarded by object identity
+
+- MustVerifyEmail::sendEmailVerificationNotification() sends at most once per model INSTANCE; a registration reaches it twice, once from CreateUser and once from the framework listener on Registered.
+- The guard is an instance property, not a static keyed by id: a static would survive between requests under Octane and mute a customer's later resend.
+- The limit follows from that. Binding your own CreatesUsers and then firing event(new Registered($user->fresh())), or reloading the model between the action and the event, hands the listener a different object and sends both mails again with no signal. Pass the same instance through.
+- POST /email/verification-notification is unaffected: its own request, its own instance.
+
 ### Social login pre-verifies email
 
 - CreateUser accepts email_verified_at as an optional validated field when extended-profile is enabled.

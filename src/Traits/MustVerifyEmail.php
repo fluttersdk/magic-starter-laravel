@@ -69,6 +69,15 @@ trait MustVerifyEmail
      *
      * A deliberate resend still works: `POST /email/verification-notification`
      * arrives in its own request with its own model instance.
+     *
+     * **The invariant is scoped to object identity, and that is its limit.** It
+     * holds for every path this package owns, because all of them carry one
+     * instance from the action to the event. A consumer who binds its own
+     * `Contracts\CreatesUsers` and then fires `event(new Registered($user->fresh()))`,
+     * or who reloads the model between the two, hands the listener a DIFFERENT
+     * object with the flag unset and gets both mails again. Nothing signals that,
+     * so read "one mail per registration" as a promise about this package's own
+     * paths rather than an unconditional one, and pass the same instance through.
      */
     public function sendEmailVerificationNotification(): void
     {
