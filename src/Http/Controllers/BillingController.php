@@ -167,11 +167,15 @@ class BillingController
      * cycle itself was added to close, moved one step later, so it is closed on
      * the read the client already makes rather than at the point of sale.
      *
-     * `cycles` is DERIVED and additive: every key the adopter wrote still
-     * travels untouched, which is the contract {@see self::plans()} states. An
-     * entry with no mapped price at all gets an empty list, which is the honest
-     * answer and the one a client needs to hide a tier's purchase affordance
-     * rather than offer a refusal.
+     * `cycles` is DERIVED, and it is the ONE key an entry does not carry to the
+     * client verbatim: the write below is unconditional, so an adopter who put
+     * their own `cycles` on a plan entry has it replaced by a list computed from
+     * the price map. That is why it is declared reserved beside the catalogue in
+     * `config/magic-starter.php` and in {@see self::plans()}; two values under
+     * one key, one hand-written and one derived, is a disagreement with no
+     * reader able to tell which they got. An entry with no mapped price at all
+     * gets an empty list, which is the honest answer and the one a client needs
+     * to hide a tier's purchase affordance rather than offer a refusal.
      *
      * @return array<int, array<string, mixed>>
      */

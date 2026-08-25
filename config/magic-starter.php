@@ -317,11 +317,12 @@ return [
     | 'cycles', which is RESERVED and derived: the endpoint computes it from the
     | price map below and overwrites whatever an entry carries under that key, so
     | do not write one. Every other key you put on an entry travels to the client
-    | UNTOUCHED, which is where anything product-specific belongs: what a tier caps, what it unlocks,
-    | the copy for a capability only your product has. This package cannot know
-    | those and does not try, exactly as it delegates counting to ReportsUsage
-    | and the tier vocabulary to the list below. A null price means "contact us";
-    | what a null LIMIT means is your application's business, not this package's.
+    | UNTOUCHED, which is where anything product-specific belongs: what a tier
+    | caps, what it unlocks, the copy for a capability only your product has.
+    | This package cannot know those and does not try, exactly as it delegates
+    | counting to ReportsUsage and the tier vocabulary to the list below. A null
+    | price means "contact us"; what a null LIMIT means is your application's
+    | business, not this package's.
     |
     | A bullet in 'features' is a promise made to somebody holding a credit card,
     | so it may only name something that works today.
