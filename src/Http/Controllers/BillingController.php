@@ -282,16 +282,28 @@ class BillingController
         try {
             // 1. The renewal date favours the local trial end (a plain column
             //    read) and only falls back to the live period end when there is
-            //    no trial, which is the one retrieval on this path.
+            //    no trial, which is a rail retrieval.
+            //
+            //    This endpoint used to make exactly one, and the docblocks below
+            //    said so. It no longer does: on the common post-checkout state
+            //    it retrieves the customer (for the default payment method), the
+            //    subscription (for the card the checkout left there) and the
+            //    period per item. That is the cost of answering honestly for a
+            //    customer whose card Stripe filed on the subscription, and it is
+            //    still the only rail-live read on the billing screen.
             $subscription = $this->defaultSubscription($billable);
             $renewalDate = $subscription === null
                 ? null
                 : $this->dateAttribute($subscription, 'trial_ends_at') ?? $this->periodEnd($subscription);
 
-            // 2. Only a Cashier PaymentMethod exposes a card; a null default or
-            //    a legacy Stripe Source yields null card fields, and so does a
-            //    billable whose application never applied Cashier's trait.
-            $card = $this->defaultCard($billable);
+            // 2. Only a Cashier PaymentMethod exposes a card, and a billable
+            //    whose application never applied Cashier's trait has none to
+            //    read. The subscription is passed because a hosted checkout
+            //    leaves the card there rather than on the customer, and a legacy
+            //    Stripe Source now falls THROUGH to it rather than yielding null
+            //    outright: a Source fails the `instanceof PaymentMethod` test,
+            //    which is the same door the customer-has-no-default case takes.
+            $card = $this->defaultCard($billable, $subscription);
 
             // 3. The rail answered. Whether it had a card to show is the card
             //    fields' business, not this flag's.
@@ -394,7 +406,9 @@ class BillingController
         //    applied Cashier's trait has no card rail to check out on, and a
         //    direct call on such a model is a fatal `Error` on the billing screen
         //    rather than a refusal the client can render.
-        if (! method_exists($billable, 'checkout')) {
+        //    The method it asks for is the one step 6 calls. Probing a different
+        //    Cashier method would answer a question this step is not asking.
+        if (! method_exists($billable, 'newSubscription')) {
             $this->abortWithBillingConflict(
                 self::REASON_NO_BILLING_ACCOUNT,
                 BillingProvider::fromWire($this->stringAttribute($billable, 'plan_provider')),
@@ -421,10 +435,23 @@ class BillingController
             __('magic-starter::billing.refusals.unmapped_price'),
         );
 
-        // 6. One unit of one price. Quantity is not the client's to send: a
-        //    request body carrying it would let a caller decide what they are
-        //    charged.
-        $checkout = $billable->checkout([$priceId => 1], [
+        // 6. One price, through the SUBSCRIPTION builder. Quantity is not the
+        //    client's to send: a request body carrying it would let a caller
+        //    decide what they are charged.
+        //
+        //    `Billable::checkout()` is the wrong door and cannot be made to
+        //    work. It routes to `Checkout::create`, whose mode defaults to
+        //    `Session::MODE_PAYMENT`, and Stripe refuses a recurring price in
+        //    payment mode: "You specified `payment` mode but passed a recurring
+        //    price." Every price a subscription catalogue maps is recurring, so
+        //    that call opened no session for anything this package sells. The
+        //    builder is what asks for `mode: subscription`.
+        //
+        //    The subscription NAME matters as much as the mode: `swap` and
+        //    `cancel` below both act on `subscription('default')`, so a checkout
+        //    opened under any other name would sell a subscription neither of
+        //    them could reach.
+        $checkout = $billable->newSubscription('default', $priceId)->checkout([
             'success_url' => $validated['success_url'],
             'cancel_url' => $validated['cancel_url'],
         ]);
@@ -773,8 +800,8 @@ class BillingController
     /**
      * When the subscription's current paid period ends, read live from the rail.
      *
-     * The one retrieval on this endpoint, and the reason this endpoint is the
-     * only rail-live one: Cashier resolves the period per subscription ITEM, so
+     * One of this endpoint's rail retrievals, and the reason the endpoint is
+     * rail-live at all: Cashier resolves the period per subscription ITEM, so
      * there is no local column to read it from. It is guarded because the
      * subscription model is resolvable by the consuming application and a call
      * on a model that does not carry the accessor would be a fatal rather than a
@@ -805,19 +832,58 @@ class BillingController
      * would send its client retrying something that cannot succeed, while "there
      * is no card on file" is simply true.
      */
-    protected function defaultCard(Model $billable): ?StripeObject
+    protected function defaultCard(Model $billable, ?Model $subscription = null): ?StripeObject
     {
-        if (! method_exists($billable, 'defaultPaymentMethod')) {
+        if (method_exists($billable, 'defaultPaymentMethod')) {
+            $paymentMethod = $billable->defaultPaymentMethod();
+
+            if ($paymentMethod instanceof PaymentMethod) {
+                $card = $paymentMethod->asStripePaymentMethod()->card;
+
+                if ($card instanceof StripeObject) {
+                    return $card;
+                }
+            }
+        }
+
+        return $subscription === null ? null : $this->subscriptionCard($subscription);
+    }
+
+    /**
+     * The card the SUBSCRIPTION itself carries, or null.
+     *
+     * The fallback exists because a hosted checkout does not leave a card where
+     * Cashier looks for one. Stripe Checkout attaches the payment method to the
+     * subscription it creates and leaves the customer's
+     * `invoice_settings.default_payment_method` null, while
+     * `Billable::defaultPaymentMethod()` reads the customer alone. So every
+     * customer who bought through the hosted page was told there was no card on
+     * file, moments after paying with one, and the card in question is the one
+     * that renews them.
+     *
+     * It runs SECOND rather than first, and the order carries the correctness.
+     * A portal update sets the customer's default, and Stripe does not
+     * retroactively rewrite the subscription's, so consulting the subscription
+     * first would show the card the customer had just replaced.
+     *
+     * This is a NEW round trip, not a reuse of one already made. The `expand`
+     * is what stops it becoming two: an unexpanded `default_payment_method` is a
+     * bare id, and resolving that into a card would cost a further retrieve.
+     */
+    protected function subscriptionCard(Model $subscription): ?StripeObject
+    {
+        if (! method_exists($subscription, 'asStripeSubscription')) {
             return null;
         }
 
-        $paymentMethod = $billable->defaultPaymentMethod();
+        $paymentMethod = $subscription->asStripeSubscription(['default_payment_method'])
+            ->default_payment_method;
 
-        if (! $paymentMethod instanceof PaymentMethod) {
+        if (! $paymentMethod instanceof StripeObject) {
             return null;
         }
 
-        $card = $paymentMethod->asStripePaymentMethod()->card;
+        $card = $paymentMethod->card ?? null;
 
         return $card instanceof StripeObject ? $card : null;
     }

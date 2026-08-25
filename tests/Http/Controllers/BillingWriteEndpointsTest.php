@@ -19,6 +19,7 @@ use Illuminate\Routing\RouteCollection;
 use Illuminate\Support\Facades\Gate;
 use Illuminate\Testing\TestResponse;
 use Laravel\Cashier\Checkout;
+use LogicException;
 use Stripe\Checkout\Session as StripeCheckoutSession;
 
 /**
@@ -163,6 +164,12 @@ class BillingWriteEndpointsTest extends TestCase
         // sells `pro`, which is the half a test asserting only the status code
         // would miss: a checkout against the wrong price still answers 200.
         $this->assertSame(['price_pro' => 1], BillingWriteRail::$checkoutItems);
+
+        // And it is a SUBSCRIPTION session under the name the other two writes
+        // act on. `swap` and `cancel` both reach for `subscription('default')`,
+        // so a checkout opened under any other name sells a subscription the
+        // customer can then neither move nor cancel.
+        $this->assertSame('default', BillingWriteRail::$checkoutSubscriptionType);
 
         $this->buy($user, 'enterprise')
             ->assertStatus(422)
@@ -476,8 +483,8 @@ class BillingWriteEndpointsTest extends TestCase
      * rather than fataling.
      *
      * An application selling only through the two app stores has no reason to
-     * have applied the trait, and a direct `checkout()` on such a model is a
-     * fatal `Error` on the billing screen.
+     * have applied the trait, and a direct `newSubscription()` on such a model
+     * is a fatal `Error` on the billing screen.
      *
      * The CONFIGURED team model is swapped, not just the row's class. Creating a
      * trait-less row and leaving the config pointed at the trait-carrying fixture
@@ -502,7 +509,8 @@ class BillingWriteEndpointsTest extends TestCase
         $team->users()->attach($owner->getKey(), ['role' => 'owner']);
         $owner->forceFill(['current_team_id' => $team->getKey()])->save();
 
-        $this->assertFalse(method_exists($team, 'checkout'));
+        // The method the guard probes, which is also the one the checkout calls.
+        $this->assertFalse(method_exists($team, 'newSubscription'));
         $this->assertSame(CashierlessWriteTeam::class, MagicStarter::billableModel());
 
         $this->buy($owner, 'pro')
@@ -733,11 +741,20 @@ final class BillingWriteRail
      */
     public static ?array $checkoutItems = null;
 
+    /**
+     * The subscription name a checkout was opened under, or null when none was.
+     *
+     * It has to match the one `swap` and `cancel` operate on, or a customer
+     * checks out into a subscription those two can never reach.
+     */
+    public static ?string $checkoutSubscriptionType = null;
+
     public static function reset(): void
     {
         self::$hasStripeId = false;
         self::$subscription = null;
         self::$checkoutItems = null;
+        self::$checkoutSubscriptionType = null;
 
         BillingWriteSubscription::reset();
     }
@@ -763,15 +780,76 @@ trait BillingWriteBillable
     }
 
     /**
+     * The ONE-OFF charge session, which is what Cashier's `Billable::checkout()`
+     * opens: it routes to `Checkout::create`, whose mode defaults to
+     * `Session::MODE_PAYMENT`.
+     *
+     * It refuses here for the reason Stripe refuses there. Every price a
+     * subscription catalogue sells is recurring, and Stripe rejects a recurring
+     * price in payment mode outright, so this call can never open a session for
+     * anything this package sells. A fixture that quietly recorded the items
+     * instead certified exactly that call as correct, and no assertion in this
+     * file could go red, because Stripe was never asked whether it was valid.
+     *
      * @param  array<string, int>|string  $items
      * @param  array<string, mixed>  $sessionOptions
      * @param  array<string, mixed>  $customerOptions
      */
     public function checkout($items, array $sessionOptions = [], array $customerOptions = []): Checkout
     {
-        BillingWriteRail::$checkoutItems = is_array($items) ? $items : [$items => 1];
+        throw new LogicException(
+            'You specified `payment` mode but passed a recurring price. '
+            . 'A subscription checkout goes through newSubscription()->checkout().',
+        );
+    }
 
-        return new Checkout($this, StripeCheckoutSession::constructFrom([
+    /**
+     * The SUBSCRIPTION checkout builder, which is the one that asks Stripe for
+     * `mode: subscription`.
+     *
+     * @param  array<int, string>|string  $prices
+     */
+    public function newSubscription(string $type, $prices = []): BillingWriteSubscriptionBuilder
+    {
+        return new BillingWriteSubscriptionBuilder($this, $type, $prices);
+    }
+}
+
+/**
+ * Stands in for Cashier's `SubscriptionBuilder`, recording what a checkout was
+ * opened against so the assertions can read it back.
+ *
+ * It normalises `$prices` into the `[price => quantity]` shape the rail's
+ * recorder already used, so the price a session was opened against is asserted
+ * the same way whichever call shape produced it.
+ */
+final class BillingWriteSubscriptionBuilder
+{
+    /**
+     * @param  array<int, string>|string  $prices
+     */
+    public function __construct(
+        protected object $billable,
+        protected string $type,
+        protected array|string $prices,
+    ) {}
+
+    /**
+     * @param  array<string, mixed>  $sessionOptions
+     * @param  array<string, mixed>  $customerOptions
+     */
+    public function checkout(array $sessionOptions = [], array $customerOptions = []): Checkout
+    {
+        $items = [];
+
+        foreach ((array) $this->prices as $price) {
+            $items[(string) $price] = 1;
+        }
+
+        BillingWriteRail::$checkoutItems = $items;
+        BillingWriteRail::$checkoutSubscriptionType = $this->type;
+
+        return new Checkout($this->billable, StripeCheckoutSession::constructFrom([
             'id' => 'cs_test_write',
             'url' => 'https://checkout.stripe.test/session',
             'success_url' => $sessionOptions['success_url'] ?? null,
