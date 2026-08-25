@@ -40,6 +40,20 @@ return [
     ],
 
     /*
+     * Human names for the two billing cycles, keyed by the wire word.
+     *
+     * They exist because `unmapped_price` NAMES the cycle, and the wire word is
+     * English: without this a Turkish adopter read "Bu plani monthly dongusunde
+     * satan bir Stripe fiyati yok", with the one dimension that sentence was
+     * rewritten to surface left untranslated. The wire word itself never
+     * changes; only what a human is shown.
+     */
+    'cycles' => [
+        'monthly' => 'monthly',
+        'annual' => 'annual',
+    ],
+
+    /*
      * Refusal sentences the billing actions and endpoints raise, keyed by a
      * short reason. Shipped here rather than inlined so every reader gets the
      * same wording in their own locale, and so a redeclaration-guard test can
@@ -75,7 +89,15 @@ return [
          * file.
          */
         'no_published_catalogue' => 'No plans are published, so there is nothing to buy yet. Publish magic-starter.billing.plans or magic-starter.billing.tier_order to sell one.',
-        'unmapped_price' => 'No Stripe price sells this plan. Map one under magic-starter.billing.prices before offering it.',
+        /*
+         * It names the CYCLE because the cycle is what fails. Since a checkout
+         * asks for a (tier, cycle) pair, an adopter selling `business` annually
+         * only meets this on EVERY monthly checkout, and the sentence used to
+         * tell them to map a price they had already mapped while never naming
+         * the dimension that did not match. The one thing the reader needs was
+         * the one thing it omitted.
+         */
+        'unmapped_price' => 'No Stripe price sells this plan on a :cycle cycle. Map one under magic-starter.billing.prices, or offer the other cycle.',
         'no_subscription' => 'There is no active subscription to change.',
     ],
 

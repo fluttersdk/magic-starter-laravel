@@ -8,6 +8,7 @@ use FlutterSdk\MagicStarter\MagicStarter;
 use FlutterSdk\MagicStarter\MagicStarterServiceProvider;
 use FlutterSdk\MagicStarter\Models\Team;
 use FlutterSdk\MagicStarter\Support\ConditionallyUsesUuids;
+use FlutterSdk\MagicStarter\Support\StripeSubscriptionState;
 use FlutterSdk\MagicStarter\Tests\TestCase;
 use Illuminate\Auth\Authenticatable as AuthenticatableTrait;
 use Illuminate\Contracts\Auth\Access\Gate as GateContract;
@@ -177,6 +178,101 @@ class BillingWriteEndpointsTest extends TestCase
     }
 
     /**
+     * The cycle decides which of a tier's prices is charged, and a cycle the
+     * adopter does not sell is refused rather than substituted.
+     *
+     * THE PAIR IS THE TEST, and neither limb means anything alone. Two prices for
+     * one tier makes "the tier is sellable" true for both requests, so an
+     * implementation that ignored the cycle, or that fell back to whichever price
+     * it found first, would pass a single-limb assertion and charge the customer
+     * the other figure. That is not hypothetical: it is what shipped, and a
+     * screen offering an annual discount was billing the monthly rate.
+     *
+     * The refusing limb carries the same weight. An adopter selling `business`
+     * annually only has to REFUSE a monthly checkout, because the alternative is
+     * a customer who asked for one price being charged another.
+     */
+    public function test_each_cycle_reaches_its_own_price_and_an_unsold_cycle_is_refused(): void
+    {
+        config([
+            'magic-starter.billing.prices' => [
+                'price_pro_monthly' => ['tier' => 'pro', 'cycle' => 'monthly'],
+                'price_pro_annual' => ['tier' => 'pro', 'cycle' => 'annual'],
+                'price_business_annual' => ['tier' => 'business', 'cycle' => 'annual'],
+            ],
+        ]);
+
+        $this->bootBillingRoutes('user');
+
+        $user = $this->createUser('cycles@example.test');
+
+        $this->buy($user, 'pro', StripeSubscriptionState::CYCLE_MONTHLY)->assertOk();
+        $this->assertSame(['price_pro_monthly' => 1], BillingWriteRail::$checkoutItems);
+
+        $this->buy($user, 'pro', StripeSubscriptionState::CYCLE_ANNUAL)->assertOk();
+        $this->assertSame(['price_pro_annual' => 1], BillingWriteRail::$checkoutItems);
+
+        // Sold annually only, so the monthly request is refused and no session
+        // is opened against the annual price behind it.
+        BillingWriteRail::$checkoutItems = null;
+
+        $this->buy($user, 'business', StripeSubscriptionState::CYCLE_MONTHLY)
+            ->assertStatus(422);
+
+        $this->assertNull(
+            BillingWriteRail::$checkoutItems,
+            'A cycle the adopter does not sell must open no session at all.',
+        );
+
+        // The cycle is a closed vocabulary, so a word outside it never reaches
+        // the price lookup.
+        $this->write($user, '/billing/checkout', [
+            'plan' => 'pro',
+            'cycle' => 'quarterly',
+            'success_url' => self::SUCCESS_URL,
+            'cancel_url' => self::CANCEL_URL,
+        ])->assertStatus(422)->assertJsonValidationErrors('cycle');
+
+        // An ABSENT cycle is refused too rather than defaulted, which is what
+        // stops a client from buying whichever price the adopter listed first.
+        $this->write($user, '/billing/checkout', [
+            'plan' => 'pro',
+            'success_url' => self::SUCCESS_URL,
+            'cancel_url' => self::CANCEL_URL,
+        ])->assertStatus(422)->assertJsonValidationErrors('cycle');
+    }
+
+    /**
+     * A swap can move the cycle without moving the tier.
+     *
+     * The case a tier-only swap cannot express at all: a customer on `pro`
+     * monthly who takes the annual discount is not changing tier, so an endpoint
+     * reading the plan alone would answer 200 and leave them on the price they
+     * were trying to leave.
+     */
+    public function test_a_swap_can_change_the_cycle_while_the_tier_stays_put(): void
+    {
+        config([
+            'magic-starter.billing.prices' => [
+                'price_pro_monthly' => ['tier' => 'pro', 'cycle' => 'monthly'],
+                'price_pro_annual' => ['tier' => 'pro', 'cycle' => 'annual'],
+            ],
+        ]);
+
+        $this->bootBillingRoutes('user');
+
+        $user = $this->createUser('cycle-swap@example.test');
+        BillingWriteRail::$subscription = new BillingWriteSubscription;
+
+        $this->write($user, '/billing/swap', [
+            'plan' => 'pro',
+            'cycle' => StripeSubscriptionState::CYCLE_ANNUAL,
+        ])->assertOk();
+
+        $this->assertSame('price_pro_annual', BillingWriteSubscription::$swappedTo);
+    }
+
+    /**
      * An adopter who has published nothing sells nothing, and the sentence names
      * the config that is missing.
      *
@@ -268,12 +364,52 @@ class BillingWriteEndpointsTest extends TestCase
         $refused = $this->buy($user, 'business');
 
         $refused->assertStatus(422);
-        $this->assertSame($this->shippedLine('en', 'unmapped_price'), $refused->json('message'));
+
+        // The sentence NAMES the cycle, which is the dimension that failed. An
+        // adopter selling a tier one way only meets this on every checkout for
+        // the other, and a message that told them to map a price they had
+        // already mapped sent them to the right file looking for the wrong
+        // thing. Asserted against the shipped line with the placeholder filled,
+        // so dropping `:cycle` from the catalogue fails here rather than
+        // shipping a sentence with a literal `:cycle` in it.
+        $this->assertSame(
+            str_replace(':cycle', 'monthly', $this->shippedLine('en', 'unmapped_price')),
+            $refused->json('message'),
+        );
+        $this->assertStringContainsString('monthly', (string) $refused->json('message'));
         $this->assertNull(BillingWriteRail::$checkoutItems, 'No session may be opened against an unmapped tier.');
 
         // The disarming limb: the neighbouring tier IS mapped and sells, so the
         // refusal above is the missing price and not a broken endpoint.
         $this->buy($user, 'pro')->assertOk();
+    }
+
+    /**
+     * The cycle inside that sentence is translated, not passed through raw.
+     *
+     * The wire word is English and the sentence around it is not, so a
+     * substituted `monthly` left a Turkish adopter reading "Bu plani monthly
+     * dongusunde satan bir Stripe fiyati yok" with the one dimension the
+     * sentence exists to name in the wrong language. Invisible to the English
+     * case above, where the translated word and the wire word are the same
+     * string: this is the only assertion that can tell them apart.
+     */
+    public function test_the_refused_cycle_is_named_in_the_readers_language(): void
+    {
+        $this->bootBillingRoutes('user');
+
+        $user = $this->createUser('unpriced-tr@example.test');
+
+        app()->setLocale('tr');
+
+        try {
+            $message = (string) $this->buy($user, 'business')->assertStatus(422)->json('message');
+        } finally {
+            app()->setLocale('en');
+        }
+
+        $this->assertStringContainsString('aylık', $message);
+        $this->assertStringNotContainsString('monthly', $message);
     }
 
     /**
@@ -319,7 +455,7 @@ class BillingWriteEndpointsTest extends TestCase
         BillingWriteRail::$hasStripeId = true;
         BillingWriteRail::$subscription = new BillingWriteSubscription;
 
-        $this->write($user, '/billing/swap', ['plan' => 'pro'])
+        $this->write($user, '/billing/swap', ['plan' => 'pro', 'cycle' => 'monthly'])
             ->assertOk()
             ->assertJsonPath('data.plan', 'free');
 
@@ -330,7 +466,7 @@ class BillingWriteEndpointsTest extends TestCase
         // not have named.
         BillingWriteSubscription::reset();
 
-        $this->write($user, '/billing/swap', ['plan' => 'enterprise'])
+        $this->write($user, '/billing/swap', ['plan' => 'enterprise', 'cycle' => 'monthly'])
             ->assertStatus(422)
             ->assertJsonValidationErrors('plan');
 
@@ -379,7 +515,7 @@ class BillingWriteEndpointsTest extends TestCase
 
         BillingWriteRail::$subscription = null;
 
-        foreach ([['/billing/swap', ['plan' => 'pro']], ['/billing/cancel', []]] as [$path, $payload]) {
+        foreach ([['/billing/swap', ['plan' => 'pro', 'cycle' => 'monthly']], ['/billing/cancel', []]] as [$path, $payload]) {
             $response = $this->write($user, $path, $payload);
 
             $response->assertNotFound();
@@ -413,7 +549,7 @@ class BillingWriteEndpointsTest extends TestCase
 
         foreach ([
             ['/billing/checkout', $this->checkoutPayload('pro')],
-            ['/billing/swap', ['plan' => 'pro']],
+            ['/billing/swap', ['plan' => 'pro', 'cycle' => 'monthly']],
             ['/billing/cancel', []],
         ] as [$path, $payload]) {
             $this->write($user, $path, $payload)
@@ -546,7 +682,7 @@ class BillingWriteEndpointsTest extends TestCase
 
         foreach ([
             ['/billing/checkout', $this->checkoutPayload('pro')],
-            ['/billing/swap', ['plan' => 'pro']],
+            ['/billing/swap', ['plan' => 'pro', 'cycle' => 'monthly']],
             ['/billing/cancel', []],
         ] as [$path, $payload]) {
             $this->write($member, $path, $payload)->assertForbidden();
@@ -566,7 +702,7 @@ class BillingWriteEndpointsTest extends TestCase
 
         foreach ([
             ['/billing/checkout', $this->checkoutPayload('pro')],
-            ['/billing/swap', ['plan' => 'pro']],
+            ['/billing/swap', ['plan' => 'pro', 'cycle' => 'monthly']],
             ['/billing/cancel', []],
         ] as [$path, $payload]) {
             $this->postJson($path, $payload)->assertUnauthorized();
@@ -589,7 +725,7 @@ class BillingWriteEndpointsTest extends TestCase
         $user = $this->createUser('write-feature-off@example.test');
 
         $this->write($user, '/billing/checkout', $this->checkoutPayload('pro'))->assertNotFound();
-        $this->write($user, '/billing/swap', ['plan' => 'pro'])->assertNotFound();
+        $this->write($user, '/billing/swap', ['plan' => 'pro', 'cycle' => 'monthly'])->assertNotFound();
         $this->write($user, '/billing/cancel')->assertNotFound();
 
         // The disarming limb: the provider booted and registered its other
@@ -600,9 +736,12 @@ class BillingWriteEndpointsTest extends TestCase
     /**
      * Open a checkout for one tier, as the given caller.
      */
-    private function buy(Model $user, string $plan): TestResponse
-    {
-        return $this->write($user, '/billing/checkout', $this->checkoutPayload($plan));
+    private function buy(
+        Model $user,
+        string $plan,
+        string $cycle = StripeSubscriptionState::CYCLE_MONTHLY,
+    ): TestResponse {
+        return $this->write($user, '/billing/checkout', $this->checkoutPayload($plan, $cycle));
     }
 
     /**
@@ -624,10 +763,11 @@ class BillingWriteEndpointsTest extends TestCase
      *
      * @return array<string, string>
      */
-    private function checkoutPayload(string $plan): array
+    private function checkoutPayload(string $plan, string $cycle = StripeSubscriptionState::CYCLE_MONTHLY): array
     {
         return [
             'plan' => $plan,
+            'cycle' => $cycle,
             'success_url' => self::SUCCESS_URL,
             'cancel_url' => self::CANCEL_URL,
         ];

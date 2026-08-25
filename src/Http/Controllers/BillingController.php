@@ -129,10 +129,15 @@ class BillingController
      * `config()` so that the endpoint, the checkout validation and the paid-tier
      * floor all read exactly the same sanitised catalogue.
      *
-     * Entries reach the client VERBATIM. The package names the fields every
-     * billing screen needs (`id`, `name`, `tagline`, `monthly`, `annual`,
-     * `currency`, `features`, `recommended`) and passes everything else through
-     * untouched, which is where a tier's limits and any capability copy live. A
+     * Entries reach the client VERBATIM but for ONE key. The package names the
+     * fields every billing screen needs (`id`, `name`, `tagline`, `monthly`,
+     * `annual`, `currency`, `features`, `recommended`) and passes everything
+     * else through untouched, which is where a tier's limits and any capability
+     * copy live. The exception is `cycles`, which
+     * {@see self::sellableCatalogue()} DERIVES from the price map and writes
+     * over: it is a reserved key, said so in the config comment beside the
+     * catalogue, and an adopter carrying their own would otherwise have it
+     * silently replaced by a list computed from somewhere else. A
      * schema for those would mean this package owning product knowledge it does
      * not have, the same reason counting leaves through {@see ReportsUsage} and
      * the tier vocabulary is the consumer's throughout.
@@ -145,8 +150,55 @@ class BillingController
     public function plans(): JsonResponse
     {
         return response()->json([
-            'data' => $this->planCatalogue(),
+            'data' => $this->sellableCatalogue(),
         ]);
+    }
+
+    /**
+     * The published catalogue, with each entry told which cycles it can be SOLD
+     * on.
+     *
+     * The catalogue and the price map are two independent config keys, and
+     * nothing on the wire related them. An adopter who fills in both display
+     * figures for a tier but maps only its monthly price therefore ships an
+     * annual button on every billing screen, and the customer learns that price
+     * does not exist from a 422 AFTER committing to buy. That is the same
+     * divergence between what a screen shows and what the rail will do that the
+     * cycle itself was added to close, moved one step later, so it is closed on
+     * the read the client already makes rather than at the point of sale.
+     *
+     * `cycles` is DERIVED, and it is the ONE key an entry does not carry to the
+     * client verbatim: the write below is unconditional, so an adopter who put
+     * their own `cycles` on a plan entry has it replaced by a list computed from
+     * the price map. That is why it is declared reserved beside the catalogue in
+     * `config/magic-starter.php` and in {@see self::plans()}; two values under
+     * one key, one hand-written and one derived, is a disagreement with no
+     * reader able to tell which they got. An entry with no mapped price at all
+     * gets an empty list, which is the honest answer and the one a client needs
+     * to hide a tier's purchase affordance rather than offer a refusal.
+     *
+     * @return array<int, array<string, mixed>>
+     */
+    protected function sellableCatalogue(): array
+    {
+        $sellable = [];
+
+        foreach (StripeSubscriptionState::catalogue() as $entry) {
+            $sellable[$entry['tier']][$entry['cycle']] = true;
+        }
+
+        return array_map(
+            static function (array $entry) use ($sellable): array {
+                $id = is_string($entry['id'] ?? null) ? $entry['id'] : null;
+
+                $entry['cycles'] = $id === null
+                    ? []
+                    : array_keys($sellable[$id] ?? []);
+
+                return $entry;
+            },
+            $this->planCatalogue(),
+        );
     }
 
     /**
@@ -420,19 +472,35 @@ class BillingController
         //    Stripe sends the customer back and are the client's to choose.
         $validated = $request->validate([
             'plan' => ['required', 'string', Rule::in($this->sellableTiers())],
+            // The cycle decides WHICH of the tier's prices is charged, so it is
+            // required rather than defaulted. A default would be the whole
+            // defect this parameter closes: a client showing an annual figure
+            // and a producer choosing the monthly price is how a customer gets
+            // billed an amount nothing on screen ever displayed.
+            'cycle' => ['required', 'string', Rule::in(StripeSubscriptionState::CYCLES)],
             'success_url' => ['required', 'string', 'url'],
             'cancel_url' => ['required', 'string', 'url'],
         ]);
 
-        // 5. A sellable tier with no price behind it is a config gap and not a
-        //    client fault, so it is refused with its own sentence rather than
-        //    checked out against nothing.
-        $priceId = $this->resolvePriceId($validated['plan']);
+        // 5. A sellable tier with no price behind THIS CYCLE is a config gap and
+        //    not a client fault, so it is refused with its own sentence rather
+        //    than checked out against the tier's other price. An adopter who
+        //    sells a tier one way only refuses the other way here, which is the
+        //    honest answer: the alternative is charging a figure the customer
+        //    was never shown.
+        $priceId = $this->resolvePriceId($validated['plan'], $validated['cycle']);
 
         abort_if(
             $priceId === null,
             HttpResponse::HTTP_UNPROCESSABLE_ENTITY,
-            __('magic-starter::billing.refusals.unmapped_price'),
+            __('magic-starter::billing.refusals.unmapped_price', [
+                // The cycle is the one dimension this sentence exists to name,
+                // so it is named in the reader's language rather than in the
+                // wire's. The wire word is unchanged and is what the lookup is
+                // keyed by; only what a human is shown goes through the
+                // catalogue.
+                'cycle' => __('magic-starter::billing.cycles.' . $validated['cycle']),
+            ]),
         );
 
         // 6. One price, through the SUBSCRIPTION builder. Quantity is not the
@@ -486,6 +554,12 @@ class BillingController
 
         $validated = $request->validate([
             'plan' => ['required', 'string', Rule::in($this->sellableTiers())],
+            // Required here as well as on checkout, and not because the two
+            // endpoints should look alike: moving a customer from monthly to
+            // annual on the SAME tier is a real change, and a swap that could
+            // not express the cycle would answer 200 while leaving them on the
+            // price they were trying to leave.
+            'cycle' => ['required', 'string', Rule::in(StripeSubscriptionState::CYCLES)],
         ]);
 
         // 3. Reached only on a rail this application controls, so an absent
@@ -493,12 +567,19 @@ class BillingController
         $subscription = $this->actionableSubscription($billable, 'swap');
 
         // 4. Same config gap as checkout's, refused the same way.
-        $priceId = $this->resolvePriceId($validated['plan']);
+        $priceId = $this->resolvePriceId($validated['plan'], $validated['cycle']);
 
         abort_if(
             $priceId === null,
             HttpResponse::HTTP_UNPROCESSABLE_ENTITY,
-            __('magic-starter::billing.refusals.unmapped_price'),
+            __('magic-starter::billing.refusals.unmapped_price', [
+                // The cycle is the one dimension this sentence exists to name,
+                // so it is named in the reader's language rather than in the
+                // wire's. The wire word is unchanged and is what the lookup is
+                // keyed by; only what a human is shown goes through the
+                // catalogue.
+                'cycle' => __('magic-starter::billing.cycles.' . $validated['cycle']),
+            ]),
         );
 
         $subscription->swap($priceId);
@@ -713,11 +794,9 @@ class BillingController
      * INT, so a price id that happens to look like a number comes back from the
      * reverse lookup as one.
      */
-    protected function resolvePriceId(string $tier): ?string
+    protected function resolvePriceId(string $tier, string $cycle): ?string
     {
-        $priceId = array_search($tier, StripeSubscriptionState::prices(), true);
-
-        return $priceId === false ? null : (string) $priceId;
+        return StripeSubscriptionState::priceFor($tier, $cycle);
     }
 
     /**

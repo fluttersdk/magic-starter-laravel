@@ -56,6 +56,7 @@ class SubscriptionResourceTest extends TestCase
             'plan_status',
             'subscribed',
             'renews',
+            'cycle',
             'provider',
             'provider_status',
             'product_id',
@@ -177,6 +178,49 @@ class SubscriptionResourceTest extends TestCase
 
         // A stored zero is an answer, and the wire must not report it as unknown.
         $this->assertSame(false, $this->wire($this->rawSubject(overrides: ['plan_renews' => 0]))['renews']);
+    }
+
+    /**
+     * The cycle is DERIVED from the price the subscription sits on, so it cannot
+     * drift from the price that is actually billing the customer.
+     *
+     * Three limbs, and the two null ones are what make the first mean anything.
+     * A resource that hardcoded a cycle, or that read one from a column beside
+     * the price, would pass the populated limb and keep passing after the price
+     * moved. Both null cases are real production states rather than edge cases:
+     * a store subscription's `plan_product_id` is a store product id this Stripe
+     * catalogue cannot name, and an adopter is free to map a price without
+     * declaring its cycle.
+     */
+    public function test_the_cycle_is_read_off_the_price_and_is_null_when_unmappable(): void
+    {
+        config(['magic-starter.billing.prices' => [
+            'price_pro' => ['tier' => 'pro', 'cycle' => 'annual'],
+        ]]);
+
+        $this->assertSame('annual', $this->wire($this->rawSubject())['cycle']);
+
+        // The same row on the tier's other price, which is the drift a hardcoded
+        // cycle would hide.
+        config(['magic-starter.billing.prices' => [
+            'price_pro' => ['tier' => 'pro', 'cycle' => 'monthly'],
+        ]]);
+
+        $this->assertSame('monthly', $this->wire($this->rawSubject())['cycle']);
+
+        // A store product id: a real subscription, on a rail whose cycle this
+        // catalogue has no entry for. Null, never a guess.
+        $this->assertNull($this->wire($this->rawSubject(overrides: [
+            'plan_provider' => 'app_store',
+            'plan_product_id' => 'com.example.pro.monthly',
+        ]))['cycle']);
+
+        // And a Stripe price the adopter mapped without saying which cycle it
+        // sells falls back to monthly, which is `catalogue()`'s documented
+        // default rather than this resource's decision.
+        config(['magic-starter.billing.prices' => ['price_pro' => 'pro']]);
+
+        $this->assertSame('monthly', $this->wire($this->rawSubject())['cycle']);
     }
 
     /**

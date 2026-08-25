@@ -297,14 +297,32 @@ return [
     | GET billing/plans. It is display data and gating data, never Stripe price
     | ids (those are 'prices' below).
     |
+    | 'prices' maps a Stripe price id onto the tier AND the cycle it sells. A
+    | tier is not a price: sold monthly and annually it is two, and the checkout
+    | asks for a (tier, cycle) pair so the customer is charged the figure the
+    | screen showed them. A bare value ('price_x' => 'pro') names the tier and is
+    | read as MONTHLY, which is a guess this package cannot verify, so declare
+    | ['tier' => ..., 'cycle' => ...] on anything that is not monthly or every
+    | screen will report the wrong interval over a real charge.
+    |
+    | THE FIRST ENTRY MATCHING A (tier, cycle) PAIR WINS, in the order written
+    | here. The old shape had one entry per tier by construction and this one
+    | invites several: the realistic case is a grandfathered price kept mapped so
+    | its webhooks still grant the tier, and new checkouts then go to whichever
+    | of the two is listed higher, silently. List the price you want SOLD first
+    | and keep retired ones below it.
+    |
     | The package names only the fields every billing screen needs: 'id', 'name',
-    | 'tagline', 'monthly', 'annual', 'currency', 'features', 'recommended'. Every
-    | other key you put on an entry travels to the client UNTOUCHED, which is
-    | where anything product-specific belongs: what a tier caps, what it unlocks,
-    | the copy for a capability only your product has. This package cannot know
-    | those and does not try, exactly as it delegates counting to ReportsUsage
-    | and the tier vocabulary to the list below. A null price means "contact us";
-    | what a null LIMIT means is your application's business, not this package's.
+    | 'tagline', 'monthly', 'annual', 'currency', 'features', 'recommended', plus
+    | 'cycles', which is RESERVED and derived: the endpoint computes it from the
+    | price map below and overwrites whatever an entry carries under that key, so
+    | do not write one. Every other key you put on an entry travels to the client
+    | UNTOUCHED, which is where anything product-specific belongs: what a tier
+    | caps, what it unlocks, the copy for a capability only your product has.
+    | This package cannot know those and does not try, exactly as it delegates
+    | counting to ReportsUsage and the tier vocabulary to the list below. A null
+    | price means "contact us"; what a null LIMIT means is your application's
+    | business, not this package's.
     |
     | A bullet in 'features' is a promise made to somebody holding a credit card,
     | so it may only name something that works today.
@@ -317,10 +335,12 @@ return [
     | means the explicit list wins, because it is the more specific declaration;
     | there is no reason to write two orders, so write one.
     |
-    | 'prices' is which Stripe PRICE sells which of those tiers, as a plain
-    | ['price_id' => 'tier_id'] map. The Stripe rail reads it in both directions:
-    | a webhook asks which tier the price on a subscription sells, and a checkout
-    | asks which price sells a tier the customer picked.
+    | 'prices' is which Stripe PRICE sells which tier ON WHICH CYCLE, in either
+    | of the two forms described above: a bare 'price_id' => 'tier_id' string,
+    | read as MONTHLY, or the explicit ['tier' => ..., 'cycle' => ...] entry. The
+    | Stripe rail reads it in both directions: a webhook asks which tier and
+    | cycle the price on a subscription sells, and a checkout asks which price
+    | sells the (tier, cycle) pair the customer picked.
     |
     | It lives here rather than under cashier.plans, which is where an earlier
     | application kept it. That key is NOT part of Cashier: Cashier's own config
@@ -551,8 +571,17 @@ return [
         ],
 
         'prices' => [
+            // A bare value names the tier and is read as MONTHLY. Terse, and
+            // correct only when the price really is a monthly one.
             // env('CASHIER_PRICE_PRO') => 'pro',
-            // env('CASHIER_PRICE_BUSINESS') => 'business',
+            //
+            // Declare the cycle when you sell a tier both ways, which is the
+            // form that lets a customer buy the annual figure your billing
+            // screen is showing them. A checkout names a tier AND a cycle and
+            // gets the price behind that exact pair; a cycle you have not mapped
+            // is refused with a 422 rather than charged at the other price.
+            // env('CASHIER_PRICE_PRO_MONTHLY') => ['tier' => 'pro', 'cycle' => 'monthly'],
+            // env('CASHIER_PRICE_PRO_ANNUAL') => ['tier' => 'pro', 'cycle' => 'annual'],
         ],
 
         'store_products' => [

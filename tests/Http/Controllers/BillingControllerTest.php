@@ -724,9 +724,23 @@ class BillingControllerTest extends TestCase
 
         $user = $this->createUser('plans@example.test');
 
+        // Every key the adopter wrote travels untouched; `cycles` is the one
+        // field the endpoint DERIVES, and it says which of a tier's display
+        // figures can actually be bought. Without it a catalogue that prices a
+        // tier annually while the price map does not renders an annual button
+        // and answers 422 after the customer commits.
+        $expected = array_map(
+            static function (array $entry): array {
+                $entry['cycles'] = [];
+
+                return $entry;
+            },
+            config('magic-starter.billing.plans'),
+        );
+
         $this->ask($user, '/billing/plans')
             ->assertOk()
-            ->assertExactJson(['data' => config('magic-starter.billing.plans')]);
+            ->assertExactJson(['data' => $expected]);
 
         config(['magic-starter.billing.plans' => []]);
 
@@ -752,7 +766,49 @@ class BillingControllerTest extends TestCase
 
         $this->ask($this->createUser('shape@example.test'), '/billing/plans')
             ->assertOk()
-            ->assertExactJson(['data' => [['id' => 'pro', 'name' => 'Pro']]]);
+            ->assertExactJson(['data' => [['id' => 'pro', 'name' => 'Pro', 'cycles' => []]]]);
+    }
+
+    /**
+     * Each tier is told which cycles it can be SOLD on, from the price map.
+     *
+     * The catalogue and the price map are independent config keys and nothing on
+     * the wire related them, so an adopter filling in both display figures for a
+     * tier while mapping only its monthly price shipped an annual button on
+     * every billing screen. The customer learned that price did not exist from a
+     * 422 after committing to buy: the same screen-versus-charge divergence the
+     * cycle was added to close, one step later.
+     *
+     * THE PAIR IS THE TEST and the empty limb is the one with money behind it. A
+     * derivation that returned every cycle regardless would satisfy the first
+     * two entries and still render the button that cannot be honoured.
+     */
+    public function test_each_tier_publishes_the_cycles_a_price_actually_sells(): void
+    {
+        $this->bootBillingRoutes('user');
+
+        config([
+            'magic-starter.billing.plans' => [
+                ['id' => 'free', 'name' => 'Free'],
+                ['id' => 'pro', 'name' => 'Pro'],
+                ['id' => 'business', 'name' => 'Business'],
+            ],
+            'magic-starter.billing.prices' => [
+                'price_pro_monthly' => ['tier' => 'pro', 'cycle' => 'monthly'],
+                'price_pro_annual' => ['tier' => 'pro', 'cycle' => 'annual'],
+                'price_business' => 'business',
+            ],
+        ]);
+
+        $data = $this->ask($this->createUser('cycles@example.test'), '/billing/plans')
+            ->assertOk()
+            ->json('data');
+
+        // Both, one, and none: a free tier nobody prices is as real a state as
+        // the other two and must not read as sellable.
+        $this->assertSame(['monthly', 'annual'], $data[1]['cycles']);
+        $this->assertSame(['monthly'], $data[2]['cycles']);
+        $this->assertSame([], $data[0]['cycles']);
     }
 
     /**
