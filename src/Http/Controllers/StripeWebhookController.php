@@ -129,7 +129,7 @@ class StripeWebhookController extends CashierWebhookController
     {
         return $this->processOnce($payload, function (array $payload): Response {
             $response = parent::handleCustomerSubscriptionCreated($payload);
-            $this->syncEntitlementFromSubscription($payload['data']['object'], $this->eventAt($payload));
+            $this->syncEntitlementFromSubscription($payload, $this->eventAt($payload));
 
             return $response;
         });
@@ -146,7 +146,7 @@ class StripeWebhookController extends CashierWebhookController
             // Parent returns null on the incomplete_expired branch (it deletes
             // the subscription); the projection still revokes the tier there.
             $response = parent::handleCustomerSubscriptionUpdated($payload);
-            $this->syncEntitlementFromSubscription($payload['data']['object'], $this->eventAt($payload));
+            $this->syncEntitlementFromSubscription($payload, $this->eventAt($payload));
 
             return $response ?? $this->successMethod();
         });
@@ -228,23 +228,30 @@ class StripeWebhookController extends CashierWebhookController
      * which reads as the entitlement flickering rather than as a config gap.
      *
      * The type is resolved exactly as Cashier resolves it on the same payload
-     * (`vendor/laravel/cashier/src/Http/Controllers/WebhookController.php:86`):
-     * `metadata.type`, then the legacy `metadata.name`, then `default`. It is
-     * read from the EVENT rather than from the local row on purpose, because
+     * (`vendor/laravel/cashier/src/Http/Controllers/WebhookController.php:86`),
+     * through {@see self::subscriptionType()}. It is read from the EVENT rather
+     * than from the local row on purpose, because
      * `customer.subscription.created` is the event that creates that row and it
-     * may not exist yet.
+     * may not exist yet, which is also why this takes the whole payload: the
+     * last step of Cashier's resolution is handed the payload, not the object.
      *
-     * @param  array<string, mixed>  $object
+     * @param  array<string, mixed>  $payload
      */
-    protected function syncEntitlementFromSubscription(array $object, CarbonInterface $eventAt): void
+    protected function syncEntitlementFromSubscription(array $payload, CarbonInterface $eventAt): void
     {
+        $object = $payload['data']['object'] ?? [];
+
+        if (! is_array($object)) {
+            return;
+        }
+
         $billable = $this->resolveBillable($object['customer'] ?? null);
 
         if ($billable === null) {
             return;
         }
 
-        if ($this->subscriptionType($object) !== StripeSubscriptionState::SUBSCRIPTION_TYPE) {
+        if ($this->subscriptionType($payload) !== StripeSubscriptionState::SUBSCRIPTION_TYPE) {
             return;
         }
 
@@ -282,27 +289,35 @@ class StripeWebhookController extends CashierWebhookController
     /**
      * The Cashier subscription type a webhook payload declares.
      *
-     * Mirrors Cashier's own resolution order on this payload so that a
-     * subscription this package skips is exactly one Cashier would file under
-     * another type: `metadata.type` first, the legacy `metadata.name` second,
-     * and `default` when neither is present, which is what an adopter's
-     * subscription created before Cashier wrote metadata looks like.
+     * Mirrors Cashier's own resolution order, so that a subscription this
+     * package skips is exactly one Cashier would file under another type:
+     * `metadata.type` first, the legacy `metadata.name` second, and
+     * `newSubscriptionType()` third, which is what a subscription created
+     * before Cashier wrote metadata falls back to.
      *
-     * @param  array<string, mixed>  $object
+     * That third step is a CALL and not the literal `'default'` it returns by
+     * default. It is Cashier's own protected extension point, so an adopter who
+     * overrides it on a subclass of this controller has Cashier filing their
+     * unlabelled subscriptions under their name, and a hardcoded `'default'`
+     * here would skip every one of them. Their override already puts them at
+     * odds with the rest of this package, which resolves
+     * {@see StripeSubscriptionState::SUBSCRIPTION_TYPE} for `swap`, `cancel`
+     * and the reconciler; what this call buys is that the two disagree in one
+     * place they can find rather than silently here.
+     *
+     * @param  array<string, mixed>  $payload
      */
-    protected function subscriptionType(array $object): string
+    protected function subscriptionType(array $payload): string
     {
-        $metadata = $object['metadata'] ?? [];
+        $object = $payload['data']['object'] ?? [];
+        $metadata = is_array($object) ? ($object['metadata'] ?? []) : [];
+        $type = is_array($metadata) ? ($metadata['type'] ?? $metadata['name'] ?? null) : null;
 
-        if (! is_array($metadata)) {
-            return StripeSubscriptionState::SUBSCRIPTION_TYPE;
+        if (is_string($type) && $type !== '') {
+            return $type;
         }
 
-        $type = $metadata['type'] ?? $metadata['name'] ?? null;
-
-        return is_string($type) && $type !== ''
-            ? $type
-            : StripeSubscriptionState::SUBSCRIPTION_TYPE;
+        return (string) $this->newSubscriptionType($payload);
     }
 
     /**
