@@ -104,6 +104,17 @@ class BillingController
     public const REASON_NO_BILLING_ACCOUNT = 'no_billing_account';
 
     /**
+     * This card rail is already billing the subject, so a checkout would open a
+     * SECOND subscription beside the first.
+     *
+     * A third reason rather than reusing either above, because it leads
+     * somewhere neither of those does: the customer is not being told to go
+     * elsewhere and not being told there is nothing to manage, they are being
+     * told to CHANGE what they already have. The client's next step is `swap`.
+     */
+    public const REASON_SUBSCRIPTION_EXISTS = 'subscription_exists';
+
+    /**
      * How many invoices one page of the invoice list carries.
      *
      * Untyped on purpose: the package's PHP floor is 8.2 and a typed class
@@ -454,6 +465,25 @@ class BillingController
         //    enforcement.
         $this->guardStoreOwnedSubscription($billable);
 
+        // 2b. A subject this rail is ALREADY billing must not open a second
+        //     subscription beside the first. `newSubscription()` happily creates
+        //     one, so without this a customer who cancels and buys again ends up
+        //     holding two live Stripe subscriptions and paying both, and the
+        //     damage does not stop at the double charge: both rows carry
+        //     `type = 'default'`, so `subscription('default')` becomes ambiguous
+        //     for `swap`, `cancel` and the period read, and the eventual
+        //     deletion of the older one revokes the entitlement the newer one is
+        //     paying for. Measured end to end against a live Stripe test
+        //     account, on a cancelled-but-still-active subscription.
+        //
+        //     A CANCELLED subscription counts as live while it still grants,
+        //     which is the case this guard exists for: that is exactly when a
+        //     customer is most likely to buy again, and it is the one moment the
+        //     store guard above has nothing to say about. `swap` is the way to
+        //     change what such a customer is paying for, and it un-cancels as a
+        //     side effect, so nothing is unreachable behind this refusal.
+        $this->guardExistingCardSubscription($billable);
+
         // 3. Rail facts before input facts. A subject whose application never
         //    applied Cashier's trait has no card rail to check out on, and a
         //    direct call on such a model is a fatal `Error` on the billing screen
@@ -519,7 +549,7 @@ class BillingController
         //    `cancel` below both act on `subscription('default')`, so a checkout
         //    opened under any other name would sell a subscription neither of
         //    them could reach.
-        $checkout = $billable->newSubscription('default', $priceId)->checkout([
+        $checkout = $billable->newSubscription(StripeSubscriptionState::SUBSCRIPTION_TYPE, $priceId)->checkout([
             'success_url' => $validated['success_url'],
             'cancel_url' => $validated['cancel_url'],
         ]);
@@ -708,6 +738,72 @@ class BillingController
     }
 
     /**
+     * Refuse a checkout for a subject this card rail is already billing.
+     *
+     * `newSubscription()` does not care that one exists, so without this a
+     * customer who cancels and buys again holds TWO live Stripe subscriptions
+     * and pays both. The double charge is not the worst of it: Cashier stores
+     * both under `type = 'default'`, so `subscription('default')` becomes
+     * ambiguous for `swap`, `cancel` and the period read, and when the older one
+     * finally deletes, its event revokes the entitlement the newer one is paying
+     * for. Measured end to end against a live Stripe test account.
+     *
+     * A subscription counts as existing while it still GRANTS, which includes a
+     * cancelled one inside its paid period. That is the whole point: it is the
+     * moment a customer is most likely to buy again, and the only one the store
+     * guard above says nothing about. `swap` remains open to them and un-cancels
+     * as a side effect, so nothing is unreachable behind this refusal.
+     *
+     * The status is read from the LOCAL rows rather than from the rail: this runs
+     * on the checkout path, the rows are what Cashier's own webhook handlers keep
+     * in step, and a network read here would put a Stripe round trip in front of
+     * every purchase.
+     *
+     * The cost of that choice, stated because it is a REGRESSION in one case
+     * rather than merely a limitation: nothing in this package heals a local row
+     * that Stripe has moved past. {@see \FlutterSdk\MagicStarter\Console\ReconcileBillingEntitlements} re-reads
+     * the local subscription and never calls the Stripe API, so a dropped
+     * `customer.subscription.deleted` leaves `stripe_status = 'active'` here
+     * forever. Before this guard existed that customer could simply buy again;
+     * now they are refused, and `swap` fails at the API against a subscription
+     * that no longer exists, so they cannot buy at all. Rare (Stripe retries
+     * deliveries for days) but unrecoverable without operator action, so an
+     * adopter seeing a customer stuck behind `subscription_exists` should check
+     * Stripe before looking anywhere else, and the fix when the rail disagrees
+     * is to re-sync that row, not to loosen this guard.
+     */
+    protected function guardExistingCardSubscription(Model $billable): void
+    {
+        if (! method_exists($billable, 'subscriptions')) {
+            return;
+        }
+
+        foreach ($billable->subscriptions as $subscription) {
+            // SCOPED TO `default`, because that is the only subscription any
+            // other write in this package can reach: `swap` and `cancel` both
+            // resolve `subscription('default')`, which Cashier filters by type.
+            // Refusing on a granting subscription of some OTHER type would close
+            // the escape hatch this refusal points at, since `swap` would find
+            // nothing and answer 409 `no_subscription`, and that customer could
+            // not buy at all. Cashier's named types are an adopter-facing
+            // feature and a subject may legitimately hold one.
+            if ($subscription->type !== StripeSubscriptionState::SUBSCRIPTION_TYPE) {
+                continue;
+            }
+
+            $status = $subscription->stripe_status;
+
+            if (is_string($status) && StripeSubscriptionState::grants($status)) {
+                $this->abortWithBillingConflict(
+                    self::REASON_SUBSCRIPTION_EXISTS,
+                    BillingProvider::STRIPE,
+                    __('magic-starter::billing.refusals.subscription_exists'),
+                );
+            }
+        }
+    }
+
+    /**
      * The tier ids a checkout or a swap may name, refusing when the adopter has
      * published none.
      *
@@ -871,7 +967,7 @@ class BillingController
             return null;
         }
 
-        $subscription = $billable->subscription('default');
+        $subscription = $billable->subscription(StripeSubscriptionState::SUBSCRIPTION_TYPE);
 
         return $subscription instanceof Model ? $subscription : null;
     }

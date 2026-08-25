@@ -129,7 +129,7 @@ class StripeWebhookController extends CashierWebhookController
     {
         return $this->processOnce($payload, function (array $payload): Response {
             $response = parent::handleCustomerSubscriptionCreated($payload);
-            $this->syncEntitlementFromSubscription($payload['data']['object'], $this->eventAt($payload));
+            $this->syncEntitlementFromSubscription($payload, $this->eventAt($payload));
 
             return $response;
         });
@@ -146,7 +146,7 @@ class StripeWebhookController extends CashierWebhookController
             // Parent returns null on the incomplete_expired branch (it deletes
             // the subscription); the projection still revokes the tier there.
             $response = parent::handleCustomerSubscriptionUpdated($payload);
-            $this->syncEntitlementFromSubscription($payload['data']['object'], $this->eventAt($payload));
+            $this->syncEntitlementFromSubscription($payload, $this->eventAt($payload));
 
             return $response ?? $this->successMethod();
         });
@@ -220,13 +220,38 @@ class StripeWebhookController extends CashierWebhookController
     /**
      * Project a subscription object onto the billable's entitlement columns.
      *
-     * @param  array<string, mixed>  $object
+     * Scoped to {@see StripeSubscriptionState::SUBSCRIPTION_TYPE}, the last of
+     * the four feeders to be: the two guards and the reconciler read `default`
+     * only, so a grant written from a `seats` subscription put a tier on the
+     * billable that nothing downstream would ever maintain. It would survive
+     * until the next `default` event or the next reconciler run and then vanish,
+     * which reads as the entitlement flickering rather than as a config gap.
+     *
+     * The type is resolved exactly as Cashier resolves it on the same payload
+     * (`vendor/laravel/cashier/src/Http/Controllers/WebhookController.php:86`),
+     * through {@see self::subscriptionType()}. It is read from the EVENT rather
+     * than from the local row on purpose, because
+     * `customer.subscription.created` is the event that creates that row and it
+     * may not exist yet, which is also why this takes the whole payload: the
+     * last step of Cashier's resolution is handed the payload, not the object.
+     *
+     * @param  array<string, mixed>  $payload
      */
-    protected function syncEntitlementFromSubscription(array $object, CarbonInterface $eventAt): void
+    protected function syncEntitlementFromSubscription(array $payload, CarbonInterface $eventAt): void
     {
+        $object = $payload['data']['object'] ?? [];
+
+        if (! is_array($object)) {
+            return;
+        }
+
         $billable = $this->resolveBillable($object['customer'] ?? null);
 
         if ($billable === null) {
+            return;
+        }
+
+        if ($this->subscriptionType($payload) !== StripeSubscriptionState::SUBSCRIPTION_TYPE) {
             return;
         }
 
@@ -262,6 +287,40 @@ class StripeWebhookController extends CashierWebhookController
     }
 
     /**
+     * The Cashier subscription type a webhook payload declares.
+     *
+     * Mirrors Cashier's own resolution order, so that a subscription this
+     * package skips is exactly one Cashier would file under another type:
+     * `metadata.type` first, the legacy `metadata.name` second, and
+     * `newSubscriptionType()` third, which is what a subscription created
+     * before Cashier wrote metadata falls back to.
+     *
+     * That third step is a CALL and not the literal `'default'` it returns by
+     * default. It is Cashier's own protected extension point, so an adopter who
+     * overrides it on a subclass of this controller has Cashier filing their
+     * unlabelled subscriptions under their name, and a hardcoded `'default'`
+     * here would skip every one of them. Their override already puts them at
+     * odds with the rest of this package, which resolves
+     * {@see StripeSubscriptionState::SUBSCRIPTION_TYPE} for `swap`, `cancel`
+     * and the reconciler; what this call buys is that the two disagree in one
+     * place they can find rather than silently here.
+     *
+     * @param  array<string, mixed>  $payload
+     */
+    protected function subscriptionType(array $payload): string
+    {
+        $object = $payload['data']['object'] ?? [];
+        $metadata = is_array($object) ? ($object['metadata'] ?? []) : [];
+        $type = is_array($metadata) ? ($metadata['type'] ?? $metadata['name'] ?? null) : null;
+
+        if (is_string($type) && $type !== '') {
+            return $type;
+        }
+
+        return (string) $this->newSubscriptionType($payload);
+    }
+
+    /**
      * A paid subscription invoice re-affirms the active entitlement tier read
      * from the billable's synced Cashier subscription price.
      *
@@ -285,7 +344,7 @@ class StripeWebhookController extends CashierWebhookController
             return;
         }
 
-        $subscription = $billable->subscription('default');
+        $subscription = $billable->subscription(StripeSubscriptionState::SUBSCRIPTION_TYPE);
 
         if (! $subscription instanceof Model) {
             return;
@@ -362,6 +421,31 @@ class StripeWebhookController extends CashierWebhookController
             return;
         }
 
+        // A deletion says THIS subscription stopped billing, not that the
+        // customer stopped paying. A subject can hold more than one Stripe
+        // subscription (a checkout opened beside an existing one, a migration,
+        // a portal-side change), and revoking on the older one's deletion takes
+        // the tier away from somebody the newer one is still charging.
+        //
+        // Measured, not hypothesised: a cancelled monthly subscription plus a
+        // fresh annual one, the monthly deleted at its period end, and the
+        // entitlement went to `plan=free, subscribed=false` while Stripe was
+        // charging $348/year. The hourly reconciler healed it, so the damage is
+        // an hour of a paying customer refused by every cap gate rather than a
+        // permanent loss, which is exactly why nothing ever noticed.
+        //
+        // Cashier's own deleted handler has already run by the time this does
+        // (see the caller) and has marked the deleted row canceled, so a
+        // surviving granting row can only be a DIFFERENT subscription.
+        if ($this->stillGrantedByAnotherSubscription($billable)) {
+            Log::warning('Skipped a Stripe revocation: another subscription still grants.', [
+                'billable_id' => $billable->getKey(),
+                'deleted_subscription' => $object['id'] ?? null,
+            ]);
+
+            return;
+        }
+
         $this->claim(new EntitlementWrite(
             billable: $billable,
             // No tier, rather than the cheapest one. A deleted subscription is
@@ -381,6 +465,45 @@ class StripeWebhookController extends CashierWebhookController
             // period left to run and nothing left to renew, so both fields are
             // now unknown rather than merely unread.
         ));
+    }
+
+    /**
+     * Whether the billable holds another Stripe subscription that still grants.
+     *
+     * Read from the LOCAL rows rather than the rail: Cashier's own webhook
+     * handlers keep them in step, this runs inside a webhook transaction, and a
+     * network read here would put a Stripe round trip inside every deletion.
+     *
+     * `StripeSubscriptionState::grants()` is the same predicate every other
+     * feeder uses, so a status added to that list is honoured here without a
+     * second edit. A subject with no local rows answers false and revokes
+     * normally, which is the ordinary single-subscription case.
+     */
+    protected function stillGrantedByAnotherSubscription(Model $billable): bool
+    {
+        if (! method_exists($billable, 'subscriptions')) {
+            return false;
+        }
+
+        foreach ($billable->subscriptions as $subscription) {
+            // SCOPED TO `default`, the same type every other feeder reads. The
+            // reconciler asks `subscription('default')` directly, so a granting
+            // row of another type suppressing this revocation would put the two
+            // out of step: this feeder would keep the tier and the reconciler
+            // would take it away on its next hourly run, against the same
+            // subject, with neither of them wrong on its own terms.
+            if ($subscription->type !== StripeSubscriptionState::SUBSCRIPTION_TYPE) {
+                continue;
+            }
+
+            $status = $subscription->stripe_status;
+
+            if (is_string($status) && StripeSubscriptionState::grants($status)) {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     /**

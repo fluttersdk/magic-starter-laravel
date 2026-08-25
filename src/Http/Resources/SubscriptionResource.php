@@ -220,7 +220,7 @@ class SubscriptionResource extends JsonResource
             return null;
         }
 
-        $subscription = $billable->subscription('default');
+        $subscription = $billable->subscription(StripeSubscriptionState::SUBSCRIPTION_TYPE);
 
         if (! $subscription instanceof Model) {
             return null;

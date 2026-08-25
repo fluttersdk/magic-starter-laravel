@@ -157,7 +157,7 @@ class ReconcileBillingEntitlements extends Command
      * ships; the parameter exists in Cashier for multi-plan billing that nothing
      * here sells.
      */
-    protected const STRIPE_SUBSCRIPTION_TYPE = 'default';
+    protected const STRIPE_SUBSCRIPTION_TYPE = StripeSubscriptionState::SUBSCRIPTION_TYPE;
 
     /**
      * The word this command leaves in `plan_provider_status` on the store rail.

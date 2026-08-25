@@ -144,6 +144,71 @@ class BillingWriteEndpointsTest extends TestCase
     }
 
     /**
+     * A subject this rail already bills cannot open a SECOND subscription.
+     *
+     * `newSubscription()` does not care that one exists, so without the guard a
+     * customer who cancels and buys again holds two live Stripe subscriptions
+     * and pays both. Measured end to end against a live Stripe test account, and
+     * the double charge is not the worst of it: Cashier stores both under
+     * `type = 'default'`, so `subscription('default')` becomes ambiguous for
+     * `swap`, `cancel` and the period read, and the eventual deletion of the
+     * older one revoked the entitlement the newer one was paying for.
+     *
+     * THE PAIR IS THE TEST, and the accepting limb is the one that stops this
+     * guard from being a wall. A refusal keyed on "has any subscription row"
+     * would lock out every customer who has EVER subscribed, including one whose
+     * subscription genuinely ended, and they would have no way back at all since
+     * there is no resume endpoint. So the granting limb refuses and the
+     * non-granting limb sells.
+     */
+    public function test_a_subject_this_rail_already_bills_cannot_buy_a_second_subscription(): void
+    {
+        $this->bootBillingRoutes('user');
+
+        $user = $this->createUser('second-sub@example.test');
+
+        // A CANCELLED subscription inside its paid period still grants, and it
+        // is the case this guard exists for: it is when a customer is most
+        // likely to buy again, and the store guard says nothing about it.
+        BillingWriteRail::$subscriptions = [
+            (object) ['type' => 'default', 'stripe_status' => 'active'],
+        ];
+
+        $this->buy($user, 'pro')
+            ->assertStatus(409)
+            ->assertJsonPath('billing.reason', BillingController::REASON_SUBSCRIPTION_EXISTS)
+            ->assertJsonPath('billing.provider', 'stripe');
+
+        $this->assertNull(
+            BillingWriteRail::$checkoutItems,
+            'A refused checkout must open no session at all.',
+        );
+
+        // The accepting limb: a subscription that no longer grants is not a
+        // subscription, and this customer has to be able to buy again.
+        BillingWriteRail::$subscriptions = [
+            (object) ['type' => 'default', 'stripe_status' => 'canceled'],
+        ];
+
+        $this->buy($user, 'pro')->assertOk();
+        $this->assertSame(['price_pro' => 1], BillingWriteRail::$checkoutItems);
+
+        // And a granting subscription of ANOTHER type does not block either.
+        // Cashier's named types are an adopter-facing feature, and every other
+        // write here resolves `subscription('default')`: refusing on a row those
+        // writes cannot reach would close the escape hatch this refusal points
+        // at, because `swap` would find nothing and answer 409 `no_subscription`
+        // and that customer could not buy at all.
+        BillingWriteRail::$checkoutItems = null;
+        BillingWriteRail::$subscriptions = [
+            (object) ['type' => 'seats', 'stripe_status' => 'active'],
+        ];
+
+        $this->buy($user, 'pro')->assertOk();
+        $this->assertSame(['price_pro' => 1], BillingWriteRail::$checkoutItems);
+    }
+
+    /**
      * A tier in the published ranking is sold; one outside it is refused.
      *
      * The pair is the test. The accepting limb alone passes against a rule that
@@ -889,12 +954,21 @@ final class BillingWriteRail
      */
     public static ?string $checkoutSubscriptionType = null;
 
+    /**
+     * The local Cashier rows the checkout guard reads, as bare objects carrying
+     * the one field it looks at.
+     *
+     * @var array<int, object>
+     */
+    public static array $subscriptions = [];
+
     public static function reset(): void
     {
         self::$hasStripeId = false;
         self::$subscription = null;
         self::$checkoutItems = null;
         self::$checkoutSubscriptionType = null;
+        self::$subscriptions = [];
 
         BillingWriteSubscription::reset();
     }
@@ -917,6 +991,30 @@ trait BillingWriteBillable
     public function subscription(string $type = 'default'): ?Model
     {
         return BillingWriteRail::$subscription;
+    }
+
+    /**
+     * The relation-shaped method the checkout guard probes with
+     * `method_exists`, and the accessor that answers `$billable->subscriptions`.
+     *
+     * Both are needed and for different reasons: the guard asks whether the
+     * adopter's model carries Cashier's relation at all before it reads it, so a
+     * fixture with only the accessor would be skipped entirely and the guard
+     * would look correct while testing nothing.
+     *
+     * @return array<int, object>
+     */
+    public function subscriptions(): array
+    {
+        return BillingWriteRail::$subscriptions;
+    }
+
+    /**
+     * @return array<int, object>
+     */
+    public function getSubscriptionsAttribute(): array
+    {
+        return BillingWriteRail::$subscriptions;
     }
 
     /**
