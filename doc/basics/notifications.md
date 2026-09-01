@@ -8,6 +8,7 @@
 - [Mark as Read](#mark-as-read)
 - [Mark All as Read](#mark-all-as-read)
 - [Delete a Notification](#delete-a-notification)
+- [Send a Push Test](#send-a-push-test)
 - [Notification Preferences](#notification-preferences)
   - [Get Preference Matrix](#get-preference-matrix)
   - [Update Preferences](#update-preferences)
@@ -171,6 +172,73 @@ Permanently deletes a single notification. The notification is scoped to the aut
 ```
 
 **Controller**: `NotificationController@destroy`
+
+---
+
+## <a name="send-a-push-test"></a>Send a Push Test
+
+**`POST /notifications/push-test`**
+
+Sends the authenticated caller a push notification, to their own devices, so a
+person can find out whether push actually reaches the phone in their hand. On an
+on-call product that is a question worth answering before an incident rather
+than during one.
+
+**This endpoint ships switched off.** Set
+`magic-starter.onesignal.self_test_enabled` (env
+`MAGIC_STARTER_PUSH_SELF_TEST_ENABLED`) to enable it. An absent key reads as off,
+because `mergeConfigFrom` is shallow and an upgrade that adds a key to the
+package default does not add it to a config a consumer already published.
+
+### Request
+
+```json
+{
+    "title": "Uptizm",
+    "body": "Push is working on this device.",
+    "data": { "type": "push_test" }
+}
+```
+
+| Field | Rules |
+|---|---|
+| `title` | required, string, max 120 |
+| `body` | required, string, max 500 |
+| `data` | sometimes, array |
+
+**The body carries no recipient, and adding one is a breaking change to the
+endpoint's safety property rather than a feature.** The target is derived from
+the Sanctum session, so the worst a caller can do is page themselves. The server
+also stamps `data.subject` with `user_<id>` over whatever the client sent, so a
+caller cannot make a push aimed at their own device claim to be somebody else's.
+
+### Response
+
+```json
+{
+    "accepted": true
+}
+```
+
+`accepted`, not `delivered`: a zero-recipient send is an HTTP 200 from OneSignal
+with an empty notification id, which the channel reports without throwing. A
+caller with no registered device is exactly who this endpoint is for, and
+telling them it was delivered would send them looking in the wrong place.
+
+| Status | Meaning |
+|---|---|
+| `202` | Accepted and dispatched |
+| `501` | `self_test_enabled` is off on this server |
+| `409` | OneSignal is not provisioned (no `app_id`, or the feature is off) |
+| `502` | The push provider could not be reached |
+| `429` | Rate limited (5 per minute, per user) |
+
+The 501 check runs before every other guard: 403 would say the caller may not,
+which is untrue of an operator who has simply not switched this on; 409 names a
+different and independently fixable state; and 404 would hide that the route
+exists at all from a client that can read the package's own config.
+
+**Controller**: `PushTestController@__invoke`
 
 ---
 

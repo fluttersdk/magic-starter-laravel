@@ -15,6 +15,8 @@ use Illuminate\Notifications\Notifiable;
 use Illuminate\Routing\RouteCollection;
 use Illuminate\Support\Facades\Notification;
 use Illuminate\Testing\TestResponse;
+use onesignal\client\api\DefaultApi;
+use RuntimeException;
 
 /**
  * The self-addressed push test endpoint.
@@ -150,7 +152,7 @@ final class PushTestControllerTest extends TestCase
             'data' => ['type' => 'push_test'],
         ])
             ->assertStatus(202)
-            ->assertExactJson(['delivered' => true]);
+            ->assertExactJson(['accepted' => true]);
 
         Notification::assertCount(1);
 
@@ -246,10 +248,49 @@ final class PushTestControllerTest extends TestCase
         $this->assertSame(202, $statuses[0], 'The first call must be accepted.');
         $this->assertSame(429, $statuses[10], 'The eleventh call must be refused.');
 
+        // Pinned to the limiter's actual number rather than bounded loosely.
+        // `assertLessThan(10, ...)` passed against a 5/min limiter and would
+        // have kept passing if somebody quietly raised it to 9/min, which is
+        // the change this test exists to catch: the sixth call is the first
+        // refusal, and every call after it is refused too.
+        $this->assertSame(429, $statuses[5], 'The sixth call must be the first refusal.');
+
         $accepted = count(array_filter($statuses, static fn (int $status): bool => $status === 202));
 
-        $this->assertLessThan(10, $accepted, 'The limiter must bound the burst to single digits.');
+        $this->assertSame(5, $accepted, 'The limiter must accept exactly five calls a minute.');
         Notification::assertCount($accepted);
+    }
+
+    /**
+     * A provider that cannot be reached answers 502, not an unshaped 500.
+     *
+     * `OneSignalChannel::send()` reports a transport `Throwable` and rethrows it
+     * "so the ShouldQueue job can retry the delivery". This notification is
+     * anonymous and sent inline, so there is no job: unguarded, the rethrow
+     * left the request path as a 500 with whatever the exception handler chose
+     * to say. `.claude/rules/http.md` asks for report plus a user-friendly
+     * payload, and the status has to let the caller tell "this server broke"
+     * apart from "the provider did not answer", which is the whole question a
+     * person testing their own push is asking.
+     *
+     * Deliberately NOT `Notification::fake()`: faking the facade is what stops
+     * the real channel from ever running, and the real channel is the thing
+     * under test here.
+     */
+    public function test_it_answers_502_when_the_push_provider_cannot_be_reached(): void
+    {
+        $this->provision();
+
+        $client = $this->createMock(DefaultApi::class);
+        $client->method('createNotification')
+            ->willThrowException(new RuntimeException('OneSignal timed out'));
+        $this->app->instance(DefaultApi::class, $client);
+
+        $user = $this->createUser('unreachable@example.test');
+
+        $this->push($user)
+            ->assertStatus(502)
+            ->assertJsonPath('message', 'The push provider could not be reached.');
     }
 
     /**

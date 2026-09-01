@@ -10,6 +10,7 @@ use Illuminate\Notifications\Notification;
 use Illuminate\Support\Facades\Notification as NotificationFacade;
 use onesignal\client\model\LanguageStringMap;
 use onesignal\client\model\Notification as OneSignalNotification;
+use Throwable;
 
 /**
  * Sends the authenticated caller a push notification, to their own devices.
@@ -99,13 +100,49 @@ class PushTestController
         $data = (array) $request->validated('data', []);
         $data['subject'] = 'user_' . $user->getKey();
 
-        NotificationFacade::send($user, $this->notification(
-            (string) $request->validated('title'),
-            (string) $request->validated('body'),
-            $data,
-        ));
+        // 5. Send inside a guard, because this one leaves the request path.
+        //    `OneSignalChannel::send()` reports a transport `Throwable` and then
+        //    rethrows it "so the ShouldQueue job can retry the delivery", and
+        //    that assumption does not hold here: this notification is anonymous
+        //    and carries no state a queue could restore, so it is sent inline
+        //    and there is no job to retry it. Unguarded, a OneSignal timeout, a
+        //    rejected app id or a 4xx over a bad `data` payload answered the
+        //    caller with an unshaped 500. `.claude/rules/http.md` asks for the
+        //    opposite: report, then a user-friendly payload carrying the detail
+        //    only under `app.debug`.
+        //
+        //    502 rather than the rule's example 500, chosen the way
+        //    `AuthController` chooses 401 for a refused Socialite token: the
+        //    caller's request was well-formed and this server is working, the
+        //    provider it depends on did not answer. A person testing whether
+        //    push reaches their phone has to be able to tell those apart.
+        try {
+            NotificationFacade::send($user, $this->notification(
+                (string) $request->validated('title'),
+                (string) $request->validated('body'),
+                $data,
+            ));
+        } catch (Throwable $exception) {
+            report($exception);
 
-        return response()->json(['delivered' => true], 202);
+            $payload = ['message' => 'The push provider could not be reached.'];
+
+            if (config('app.debug')) {
+                $payload['error'] = $exception->getMessage();
+            }
+
+            return response()->json($payload, 502);
+        }
+
+        // 6. `accepted`, not `delivered`, because delivery is not what this
+        //    knows. `NotificationFacade::send()` discards the channel's return
+        //    value, and a zero-recipient send is an HTTP 200 with an empty
+        //    notification id that the channel reports without throwing
+        //    (`OneSignalChannel::send()`), deliberately, since it is not
+        //    retryable. Somebody with no registered device is exactly the person
+        //    this endpoint is for, and telling them their push was delivered is
+        //    the one answer that sends them looking in the wrong place.
+        return response()->json(['accepted' => true], 202);
     }
 
     /**
