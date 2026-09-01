@@ -21,6 +21,7 @@ use FlutterSdk\MagicStarter\Http\Controllers\OtpController;
 use FlutterSdk\MagicStarter\Http\Controllers\PasswordResetController;
 use FlutterSdk\MagicStarter\Http\Controllers\ProfileController;
 use FlutterSdk\MagicStarter\Http\Controllers\ProfilePhotoController;
+use FlutterSdk\MagicStarter\Http\Controllers\PushTestController;
 use FlutterSdk\MagicStarter\Http\Controllers\SessionController;
 use FlutterSdk\MagicStarter\Http\Controllers\SettingsController;
 use FlutterSdk\MagicStarter\Http\Controllers\TeamController;
@@ -139,6 +140,20 @@ Route::prefix((string) config('magic-starter.route_prefix', ''))
                     Route::post('/{id}/read', [NotificationController::class, 'markAsRead']);
                     Route::post('/read-all', [NotificationController::class, 'markAllAsRead']);
                     Route::delete('/{id}', [NotificationController::class, 'destroy']);
+
+                    // A push the caller sends to their OWN devices, so a person
+                    // can find out whether push reaches their phone before an
+                    // incident rather than during one. It takes no recipient:
+                    // the target comes from the session.
+                    //
+                    // The limiter is REQUIRED rather than defensive. Nothing in
+                    // this group inherits a throttle, and an application that
+                    // registers these routes under an api prefix of its own does
+                    // not necessarily call `throttleApi()` there either, so
+                    // without this the one endpoint here that costs money on
+                    // every call would be the one endpoint with no bound.
+                    Route::post('/push-test', [PushTestController::class, 'store'])
+                        ->middleware('throttle:magic-starter-push-test');
                 });
 
                 Route::prefix('notification-preferences')->group(function (): void {

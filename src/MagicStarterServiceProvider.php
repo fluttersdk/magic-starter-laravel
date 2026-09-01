@@ -575,5 +575,14 @@ class MagicStarterServiceProvider extends ServiceProvider
         RateLimiter::for('magic-starter-email-verification', function ($request) {
             return Limit::perMinute(1)->by($request->user()?->id ?: $request->ip());
         });
+
+        // Self-addressed push test. Bucketed on the caller and not on the IP,
+        // because the recipient IS the caller: one person behind a shared egress
+        // must not be able to spend the office's budget, and the same person on
+        // a phone that changes network must not get a fresh allowance by moving.
+        // Five a minute is a person pressing a button, not a client loop.
+        RateLimiter::for('magic-starter-push-test', function ($request) {
+            return Limit::perMinute(5)->by($request->user()?->getAuthIdentifier() ?: $request->ip());
+        });
     }
 }
