@@ -244,7 +244,7 @@ which is untrue of an operator who has simply not switched this on; 409 names a
 different and independently fixable state; and 404 would hide that the route
 exists at all from a client that can read the package's own config.
 
-**Controller**: `PushTestController@__invoke`
+**Controller**: `PushTestController@store`
 
 ---
 
