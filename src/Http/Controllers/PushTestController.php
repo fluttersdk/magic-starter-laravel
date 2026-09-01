@@ -23,21 +23,51 @@ use onesignal\client\model\Notification as OneSignalNotification;
  * target is derived from the Sanctum session and the worst a caller can do is
  * page themselves. Adding a recipient parameter later, even an optional or an
  * ignored one, breaks that property rather than extending the feature.
+ *
+ * It ships SWITCHED OFF, behind `magic-starter.onesignal.self_test_enabled`,
+ * and an absent key is off. See that key's comment in the published config for
+ * why, and for the Flutter client's matching switch: either half alone is a
+ * half-measure, since a client that refuses locally leaves this endpoint
+ * reachable by anything holding a token.
  */
 class PushTestController
 {
     /**
      * Send a test push to the authenticated caller.
      *
-     * Answers 202 once the send is accepted, 409 when this deployment cannot
-     * deliver push at all, 403 to a guest, 422 on validation, and 429 when the
-     * named limiter refuses.
+     * Answers 202 once the send is accepted, 501 while the surface is switched
+     * off, 409 when this deployment cannot deliver push at all, 403 to a guest,
+     * 422 on validation, and 429 when the named limiter refuses.
      */
     public function store(PushTestRequest $request): JsonResponse
     {
         $user = $request->user();
 
-        // 1. Refuse a guest. Guest authentication hands a Sanctum token to
+        // 1. Refuse before reading anything about the caller while this
+        //    deployment has not switched the surface on. The whole endpoint is
+        //    a capability rather than a detail: it makes the platform emit a
+        //    real push because a client asked it to, so it stays cold until an
+        //    application offers the button. An absent key is off, which is what
+        //    a config published before the key existed carries.
+        //
+        //    501 because none of the other refusals means this. 403 says the
+        //    caller may not, 409 says push is not provisioned here, 404 says
+        //    the notifications feature is off; a switched-off endpoint is a
+        //    server that does not offer the functionality, and answering with
+        //    one of the others would send an adopter hunting a guest flag or a
+        //    missing app id over a config key.
+        //
+        //    First, so the answer is the same one whoever asks. The request
+        //    body is still validated ahead of this, because a FormRequest
+        //    validates as it resolves; that costs a 422 to a malformed call on
+        //    a switched-off endpoint and nothing else, and it sends nothing.
+        if (! (bool) config('magic-starter.onesignal.self_test_enabled', false)) {
+            return response()->json([
+                'message' => 'The push test endpoint is not enabled for this application.',
+            ], 501);
+        }
+
+        // 2. Refuse a guest. Guest authentication hands a Sanctum token to
         //    anybody who asks for one, so for an adopter running that feature
         //    this endpoint would otherwise be an anonymously reachable way to
         //    spend somebody else's OneSignal quota.
@@ -47,7 +77,7 @@ class PushTestController
             ], 403);
         }
 
-        // 2. Refuse before touching the channel when push is not provisioned.
+        // 3. Refuse before touching the channel when push is not provisioned.
         //    Both halves are the shipped default for an adopter who has not set
         //    push up: without the feature the channel manager has no `onesignal`
         //    driver, and without the app id `OneSignalChannel::send()` throws.
@@ -60,7 +90,7 @@ class PushTestController
             ], 409);
         }
 
-        // 3. Stamp the subject the client's receive-side guard reads, over
+        // 4. Stamp the subject the client's receive-side guard reads, over
         //    anything the caller supplied for that key. A subject a caller can
         //    choose is not a subject, it is a suggestion, and the client drops a
         //    notification whose subject disagrees with the account it is signed

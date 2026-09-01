@@ -649,5 +649,47 @@ return [
         */
 
         'target_channel' => 'push',
+
+        /*
+        |--------------------------------------------------------------------------
+        | Self-Addressed Push Test
+        |--------------------------------------------------------------------------
+        |
+        | Whether POST {route_prefix}/notifications/push-test is switched on.
+        | The endpoint lets a signed-in person page their OWN devices, so they
+        | can find out whether push reaches the phone in their hand before an
+        | incident rather than during one. It takes no recipient: the target is
+        | derived from the Sanctum session.
+        |
+        | OFF, and an absent key is off too. Everything the endpoint does is
+        | make the platform emit a real push because a client asked it to, and
+        | that is a capability to switch on deliberately once an application
+        | actually offers the button, not one to have live and reachable by
+        | anything holding a token from the day the package is installed.
+        | Absence has to mean off for the same reason: `mergeConfigFrom` is a
+        | shallow merge, so a config published before this key existed carries
+        | an `onesignal` block with no switch in it, and an upgrade must not
+        | turn an outbound send on for an adopter who never asked for one.
+        |
+        | While it is off the route is still registered (under the
+        | `notifications` feature, as before) and answers 501: the server does
+        | not offer this functionality. That is deliberately none of the other
+        | three answers this endpoint gives. 403 means the caller may not, 409
+        | means push is not provisioned on this deployment, and 404 means the
+        | notifications feature is off entirely; a switched-off endpoint is
+        | none of those, and reusing one of them would send whoever hits it
+        | looking for the wrong thing.
+        |
+        | TURNING IT ON TAKES BOTH HALVES. The Flutter client carries the same
+        | switch, `notifications.push.self_test_enabled` in the magic
+        | notifications config, also off by default, and its push channel
+        | reports itself unavailable and posts nothing while that one is off.
+        | Setting only this key leaves a live endpoint no client calls; setting
+        | only the client's leaves a client posting requests that always 501.
+        | Set both, and only once something needs the button.
+        |
+        */
+
+        'self_test_enabled' => (bool) env('MAGIC_STARTER_PUSH_SELF_TEST_ENABLED', false),
     ],
 ];

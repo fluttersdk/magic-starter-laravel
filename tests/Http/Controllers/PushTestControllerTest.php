@@ -54,6 +54,12 @@ final class PushTestControllerTest extends TestCase
             'magic-starter.models.user' => PushTestUser::class,
             'magic-starter.route_prefix' => '',
             'magic-starter.onesignal.app_id' => null,
+            // Every test below describes the endpoint of a deployment that has
+            // SWITCHED IT ON. The switch ships off, so without this line each
+            // of them would assert against an endpoint that refuses before it
+            // reads anything and would pass for the wrong reason. The off state
+            // has its own three tests, which set the key themselves.
+            'magic-starter.onesignal.self_test_enabled' => true,
             'auth.providers.users' => [
                 'driver' => 'eloquent',
                 'model' => PushTestUser::class,
@@ -319,6 +325,107 @@ final class PushTestControllerTest extends TestCase
         $user = $this->createUser('feature-off@example.test');
 
         $this->push($user)->assertNotFound();
+
+        Notification::assertNothingSent();
+    }
+
+    /**
+     * The shipped default refuses, and says it is switched off while doing it.
+     *
+     * The switch is read from the package's own config file here rather than
+     * set by the test, so this asserts what an adopter who installs this
+     * package and configures push properly actually gets: a provisioned,
+     * signed-in, correctly formed request that still sends nothing. The
+     * endpoint makes the platform emit a push on a client's say-so, and it
+     * stays cold until a deployment asks for it.
+     *
+     * 501 rather than 403 or 409: those two are taken, and they mean different
+     * things. 403 says the caller may not, 409 says push is not provisioned
+     * here, and both invite a client to fix something. This one is not the
+     * caller's to fix and there is nothing to provision; the server simply does
+     * not offer the functionality.
+     */
+    public function test_it_refuses_with_501_while_the_shipped_default_switch_is_off(): void
+    {
+        Notification::fake();
+        $this->provision();
+
+        // Read out of the package's own config FILE, because `setUp()` above
+        // switched the key on for every other test in this class and asserting
+        // against the value it wrote would assert nothing about what ships.
+        $shipped = require __DIR__ . '/../../../config/magic-starter.php';
+
+        $this->assertArrayHasKey(
+            'self_test_enabled',
+            $shipped['onesignal'],
+            'The shipped config must declare the switch, or an adopter cannot find it.',
+        );
+        $this->assertFalse(
+            (bool) $shipped['onesignal']['self_test_enabled'],
+            'The shipped config must leave the self test switched off.',
+        );
+
+        config(['magic-starter.onesignal.self_test_enabled' => $shipped['onesignal']['self_test_enabled']]);
+
+        $user = $this->createUser('switched-off@example.test');
+
+        $this->push($user)
+            ->assertStatus(501)
+            ->assertJsonStructure(['message']);
+
+        Notification::assertNothingSent();
+    }
+
+    /**
+     * An absent key is off, which is what an upgrading adopter has.
+     *
+     * `mergeConfigFrom` is a shallow merge, so a config published before this
+     * key existed carries an `onesignal` block with no switch in it at all. The
+     * default has to answer for that block, and it has to answer OFF: an
+     * upgrade must not turn an outbound send on for somebody who never asked.
+     */
+    public function test_an_absent_switch_is_off(): void
+    {
+        Notification::fake();
+        $this->provision();
+
+        $onesignal = config('magic-starter.onesignal');
+        unset($onesignal['self_test_enabled']);
+        config(['magic-starter.onesignal' => $onesignal]);
+
+        $user = $this->createUser('absent-switch@example.test');
+
+        $this->push($user)->assertStatus(501);
+
+        Notification::assertNothingSent();
+    }
+
+    /**
+     * The switch is read before every other refusal in the controller.
+     *
+     * A switched-off endpoint has one answer, and it is the same answer for a
+     * guest and for an unprovisioned deployment: a 403 or a 409 here would
+     * describe a request the server never got far enough to judge, and would
+     * send an adopter looking for a guest account or a missing app id when the
+     * only thing in the way is a config key.
+     */
+    public function test_the_switch_is_read_before_the_guest_and_provisioning_refusals(): void
+    {
+        Notification::fake();
+        config(['magic-starter.onesignal.self_test_enabled' => false]);
+
+        // Provisioned, but a guest: 403 is what an enabled endpoint answers.
+        $this->provision();
+        $guest = $this->createUser('switched-off-guest@example.test', ['is_guest' => true]);
+
+        $this->push($guest)->assertStatus(501);
+
+        // Unprovisioned, and not a guest: 409 is what an enabled endpoint
+        // answers.
+        config(['magic-starter.onesignal.app_id' => null]);
+        $user = $this->createUser('switched-off-unprovisioned@example.test');
+
+        $this->push($user)->assertStatus(501);
 
         Notification::assertNothingSent();
     }
