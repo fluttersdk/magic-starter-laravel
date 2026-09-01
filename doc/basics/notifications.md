@@ -229,9 +229,15 @@ telling them it was delivered would send them looking in the wrong place.
 |---|---|
 | `202` | Accepted and dispatched |
 | `501` | `self_test_enabled` is off on this server |
+| `403` | The caller is a guest user |
 | `409` | OneSignal is not provisioned (no `app_id`, or the feature is off) |
+| `422` | Validation failed on `title`, `body` or `data` |
 | `502` | The push provider could not be reached |
 | `429` | Rate limited (5 per minute, per user) |
+
+The 403 is worth reading twice if guest authentication is on: that feature hands
+a Sanctum token to anybody who asks, so without this guard the endpoint would be
+an anonymously reachable way to spend an operator's OneSignal quota.
 
 The 501 check runs before every other guard: 403 would say the caller may not,
 which is untrue of an operator who has simply not switched this on; 409 names a
