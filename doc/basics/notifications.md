@@ -599,6 +599,23 @@ Two things about this are worth knowing before you rely on it:
   middleware for that shape instead, which is what the label does when no
   contract is declared.
 
+  There is a third shape, and an escape hatch for it. An app whose middleware
+  prefers `Accept-Language` while its model implements the contract anyway
+  (which is reasonable, since Laravel's notification sender honours it for
+  queued mail) gets a preference screen whose type labels follow the stored
+  locale while every other string in the same response follows the header. If
+  that is you, override the resolver rather than dropping the contract:
+  `HasNotifications::translateTypeLabel(string $label): string` is `protected`,
+  so one method on your User model decides this for the preference matrix
+  alone.
+
+  ```php
+  protected function translateTypeLabel(string $label): string
+  {
+      return (string) __($label);
+  }
+  ```
+
 ### Slug resolution
 
 The registry key can be a FQCN or a plain string. The slug stored in `notification_settings.type` is derived automatically:
