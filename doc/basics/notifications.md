@@ -540,6 +540,42 @@ NotificationPreferenceRegistry::register([
 ]);
 ```
 
+#### Translating the label
+
+`label` is passed through the translator when the matrix is built, so an app
+that ships more than one language registers a KEY instead of a sentence:
+
+```php
+NotificationPreferenceRegistry::register([
+    OrderShippedNotification::class => [
+        'label'    => 'notifications.type_order_shipped',
+        'channels' => ['push', 'email'],
+        'default'  => ['push'],
+        'locked'   => [],
+    ],
+]);
+```
+
+A finished sentence still works exactly as before: `__()` hands back an
+argument it has no line for, so `'Order Shipped'` stays `'Order Shipped'`.
+
+Two things about this are worth knowing before you rely on it:
+
+- **Register the key, never `__('...')`.** `register()` runs in a service
+  provider's `boot()`, which is before any locale middleware has looked at the
+  request, and under Octane it runs once for the worker's whole life. A `__()`
+  call there resolves in the default locale and then freezes that answer in for
+  every later request. Resolving happens inside
+  `notificationPreferenceMatrix()` precisely so it lands in the request.
+- **The locale comes from the notifiable when it declares one.** If your user
+  model implements `Illuminate\Contracts\Translation\HasLocalePreference`
+  (the same contract Laravel's own notification sender honours), the label
+  resolves in `preferredLocale()`. This package writes `users.locale` at
+  registration and at login, so implementing the contract is usually two lines
+  and it means the labels follow the user's stored choice with no middleware at
+  all. Without the contract the label follows whatever locale your app has
+  set.
+
 ### Slug resolution
 
 The registry key can be a FQCN or a plain string. The slug stored in `notification_settings.type` is derived automatically:

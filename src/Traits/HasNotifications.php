@@ -4,6 +4,7 @@ namespace FlutterSdk\MagicStarter\Traits;
 
 use FlutterSdk\MagicStarter\Models\NotificationSetting;
 use FlutterSdk\MagicStarter\NotificationPreferenceRegistry;
+use Illuminate\Contracts\Translation\HasLocalePreference;
 use Illuminate\Database\Eloquent\Relations\MorphMany;
 
 /**
@@ -113,26 +114,55 @@ trait HasNotifications
             }
 
             // 3. Use slug as the matrix key (not FQCN) for consistent API shape.
-            //
-            // The label goes through the translator so an app can register a
-            // translation key instead of a finished sentence. Doing it HERE
-            // rather than at registration time is the whole point: the registry
-            // is filled in a service provider's `boot()`, which runs before the
-            // locale middleware, and under Octane runs once for the lifetime of
-            // the worker. A `__()` call over there resolves in the default
-            // locale and then freezes, so every request would answer in
-            // whichever language the first one happened to want.
-            //
-            // Non-breaking for an app that registers a plain sentence:
-            // `__()` returns its argument unchanged when no translation line
-            // matches, so 'Incident opened' stays 'Incident opened'.
             $matrix[$slug] = [
-                'label' => __($definition['label']),
+                'label' => $this->translateTypeLabel($definition['label']),
                 'channels' => $channels,
             ];
         }
 
         return $matrix;
+    }
+
+    /**
+     * Resolve a registered notification-type label for this notifiable.
+     *
+     * The label goes through the translator so an app can register a
+     * translation key instead of a finished sentence. Doing it HERE rather than
+     * at registration time is load-bearing: the registry is filled in a service
+     * provider's `boot()`, which runs before any locale middleware, and under
+     * Octane runs once for the lifetime of the worker. A `__()` call over there
+     * resolves in the default locale and then freezes, so every request would
+     * answer in whichever language the first one happened to want.
+     *
+     * The locale comes from the notifiable's own `HasLocalePreference` when it
+     * declares one, which is the same contract Laravel's own
+     * `NotificationSender` honours before rendering a notification
+     * (`Illuminate\Notifications\NotificationSender::withLocale`). This package
+     * WRITES `users.locale` at registration and login and never applied it
+     * anywhere, so an adopter with no locale middleware of its own stored a
+     * preference this package then ignored. A `null` locale means "whatever the
+     * app has set", so an adopter that resolves the locale in middleware is
+     * unaffected and the two agree.
+     *
+     * Non-breaking for an app that registers a plain sentence: `__()` returns
+     * its argument unchanged when no translation line matches it, so
+     * 'Incident opened' stays 'Incident opened'.
+     *
+     * The `is_string` guard is not defensive noise. `Translator::get()` returns
+     * the line UNCHANGED when it is an array, so a key naming a group of lines
+     * rather than one line would put a nested object where the response shape
+     * promises a string. Falling back to the registered key is more useful to
+     * whoever has to debug it than a JSON blob in a label.
+     */
+    protected function translateTypeLabel(string $label): string
+    {
+        $locale = $this instanceof HasLocalePreference
+            ? $this->preferredLocale()
+            : null;
+
+        $translated = __($label, [], $locale);
+
+        return is_string($translated) ? $translated : $label;
     }
 
     /**
