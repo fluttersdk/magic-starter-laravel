@@ -570,11 +570,34 @@ Two things about this are worth knowing before you rely on it:
 - **The locale comes from the notifiable when it declares one.** If your user
   model implements `Illuminate\Contracts\Translation\HasLocalePreference`
   (the same contract Laravel's own notification sender honours), the label
-  resolves in `preferredLocale()`. This package writes `users.locale` at
-  registration and at login, so implementing the contract is usually two lines
-  and it means the labels follow the user's stored choice with no middleware at
-  all. Without the contract the label follows whatever locale your app has
-  set.
+  resolves in `preferredLocale()`. Without the contract it follows whatever
+  locale your app has set, which for most apps means whatever your locale
+  middleware resolved for the request.
+
+  **The shipped `User` stub deliberately does NOT implement it, and whether
+  you should is one question rather than a default.** This package writes
+  `users.locale` at registration and on a profile update, and its migration
+  creates that column `NOT NULL` with an `'en'` default. So the column cannot
+  tell "this person chose English" apart from "this row was created by a
+  seeder and nobody has chosen anything", and `HasLocalePreference` asserts a
+  STATED preference. Implement it when your `users.locale` really does reflect
+  a choice somebody made:
+
+  ```php
+  class User extends Authenticatable implements HasLocalePreference
+  {
+      public function preferredLocale(): ?string
+      {
+          return $this->locale;
+      }
+  }
+  ```
+
+  Do not implement it if some of your rows carry the default: on those, a
+  stated `'en'` would outrank a request that asked for something else, and a
+  person browsing in Turkish would get English labels. Resolve the locale in
+  middleware for that shape instead, which is what the label does when no
+  contract is declared.
 
 ### Slug resolution
 
