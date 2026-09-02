@@ -7,6 +7,7 @@ use FlutterSdk\MagicStarter\Models\NotificationSetting;
 use FlutterSdk\MagicStarter\NotificationPreferenceRegistry;
 use FlutterSdk\MagicStarter\Tests\TestCase;
 use FlutterSdk\MagicStarter\Traits\HasNotifications;
+use Illuminate\Contracts\Translation\HasLocalePreference;
 use Illuminate\Database\Eloquent\Concerns\HasUuids;
 use Illuminate\Foundation\Auth\User as Authenticatable;
 
@@ -33,6 +34,9 @@ final class HasNotificationsTest extends TestCase
             $table->uuid('id')->primary();
             $table->string('name')->nullable();
             $table->string('email')->nullable();
+            // The column this package writes at registration and login, and
+            // the one the locale-preference test reads back.
+            $table->string('locale')->nullable();
             $table->timestamps();
         });
 
@@ -160,6 +164,167 @@ final class HasNotificationsTest extends TestCase
         // incident_update: database default on, mail default off
         $this->assertTrue($matrix['incident_update']['channels']['database']['enabled']);
         $this->assertFalse($matrix['incident_update']['channels']['mail']['enabled']);
+    }
+
+    public function test_notification_preference_matrix_translates_a_label_key_per_request_locale(): void
+    {
+        // An app that ships more than one language cannot register a finished
+        // sentence: the registry is filled in a service provider's boot(),
+        // before the locale middleware has run, and under Octane it is filled
+        // once for the worker's whole life. So the label has to be resolvable
+        // per request, which is what registering a key buys.
+        NotificationPreferenceRegistry::flush();
+        NotificationPreferenceRegistry::register([
+            'monitor_down' => [
+                'label' => 'notifications.type_monitor_down',
+                'channels' => ['mail'],
+                'default' => ['mail'],
+                'locked' => [],
+            ],
+        ]);
+
+        \call_user_func([\call_user_func('app', 'translator'), 'addLines'], [
+            'notifications.type_monitor_down' => 'Monitor went down',
+        ], 'en');
+        \call_user_func([\call_user_func('app', 'translator'), 'addLines'], [
+            'notifications.type_monitor_down' => 'İzleyici düştü',
+        ], 'tr');
+
+        $user = HasNotifPrefsTestUser::query()->create([
+            'name' => 'Test User',
+            'email' => 'test@example.test',
+        ]);
+        $user->load('notificationSettings');
+
+        \call_user_func([\call_user_func('app'), 'setLocale'], 'en');
+        $this->assertSame(
+            'Monitor went down',
+            $user->notificationPreferenceMatrix()['monitor_down']['label'],
+        );
+
+        // The same registry entry, the same booted app, a different locale.
+        // This is the assertion a boot-time __() call cannot satisfy.
+        \call_user_func([\call_user_func('app'), 'setLocale'], 'tr');
+        $this->assertSame(
+            'İzleyici düştü',
+            $user->notificationPreferenceMatrix()['monitor_down']['label'],
+        );
+    }
+
+    public function test_notification_preference_matrix_honours_a_stored_locale_preference(): void
+    {
+        // This package WRITES users.locale at registration and login, and used
+        // to apply it nowhere: an adopter with no locale middleware of its own
+        // stored a preference this package then ignored. The label now resolves
+        // through the notifiable's own HasLocalePreference, which is the same
+        // contract Laravel's NotificationSender honours before rendering.
+        //
+        // Nothing here calls App::setLocale(), deliberately: the app locale
+        // stays 'en' for the whole test, so the only thing that can produce
+        // Turkish is the stored preference being read.
+        NotificationPreferenceRegistry::flush();
+        NotificationPreferenceRegistry::register([
+            'monitor_down' => [
+                'label' => 'notifications.type_monitor_down',
+                'channels' => ['mail'],
+                'default' => ['mail'],
+                'locked' => [],
+            ],
+        ]);
+
+        \call_user_func([\call_user_func('app', 'translator'), 'addLines'], [
+            'notifications.type_monitor_down' => 'Monitor went down',
+        ], 'en');
+        \call_user_func([\call_user_func('app', 'translator'), 'addLines'], [
+            'notifications.type_monitor_down' => 'İzleyici düştü',
+        ], 'tr');
+
+        \call_user_func([\call_user_func('app'), 'setLocale'], 'en');
+
+        \call_user_func('config', [
+            'magic-starter.models.user' => HasNotifPrefsLocaleAwareUser::class,
+        ]);
+
+        $user = HasNotifPrefsLocaleAwareUser::query()->create([
+            'name' => 'Test User',
+            'email' => 'tr@example.test',
+            'locale' => 'tr',
+        ]);
+        $user->load('notificationSettings');
+
+        $this->assertSame(
+            'İzleyici düştü',
+            $user->notificationPreferenceMatrix()['monitor_down']['label'],
+        );
+
+        // And a notifiable that declares no preference still follows the app.
+        $plain = HasNotifPrefsTestUser::query()->create([
+            'name' => 'Test User',
+            'email' => 'en@example.test',
+        ]);
+        $plain->load('notificationSettings');
+
+        $this->assertSame(
+            'Monitor went down',
+            $plain->notificationPreferenceMatrix()['monitor_down']['label'],
+        );
+    }
+
+    public function test_notification_preference_matrix_falls_back_when_a_key_names_a_group(): void
+    {
+        // `Translator::get()` returns the line UNCHANGED when it is an array,
+        // so a key naming a group of lines would put a nested object where the
+        // response shape promises a string.
+        NotificationPreferenceRegistry::flush();
+        NotificationPreferenceRegistry::register([
+            'monitor_down' => [
+                'label' => 'notifications.types',
+                'channels' => ['mail'],
+                'default' => ['mail'],
+                'locked' => [],
+            ],
+        ]);
+
+        \call_user_func([\call_user_func('app', 'translator'), 'addLines'], [
+            'notifications.types' => ['down' => 'Down', 'up' => 'Up'],
+        ], 'en');
+
+        $user = HasNotifPrefsTestUser::query()->create([
+            'name' => 'Test User',
+            'email' => 'group@example.test',
+        ]);
+        $user->load('notificationSettings');
+
+        $label = $user->notificationPreferenceMatrix()['monitor_down']['label'];
+
+        $this->assertIsString($label);
+        $this->assertSame('notifications.types', $label);
+    }
+
+    public function test_notification_preference_matrix_leaves_a_plain_label_alone(): void
+    {
+        // The non-breaking half: every app on 0.0.x registers a finished
+        // English sentence, and __() hands back an argument it has no line for.
+        NotificationPreferenceRegistry::flush();
+        NotificationPreferenceRegistry::register([
+            'monitor_down' => [
+                'label' => 'Monitor Down',
+                'channels' => ['mail'],
+                'default' => ['mail'],
+                'locked' => [],
+            ],
+        ]);
+
+        $user = HasNotifPrefsTestUser::query()->create([
+            'name' => 'Test User',
+            'email' => 'test@example.test',
+        ]);
+        $user->load('notificationSettings');
+
+        $this->assertSame(
+            'Monitor Down',
+            $user->notificationPreferenceMatrix()['monitor_down']['label'],
+        );
     }
 
     public function test_notification_preference_matrix_reflects_overrides(): void
@@ -355,4 +520,31 @@ final class HasNotifPrefsTestUser extends Authenticatable
     protected $keyType = 'string';
 
     protected $guarded = [];
+}
+
+/**
+ * The same notifiable, declaring Laravel's locale-preference contract.
+ *
+ * Its presence is the whole test: `$this instanceof HasLocalePreference`
+ * answers false for an unresolvable class name rather than erroring, so a
+ * mistyped import would leave the label resolving in the app locale with
+ * nothing failing anywhere.
+ */
+final class HasNotifPrefsLocaleAwareUser extends Authenticatable implements HasLocalePreference
+{
+    use HasNotifications;
+    use HasUuids;
+
+    protected $table = 'users';
+
+    public $incrementing = false;
+
+    protected $keyType = 'string';
+
+    protected $guarded = [];
+
+    public function preferredLocale(): ?string
+    {
+        return $this->locale;
+    }
 }

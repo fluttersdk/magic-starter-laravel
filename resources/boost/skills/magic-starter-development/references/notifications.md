@@ -13,6 +13,7 @@
 ### NotificationPreferenceRegistry centralizes type and channel definitions
 
 - Register notification types in AppServiceProvider boot(): NotificationPreferenceRegistry::register(['ClassName' => ['label' => '...', 'channels' => ['email', 'push'], 'default' => ['email'], 'locked' => []]]).
+- 'label' is passed through __() when the preference matrix is built, so a multi-language app registers a translation KEY rather than a sentence. Register the key, never __('...') itself: boot() runs before any locale middleware, and under Octane it runs once per worker, so a __() there freezes the first request's language in for every later one. A finished sentence still works unchanged, since __() returns an argument it has no line for.
 - Channel aliases map logical names (e.g. 'push') to driver classes via NotificationPreferenceRegistry::channelAliases(['push' => OneSignalChannel::class]).
 - Slugs auto-derive from class basename with Notification suffix stripped and converted to snake_case; override via 'slug' key in registration.
 

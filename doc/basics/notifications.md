@@ -540,6 +540,88 @@ NotificationPreferenceRegistry::register([
 ]);
 ```
 
+#### Translating the label
+
+`label` is passed through the translator when the matrix is built, so an app
+that ships more than one language registers a KEY instead of a sentence:
+
+```php
+NotificationPreferenceRegistry::register([
+    OrderShippedNotification::class => [
+        'label'    => 'notifications.type_order_shipped',
+        'channels' => ['push', 'email'],
+        'default'  => ['push'],
+        'locked'   => [],
+    ],
+]);
+```
+
+A finished sentence still works exactly as before: `__()` hands back an
+argument it has no line for, so `'Order Shipped'` stays `'Order Shipped'`.
+
+Two things about this are worth knowing before you rely on it:
+
+- **Register the key, never `__('...')`.** `register()` runs in a service
+  provider's `boot()`, which is before any locale middleware has looked at the
+  request, and under Octane it runs once for the worker's whole life. A `__()`
+  call there resolves in the default locale and then freezes that answer in for
+  every later request. Resolving happens inside
+  `notificationPreferenceMatrix()` precisely so it lands in the request.
+- **The locale comes from the notifiable when it declares one.** If your user
+  model implements `Illuminate\Contracts\Translation\HasLocalePreference`
+  (the same contract Laravel's own notification sender honours), the label
+  resolves in `preferredLocale()`. Without the contract it follows whatever
+  locale your app has set, which for most apps means whatever your locale
+  middleware resolved for the request.
+
+  **The shipped `User` stub deliberately does NOT implement it, and whether
+  you should is one question rather than a default.** This package writes
+  `users.locale` at registration and on a profile update, and its migration
+  creates that column `NOT NULL` with an `'en'` default. So the column cannot
+  tell "this person chose English" apart from "this row was created by a
+  seeder and nobody has chosen anything", and `HasLocalePreference` asserts a
+  STATED preference. Implement it when your `users.locale` really does reflect
+  a choice somebody made:
+
+  ```php
+  class User extends Authenticatable implements HasLocalePreference
+  {
+      public function preferredLocale(): ?string
+      {
+          return $this->locale;
+      }
+  }
+  ```
+
+  Do not implement it if some of your rows carry the default: on those, a
+  stated `'en'` would outrank a request that asked for something else, and a
+  person browsing in Turkish would get English labels. Resolve the locale in
+  middleware for that shape instead, which is what the label does when no
+  contract is declared.
+
+  There is a third shape, and an escape hatch for it. An app whose middleware
+  prefers `Accept-Language` while its model implements the contract anyway
+  (which is reasonable, since Laravel's notification sender honours it for
+  queued mail) gets a preference screen whose type labels follow the stored
+  locale while every other string in the same response follows the header. If
+  that is you, override the resolver rather than dropping the contract:
+  `HasNotifications::translateTypeLabel(string $label): string` is `protected`,
+  so one method on your User model decides this for the preference matrix
+  alone.
+
+  ```php
+  protected function translateTypeLabel(string $label): string
+  {
+      // Keep the guard the method you are replacing has: `__()` returns the
+      // line UNCHANGED when it is an array, so a key naming a group of lines
+      // would otherwise put "Array" in a label, with a PHP conversion warning
+      // beside it. Handing the key back is what the package does.
+      $translated = __($label);
+
+      return is_string($translated) ? $translated : $label;
+  }
+  ```
+
 ### Slug resolution
 
 The registry key can be a FQCN or a plain string. The slug stored in `notification_settings.type` is derived automatically:
