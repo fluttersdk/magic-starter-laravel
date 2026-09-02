@@ -162,6 +162,77 @@ final class HasNotificationsTest extends TestCase
         $this->assertFalse($matrix['incident_update']['channels']['mail']['enabled']);
     }
 
+    public function test_notification_preference_matrix_translates_a_label_key_per_request_locale(): void
+    {
+        // An app that ships more than one language cannot register a finished
+        // sentence: the registry is filled in a service provider's boot(),
+        // before the locale middleware has run, and under Octane it is filled
+        // once for the worker's whole life. So the label has to be resolvable
+        // per request, which is what registering a key buys.
+        NotificationPreferenceRegistry::flush();
+        NotificationPreferenceRegistry::register([
+            'monitor_down' => [
+                'label' => 'notifications.type_monitor_down',
+                'channels' => ['mail'],
+                'default' => ['mail'],
+                'locked' => [],
+            ],
+        ]);
+
+        \call_user_func([\call_user_func('app', 'translator'), 'addLines'], [
+            'notifications.type_monitor_down' => 'Monitor went down',
+        ], 'en');
+        \call_user_func([\call_user_func('app', 'translator'), 'addLines'], [
+            'notifications.type_monitor_down' => 'İzleyici düştü',
+        ], 'tr');
+
+        $user = HasNotifPrefsTestUser::query()->create([
+            'name' => 'Test User',
+            'email' => 'test@example.test',
+        ]);
+        $user->load('notificationSettings');
+
+        \call_user_func([\call_user_func('app'), 'setLocale'], 'en');
+        $this->assertSame(
+            'Monitor went down',
+            $user->notificationPreferenceMatrix()['monitor_down']['label'],
+        );
+
+        // The same registry entry, the same booted app, a different locale.
+        // This is the assertion a boot-time __() call cannot satisfy.
+        \call_user_func([\call_user_func('app'), 'setLocale'], 'tr');
+        $this->assertSame(
+            'İzleyici düştü',
+            $user->notificationPreferenceMatrix()['monitor_down']['label'],
+        );
+    }
+
+    public function test_notification_preference_matrix_leaves_a_plain_label_alone(): void
+    {
+        // The non-breaking half: every app on 0.0.x registers a finished
+        // English sentence, and __() hands back an argument it has no line for.
+        NotificationPreferenceRegistry::flush();
+        NotificationPreferenceRegistry::register([
+            'monitor_down' => [
+                'label' => 'Monitor Down',
+                'channels' => ['mail'],
+                'default' => ['mail'],
+                'locked' => [],
+            ],
+        ]);
+
+        $user = HasNotifPrefsTestUser::query()->create([
+            'name' => 'Test User',
+            'email' => 'test@example.test',
+        ]);
+        $user->load('notificationSettings');
+
+        $this->assertSame(
+            'Monitor Down',
+            $user->notificationPreferenceMatrix()['monitor_down']['label'],
+        );
+    }
+
     public function test_notification_preference_matrix_reflects_overrides(): void
     {
         $user = HasNotifPrefsTestUser::query()->create([

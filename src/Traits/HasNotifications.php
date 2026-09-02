@@ -113,8 +113,21 @@ trait HasNotifications
             }
 
             // 3. Use slug as the matrix key (not FQCN) for consistent API shape.
+            //
+            // The label goes through the translator so an app can register a
+            // translation key instead of a finished sentence. Doing it HERE
+            // rather than at registration time is the whole point: the registry
+            // is filled in a service provider's `boot()`, which runs before the
+            // locale middleware, and under Octane runs once for the lifetime of
+            // the worker. A `__()` call over there resolves in the default
+            // locale and then freezes, so every request would answer in
+            // whichever language the first one happened to want.
+            //
+            // Non-breaking for an app that registers a plain sentence:
+            // `__()` returns its argument unchanged when no translation line
+            // matches, so 'Incident opened' stays 'Incident opened'.
             $matrix[$slug] = [
-                'label' => $definition['label'],
+                'label' => __($definition['label']),
                 'channels' => $channels,
             ];
         }
