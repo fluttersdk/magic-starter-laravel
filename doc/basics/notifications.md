@@ -612,7 +612,13 @@ Two things about this are worth knowing before you rely on it:
   ```php
   protected function translateTypeLabel(string $label): string
   {
-      return (string) __($label);
+      // Keep the guard the method you are replacing has: `__()` returns the
+      // line UNCHANGED when it is an array, so a key naming a group of lines
+      // would otherwise put "Array" in a label, with a PHP conversion warning
+      // beside it. Handing the key back is what the package does.
+      $translated = __($label);
+
+      return is_string($translated) ? $translated : $label;
   }
   ```
 
