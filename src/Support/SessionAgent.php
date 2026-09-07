@@ -7,6 +7,20 @@ class SessionAgent
     /**
      * Parse the given user agent string and return device info.
      *
+     * `browser` and `platform` are EMPTY when this class cannot name them,
+     * never a word. A published package cannot know the language its consumer
+     * renders in, so a literal here is English frozen into every app that
+     * installs it: a Turkish session list read "Unknown - Unknown" under an
+     * otherwise fully Turkish page. Empty is already the answer this method
+     * gives for an absent user agent, so it is one shape for one fact rather
+     * than two, and the consumer supplies the wording.
+     *
+     * The client half of the contract is already written for it:
+     * `magic_starter`'s session row joins the non-empty parts and falls back to
+     * its own translated label when both are empty, so a partially readable
+     * agent still shows what IS known ("Mac") instead of naming a browser we
+     * failed to recognise.
+     *
      * @return array{browser: string, platform: string, is_desktop: bool, is_mobile: bool}
      */
     public static function parse(string $userAgent): array
@@ -52,7 +66,8 @@ class SessionAgent
             }
         }
 
-        return 'Unknown';
+        // Empty rather than a word: see the note on parse().
+        return '';
     }
 
     /**
@@ -74,7 +89,8 @@ class SessionAgent
             }
         }
 
-        return 'Unknown';
+        // Empty rather than a word: see the note on parse().
+        return '';
     }
 
     /**

@@ -461,6 +461,12 @@ Available when the `sessions` feature is enabled. Sessions are Sanctum personal 
 
 Returns all active tokens for the authenticated user.
 
+`agent` is parsed from the stored user agent by `SessionAgent`. **`browser` and
+`platform` are EMPTY strings when it cannot name them**, never a word: this is a
+package, and a literal here would be English frozen into every consumer's UI. The
+two are independent, so a partially readable agent reports the half it read. Show
+your own translated label when both are empty.
+
 #### Response Example
 
 ```json
@@ -472,7 +478,9 @@ Returns all active tokens for the authenticated user.
             "user_agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7)...",
             "agent": {
                 "browser": "Chrome",
-                "platform": "macOS"
+                "platform": "Mac",
+                "is_desktop": true,
+                "is_mobile": false
             },
             "location": {
                 "city": "Istanbul",
@@ -487,8 +495,10 @@ Returns all active tokens for the authenticated user.
             "ip_address": "10.0.0.5",
             "user_agent": "Dart/3.2 (dart:io)",
             "agent": {
-                "browser": "Dart",
-                "platform": "Unknown"
+                "browser": "",
+                "platform": "",
+                "is_desktop": true,
+                "is_mobile": false
             },
             "location": null,
             "is_current_device": false,
