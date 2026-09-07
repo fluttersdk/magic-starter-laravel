@@ -76,4 +76,49 @@ final class SessionAgentTest extends TestCase
         $this->assertArrayHasKey('is_desktop', $result);
         $this->assertArrayHasKey('is_mobile', $result);
     }
+
+    /**
+     * An unrecognisable agent names nothing, rather than naming it in English.
+     *
+     * This class is shipped in a package, so a literal it returns is frozen
+     * English inside every consumer's UI. A Turkish session list rendered
+     * "Unknown - Unknown" under an otherwise fully Turkish page because of it.
+     * Empty is what the method already answers for an absent user agent, so
+     * this makes one shape for one fact.
+     */
+    public function test_parse_names_nothing_when_it_recognises_nothing(): void
+    {
+        $result = SessionAgent::parse('some-internal-probe/1.0');
+
+        $this->assertSame('', $result['browser']);
+        $this->assertSame('', $result['platform']);
+    }
+
+    /**
+     * A PARTIALLY readable agent still reports the half it read.
+     *
+     * The client joins the non-empty parts, so this row reads "Mac" rather than
+     * "Mac - Unknown": naming what is known and staying silent on what is not.
+     * A blanket empty-on-any-miss would have lost the platform too.
+     */
+    public function test_parse_keeps_the_half_it_could_read(): void
+    {
+        // A Mac UA with no browser token any of the six patterns match.
+        $result = SessionAgent::parse('Mozilla/5.0 (Macintosh; Mac OS X 10_15_7) CustomAgent/2.1');
+
+        $this->assertSame('Mac', $result['platform']);
+        $this->assertSame('', $result['browser']);
+    }
+
+    /**
+     * The empty-user-agent branch keeps answering the same way, so the two
+     * "we do not know" paths cannot drift back apart.
+     */
+    public function test_an_absent_user_agent_answers_the_same_empty_shape(): void
+    {
+        $result = SessionAgent::parse('');
+
+        $this->assertSame('', $result['browser']);
+        $this->assertSame('', $result['platform']);
+    }
 }
