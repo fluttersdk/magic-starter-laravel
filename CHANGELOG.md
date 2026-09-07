@@ -4,6 +4,8 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [0.0.7] - 2026-09-07
+
 ### Fixed
 
 - **`SessionAgent::parse()` answers an EMPTY `browser` / `platform` when it cannot name them, instead of the literal `'Unknown'`.** A published package cannot know the language its consumer renders in, so a word returned here is English frozen inside every app that installs it: a Turkish session list read `Unknown - Unknown` under an otherwise fully Turkish page, and no consumer could translate it without pattern-matching an English string out of a payload. Empty is already the answer this same method gives for an ABSENT user agent, so this is one shape for one fact rather than two values for it, and the wording moves to the consumer where the catalogue lives. The client half of the contract was already written for it: `magic_starter`'s session row joins the non-empty parts and falls back to its own translated label when both are empty, so nothing had to change there. A PARTIALLY readable agent is better off too, since the row now reads `Mac` rather than `Mac - Unknown`: it names what was read and stays silent about what was not, instead of asserting a browser we failed to recognise. Three tests, two of them proved red against the literal. (`src/Support/SessionAgent.php`)
