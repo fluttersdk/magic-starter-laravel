@@ -11,7 +11,9 @@ All notable changes to this project will be documented in this file.
 
   The key order matches `magic_deeplink`'s `OneSignalDeeplinkHandler.extractUri` exactly (`url`, `deep_link`, `link`, `uri`), because the two disagreeing would send web and mobile to different screens from one payload.
 
-  **Absent `web_origin` means off, and off is the previous behaviour rather than a broken one:** mobile keeps working and web keeps landing on the home page. No origin is guessed, since `APP_URL` on an API-only deployment is the API host and would send every web recipient somewhere the client is not served. A builder that sets `web_url` itself is always left alone, and only a rooted path is joined, so an absolute link in the payload is never rewritten onto another origin.
+  Both shapes of `data` are read. The SDK types that field `object|null` and this package's own push-test endpoint sets it with `(object)`, so an array-only check would have skipped exactly the endpoint an adopter reaches for to verify the feature; an application composing the payload by hand is as likely to pass an array, which is what every notification in the wild does today.
+
+  **Absent `web_origin` means off, and off is the previous behaviour rather than a broken one:** mobile keeps working and web keeps landing on the home page. No origin is guessed, since `APP_URL` on an API-only deployment is the API host and would send every web recipient somewhere the client is not served. A builder that sets `web_url` OR the top-level `url` is always left alone (the SDK documents `url` as "Omit if including web_url or app_url", so setting both would contradict its own contract), and only a rooted path is joined, so an absolute link in the payload is never rewritten onto another origin.
 
 ## [0.0.7] - 2026-09-07
 

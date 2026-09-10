@@ -34,6 +34,19 @@ use Throwable;
  */
 class OneSignalChannel
 {
+    /**
+     * Keys the Flutter client reads a deep link from, in its own order.
+     *
+     * Mirrors `magic_deeplink`'s `OneSignalDeeplinkHandler.extractUri`
+     * (`onesignal_deeplink_handler.dart:66`). The two lists have to agree: a
+     * key this side ignores is a link the browser never follows, and a key
+     * this side prefers over the client's choice sends the two platforms to
+     * different screens from one payload.
+     *
+     * @var list<string>
+     */
+    private const DEEP_LINK_KEYS = ['url', 'deep_link', 'link', 'uri'];
+
     public function __construct(
         private DefaultApi $client,
         private string $builderMethod = 'toOneSignal',
@@ -124,19 +137,6 @@ class OneSignalChannel
     }
 
     /**
-     * Keys the Flutter client reads a deep link from, in its own order.
-     *
-     * Mirrors `magic_deeplink`'s `OneSignalDeeplinkHandler.extractUri`
-     * (`onesignal_deeplink_handler.dart:66`). The two lists have to agree: a
-     * key this side ignores is a link the browser never follows, and a key
-     * this side prefers over the client's choice sends the two platforms to
-     * different screens from one payload.
-     *
-     * @var list<string>
-     */
-    private const DEEP_LINK_KEYS = ['url', 'deep_link', 'link', 'uri'];
-
-    /**
      * Derive `web_url` from the payload's deep link, when neither is settled.
      *
      * A browser reads `web_url` and nothing else. It does NOT read the custom
@@ -170,7 +170,11 @@ class OneSignalChannel
      */
     private function applyWebUrl(OneSignalNotification $payload): void
     {
-        if (is_string($payload->getWebUrl()) && $payload->getWebUrl() !== '') {
+        // `url` as well as `web_url`. The SDK's own field documentation says
+        // to "Omit if including web_url or app_url", so setting both would
+        // produce a payload that contradicts its own contract, and a builder
+        // that named a launch url has already decided where the click goes.
+        if ($this->isSet($payload->getWebUrl()) || $this->isSet($payload->getUrl())) {
             return;
         }
 
@@ -180,7 +184,17 @@ class OneSignalChannel
             return;
         }
 
+        // Both shapes. The SDK types this field `object|null` and this
+        // package's own push-test endpoint sets it with `(object)`
+        // (`PushTestController::200`), so an is_array check skipped exactly
+        // the endpoint an adopter would use to verify this feature. An
+        // application composing the payload by hand is as likely to pass an
+        // array, which is what every notification in the wild does today.
         $data = $payload->getData();
+
+        if (is_object($data)) {
+            $data = get_object_vars($data);
+        }
 
         if (! is_array($data)) {
             return;
@@ -197,5 +211,13 @@ class OneSignalChannel
 
             return;
         }
+    }
+
+    /**
+     * Whether a nullable SDK string field carries a value.
+     */
+    private function isSet(mixed $value): bool
+    {
+        return is_string($value) && $value !== '';
     }
 }

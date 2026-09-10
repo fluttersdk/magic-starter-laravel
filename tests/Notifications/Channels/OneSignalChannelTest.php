@@ -409,13 +409,20 @@ final class OneSignalChannelTest extends TestCase
 
     /**
      * Sends [$data] through the channel and returns the `web_url` it settled on.
+     *
+     * `$data` is passed through untouched so a caller can hand it either shape
+     * the SDK accepts: an array, or the `object` its own field is typed as.
      */
-    private function webUrlFor(array $data, ?string $preset = null): ?string
+    private function webUrlFor(mixed $data, ?string $preset = null, ?string $url = null): ?string
     {
         $payload = (new OneSignalNotification)->setData($data);
 
         if ($preset !== null) {
             $payload->setWebUrl($preset);
+        }
+
+        if ($url !== null) {
+            $payload->setUrl($url);
         }
 
         $captured = null;
@@ -486,6 +493,37 @@ final class OneSignalChannelTest extends TestCase
         // one. Guessing an origin would send every web recipient to a host the
         // client is not served from.
         $this->assertNull($this->webUrlFor(['deep_link' => '/incidents/7']));
+    }
+
+    public function test_web_url_is_derived_when_data_is_an_object(): void
+    {
+        config(['magic-starter.onesignal.web_origin' => 'https://app.example.com']);
+
+        // The shape the SDK's own field is typed as (`object|null`), and the
+        // one this package's push-test endpoint uses:
+        // `PushTestController` sets `(object) $this->data` deliberately.
+        // An is_array check skipped exactly the endpoint an adopter would
+        // reach for to verify this feature.
+        $this->assertSame(
+            'https://app.example.com/incidents/7',
+            $this->webUrlFor((object) ['deep_link' => '/incidents/7']),
+        );
+    }
+
+    public function test_a_builder_set_url_opts_out_of_the_derivation(): void
+    {
+        config(['magic-starter.onesignal.web_origin' => 'https://app.example.com']);
+
+        // The SDK documents `url` as "Omit if including web_url or app_url",
+        // so setting both produces a payload contradicting its own contract.
+        // A builder that named a launch url has already decided where the
+        // click goes.
+        $this->assertNull(
+            $this->webUrlFor(
+                ['deep_link' => '/incidents/7'],
+                url: 'https://app.example.com/somewhere-else',
+            ),
+        );
     }
 
     public function test_an_absolute_deep_link_is_not_rewritten_onto_the_origin(): void
