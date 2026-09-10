@@ -434,6 +434,17 @@ Required configuration keys under `magic-starter.onesignal`:
 | `app_id` | string | OneSignal Application ID |
 | `rest_api_key` | string | OneSignal REST API key. Falls back to `services.onesignal.rest_api_key` if not set. |
 | `target_channel` | string | Default notification channel. Defaults to `'push'`. |
+| `web_origin` | string\|null | Where the Flutter web client is served, e.g. `https://app.example.com` (`MAGIC_STARTER_WEB_ORIGIN`). Optional; see below. |
+
+#### `web_origin`, and why a web push needs it
+
+Set it and a push carrying a deep link opens the right SCREEN in a browser. Leave it absent and web recipients land on the home page, which is the behaviour before this key existed.
+
+A browser reads `web_url` and nothing else. The mobile clients navigate from the notification's custom `data` and the web one cannot: a click is handled by the service worker rather than by the page, so it opens the launch url as an ordinary page load and no Dart is running yet to read `additionalData`. OneSignal supplies the dashboard's Site URL when the payload names no url, which is why the symptom is the home page in a new tab rather than an error, even with the app already open in another.
+
+`OneSignalChannel` therefore joins this origin to the deep link the notification already carries, reading `url`, `deep_link`, `link`, `uri` in that order to match the Flutter client's own lookup. So a notification class keeps returning a relative path and nothing composes an absolute url per notification.
+
+It leaves the payload alone in three cases: when the builder set `web_url` or the top-level `url` itself (the SDK documents `url` as "Omit if including web_url or app_url"), when no origin is configured, and when the deep link is not a rooted path. No origin is guessed, because `APP_URL` on an API-only deployment is the API host and would send every web recipient where the client is not served.
 
 ### Notification Contract
 

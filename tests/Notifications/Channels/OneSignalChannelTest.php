@@ -407,6 +407,135 @@ final class OneSignalChannelTest extends TestCase
         $this->assertNull($user->fresh()->sms_registered_at);
     }
 
+    /**
+     * Sends [$data] through the channel and returns the `web_url` it settled on.
+     *
+     * `$data` is passed through untouched so a caller can hand it either shape
+     * the SDK accepts: an array, or the `object` its own field is typed as.
+     */
+    private function webUrlFor(mixed $data, ?string $preset = null, ?string $url = null): ?string
+    {
+        $payload = (new OneSignalNotification)->setData($data);
+
+        if ($preset !== null) {
+            $payload->setWebUrl($preset);
+        }
+
+        if ($url !== null) {
+            $payload->setUrl($url);
+        }
+
+        $captured = null;
+        $client = $this->createMock(DefaultApi::class);
+        $client->method('createNotification')
+            ->willReturnCallback(function (OneSignalNotification $sent) use (&$captured): null {
+                $captured = $sent;
+
+                return null;
+            });
+
+        (new OneSignalChannel($client))->send(
+            new StubRoutableNotifiable('alpha'),
+            new StubOneSignalNotification($payload),
+        );
+
+        return $captured?->getWebUrl();
+    }
+
+    public function test_web_url_is_derived_from_the_deep_link(): void
+    {
+        config(['magic-starter.onesignal.web_origin' => 'https://app.example.com']);
+
+        // A browser reads `web_url` and nothing else: a click is handled by the
+        // service worker, which opens the launch url as an ordinary page load,
+        // so no Dart is running yet to read the custom data the mobile clients
+        // navigate from. Without this the recipient lands on the home page and
+        // nothing reports a failure.
+        $this->assertSame(
+            'https://app.example.com/incidents/7',
+            $this->webUrlFor(['deep_link' => '/incidents/7']),
+        );
+    }
+
+    public function test_web_url_follows_the_key_order_the_flutter_client_uses(): void
+    {
+        config(['magic-starter.onesignal.web_origin' => 'https://app.example.com']);
+
+        // `url` before `deep_link`, matching
+        // `OneSignalDeeplinkHandler.extractUri`. Disagreeing would send the two
+        // platforms to different screens from one payload.
+        $this->assertSame(
+            'https://app.example.com/first',
+            $this->webUrlFor(['deep_link' => '/second', 'url' => '/first']),
+        );
+    }
+
+    public function test_web_url_set_by_the_builder_is_left_alone(): void
+    {
+        config(['magic-starter.onesignal.web_origin' => 'https://app.example.com']);
+
+        // A default, not a policy: an application that wants the browser
+        // somewhere other than the in-app route has already said so.
+        $this->assertSame(
+            'https://marketing.example.com/promo',
+            $this->webUrlFor(
+                ['deep_link' => '/incidents/7'],
+                'https://marketing.example.com/promo',
+            ),
+        );
+    }
+
+    public function test_no_web_url_without_a_configured_origin(): void
+    {
+        config(['magic-starter.onesignal.web_origin' => null]);
+
+        // Absent means off, and off is the old behaviour rather than a broken
+        // one. Guessing an origin would send every web recipient to a host the
+        // client is not served from.
+        $this->assertNull($this->webUrlFor(['deep_link' => '/incidents/7']));
+    }
+
+    public function test_web_url_is_derived_when_data_is_an_object(): void
+    {
+        config(['magic-starter.onesignal.web_origin' => 'https://app.example.com']);
+
+        // The shape the SDK's own field is typed as (`object|null`), and the
+        // one this package's push-test endpoint uses:
+        // `PushTestController` sets `(object) $this->data` deliberately.
+        // An is_array check skipped exactly the endpoint an adopter would
+        // reach for to verify this feature.
+        $this->assertSame(
+            'https://app.example.com/incidents/7',
+            $this->webUrlFor((object) ['deep_link' => '/incidents/7']),
+        );
+    }
+
+    public function test_a_builder_set_url_opts_out_of_the_derivation(): void
+    {
+        config(['magic-starter.onesignal.web_origin' => 'https://app.example.com']);
+
+        // The SDK documents `url` as "Omit if including web_url or app_url",
+        // so setting both produces a payload contradicting its own contract.
+        // A builder that named a launch url has already decided where the
+        // click goes.
+        $this->assertNull(
+            $this->webUrlFor(
+                ['deep_link' => '/incidents/7'],
+                url: 'https://app.example.com/somewhere-else',
+            ),
+        );
+    }
+
+    public function test_an_absolute_deep_link_is_not_rewritten_onto_the_origin(): void
+    {
+        config(['magic-starter.onesignal.web_origin' => 'https://app.example.com']);
+
+        // Only a rooted path is joinable. Concatenating an absolute link would
+        // produce nonsense, and silently moving one onto another origin is
+        // worse than leaving the browser on the home page.
+        $this->assertNull($this->webUrlFor(['deep_link' => 'https://elsewhere.example/x']));
+    }
+
     private function bootUsersTable(): void
     {
         Schema::dropIfExists('users');

@@ -652,6 +652,39 @@ return [
 
         /*
         |--------------------------------------------------------------------------
+        | Web Origin
+        |--------------------------------------------------------------------------
+        |
+        | Where the Flutter web client is served, e.g. https://app.example.com.
+        | Set this and a push carrying a deep link opens the right SCREEN in a
+        | browser instead of the home page.
+        |
+        | It is needed because a browser reads `web_url` and nothing else. The
+        | mobile clients navigate from the notification's custom data, and the
+        | web one cannot: a click is handled by the service worker, which opens
+        | the launch url as an ordinary page load, so no Dart is running yet to
+        | read that data. OneSignal supplies the dashboard's Site URL when the
+        | payload names no url, which is why the symptom is the home page in a
+        | new tab rather than an error. Measured against a live deployment on
+        | 2026-09-10; nothing reported a failure.
+        |
+        | {@see OneSignalChannel::applyWebUrl} joins this to the deep link the
+        | notification already carries, so an application sets one value here
+        | rather than composing an absolute url in every notification class. A
+        | builder that sets `web_url` itself is always left alone.
+        |
+        | Absent means off, and off is the old behaviour rather than a broken
+        | one: mobile keeps working exactly as before and web keeps landing on
+        | the home page. Guessing an origin would be worse than not having one,
+        | since `APP_URL` on an API-only deployment is the API host and would
+        | send every web recipient somewhere the client is not served.
+        |
+        */
+
+        'web_origin' => env('MAGIC_STARTER_WEB_ORIGIN'),
+
+        /*
+        |--------------------------------------------------------------------------
         | Self-Addressed Push Test
         |--------------------------------------------------------------------------
         |
