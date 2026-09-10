@@ -4,6 +4,15 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Fixed
+- **A push carrying a deep link now opens the right SCREEN in a browser, not the home page.** `OneSignalChannel` derives `web_url` from the deep link the notification already carries, joined to a new `magic-starter.onesignal.web_origin` (`MAGIC_STARTER_WEB_ORIGIN`). Mobile was never affected and is unchanged.
+
+  A browser reads `web_url` and nothing else. It does NOT read the custom data the mobile clients navigate from, and that asymmetry is invisible until somebody clicks: measured against a live deployment on 2026-09-10, a push carrying only `data.deep_link` opened the site root **in a new tab while the app was already open in another one**, so the tapped incident was never reached and nothing anywhere reported a failure. A web push click is handled by the service worker rather than by the page, so it opens the launch url as an ordinary page load and no Dart is running yet to read `additionalData`; OneSignal supplies the dashboard's Site URL when the payload names no url, which is why the symptom is the home page rather than an error. The client-side bridge only gets a turn when the worker focuses an EXISTING tab, which is not the path a configured app takes.
+
+  The key order matches `magic_deeplink`'s `OneSignalDeeplinkHandler.extractUri` exactly (`url`, `deep_link`, `link`, `uri`), because the two disagreeing would send web and mobile to different screens from one payload.
+
+  **Absent `web_origin` means off, and off is the previous behaviour rather than a broken one:** mobile keeps working and web keeps landing on the home page. No origin is guessed, since `APP_URL` on an API-only deployment is the API host and would send every web recipient somewhere the client is not served. A builder that sets `web_url` itself is always left alone, and only a rooted path is joined, so an absolute link in the payload is never rewritten onto another origin.
+
 ## [0.0.7] - 2026-09-07
 
 ### Fixed

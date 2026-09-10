@@ -97,6 +97,10 @@ class OneSignalChannel
 
         $payload->setAppId($appId);
 
+        // 5b. Carry the deep link into `web_url`, which is the only thing a
+        //     browser reads.
+        $this->applyWebUrl($payload);
+
         // 6. Send via the OneSignal API. A transport exception is reported and
         //    rethrown so the ShouldQueue job can retry the delivery.
         try {
@@ -117,5 +121,81 @@ class OneSignalChannel
         }
 
         return $response;
+    }
+
+    /**
+     * Keys the Flutter client reads a deep link from, in its own order.
+     *
+     * Mirrors `magic_deeplink`'s `OneSignalDeeplinkHandler.extractUri`
+     * (`onesignal_deeplink_handler.dart:66`). The two lists have to agree: a
+     * key this side ignores is a link the browser never follows, and a key
+     * this side prefers over the client's choice sends the two platforms to
+     * different screens from one payload.
+     *
+     * @var list<string>
+     */
+    private const DEEP_LINK_KEYS = ['url', 'deep_link', 'link', 'uri'];
+
+    /**
+     * Derive `web_url` from the payload's deep link, when neither is settled.
+     *
+     * A browser reads `web_url` and nothing else. It does NOT read the custom
+     * data the mobile clients navigate from, and that asymmetry is invisible
+     * until somebody clicks: measured on 2026-09-10 against a real deployment,
+     * a push carrying only `data.deep_link` opened the site root in a NEW tab
+     * while the app was already open in another one, so the tapped incident
+     * was never reached and nothing anywhere reported a failure.
+     *
+     * The reason is worth keeping, because the obvious mental model is wrong.
+     * A web push click is handled by the service worker, not by the page: with
+     * a launch url it opens that url, and OneSignal supplies the dashboard's
+     * Site URL when the payload names none. Either way the result is an
+     * ordinary page load, and no Dart is running in a fresh document to read
+     * `additionalData`. The client-side bridge only ever gets a turn when the
+     * worker focuses an EXISTING tab instead, which is not the path a
+     * configured app takes.
+     *
+     * Left alone when the builder set `web_url` itself: an application that
+     * wants the browser somewhere other than the in-app route has said so, and
+     * this is a default rather than a policy. Also left alone when no origin
+     * is configured, because guessing one would send people to the wrong host.
+     *
+     * Only a rooted path is accepted. The value reaches here from the
+     * application's own notification class rather than from a request, so this
+     * is not input validation; it is the narrow contract that makes
+     * concatenation safe, and it keeps an absolute link in the payload from
+     * being silently rewritten onto a different origin.
+     *
+     * @param  OneSignalNotification<int|null, mixed>  $payload
+     */
+    private function applyWebUrl(OneSignalNotification $payload): void
+    {
+        if (is_string($payload->getWebUrl()) && $payload->getWebUrl() !== '') {
+            return;
+        }
+
+        $origin = config('magic-starter.onesignal.web_origin');
+
+        if (! is_string($origin) || trim($origin) === '') {
+            return;
+        }
+
+        $data = $payload->getData();
+
+        if (! is_array($data)) {
+            return;
+        }
+
+        foreach (self::DEEP_LINK_KEYS as $key) {
+            $link = $data[$key] ?? null;
+
+            if (! is_string($link) || ! str_starts_with($link, '/')) {
+                continue;
+            }
+
+            $payload->setWebUrl(rtrim(trim($origin), '/') . $link);
+
+            return;
+        }
     }
 }
