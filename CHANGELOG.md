@@ -4,6 +4,8 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [0.0.8] - 2026-09-12
+
 ### Added
 - **`magic-starter.onesignal.external_id_prefix`** (`MAGIC_STARTER_EXTERNAL_ID_PREFIX`, default `user_`), read by both places that compose an external id: `HasNotifications::routeNotificationForOneSignal`, which wrote `user_` as a literal, and the channel fallback above, which wrote nothing. Two copies of a value whose mismatch is SILENT is the shape that produced the bug, so there is now one. The default matches what the trait already wrote and what the Flutter client's own `magic_starter.notifications.external_id_prefix` defaults to; change one side and change the other. An empty value reads as the default rather than as no prefix, because no prefix is the setting that cannot work.
 
