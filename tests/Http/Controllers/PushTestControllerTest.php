@@ -180,6 +180,43 @@ final class PushTestControllerTest extends TestCase
     }
 
     /**
+     * The stamped subject follows the configured prefix, not a literal.
+     *
+     * The alias and the subject have to name the same id or the client drops
+     * the notification on arrival, which is what the stamping comment beside
+     * the code says it exists to prevent. Before the prefix was configurable a
+     * literal here agreed with the trait by construction; now it can disagree,
+     * and only a non-default prefix shows whether it does.
+     */
+    public function test_the_stamped_subject_follows_a_configured_prefix(): void
+    {
+        Notification::fake();
+        $this->provision();
+        config(['magic-starter.onesignal.external_id_prefix' => 'operator-']);
+
+        $user = $this->createUser('prefixed@example.test');
+
+        $this->push($user, [
+            'title' => 'Uptizm',
+            'body' => 'Push is working on this device.',
+        ])->assertStatus(202);
+
+        $record = $this->onlySentRecord($user);
+
+        $this->assertSame(
+            ['external_id' => ['operator-' . $user->getKey()]],
+            $record['notifiable']->routeNotificationForOneSignal(),
+        );
+
+        $payload = $record['notification']->toOneSignal($user);
+
+        $this->assertSame(
+            'operator-' . $user->getKey(),
+            ((array) $payload->getData())['subject'],
+        );
+    }
+
+    /**
      * A recipient-shaped body reaches the caller and nobody else.
      *
      * Four separate attempts in one request: a top-level `user_id`, an

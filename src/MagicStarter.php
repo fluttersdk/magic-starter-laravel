@@ -17,6 +17,15 @@ use Throwable;
 class MagicStarter
 {
     /**
+     * The external id prefix both sides of this stack compose by default.
+     *
+     * `user_` because that is what the Flutter client's
+     * `magic_starter.notifications.external_id_prefix` defaults to, and the
+     * two have to produce the same string.
+     */
+    public const DEFAULT_EXTERNAL_ID_PREFIX = 'user_';
+
+    /**
      * Indicates whether package routes should be ignored.
      */
     protected static bool $ignoreRoutes = false;
@@ -220,6 +229,31 @@ class MagicStarter
         }
 
         return trim($appId);
+    }
+
+    /**
+     * What a device's OneSignal external id carries before the user's key.
+     *
+     * One accessor because two places compose the same string and they cannot
+     * be allowed to drift: the trait that routes a notification, and the
+     * channel's fallback for a notifiable that does not use the trait. A
+     * mismatch between them is silent, since OneSignal accepts a send to an
+     * unknown alias and delivers it to nobody.
+     *
+     * An empty or non-string value reads as the default rather than as no
+     * prefix, because no prefix is the one setting that cannot work: it
+     * matches no device this stack registers, and OneSignal rejects a bare
+     * numeric external id outright.
+     */
+    public static function onesignalExternalIdPrefix(): string
+    {
+        $prefix = config('magic-starter.onesignal.external_id_prefix');
+
+        if (! is_string($prefix) || trim($prefix) === '') {
+            return self::DEFAULT_EXTERNAL_ID_PREFIX;
+        }
+
+        return trim($prefix);
     }
 
     /**

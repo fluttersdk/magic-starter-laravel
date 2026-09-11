@@ -503,6 +503,24 @@ final class HasNotificationsTest extends TestCase
         $this->assertIsString($routing['external_id'][0]);
         $this->assertStringStartsWith('user_', $routing['external_id'][0]);
     }
+
+    public function test_route_notification_for_onesignal_honours_a_configured_prefix(): void
+    {
+        // The trait used to write `user_` as a literal while the channel's
+        // fallback wrote none, so the two halves of one stack composed
+        // different ids and nothing said so. They read one config value now,
+        // and this is the test that would catch them drifting apart again.
+        config()->set('magic-starter.onesignal.external_id_prefix', 'operator-');
+
+        $user = HasNotifPrefsTestUser::query()->create([
+            'name' => 'Configured Prefix User',
+            'email' => 'configured-prefix@example.test',
+        ]);
+
+        $routing = $user->routeNotificationForOneSignal();
+
+        $this->assertSame(['operator-' . $user->getKey()], $routing['external_id']);
+    }
 }
 
 /**

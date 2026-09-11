@@ -365,7 +365,7 @@ Resolution order:
 
 **`notificationPreferenceMatrix(): array`** — returns the full preference state for all registered notification types. DB overrides use slug-based keys (not FQCNs) to ensure a stable API response shape regardless of how types were registered.
 
-**`routeNotificationForOneSignal(): array`**: returns `['external_id' => ['user_' . $this->getKey()]]` for v5 SDK alias-based routing. The payload is passed to `FlutterSdk\MagicStarter\Notifications\Channels\OneSignalChannel`, which applies the aliases to the notification via `setIncludeAliases()`. The `user_` prefix is required because OneSignal rejects simple numeric values such as `0` or `1` as external IDs. The format must match `Notify.initializePush('user_' + user.id)` in the Flutter app.
+**`routeNotificationForOneSignal(): array`**: returns `['external_id' => [MagicStarter::onesignalExternalIdPrefix() . $this->getKey()]]` for v5 SDK alias-based routing. The payload is passed to `FlutterSdk\MagicStarter\Notifications\Channels\OneSignalChannel`, which applies the aliases to the notification via `setIncludeAliases()`. A prefix is required because OneSignal rejects simple numeric values such as `0` or `1` as external IDs, and because the id has to match the one the Flutter client registered. Both sides read it from config (`magic-starter.onesignal.external_id_prefix` here, `magic_starter.notifications.external_id_prefix` there), defaulting to the same `user_`; a mismatch is silent, since OneSignal accepts a send to an alias no device carries.
 
 ### <a name="twofactorauthenticatable"></a>TwoFactorAuthenticatable
 
