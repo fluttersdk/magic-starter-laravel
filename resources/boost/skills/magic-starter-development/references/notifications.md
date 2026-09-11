@@ -38,8 +38,8 @@
 
 ### OneSignal routing uses alias-based targeting with v5 SDK
 
-- routeNotificationForOneSignal() returns ['external_id' => ['user_' . $this->getKey()]] for OneSignal v5 alias targeting.
-- The prefix is required because OneSignal rejects bare numeric IDs as external_id; must match app-side call Notify.initializePush('user_' + user.id).
+- routeNotificationForOneSignal() returns ['external_id' => [MagicStarter::onesignalExternalIdPrefix() . $this->getKey()]] for OneSignal v5 alias targeting.
+- The prefix is required because OneSignal rejects bare numeric IDs as external_id; must match app-side call Notify.initializePush(prefix + user.id).
 - Channel driver is FlutterSdk\MagicStarter\Notifications\Channels\OneSignalChannel; notification returned map is passed to \onesignal\client\model\Notification::setIncludeAliases().
 
 ### Consumer pattern: register types, let GateNotificationChannels filter

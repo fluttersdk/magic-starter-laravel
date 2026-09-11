@@ -95,10 +95,14 @@ class PushTestController
         //    anything the caller supplied for that key. A subject a caller can
         //    choose is not a subject, it is a suggestion, and the client drops a
         //    notification whose subject disagrees with the account it is signed
-        //    in as. It carries the `user_` prefix because that is the external
-        //    id `routeNotificationForOneSignal()` addresses.
+        //    in as. It carries the same prefix `routeNotificationForOneSignal()`
+        //    addresses, read from config rather than written here: the prefix
+        //    became configurable and a literal copy would send the alias to
+        //    `<prefix><id>` while stamping the subject `user_<id>`, which is
+        //    precisely the disagreement the paragraph above says the client
+        //    drops on.
         $data = (array) $request->validated('data', []);
-        $data['subject'] = 'user_' . $user->getKey();
+        $data['subject'] = MagicStarter::onesignalExternalIdPrefix() . $user->getKey();
 
         // 5. Send inside a guard, because this one leaves the request path.
         //    `OneSignalChannel::send()` reports a transport `Throwable` and then
