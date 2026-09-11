@@ -384,20 +384,33 @@ This method is called by `GateNotificationChannels` during the `NotificationSend
 public function routeNotificationForOneSignal(): array
 {
     return [
-        'external_id' => ['user_' . $this->getKey()],
+        'external_id' => [MagicStarter::onesignalExternalIdPrefix() . $this->getKey()],
     ];
 }
 ```
 
 Returns the routing payload for the OneSignal v5 notification channel using alias-based targeting. The `external_id` key maps to an array of alias identifiers that will be passed to the OneSignal SDK's `setIncludeAliases()` method by the package's `FlutterSdk\MagicStarter\Notifications\Channels\OneSignalChannel` driver.
 
-The `user_` prefix is **required** because OneSignal rejects bare numeric strings like `'0'`, `'1'`, or `'-1'` as external IDs. The format must match the external ID registered by the Flutter client:
+A prefix is **required** because OneSignal rejects bare numeric strings like `'0'`, `'1'`, or `'-1'` as external IDs, and because the id has to match the one the Flutter client registered. The client composes its own from `magic_starter.notifications.external_id_prefix`, which defaults to the same `user_`, so the two agree out of the box.
 
-```dart
-Notify.initializePush('user_' + user.id);
+Change it in one place, on both sides:
+
+```php
+// config/magic-starter.php
+'onesignal' => [
+    'external_id_prefix' => env('MAGIC_STARTER_EXTERNAL_ID_PREFIX', 'user_'),
+],
 ```
 
-To use a different format, override this method in your User model:
+```dart
+// lib/config/magic_starter.dart
+'notifications': {'external_id_prefix': 'user_'},
+```
+
+> [!WARNING]
+> A mismatch between the two is silent. OneSignal accepts a send to an alias no device carries, reports success, and delivers it to nobody; the only trace is a zero-recipient response on the server. The same config value also backs the channel's fallback for a notifiable that does NOT use this trait, which is worth knowing because `MagicStarter::userModel()` auto-detects a published `App\Models\User` and one that forgot the trait still gets a correctly prefixed id.
+
+To use a different shape entirely, rather than a different prefix, override the method:
 
 ```php
 public function routeNotificationForOneSignal(): array

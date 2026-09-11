@@ -2,6 +2,7 @@
 
 namespace FlutterSdk\MagicStarter\Traits;
 
+use FlutterSdk\MagicStarter\MagicStarter;
 use FlutterSdk\MagicStarter\Models\NotificationSetting;
 use FlutterSdk\MagicStarter\NotificationPreferenceRegistry;
 use Illuminate\Contracts\Translation\HasLocalePreference;
@@ -173,12 +174,18 @@ trait HasNotifications
      * The outer key is the alias label ('external_id') and the value is an
      * array of alias values to target.
      *
-     * The `user_` prefix is required for two reasons:
+     * The prefix is required for two reasons:
      *   - OneSignal rejects bare numeric values such as '0', '1', '-1' as
      *     alias values.
-     *   - The Flutter client registers the same prefixed id via
-     *     `Notify.initializePush('user_' + user.id)`, so both sides must
-     *     agree on the format.
+     *   - The Flutter client registers the same prefixed id, so both sides
+     *     must agree on the format.
+     *
+     * It comes from `magic-starter.onesignal.external_id_prefix` rather than
+     * being written here, because {@see \FlutterSdk\MagicStarter\Notifications\Channels\OneSignalChannel}
+     * composes the same string for a notifiable that does not use this trait,
+     * and two hardcoded copies of a value whose mismatch is SILENT is the
+     * shape this stack has already been bitten by. The client's own default
+     * matches.
      *
      * `getKey()` is used instead of `$this->id` so the method works correctly
      * for both integer and UUID primary keys.
@@ -195,7 +202,7 @@ trait HasNotifications
     public function routeNotificationForOneSignal(): array
     {
         return [
-            'external_id' => ['user_' . $this->getKey()],
+            'external_id' => [MagicStarter::onesignalExternalIdPrefix() . $this->getKey()],
         ];
     }
 }

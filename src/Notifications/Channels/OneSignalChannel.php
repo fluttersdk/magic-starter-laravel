@@ -72,7 +72,22 @@ class OneSignalChannel
             /** @var array<string, array<int, string>> $aliases */
             $aliases = $notifiable->routeNotificationForOneSignal();
         } elseif (method_exists($notifiable, 'getKey')) {
-            $aliases = ['external_id' => [(string) $notifiable->getKey()]];
+            // Prefixed, exactly as HasNotifications prefixes it. This used to
+            // send the key BARE, which is the one shape that can never reach
+            // anybody: the Flutter client registers the device as
+            // `<prefix><id>`, so a bare id addresses a device nothing
+            // registered, and OneSignal rejects a bare numeric external id
+            // outright. Neither failure is visible from here, since a send to
+            // an unknown alias is accepted and delivered to nobody.
+            //
+            // Reached by an ordinary mistake rather than an exotic one: a
+            // published `App\Models\User` that forgot the trait, which
+            // `MagicStarter::userModel()` detects and uses automatically.
+            $aliases = [
+                'external_id' => [
+                    MagicStarter::onesignalExternalIdPrefix() . $notifiable->getKey(),
+                ],
+            ];
         } else {
             throw new InvalidArgumentException(sprintf(
                 '%s must implement routeNotificationForOneSignal() or getKey() to receive OneSignal notifications.',

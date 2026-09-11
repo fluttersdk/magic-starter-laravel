@@ -109,6 +109,15 @@ final class OneSignalChannelTest extends TestCase
         $this->assertSame('push', $capturedPayload->getTargetChannel());
     }
 
+    /**
+     * The fallback prefixes, and this test used to assert that it did not.
+     *
+     * A bare key is the one shape that can never reach anybody: the Flutter
+     * client registers the device as `<prefix><id>`, so a bare id addresses a
+     * device nothing registered, and OneSignal rejects a bare numeric
+     * external id outright. Neither failure is visible from the sender, which
+     * is why the old expectation looked reasonable.
+     */
     public function test_send_falls_back_to_getkey_when_notifiable_has_no_router(): void
     {
         // Arrange
@@ -131,7 +140,57 @@ final class OneSignalChannelTest extends TestCase
         $channel->send($notifiable, $notification);
 
         // Assert
-        $this->assertSame(['external_id' => ['777']], $capturedPayload->getIncludeAliases());
+        $this->assertSame(['external_id' => ['user_777']], $capturedPayload->getIncludeAliases());
+    }
+
+    public function test_send_fallback_honours_a_configured_external_id_prefix(): void
+    {
+        // Arrange: the two sides of this stack have to compose the same
+        // string, so the prefix is one config value rather than two literals.
+        config()->set('magic-starter.onesignal.external_id_prefix', 'operator-');
+
+        $capturedPayload = null;
+        $client = $this->createMock(DefaultApi::class);
+        $client->expects($this->once())
+            ->method('createNotification')
+            ->willReturnCallback(function (OneSignalNotification $payload) use (&$capturedPayload): null {
+                $capturedPayload = $payload;
+
+                return null;
+            });
+
+        $channel = new OneSignalChannel($client);
+
+        // Act
+        $channel->send(new StubBasicNotifiable('777'), new StubOneSignalNotification);
+
+        // Assert
+        $this->assertSame(['external_id' => ['operator-777']], $capturedPayload->getIncludeAliases());
+    }
+
+    public function test_send_fallback_uses_the_default_prefix_when_the_config_is_empty(): void
+    {
+        // Arrange: an empty value reads as the default rather than as "no
+        // prefix", because no prefix is the setting that cannot work.
+        config()->set('magic-starter.onesignal.external_id_prefix', '');
+
+        $capturedPayload = null;
+        $client = $this->createMock(DefaultApi::class);
+        $client->expects($this->once())
+            ->method('createNotification')
+            ->willReturnCallback(function (OneSignalNotification $payload) use (&$capturedPayload): null {
+                $capturedPayload = $payload;
+
+                return null;
+            });
+
+        $channel = new OneSignalChannel($client);
+
+        // Act
+        $channel->send(new StubBasicNotifiable('777'), new StubOneSignalNotification);
+
+        // Assert
+        $this->assertSame(['external_id' => ['user_777']], $capturedPayload->getIncludeAliases());
     }
 
     public function test_send_returns_null_when_notification_lacks_toonesignal(): void

@@ -652,6 +652,34 @@ return [
 
         /*
         |--------------------------------------------------------------------------
+        | External ID Prefix
+        |--------------------------------------------------------------------------
+        |
+        | What a device's OneSignal external id carries before the user's own
+        | key. Both sides have to compose the same string or the server
+        | addresses an id no device registered, and nothing anywhere says so:
+        | OneSignal accepts the notification and delivers it to nobody, leaving
+        | a zero-recipient response as the only trace.
+        |
+        | The Flutter client reads the same value from
+        | `magic_starter.notifications.external_id_prefix`, which defaults to
+        | the same `user_`. Change one and change the other.
+        |
+        | It is read in two places here: {@see HasNotifications::routeNotificationForOneSignal},
+        | and {@see OneSignalChannel::send}'s fallback for a notifiable that
+        | does not use the trait. That fallback used to send the key BARE,
+        | which is the one shape that can never work: it matches no device this
+        | stack registers, and OneSignal rejects a bare numeric external id
+        | outright. A published `App\Models\User` without the trait is the
+        | ordinary way to reach it, since `MagicStarter::userModel()` detects
+        | one automatically.
+        |
+        */
+
+        'external_id_prefix' => env('MAGIC_STARTER_EXTERNAL_ID_PREFIX', 'user_'),
+
+        /*
+        |--------------------------------------------------------------------------
         | Web Origin
         |--------------------------------------------------------------------------
         |
