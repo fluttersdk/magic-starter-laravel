@@ -25,13 +25,13 @@ class TwoFactorRecoveryCodeController
 
         if (! method_exists($user, 'hasEnabledTwoFactorAuthentication') || ! $user->hasEnabledTwoFactorAuthentication()) {
             return response()->json([
-                'message' => 'Two-factor authentication is not enabled.',
+                'message' => __('magic-starter::auth.two_factor.not_enabled'),
             ], 403);
         }
 
         return response()->json([
             'data' => $user->recoveryCodes(),
-            'message' => 'Recovery codes retrieved successfully.',
+            'message' => __('magic-starter::auth.two_factor.recovery_codes_retrieved'),
         ], 200);
     }
 
@@ -46,7 +46,7 @@ class TwoFactorRecoveryCodeController
 
         if (! method_exists($user, 'hasEnabledTwoFactorAuthentication') || ! $user->hasEnabledTwoFactorAuthentication()) {
             return response()->json([
-                'message' => 'Two-factor authentication is not enabled.',
+                'message' => __('magic-starter::auth.two_factor.not_enabled'),
             ], 403);
         }
 
@@ -54,7 +54,7 @@ class TwoFactorRecoveryCodeController
 
         return response()->json([
             'data' => $codes,
-            'message' => 'Recovery codes regenerated successfully.',
+            'message' => __('magic-starter::auth.two_factor.recovery_codes_regenerated'),
         ], 200);
     }
 }

@@ -31,7 +31,7 @@ class AddTeamMember implements AddsTeamMembers
 
         if (! $teamMember) {
             throw ValidationException::withMessages([
-                'email' => ['The selected user could not be found.'],
+                'email' => [__('magic-starter::teams.members.user_not_found')],
             ]);
         }
 
@@ -40,7 +40,7 @@ class AddTeamMember implements AddsTeamMembers
             || $team->users()->where('user_id', $teamMember->id)->exists()
         ) {
             throw ValidationException::withMessages([
-                'email' => ['This user is already a member of the team.'],
+                'email' => [__('magic-starter::teams.members.already_a_member')],
             ]);
         }
 

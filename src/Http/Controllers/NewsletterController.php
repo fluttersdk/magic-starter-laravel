@@ -50,7 +50,7 @@ class NewsletterController
         // 1. Guard — newsletter subscription requires an email address.
         if ($request->user()->email === null) {
             return response()->json(
-                ['message' => 'Email address required for newsletter subscription.'],
+                ['message' => __('magic-starter::profile.newsletter.email_required')],
                 400,
             );
         }

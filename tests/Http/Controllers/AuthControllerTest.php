@@ -518,6 +518,46 @@ class AuthControllerTest extends TestCase
             ->assertJsonPath('message', 'Invalid credentials');
     }
 
+    /**
+     * The shipped sentences reach the wire in the caller's locale.
+     *
+     * Every other assertion in this suite runs under `en`, where a catalogue
+     * that was never loaded is indistinguishable from one that was: `__()`
+     * returns its argument unchanged on a miss, and the English line happens to
+     * be the sentence those tests expect. So they prove the wording and nothing
+     * about the wiring.
+     *
+     * This one asks for the OTHER locale, which the raw key cannot answer. The
+     * Turkish sentence is written out rather than read back from
+     * `lang/tr/auth.php`, because comparing the translator's output to the file
+     * the translator just read would pass for a package whose namespace is not
+     * registered at all.
+     *
+     * Both locales are driven through the same endpoint and the same key, so a
+     * `tr` file that silently fell back to English would fail the first
+     * assertion rather than quietly satisfy it.
+     */
+    public function test_a_refusal_is_answered_in_the_callers_locale(): void
+    {
+        $this->app->setLocale('tr');
+
+        $this->postJson('/login', [
+            'email' => 'nobody@example.com',
+            'password' => 'any-password',
+        ])
+            ->assertStatus(401)
+            ->assertJsonPath('message', 'Giriş bilgileri hatalı');
+
+        $this->app->setLocale('en');
+
+        $this->postJson('/login', [
+            'email' => 'nobody@example.com',
+            'password' => 'any-password',
+        ])
+            ->assertStatus(401)
+            ->assertJsonPath('message', 'Invalid credentials');
+    }
+
     public function test_register_auto_detects_locale_from_accept_language_header(): void
     {
         // Bind real CreateUser action to test auto-detection.

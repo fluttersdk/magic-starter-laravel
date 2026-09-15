@@ -21,7 +21,7 @@ class TwoFactorChallengeController extends AuthController
             $raw = decrypt((string) $request->input('two_factor_token', ''));
         } catch (DecryptException) {
             throw ValidationException::withMessages([
-                'two_factor_token' => ['Invalid two-factor authentication token.'],
+                'two_factor_token' => [__('magic-starter::auth.two_factor.invalid_token')],
             ]);
         }
 
@@ -30,7 +30,7 @@ class TwoFactorChallengeController extends AuthController
         // 2. Check token expiration.
         if (now()->timestamp > (int) ($payload['expires_at'] ?? 0)) {
             throw ValidationException::withMessages([
-                'two_factor_token' => ['Two-factor authentication token has expired.'],
+                'two_factor_token' => [__('magic-starter::auth.two_factor.expired_token')],
             ]);
         }
 
@@ -40,7 +40,7 @@ class TwoFactorChallengeController extends AuthController
 
         if ($user === null) {
             throw ValidationException::withMessages([
-                'two_factor_token' => ['Invalid two-factor authentication token.'],
+                'two_factor_token' => [__('magic-starter::auth.two_factor.invalid_token')],
             ]);
         }
 
@@ -66,7 +66,7 @@ class TwoFactorChallengeController extends AuthController
 
         if (! in_array($code, $user->recoveryCodes(), true)) {
             throw ValidationException::withMessages([
-                'recovery_code' => ['The provided two-factor authentication recovery code was invalid.'],
+                'recovery_code' => [__('magic-starter::auth.two_factor.invalid_recovery_code')],
             ]);
         }
 
@@ -87,7 +87,7 @@ class TwoFactorChallengeController extends AuthController
 
         if (! $isValid) {
             throw ValidationException::withMessages([
-                'code' => ['The provided two-factor authentication code was invalid.'],
+                'code' => [__('magic-starter::auth.two_factor.invalid_challenge_code')],
             ]);
         }
     }

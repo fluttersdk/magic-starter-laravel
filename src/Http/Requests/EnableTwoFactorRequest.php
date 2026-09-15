@@ -41,7 +41,7 @@ class EnableTwoFactorRequest extends FormRequest
     {
         $validator->after(function ($validator) {
             if (! Hash::check((string) $this->input('password'), (string) $this->user()?->getAuthPassword())) {
-                $validator->errors()->add('password', 'The provided password does not match your current password.');
+                $validator->errors()->add('password', __('magic-starter::auth.password.confirmation_mismatch'));
             }
         });
     }

@@ -46,11 +46,13 @@ class TeamInvitationController
         $validated = $request->validated();
 
         if ($teamModel->invitations()->where('email', $validated['email'])->exists()) {
+            $message = __('magic-starter::teams.invitations.already_sent');
+
             return response()->json([
-                'message' => 'An invitation has already been sent to this email.',
+                'message' => $message,
                 'errors' => [
                     'email' => [
-                        'An invitation has already been sent to this email.',
+                        $message,
                     ],
                 ],
             ], 422);
@@ -60,9 +62,11 @@ class TeamInvitationController
         $existingUser = $userModelClass::query()->where('email', $validated['email'])->first();
 
         if ($existingUser && ($teamModel->users()->where('user_id', $existingUser->getKey())->exists() || (string) $teamModel->user_id === (string) $existingUser->getKey())) {
+            $message = __('magic-starter::teams.members.already_a_member');
+
             return response()->json([
-                'message' => 'This user is already a member of the team.',
-                'errors' => ['email' => ['This user is already a member of the team.']],
+                'message' => $message,
+                'errors' => ['email' => [$message]],
             ], 422);
         }
 
@@ -95,7 +99,7 @@ class TeamInvitationController
 
         return response()->json([
             'data' => null,
-            'message' => 'Invitation canceled successfully.',
+            'message' => __('magic-starter::teams.invitations.canceled'),
         ]);
     }
 
@@ -110,7 +114,7 @@ class TeamInvitationController
 
         if ($user->email === null || mb_strtolower($invitation->email) !== mb_strtolower($user->email)) {
             return response()->json([
-                'message' => 'This invitation was sent to a different email address.',
+                'message' => __('magic-starter::teams.invitations.wrong_email'),
             ], 403);
         }
 
@@ -118,7 +122,7 @@ class TeamInvitationController
             $invitation->delete();
 
             return response()->json([
-                'message' => 'This invitation has expired.',
+                'message' => __('magic-starter::teams.invitations.expired'),
             ], 410);
         }
         if ($invitation->team->users()->where('user_id', $user->id)->exists() || (string) $invitation->team->user_id === (string) $user->id) {
@@ -126,7 +130,7 @@ class TeamInvitationController
 
             return response()->json([
                 'data' => null,
-                'message' => 'You are already a member of this team.',
+                'message' => __('magic-starter::teams.invitations.already_joined'),
             ]);
         }
 
@@ -135,7 +139,7 @@ class TeamInvitationController
 
         return response()->json([
             'data' => null,
-            'message' => 'Invitation accepted. You have joined the team.',
+            'message' => __('magic-starter::teams.invitations.accepted'),
         ]);
     }
 

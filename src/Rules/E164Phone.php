@@ -26,7 +26,7 @@ final class E164Phone implements ValidationRule
         // 1. E.164 pattern: Starts with '+', followed by 1-15 digits.
         // 2. The first digit after '+' cannot be '0'.
         if (! is_string($value) || ! preg_match('/^\+[1-9]\d{0,14}$/', $value)) {
-            $fail('The :attribute must be a valid E.164 international phone number (e.g., +14155552671).');
+            $fail((string) __('magic-starter::auth.phone.e164'));
         }
     }
 }

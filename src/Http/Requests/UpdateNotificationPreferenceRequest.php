@@ -98,7 +98,7 @@ class UpdateNotificationPreferenceRequest extends FormRequest
                 if (! NotificationPreferenceRegistry::has($type)) {
                     $validator->errors()->add(
                         "{$prefix}type",
-                        "The notification type '{$type}' is not registered.",
+                        __('magic-starter::notifications.preferences.unknown_type', ['type' => $type]),
                     );
 
                     continue;
@@ -110,7 +110,10 @@ class UpdateNotificationPreferenceRequest extends FormRequest
                 if (! in_array($channel, $availableChannels, true)) {
                     $validator->errors()->add(
                         "{$prefix}channel",
-                        "The channel '{$channel}' is not available for type '{$type}'.",
+                        __('magic-starter::notifications.preferences.channel_unavailable', [
+                            'channel' => $channel,
+                            'type' => $type,
+                        ]),
                     );
 
                     continue;
@@ -122,7 +125,10 @@ class UpdateNotificationPreferenceRequest extends FormRequest
                 if (in_array($channel, $lockedChannels, true)) {
                     $validator->errors()->add(
                         "{$prefix}channel",
-                        "The channel '{$channel}' is locked for type '{$type}' and cannot be changed.",
+                        __('magic-starter::notifications.preferences.channel_locked', [
+                            'channel' => $channel,
+                            'type' => $type,
+                        ]),
                     );
                 }
             }

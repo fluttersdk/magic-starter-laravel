@@ -26,7 +26,7 @@ trait AuthenticatesUsers
      * @param  mixed  $user  The authenticated user model.
      * @param  Request  $request  The current HTTP request.
      * @param  string  $token  The plain-text Sanctum token.
-     * @param  string  $message  Response message.
+     * @param  string|null  $message  Response message, or null for the sign-in default.
      * @param  int  $status  HTTP status code.
      * @return JsonResponse The JSON response containing user data and token.
      */
@@ -34,9 +34,16 @@ trait AuthenticatesUsers
         mixed $user,
         Request $request,
         string $token,
-        string $message = 'Login successful',
+        ?string $message = null,
         int $status = 200,
     ): JsonResponse {
+        // The default is resolved here rather than in the signature because a
+        // parameter default must be a constant expression, and the sentence is
+        // a translation line now. Null means "whatever a plain sign-in says",
+        // which is what social login, the OTP verify and the 2FA challenge all
+        // want; every other caller names its own.
+        $message ??= (string) __('magic-starter::auth.login_successful');
+
         // Make $request->user() available for nested resources.
         // Resource serialization resolves request from the container,
         // which may differ from the controller-injected $request instance.

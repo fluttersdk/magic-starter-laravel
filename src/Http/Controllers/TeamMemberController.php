@@ -49,14 +49,14 @@ class TeamMemberController
         Gate::forUser($actor)->authorize('manageMembers', $teamModel);
 
         if ((string) $teamModel->user_id === (string) $member->getKey()) {
-            abort(403, 'Cannot change role of team owner.');
+            abort(403, (string) __('magic-starter::teams.members.owner_role_locked'));
         }
 
         $teamModel->users()->updateExistingPivot($member->getKey(), [
             'role' => $request->validated('role'),
         ]);
 
-        return response()->json(['message' => 'Team member updated successfully.']);
+        return response()->json(['message' => __('magic-starter::teams.members.updated')]);
     }
 
     /**
@@ -71,12 +71,12 @@ class TeamMemberController
         Gate::forUser($actor)->authorize('manageMembers', $teamModel);
 
         if ((string) $teamModel->user_id === (string) $member->getKey()) {
-            abort(403, 'Cannot remove team owner.');
+            abort(403, (string) __('magic-starter::teams.members.owner_not_removable'));
         }
 
         $remover->remove($actor, $teamModel, $member);
 
-        return response()->json(['message' => 'Team member removed successfully.']);
+        return response()->json(['message' => __('magic-starter::teams.members.removed')]);
     }
 
     /**
@@ -89,11 +89,11 @@ class TeamMemberController
         $user = request()->user();
 
         if ((string) $teamModel->user_id === (string) $user->getKey()) {
-            abort(403, 'Team owner cannot leave the team. Transfer ownership first or delete the team.');
+            abort(403, (string) __('magic-starter::teams.members.owner_cannot_leave'));
         }
 
         if (! $teamModel->users()->where('user_id', $user->getKey())->exists()) {
-            abort(404, 'You are not a member of this team.');
+            abort(404, (string) __('magic-starter::teams.not_a_member'));
         }
 
         $remover->remove($user, $teamModel, $user);
@@ -104,7 +104,7 @@ class TeamMemberController
             $user->forceFill(['current_team_id' => $nextTeam?->getKey()])->save();
         }
 
-        return response()->json(['message' => 'You have left the team.']);
+        return response()->json(['message' => __('magic-starter::teams.members.left')]);
     }
 
     /**

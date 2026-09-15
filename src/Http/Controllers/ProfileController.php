@@ -42,7 +42,7 @@ class ProfileController
             );
 
         return response()->json([
-            'data' => null, 'message' => 'Password updated successfully.',
+            'data' => null, 'message' => __('magic-starter::profile.password_updated'),
         ]);
     }
 

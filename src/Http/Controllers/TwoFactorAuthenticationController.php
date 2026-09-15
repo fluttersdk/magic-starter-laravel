@@ -28,7 +28,7 @@ class TwoFactorAuthenticationController
                 'qr_svg' => $user->twoFactorQrCodeSvg(),
                 'recovery_codes' => $data['recovery_codes'],
             ],
-            'message' => 'Two-factor authentication enabled. Please confirm with your authenticator app.',
+            'message' => __('magic-starter::auth.two_factor.enabled'),
         ], 200);
     }
 
@@ -46,7 +46,7 @@ class TwoFactorAuthenticationController
 
         return response()->json([
             'data' => null,
-            'message' => 'Two-factor authentication confirmed successfully.',
+            'message' => __('magic-starter::auth.two_factor.confirmed'),
         ], 200);
     }
 
@@ -59,7 +59,7 @@ class TwoFactorAuthenticationController
 
         return response()->json([
             'data' => null,
-            'message' => 'Two-factor authentication has been disabled.',
+            'message' => __('magic-starter::auth.two_factor.disabled'),
         ], 200);
     }
 }

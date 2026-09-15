@@ -117,7 +117,7 @@ class RegisterRequest extends FormRequest
     public function messages(): array
     {
         return [
-            'password.min' => 'The password must be at least 8 characters.',
+            'password.min' => __('magic-starter::auth.password.min'),
         ];
     }
 }

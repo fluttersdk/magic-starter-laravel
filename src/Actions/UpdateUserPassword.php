@@ -34,7 +34,7 @@ class UpdateUserPassword implements UpdatesUserPasswords
             if (! $isGuestWithoutPassword && ! Hash::check((string) $input['current_password'], (string) $user->password)) {
                 $validator->errors()->add(
                     'current_password',
-                    __('The current password is incorrect.'),
+                    __('magic-starter::auth.password.current_incorrect'),
                 );
             }
         })->validate();

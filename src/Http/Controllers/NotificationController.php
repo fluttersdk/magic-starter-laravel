@@ -49,7 +49,7 @@ class NotificationController
 
         return response()->json([
             'data' => null,
-            'message' => 'Notification marked as read.',
+            'message' => __('magic-starter::notifications.marked_as_read'),
         ]);
     }
 
@@ -64,7 +64,7 @@ class NotificationController
 
         return response()->json([
             'data' => null,
-            'message' => 'All notifications marked as read.',
+            'message' => __('magic-starter::notifications.all_marked_as_read'),
         ]);
     }
 
@@ -79,7 +79,7 @@ class NotificationController
 
         return response()->json([
             'data' => null,
-            'message' => 'Notification deleted.',
+            'message' => __('magic-starter::notifications.deleted'),
         ]);
     }
 }
