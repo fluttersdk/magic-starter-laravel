@@ -190,7 +190,7 @@ Represents a team (workspace). Teams can be personal (created automatically for 
 | `profile_photo_path` | string\|null | Stored path; URL resolved via accessor |
 | `created_at`, `updated_at` | timestamp | |
 
-**Accessor**: `profile_photo_url` (appended) — reads from the configured storage disk (`magic-starter.profile_photo_disk`, falling back to `filesystems.default`). Falls back to a ui-avatars.com URL built from name initials when no photo is stored.
+**Accessor**: `profile_photo_url` (appended) — reads from the configured storage disk (`magic-starter.profile_photo_disk`, falling back to `filesystems.default`). Falls back to a ui-avatars.com URL built from name initials when no photo is stored, or to `null` when `magic-starter.ui_avatars_url` is set to an empty string, which is what a JSON client that draws its own initials usually wants.
 
 **Relations**
 
