@@ -22,6 +22,8 @@ use Illuminate\Support\Str;
 use Laravel\Socialite\Contracts\Factory as SocialiteFactory;
 use Laravel\Socialite\Two\User as SocialiteUser;
 use Mockery;
+use RuntimeException;
+use Throwable;
 
 class AuthControllerTest extends TestCase
 {
@@ -309,6 +311,80 @@ class AuthControllerTest extends TestCase
             ]);
     }
 
+    /**
+     * A provider that rejects the token answers 401 with one sentence, not a
+     * 500 carrying whatever Socialite threw.
+     *
+     * Every cause reaches this arm through the same Throwable (a rejected
+     * token, an unknown provider, a provider that timed out), so the caller
+     * gets one refusal and the detail goes to the log. With app.debug off the
+     * body carries nothing but the message: the provider's own text can name
+     * the client id or the redirect uri it disliked, and that is not something
+     * to hand to an unauthenticated caller in production.
+     */
+    public function test_social_login_refuses_a_rejected_token_without_leaking_the_cause(): void
+    {
+        config(['app.debug' => false]);
+
+        $this->bindSocialiteDriverThrowing(new RuntimeException('client_secret is invalid'));
+
+        $this->postJson('/social-login/google', ['access_token' => 'rejected-token'])
+            ->assertStatus(401)
+            ->assertJsonPath('message', 'Invalid token or provider')
+            ->assertJsonMissingPath('error');
+    }
+
+    /**
+     * With app.debug on, the provider's own text is attached for the developer
+     * who turned it on, under a separate key and untranslated.
+     */
+    public function test_social_login_attaches_the_provider_error_when_debug_is_on(): void
+    {
+        config(['app.debug' => true]);
+
+        $this->bindSocialiteDriverThrowing(new RuntimeException('client_secret is invalid'));
+
+        $this->postJson('/social-login/google', ['access_token' => 'rejected-token'])
+            ->assertStatus(401)
+            ->assertJsonPath('message', 'Invalid token or provider')
+            ->assertJsonPath('error', 'client_secret is invalid');
+    }
+
+    /**
+     * The same refusal reaches the caller in the caller's language, while the
+     * debug detail stays the provider's own untranslated text.
+     */
+    public function test_social_login_answers_its_refusal_in_the_callers_locale(): void
+    {
+        config(['app.debug' => false]);
+        $this->app->setLocale('tr');
+
+        $this->bindSocialiteDriverThrowing(new RuntimeException('client_secret is invalid'));
+
+        $this->postJson('/social-login/google', ['access_token' => 'rejected-token'])
+            ->assertStatus(401)
+            ->assertJsonPath('message', 'Geçersiz erişim anahtarı veya sağlayıcı');
+    }
+
+    /**
+     * Bind a Socialite factory whose driver throws on the token exchange.
+     */
+    private function bindSocialiteDriverThrowing(Throwable $exception): void
+    {
+        $driver = Mockery::mock();
+        $driver->shouldReceive('userFromToken')->once()->andThrow($exception);
+
+        $this->app->instance(SocialiteFactory::class, new class($driver) implements SocialiteFactory
+        {
+            public function __construct(private readonly mixed $driver) {}
+
+            public function driver($driver = null): mixed
+            {
+                return $this->driver;
+            }
+        });
+    }
+
     public function test_logout_deletes_current_access_token(): void
     {
         $user = AuthControllerTestUser::query()->create([
@@ -426,6 +502,98 @@ class AuthControllerTest extends TestCase
         $response
             ->assertStatus(403)
             ->assertJsonPath('message', 'This action is unauthorized.');
+    }
+
+    /**
+     * The controller refuses a team the user does not belong to even when the
+     * gate has already said yes.
+     *
+     * `SwitchTeamRequest::authorize()` normally catches this first, and its
+     * 403 says "This action is unauthorized." (see the test above). But the
+     * policy behind it is documented as overridable, and a `Gate::before` hook
+     * granting a support role blanket access is the ordinary way an app does
+     * that. Once the gate stops answering the membership question, the
+     * controller's own check is the only thing standing between that hook and a
+     * `current_team_id` pointing at a team the user cannot read: every list
+     * endpoint scopes off that column. Asserting the SENTENCE is what proves
+     * this test reached the controller rather than the form request, since both
+     * refusals are a 403.
+     */
+    public function test_switch_team_refuses_a_non_member_even_when_the_gate_allows(): void
+    {
+        $user = AuthControllerTestUser::query()->create([
+            'id' => (string) Str::uuid(),
+            'name' => 'Support Agent',
+            'email' => 'support@example.com',
+            'password' => Hash::make('Password123'),
+            'locale' => 'en',
+            'timezone' => 'UTC',
+        ]);
+
+        $stranger = AuthControllerTestUser::query()->create([
+            'id' => (string) Str::uuid(),
+            'name' => 'Stranger',
+            'email' => 'stranger@example.com',
+            'password' => Hash::make('Password123'),
+            'locale' => 'en',
+            'timezone' => 'UTC',
+        ]);
+
+        $team = AuthControllerTestTeam::query()->create([
+            'id' => (string) Str::uuid(),
+            'user_id' => $stranger->id,
+            'name' => 'Someone Elses Team',
+            'personal_team' => false,
+        ]);
+
+        Gate::before(fn (): bool => true);
+
+        $this->actingAs($user)
+            ->postJson('/switch-team', ['team_id' => $team->id])
+            ->assertStatus(403)
+            ->assertJsonPath('message', 'You are not a member of this team.');
+
+        $this->assertNull($user->fresh()->current_team_id);
+    }
+
+    /**
+     * The same refusal reaches the caller in the caller's language.
+     */
+    public function test_switch_team_answers_its_refusal_in_the_callers_locale(): void
+    {
+        $this->app->setLocale('tr');
+
+        $user = AuthControllerTestUser::query()->create([
+            'id' => (string) Str::uuid(),
+            'name' => 'Support Agent',
+            'email' => 'support-tr@example.com',
+            'password' => Hash::make('Password123'),
+            'locale' => 'tr',
+            'timezone' => 'UTC',
+        ]);
+
+        $stranger = AuthControllerTestUser::query()->create([
+            'id' => (string) Str::uuid(),
+            'name' => 'Stranger',
+            'email' => 'stranger-tr@example.com',
+            'password' => Hash::make('Password123'),
+            'locale' => 'en',
+            'timezone' => 'UTC',
+        ]);
+
+        $team = AuthControllerTestTeam::query()->create([
+            'id' => (string) Str::uuid(),
+            'user_id' => $stranger->id,
+            'name' => 'Someone Elses Team',
+            'personal_team' => false,
+        ]);
+
+        Gate::before(fn (): bool => true);
+
+        $this->actingAs($user)
+            ->postJson('/switch-team', ['team_id' => $team->id])
+            ->assertStatus(403)
+            ->assertJsonPath('message', 'Bu takımın üyesi değilsiniz.');
     }
 
     public function test_switch_team_persists_when_user_model_guards_current_team_id(): void

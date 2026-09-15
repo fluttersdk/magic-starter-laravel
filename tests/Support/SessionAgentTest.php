@@ -182,6 +182,45 @@ final class SessionAgentTest extends TestCase
     }
 
     /**
+     * Every named token in the canonicalisation table is exercised, not just
+     * the two a phone sends.
+     *
+     * `iOS`, `Android` and `macOS` are already pinned by the tests above, so
+     * this one covers the remaining three arms. They are the desktop and
+     * embedded targets a Flutter build can genuinely run on, and each is a
+     * separate arm of the match: a typo in one of them is invisible to a suite
+     * that only ever sends a phone's agent, and it surfaces as a session row
+     * spelling the platform back the way the client happened to write it.
+     */
+    public function test_parse_normalises_every_named_native_platform_token(): void
+    {
+        $this->assertSame('macOS', SessionAgent::parse('X (Flutter; macos)')['platform']);
+        $this->assertSame('Windows', SessionAgent::parse('X (Flutter; windows)')['platform']);
+        $this->assertSame('Linux', SessionAgent::parse('X (Flutter; linux)')['platform']);
+        $this->assertSame('Fuchsia', SessionAgent::parse('X (Flutter; fuchsia)')['platform']);
+    }
+
+    /**
+     * None of the three desktop tokens is judged mobile.
+     *
+     * `(Flutter; linux)` is the one that would go wrong quietly: the browser
+     * fall-through has a `/Linux/` platform pattern and an `Android` mobile
+     * substring, and an Android build's agent names Linux too. The native
+     * branch decides on its own token, so this pins that a Linux desktop stays
+     * a desktop.
+     */
+    public function test_parse_reads_the_desktop_native_tokens_as_desktops(): void
+    {
+        foreach (['macos', 'windows', 'linux'] as $token) {
+            $result = SessionAgent::parse('Uptizm (Flutter; ' . $token . ')');
+
+            $this->assertTrue($result['is_desktop'], $token . ' must read as a desktop');
+            $this->assertFalse($result['is_mobile'], $token . ' must not read as mobile');
+            $this->assertSame('Uptizm', $result['app']);
+        }
+    }
+
+    /**
      * A platform this class has not heard of is passed through, not emptied.
      *
      * A client naming a platform still knows more than nothing does, and the
