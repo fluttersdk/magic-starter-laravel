@@ -223,6 +223,27 @@ final class SessionAgentTest extends TestCase
         $this->assertFalse($result['is_mobile']);
     }
 
+    /**
+     * An app whose own NAME carries a parenthesis is not read as native, and
+     * that is the deliberate cost of excluding a browser prefix.
+     *
+     * The name part admits no parenthesis, which is what keeps
+     * `Mozilla/5.0 (Macintosh; ...) MyApp (Flutter; iOS)` out of the native
+     * branch. An app genuinely called `Acme (EU)` pays for that by falling
+     * through to the browser patterns and reporting nothing, which is a worse
+     * answer for one unusual name than a wrong answer for every browser would
+     * be. Pinned so the trade-off is recorded rather than rediscovered as a
+     * bug.
+     */
+    public function test_a_parenthesised_app_name_is_not_recognised(): void
+    {
+        $result = SessionAgent::parse('Acme (EU) (Flutter; iOS)');
+
+        $this->assertSame('', $result['app']);
+        $this->assertSame('', $result['platform']);
+        $this->assertFalse($result['is_mobile']);
+    }
+
     public function test_a_browser_agent_reports_no_app(): void
     {
         $result = SessionAgent::parse(
