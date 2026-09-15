@@ -151,6 +151,21 @@ return [
     'route_prefix' => env('MAGIC_STARTER_ROUTE_PREFIX', 'api/v1'),
 
     /*
+    | Middleware applied to every route this package registers.
+    |
+    | These routes are loaded by the service provider rather than from the
+    | host's `routes/api.php`, so they join NO middleware group on their own.
+    | Anything the host relies on in its `api` group (a locale resolver, a
+    | request id, a tenant scope) does not run here unless it is named below.
+    |
+    | Empty by default rather than `['api']`: every route here already declares
+    | the throttle it wants by name, and defaulting into a group that carries
+    | `throttle:api` as well would silently halve a rate limit a prior release
+    | granted.
+    */
+    'route_middleware' => [],
+
+    /*
     |--------------------------------------------------------------------------
     | Team Invitation Expiry
     |--------------------------------------------------------------------------

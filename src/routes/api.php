@@ -35,6 +35,7 @@ use FlutterSdk\MagicStarter\Http\Controllers\TwoFactorRecoveryCodeController;
 use Illuminate\Support\Facades\Route;
 
 Route::prefix((string) config('magic-starter.route_prefix', ''))
+    ->middleware((array) config('magic-starter.route_middleware', []))
     ->group(function (): void {
         Route::prefix('auth')->middleware(['throttle:magic-starter-auth-login'])->group(function (): void {
             Route::post('login', [AuthController::class, 'login']);
