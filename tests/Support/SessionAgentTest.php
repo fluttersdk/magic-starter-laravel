@@ -182,6 +182,22 @@ final class SessionAgentTest extends TestCase
     }
 
     /**
+     * A platform this class has not heard of is passed through, not emptied.
+     *
+     * A client naming a platform still knows more than nothing does, and the
+     * alternative reads in the session list as an unidentifiable device. It is
+     * also not judged mobile, since only the two named tokens are.
+     */
+    public function test_parse_passes_an_unknown_native_platform_through(): void
+    {
+        $result = SessionAgent::parse('Acme (Flutter; Tizen)');
+
+        $this->assertSame('Tizen', $result['platform']);
+        $this->assertSame('Acme', $result['app']);
+        $this->assertFalse($result['is_mobile']);
+    }
+
+    /**
      * A browser agent is untouched by the native branch, which is the half a
      * greedy pattern would have broken.
      */
