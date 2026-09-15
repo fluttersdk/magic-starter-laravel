@@ -34,7 +34,7 @@ class OtpController
         app(SendsOtpCodes::class)->send($phone, $code);
 
         return response()->json([
-            'message' => 'OTP sent successfully',
+            'message' => __('magic-starter::auth.otp.sent'),
         ]);
     }
 
@@ -53,7 +53,7 @@ class OtpController
 
         if (! $isValid) {
             return response()->json([
-                'message' => 'Invalid or expired OTP',
+                'message' => __('magic-starter::auth.otp.invalid'),
             ], 401);
         }
 
@@ -62,7 +62,7 @@ class OtpController
 
         if (! $user) {
             return response()->json([
-                'message' => 'User not found',
+                'message' => __('magic-starter::auth.otp.user_not_found'),
             ], 404);
         }
 

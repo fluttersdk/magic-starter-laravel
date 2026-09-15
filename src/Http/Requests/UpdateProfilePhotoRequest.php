@@ -34,7 +34,7 @@ class UpdateProfilePhotoRequest extends FormRequest
     public function messages(): array
     {
         return [
-            'photo.max' => 'The photo may not be greater than 1MB.',
+            'photo.max' => __('magic-starter::profile.photo.max'),
         ];
     }
 }

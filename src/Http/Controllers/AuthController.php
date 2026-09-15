@@ -53,7 +53,7 @@ class AuthController
         } catch (Throwable $exception) {
             report($exception);
 
-            $payload = ['message' => 'Invalid token or provider'];
+            $payload = ['message' => __('magic-starter::auth.invalid_social_token')];
 
             if (config('app.debug')) {
                 $payload['error'] = $exception->getMessage();
@@ -98,7 +98,7 @@ class AuthController
             $user,
             $request,
             $this->createAuthToken($user, $request, storeDeviceInfo: true),
-            'Registration successful',
+            (string) __('magic-starter::auth.registration_successful'),
             201,
         );
     }
@@ -130,7 +130,7 @@ class AuthController
         // 2. Verify password.
         if (! $user || ! Hash::check((string) $request->validated('password'), (string) $user->password)) {
             return response()->json([
-                'message' => 'Invalid credentials',
+                'message' => __('magic-starter::auth.invalid_credentials'),
             ], 401);
         }
 
@@ -157,7 +157,12 @@ class AuthController
         // 4. Issue a full auth token and return the authenticated response.
         $token = $this->createAuthToken($user, $request, true);
 
-        return $this->authenticatedResponse($user, $request, $token, 'Login successful');
+        return $this->authenticatedResponse(
+            $user,
+            $request,
+            $token,
+            (string) __('magic-starter::auth.login_successful'),
+        );
     }
 
     /**
@@ -168,7 +173,7 @@ class AuthController
         $request->user()?->currentAccessToken()?->delete();
 
         return response()->json([
-            'data' => null, 'message' => 'Logged out successfully',
+            'data' => null, 'message' => __('magic-starter::auth.logged_out'),
         ]);
     }
 
@@ -192,7 +197,7 @@ class AuthController
 
         if (! $user->allTeams()->contains('id', $teamId)) {
             return response()->json([
-                'message' => 'You are not a member of this team.',
+                'message' => __('magic-starter::teams.not_a_member'),
             ], 403);
         }
 
@@ -205,7 +210,7 @@ class AuthController
 
         return response()->json([
             'data' => new UserResource($request->user()->fresh()),
-            'message' => 'Team switched successfully',
+            'message' => __('magic-starter::teams.switched'),
         ]);
     }
 }

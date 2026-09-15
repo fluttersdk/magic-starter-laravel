@@ -28,14 +28,14 @@ class ConfirmTwoFactorAuthentication implements ConfirmsTwoFactorAuthentication
         // 1. Validate the secret exists.
         if ($secret === null) {
             throw ValidationException::withMessages([
-                'code' => ['Two-factor authentication has not been enabled.'],
+                'code' => [__('magic-starter::auth.two_factor.not_yet_enabled')],
             ]);
         }
 
         // 2. Verify the code using the provider.
         if (! $this->provider->verify($secret, $code)) {
             throw ValidationException::withMessages([
-                'code' => ['Invalid code.'],
+                'code' => [__('magic-starter::auth.two_factor.invalid_code')],
             ]);
         }
 

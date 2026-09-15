@@ -44,7 +44,7 @@ class GuestAuthController
             $user,
             $request,
             $this->createAuthToken($user, $request, storeDeviceInfo: true),
-            'Guest session started',
+            (string) __('magic-starter::auth.guest_session_started'),
             $wasCreated ? 201 : 200,
         );
     }

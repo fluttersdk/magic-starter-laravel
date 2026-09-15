@@ -223,7 +223,7 @@ photo: (binary image file)
 | **Controller** | `ProfilePhotoController@delete` |
 | **Response** | `UserResource` |
 
-Removes the photo file from disk and sets `profile_photo_path` to `null`. The `profile_photo_url` in the response falls back to the default avatar URL (see [HasProfilePhoto Trait](#has-profile-photo-trait)).
+Removes the photo file from disk and sets `profile_photo_path` to `null`. The `profile_photo_url` in the response falls back to the default avatar URL, or to `null` when `magic-starter.ui_avatars_url` is empty (see [HasProfilePhoto Trait](#has-profile-photo-trait)).
 
 #### Request Example
 
@@ -240,15 +240,15 @@ The `HasProfilePhoto` trait (`FlutterSdk\MagicStarter\Traits\HasProfilePhoto`) p
 
 ### profilePhotoUrl Accessor
 
-`getProfilePhotoUrlAttribute(): string`
+`getProfilePhotoUrlAttribute(): ?string`
 
 If `profile_photo_path` is set, returns the public URL from the configured filesystem disk (`magic-starter.profile_photo_disk`). If the disk driver supports the `url()` method, it generates the full URL; otherwise it returns the raw path.
 
 ### defaultProfilePhotoUrl
 
-`defaultProfilePhotoUrl(): string`
+`defaultProfilePhotoUrl(): ?string`
 
-When no custom photo is uploaded, generates a fallback avatar URL using [ui-avatars.com](https://ui-avatars.com). The initials are extracted from the user's `name` (first letter of each word). The base URL is configurable via `magic-starter.ui_avatars_url`.
+When no custom photo is uploaded, generates a fallback avatar URL using [ui-avatars.com](https://ui-avatars.com). The initials are extracted from the user's `name` (first letter of each word). The base URL is configurable via `magic-starter.ui_avatars_url`, and setting that key to an EMPTY string returns `null` instead, which is what a JSON client that draws its own initials usually wants.
 
 Default format:
 
@@ -461,11 +461,23 @@ Available when the `sessions` feature is enabled. Sessions are Sanctum personal 
 
 Returns all active tokens for the authenticated user.
 
-`agent` is parsed from the stored user agent by `SessionAgent`. **`browser` and
-`platform` are EMPTY strings when it cannot name them**, never a word: this is a
-package, and a literal here would be English frozen into every consumer's UI. The
-two are independent, so a partially readable agent reports the half it read. Show
-your own translated label when both are empty.
+`agent` is parsed from the stored user agent by `SessionAgent`. **`browser`,
+`platform` and `app` are EMPTY strings when it cannot name them**, never a word:
+this is a package, and a literal here would be English frozen into every
+consumer's UI. They are independent, so a partially readable agent reports the
+half it read. Show your own translated label when all of them are empty.
+
+`app` names a NATIVE client and is empty for a browser. `magic`'s network
+provider sends `<App Name> (Flutter; <platform>)` by default, and this reads it:
+`platform` comes back `iOS`, `browser` stays empty because a native client is not
+a browser, and `is_mobile` is decided by the platform token rather than by a
+substring sweep. Render `platform` with whichever of `browser` and `app` is
+present; they are mutually exclusive by construction.
+
+Before this, a native agent matched none of the browser patterns and none of the
+platform patterns, so both came back empty, `is_mobile` came back false, and
+`is_desktop` therefore came back TRUE: a phone's own session rendered as a
+browser session on an unknown desktop.
 
 #### Response Example
 
@@ -479,6 +491,7 @@ your own translated label when both are empty.
             "agent": {
                 "browser": "Chrome",
                 "platform": "Mac",
+                "app": "",
                 "is_desktop": true,
                 "is_mobile": false
             },
@@ -493,12 +506,13 @@ your own translated label when both are empty.
         {
             "id": 38,
             "ip_address": "10.0.0.5",
-            "user_agent": "Dart/3.2 (dart:io)",
+            "user_agent": "Acme (Flutter; iOS)",
             "agent": {
                 "browser": "",
-                "platform": "",
-                "is_desktop": true,
-                "is_mobile": false
+                "platform": "iOS",
+                "app": "Acme",
+                "is_desktop": false,
+                "is_mobile": true
             },
             "location": null,
             "is_current_device": false,

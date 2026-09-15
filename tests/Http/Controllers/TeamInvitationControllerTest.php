@@ -210,6 +210,95 @@ final class TeamInvitationControllerTest extends TestCase
         $this->assertNull($invitationModelClass::query()->find($invitation->id));
     }
 
+    /**
+     * Accepting an invitation you no longer need is a 200, not an error, and it
+     * clears the invitation.
+     *
+     * The row can outlive the reason for it: an admin adds the person directly
+     * while the mail is in their inbox, or the same link is opened twice. The
+     * person did nothing wrong and is already where the link was taking them,
+     * so the endpoint tidies up rather than refusing. Without the delete the
+     * invitation would sit in the team's pending list for good, since accepting
+     * it again lands here again.
+     */
+    public function test_accept_clears_the_invitation_when_the_user_already_joined(): void
+    {
+        $owner = TeamInvitationControllerTestUser::query()->create(['name' => 'Owner', 'email' => 'owner@test.dev']);
+        $invitee = TeamInvitationControllerTestUser::query()->create(['name' => 'Invitee', 'email' => 'invitee@test.dev']);
+        $team = TeamInvitationControllerTestTeam::query()->create(['user_id' => $owner->id, 'name' => 'A Team', 'personal_team' => false]);
+        $invitation = $team->invitations()->create([
+            'email' => $invitee->email,
+            'role' => 'admin',
+            'token' => 'already-joined-token',
+        ]);
+
+        // The admin added them directly while the invitation was in flight.
+        $team->users()->attach($invitee->id, ['role' => 'member']);
+
+        $this->actingAs($invitee)
+            ->postJson('/invitations/already-joined-token/accept')
+            ->assertOk()
+            ->assertJsonPath('message', 'You are already a member of this team.');
+
+        $invitationModelClass = MagicStarter::teamInvitationModel();
+        $this->assertNull($invitationModelClass::query()->find($invitation->id));
+
+        $this->assertSame(1, $team->fresh()->users()->count(), 'The membership must not be duplicated.');
+        $this->assertSame('member', $team->fresh()->users()->find($invitee->id)?->pivot?->role, 'The existing role must survive.');
+    }
+
+    /**
+     * The owner reaches the same answer, and by the other half of the same
+     * check: ownership lives on `teams.user_id` and writes no pivot row, so a
+     * membership query alone would let the owner attach themselves as a member
+     * of their own team.
+     */
+    public function test_accept_clears_the_invitation_when_the_user_owns_the_team(): void
+    {
+        $owner = TeamInvitationControllerTestUser::query()->create(['name' => 'Owner', 'email' => 'owner@test.dev']);
+        $team = TeamInvitationControllerTestTeam::query()->create(['user_id' => $owner->id, 'name' => 'A Team', 'personal_team' => false]);
+        $invitation = $team->invitations()->create([
+            'email' => $owner->email,
+            'role' => 'admin',
+            'token' => 'owner-token',
+        ]);
+
+        $this->actingAs($owner)
+            ->postJson('/invitations/owner-token/accept')
+            ->assertOk()
+            ->assertJsonPath('message', 'You are already a member of this team.');
+
+        $invitationModelClass = MagicStarter::teamInvitationModel();
+        $this->assertNull($invitationModelClass::query()->find($invitation->id));
+
+        $this->assertSame(0, $team->fresh()->users()->count(), 'The owner must not gain a pivot row.');
+    }
+
+    /**
+     * The same answer reaches the caller in the caller's language.
+     *
+     * Under `en` a key that resolved to nothing is indistinguishable from one
+     * that resolved: `__()` returns its argument on a miss and the English line
+     * happens to be the sentence the tests above expect.
+     */
+    public function test_accept_answers_the_already_joined_case_in_the_callers_locale(): void
+    {
+        \call_user_func('app')->setLocale('tr');
+
+        $owner = TeamInvitationControllerTestUser::query()->create(['name' => 'Owner', 'email' => 'owner@test.dev']);
+        $team = TeamInvitationControllerTestTeam::query()->create(['user_id' => $owner->id, 'name' => 'A Team', 'personal_team' => false]);
+        $team->invitations()->create([
+            'email' => $owner->email,
+            'role' => 'admin',
+            'token' => 'owner-token-tr',
+        ]);
+
+        $this->actingAs($owner)
+            ->postJson('/invitations/owner-token-tr/accept')
+            ->assertOk()
+            ->assertJsonPath('message', 'Bu takımın zaten üyesisiniz.');
+    }
+
     public function test_index_returns_403_for_non_owner(): void
     {
         $owner = TeamInvitationControllerTestUser::query()->create(['name' => 'Owner', 'email' => 'owner@test.dev']);

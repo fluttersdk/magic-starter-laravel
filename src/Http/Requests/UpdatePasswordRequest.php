@@ -52,7 +52,7 @@ class UpdatePasswordRequest extends FormRequest
             $isGuestWithoutPassword = $user && (bool) ($user->is_guest ?? false) && empty($user->password);
 
             if (! $isGuestWithoutPassword && ! Hash::check((string) $this->input('current_password'), (string) $user?->getAuthPassword())) {
-                $validator->errors()->add('current_password', __('The current password is incorrect.'));
+                $validator->errors()->add('current_password', __('magic-starter::auth.password.current_incorrect'));
             }
         });
     }

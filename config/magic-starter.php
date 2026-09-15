@@ -129,6 +129,14 @@ return [
     'team_photo_disk' => env('MAGIC_STARTER_TEAM_PHOTO_DISK', env('MAGIC_STARTER_PROFILE_PHOTO_DISK', 'public')),
     'profile_photo_path' => env('MAGIC_STARTER_PROFILE_PHOTO_PATH', 'profile-photos'),
     'team_photo_path' => env('MAGIC_STARTER_TEAM_PHOTO_PATH', 'team-photos'),
+    /*
+    | Where a generated avatar comes from for an account that has uploaded no
+    | photo. Set it to an EMPTY string to send `profile_photo_url: null`
+    | instead, which is usually what a JSON client wants: it draws its own
+    | initials already, and the generated image otherwise costs a third-party
+    | round trip per avatar, sends the person's name to that third party, fails
+    | offline, and arrives in colours the client's design system did not pick.
+    */
     'ui_avatars_url' => env('MAGIC_STARTER_UI_AVATARS_URL', 'https://ui-avatars.com/api/'),
 
     /*
@@ -141,6 +149,27 @@ return [
     */
 
     'route_prefix' => env('MAGIC_STARTER_ROUTE_PREFIX', 'api/v1'),
+
+    /*
+    | Middleware applied to every route in `src/routes/api.php`.
+    |
+    | NOT the vendor webhook routes. Those load from `src/routes/webhooks.php`
+    | under their own gate and deliberately inherit nothing from here: a webhook
+    | URL is registered in a vendor dashboard and is called by that vendor, not
+    | by your users, so a tenant scope or a locale resolver has nobody to resolve
+    | and an auth middleware would reject the call.
+    |
+    | These routes are loaded by the service provider rather than from the
+    | host's `routes/api.php`, so they join NO middleware group on their own.
+    | Anything the host relies on in its `api` group (a locale resolver, a
+    | request id, a tenant scope) does not run here unless it is named below.
+    |
+    | Empty by default rather than `['api']`: every route here already declares
+    | the throttle it wants by name, and defaulting into a group that carries
+    | `throttle:api` as well would silently halve a rate limit a prior release
+    | granted.
+    */
+    'route_middleware' => [],
 
     /*
     |--------------------------------------------------------------------------

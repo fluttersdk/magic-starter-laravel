@@ -176,6 +176,43 @@ final class TwoFactorActionsTest extends TestCase
         $action->confirm($user, '000000');
     }
 
+    /**
+     * Confirming before enabling is refused, and it names the missing step.
+     *
+     * A client that posts a code against an account whose secret was never
+     * issued reaches the same endpoint as a genuine confirmation, so the
+     * refusal has to distinguish "you typed the wrong six digits" from "there
+     * is nothing to confirm yet". Asserting the sentence, not just the
+     * exception, is what keeps the two apart: both arms of this action throw a
+     * ValidationException on `code`.
+     */
+    public function test_confirm_refuses_when_two_factor_was_never_enabled(): void
+    {
+        $action = new ConfirmTwoFactorAuthentication(app(TwoFactorAuthenticationProvider::class));
+
+        /** @var TwoFactorActionsTestUser $user */
+        $user = TwoFactorActionsTestUser::query()->create([
+            'name' => 'Test',
+            'email' => 'never-enabled@example.com',
+            'two_factor_secret' => null,
+        ]);
+
+        try {
+            $action->confirm($user, '000000');
+
+            $this->fail('Confirming without a secret must be refused.');
+        } catch (ValidationException $exception) {
+            $this->assertSame(
+                ['Two-factor authentication has not been enabled.'],
+                $exception->errors()['code'],
+            );
+        }
+
+        $user->refresh();
+
+        $this->assertNull($user->two_factor_confirmed_at);
+    }
+
     public function test_disable_clears_all_two_factor_columns(): void
     {
         $action = new DisableTwoFactorAuthentication;

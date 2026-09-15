@@ -39,7 +39,7 @@ class DeleteAccountRequest extends FormRequest
             }
 
             if (! Hash::check((string) $this->input('password'), (string) $this->user()?->getAuthPassword())) {
-                $validator->errors()->add('password', 'The password is incorrect.');
+                $validator->errors()->add('password', __('magic-starter::auth.password.incorrect'));
             }
         });
     }

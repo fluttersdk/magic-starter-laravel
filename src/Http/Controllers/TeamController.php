@@ -106,7 +106,7 @@ class TeamController
         // Personal teams cannot be deleted — Jetstream convention.
         if ($teamModel->personal_team) {
             throw ValidationException::withMessages([
-                'team' => __('You may not delete your personal team.'),
+                'team' => __('magic-starter::teams.personal_team_undeletable'),
             ])->errorBag('deleteTeam');
         }
 
@@ -118,7 +118,7 @@ class TeamController
 
         return response()->json([
             'data' => null,
-            'message' => 'Team deleted successfully.',
+            'message' => __('magic-starter::teams.deleted'),
         ]);
     }
 

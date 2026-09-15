@@ -120,5 +120,177 @@ final class SessionAgentTest extends TestCase
 
         $this->assertSame('', $result['browser']);
         $this->assertSame('', $result['platform']);
+        $this->assertSame('', $result['app']);
+    }
+
+    /**
+     * A native client is named rather than filed under "unknown desktop".
+     *
+     * `magic` sends `<App Name> (Flutter; <platform>)`. Before this, none of
+     * the six browser patterns and none of the five platform patterns matched
+     * it, so both came back empty, `is_mobile` came back false, and a phone's
+     * own session rendered as a browser session on an unknown desktop.
+     */
+    public function test_parse_reads_a_native_flutter_agent(): void
+    {
+        $result = SessionAgent::parse('Uptizm (Flutter; iOS)');
+
+        $this->assertSame('iOS', $result['platform']);
+        $this->assertSame('Uptizm', $result['app']);
+        $this->assertTrue($result['is_mobile']);
+        $this->assertFalse($result['is_desktop']);
+        $this->assertSame('', $result['browser'], 'a native client is not a browser');
+    }
+
+    /**
+     * An app name with spaces survives, because plenty have one.
+     */
+    public function test_parse_keeps_a_multi_word_app_name(): void
+    {
+        $result = SessionAgent::parse('Uptizm Field Ops (Flutter; Android)');
+
+        $this->assertSame('Uptizm Field Ops', $result['app']);
+        $this->assertSame('Android', $result['platform']);
+        $this->assertTrue($result['is_mobile']);
+    }
+
+    /**
+     * A native desktop is a desktop, and it says so for its own reason.
+     *
+     * `(Flutter; macOS)` contains none of the mobile substrings, so it would
+     * have read as a desktop by accident. The native branch decides on the
+     * token instead, which is what keeps a future platform from being judged
+     * by a coincidence.
+     */
+    public function test_parse_reads_a_native_desktop_agent(): void
+    {
+        $result = SessionAgent::parse('Uptizm (Flutter; macOS)');
+
+        $this->assertSame('macOS', $result['platform']);
+        $this->assertTrue($result['is_desktop']);
+        $this->assertFalse($result['is_mobile']);
+    }
+
+    /**
+     * A hand-rolled client's casing is normalised to this class's spelling, so
+     * two clients naming the same platform do not read differently in the list.
+     */
+    public function test_parse_normalises_a_native_platform_token(): void
+    {
+        $this->assertSame('iOS', SessionAgent::parse('X (Flutter; ios)')['platform']);
+        $this->assertSame('Android', SessionAgent::parse('X (Flutter; ANDROID)')['platform']);
+    }
+
+    /**
+     * Every named token in the canonicalisation table is exercised, not just
+     * the two a phone sends.
+     *
+     * `iOS`, `Android` and `macOS` are already pinned by the tests above, so
+     * this one covers the remaining three arms. They are the desktop and
+     * embedded targets a Flutter build can genuinely run on, and each is a
+     * separate arm of the match: a typo in one of them is invisible to a suite
+     * that only ever sends a phone's agent, and it surfaces as a session row
+     * spelling the platform back the way the client happened to write it.
+     */
+    public function test_parse_normalises_every_named_native_platform_token(): void
+    {
+        $this->assertSame('macOS', SessionAgent::parse('X (Flutter; macos)')['platform']);
+        $this->assertSame('Windows', SessionAgent::parse('X (Flutter; windows)')['platform']);
+        $this->assertSame('Linux', SessionAgent::parse('X (Flutter; linux)')['platform']);
+        $this->assertSame('Fuchsia', SessionAgent::parse('X (Flutter; fuchsia)')['platform']);
+    }
+
+    /**
+     * None of the three desktop tokens is judged mobile.
+     *
+     * `(Flutter; linux)` is the one that would go wrong quietly: the browser
+     * fall-through has a `/Linux/` platform pattern and an `Android` mobile
+     * substring, and an Android build's agent names Linux too. The native
+     * branch decides on its own token, so this pins that a Linux desktop stays
+     * a desktop.
+     */
+    public function test_parse_reads_the_desktop_native_tokens_as_desktops(): void
+    {
+        foreach (['macos', 'windows', 'linux'] as $token) {
+            $result = SessionAgent::parse('Uptizm (Flutter; ' . $token . ')');
+
+            $this->assertTrue($result['is_desktop'], $token . ' must read as a desktop');
+            $this->assertFalse($result['is_mobile'], $token . ' must not read as mobile');
+            $this->assertSame('Uptizm', $result['app']);
+        }
+    }
+
+    /**
+     * A platform this class has not heard of is passed through, not emptied.
+     *
+     * A client naming a platform still knows more than nothing does, and the
+     * alternative reads in the session list as an unidentifiable device. It is
+     * also not judged mobile, since only the two named tokens are.
+     */
+    public function test_parse_passes_an_unknown_native_platform_through(): void
+    {
+        $result = SessionAgent::parse('Acme (Flutter; Tizen)');
+
+        $this->assertSame('Tizen', $result['platform']);
+        $this->assertSame('Acme', $result['app']);
+        $this->assertFalse($result['is_mobile']);
+    }
+
+    /**
+     * A browser agent is untouched by the native branch, which is the half a
+     * greedy pattern would have broken.
+     */
+    /**
+     * A browser agent carrying a trailing native token is still a browser.
+     *
+     * The three native reads (platform, mobile, app name) used to be three
+     * separate patterns deciding on different substrings, so this string
+     * reported `platform=iOS` and `browser=Safari` at the same time and handed
+     * the whole `Mozilla/5.0 (...)` prefix back as the application's name. They
+     * now share one anchored read whose name part admits no parenthesis, which
+     * is what keeps a browser out of the native branch rather than merely
+     * making the three agree on a wrong answer.
+     */
+    public function test_a_browser_prefix_is_not_read_as_a_native_app(): void
+    {
+        $result = SessionAgent::parse(
+            'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) MyApp (Flutter; iOS)',
+        );
+
+        $this->assertSame('Mac', $result['platform']);
+        $this->assertSame('', $result['app']);
+        $this->assertFalse($result['is_mobile']);
+    }
+
+    /**
+     * An app whose own NAME carries a parenthesis is not read as native, and
+     * that is the deliberate cost of excluding a browser prefix.
+     *
+     * The name part admits no parenthesis, which is what keeps
+     * `Mozilla/5.0 (Macintosh; ...) MyApp (Flutter; iOS)` out of the native
+     * branch. An app genuinely called `Acme (EU)` pays for that by falling
+     * through to the browser patterns and reporting nothing, which is a worse
+     * answer for one unusual name than a wrong answer for every browser would
+     * be. Pinned so the trade-off is recorded rather than rediscovered as a
+     * bug.
+     */
+    public function test_a_parenthesised_app_name_is_not_recognised(): void
+    {
+        $result = SessionAgent::parse('Acme (EU) (Flutter; iOS)');
+
+        $this->assertSame('', $result['app']);
+        $this->assertSame('', $result['platform']);
+        $this->assertFalse($result['is_mobile']);
+    }
+
+    public function test_a_browser_agent_reports_no_app(): void
+    {
+        $result = SessionAgent::parse(
+            'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0 Safari/537.36',
+        );
+
+        $this->assertSame('Mac', $result['platform']);
+        $this->assertSame('Chrome', $result['browser']);
+        $this->assertSame('', $result['app']);
     }
 }

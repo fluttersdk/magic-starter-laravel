@@ -19,7 +19,7 @@ use Illuminate\Support\Facades\Storage;
  * @property string $name
  * @property bool $personal_team
  * @property string|null $profile_photo_path
- * @property-read  string  $profile_photo_url
+ * @property-read  string|null  $profile_photo_url
  * @property Carbon|null $created_at
  * @property Carbon|null $updated_at
  * @property-read  Model $owner
@@ -94,11 +94,11 @@ class Team extends Model
     /**
      * Get the team's profile photo URL.
      *
-     * @return Attribute<string, never>
+     * @return Attribute<string|null, never>
      */
     protected function profilePhotoUrl(): Attribute
     {
-        return Attribute::get(function (): string {
+        return Attribute::get(function (): ?string {
             return $this->profile_photo_path
                 ? Storage::disk(config('magic-starter.profile_photo_disk', config('filesystems.default')))->url($this->profile_photo_path)
                 : $this->defaultProfilePhotoUrl();
@@ -106,10 +106,22 @@ class Team extends Model
     }
 
     /**
-     * Get the default profile photo URL for the team.
+     * Get the default profile photo URL for the team, or null when the host
+     * wants none.
+     *
+     * Same switch and same reasoning as the user's, in
+     * FlutterSdk\MagicStarter\Traits\HasProfilePhoto: an empty
+     * `magic-starter.ui_avatars_url` returns null so a JSON client can draw its
+     * own initials instead of fetching a third-party image per avatar.
      */
-    protected function defaultProfilePhotoUrl(): string
+    protected function defaultProfilePhotoUrl(): ?string
     {
+        $baseUrl = rtrim((string) config('magic-starter.ui_avatars_url', 'https://ui-avatars.com/api/'), '/');
+
+        if ($baseUrl === '') {
+            return null;
+        }
+
         $initials = [];
 
         foreach (preg_split('/\s+/', trim((string) $this->name)) ?: [] as $segment) {
@@ -119,8 +131,6 @@ class Team extends Model
         }
 
         $name = implode(' ', $initials);
-
-        $baseUrl = rtrim((string) config('magic-starter.ui_avatars_url', 'https://ui-avatars.com/api/'), '/');
 
         return $baseUrl . '/?name=' . urlencode($name) . '&color=7F9CF5&background=EBF4FF';
     }

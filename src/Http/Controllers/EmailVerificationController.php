@@ -23,18 +23,18 @@ class EmailVerificationController
     {
         // 1. Skip if already verified — no point re-sending.
         if ($request->user()->hasVerifiedEmail()) {
-            return response()->json(['message' => 'Email already verified.'], 200);
+            return response()->json(['message' => __('magic-starter::auth.verification.already_verified')], 200);
         }
 
         // 2. Guard against users with no email address.
         if (empty($request->user()->email)) {
-            return response()->json(['message' => 'No email address to verify.'], 400);
+            return response()->json(['message' => __('magic-starter::auth.verification.no_email')], 400);
         }
 
         // 3. Send the signed verification URL via email.
         $request->user()->sendEmailVerificationNotification();
 
-        return response()->json(['message' => 'Verification link sent.'], 202);
+        return response()->json(['message' => __('magic-starter::auth.verification.link_sent')], 202);
     }
 
     /**
@@ -55,17 +55,17 @@ class EmailVerificationController
 
         // 2. Validate the hash to ensure the link matches the current email.
         if (! hash_equals(sha1($user->getEmailForVerification()), $hash)) {
-            return response()->json(['message' => 'Invalid verification link.'], 403);
+            return response()->json(['message' => __('magic-starter::auth.verification.invalid_link')], 403);
         }
 
         // 3. Skip if already verified — idempotent response.
         if ($user->hasVerifiedEmail()) {
-            return response()->json(['message' => 'Email already verified.'], 200);
+            return response()->json(['message' => __('magic-starter::auth.verification.already_verified')], 200);
         }
 
         // 4. Mark as verified — the MustVerifyEmail trait fires the Verified event internally.
         $user->markEmailAsVerified();
 
-        return response()->json(['message' => 'Email verified successfully.'], 200);
+        return response()->json(['message' => __('magic-starter::auth.verification.verified')], 200);
     }
 }

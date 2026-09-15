@@ -28,7 +28,7 @@ class PasswordResetController
         // Always return 200 with a generic message to prevent email enumeration.
         return response()->json([
             'data' => null,
-            'message' => __('If an account with that email exists, a password reset link has been sent.'),
+            'message' => __('magic-starter::auth.password.reset_link_sent'),
         ]);
     }
 

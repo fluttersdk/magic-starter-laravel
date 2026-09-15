@@ -35,14 +35,14 @@ class SessionController
             ->first();
 
         if (! $token) {
-            abort(404, 'Session not found.');
+            abort(404, (string) __('magic-starter::auth.sessions.not_found'));
         }
 
         $token->delete();
 
         return response()->json([
             'data' => null,
-            'message' => 'Session revoked successfully.',
+            'message' => __('magic-starter::auth.sessions.revoked'),
         ]);
     }
 
@@ -62,7 +62,7 @@ class SessionController
 
         return response()->json([
             'data' => null,
-            'message' => 'Other sessions revoked successfully.',
+            'message' => __('magic-starter::auth.sessions.others_revoked'),
         ]);
     }
 }

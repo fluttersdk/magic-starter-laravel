@@ -78,7 +78,7 @@ class LoginRequest extends FormRequest
     public function messages(): array
     {
         return [
-            'password.required' => 'Password is required.',
+            'password.required' => __('magic-starter::auth.password.required'),
         ];
     }
 }

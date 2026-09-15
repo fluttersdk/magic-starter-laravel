@@ -34,7 +34,30 @@ use FlutterSdk\MagicStarter\Http\Controllers\TwoFactorChallengeController;
 use FlutterSdk\MagicStarter\Http\Controllers\TwoFactorRecoveryCodeController;
 use Illuminate\Support\Facades\Route;
 
+// Every route below carries the host's own middleware, and the default is none.
+//
+// These routes are loaded by the package's service provider rather than from
+// the host's `routes/api.php`, so they join no middleware group on their own:
+// Laravel's `api` group, and anything the host added beside it, simply never
+// runs on them.
+//
+// That is invisible until something in a group is load-bearing. It was found on
+// a host whose `SetApiLocale` middleware resolves the caller's language from
+// their stored `users.locale`: it ran on every route the host wrote and on none
+// of this package's, so a Turkish account read a Turkish interface and English
+// refusals from exactly the screens this package owns.
+//
+// The default stays EMPTY rather than `['api']`. Every route here already
+// declares the throttle it wants by name, and a host's `api` group usually
+// carries `throttle:api` as well, so defaulting into it would silently halve
+// the rate limit a prior release granted. The host names what it wants.
+//
+// Below only. The vendor webhook routes load from `webhooks.php` under their
+// own gate and inherit nothing from here, because a vendor calls them rather
+// than a user: there is nobody for a locale resolver or a tenant scope to
+// resolve, and an auth middleware would reject the call outright.
 Route::prefix((string) config('magic-starter.route_prefix', ''))
+    ->middleware((array) config('magic-starter.route_middleware', []))
     ->group(function (): void {
         Route::prefix('auth')->middleware(['throttle:magic-starter-auth-login'])->group(function (): void {
             Route::post('login', [AuthController::class, 'login']);

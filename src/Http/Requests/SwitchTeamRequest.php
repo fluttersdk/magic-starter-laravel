@@ -55,7 +55,7 @@ class SwitchTeamRequest extends FormRequest
     public function messages(): array
     {
         return [
-            'team_id.exists' => 'The selected team does not exist.',
+            'team_id.exists' => __('magic-starter::teams.not_found'),
         ];
     }
 }

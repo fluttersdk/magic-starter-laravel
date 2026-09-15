@@ -132,8 +132,9 @@ Every key available in `config/magic-starter.php`:
 | `team_photo_disk` | `'public'` | Laravel filesystem disk for team photos (defaults to `profile_photo_disk` value) |
 | `profile_photo_path` | `'profile-photos'` | Directory path within disk for user profile photos |
 | `team_photo_path` | `'team-photos'` | Directory path within disk for team photos |
-| `ui_avatars_url` | `'https://ui-avatars.com/api/'` | Fallback avatar generation service URL when no photo is uploaded |
+| `ui_avatars_url` | `'https://ui-avatars.com/api/'` | Fallback avatar service used when no photo is uploaded. An EMPTY string sends `profile_photo_url: null` instead |
 | `route_prefix` | `'api/v1'` | Global prefix applied to all package-registered routes |
+| `route_middleware` | `[]` | Middleware applied to every package-registered route. These routes join NO group on their own |
 | `invitation_expiry_days` | `7` | Number of days until a team invitation token expires |
 | `token_expiration_minutes` | `null` | Sanctum personal access token TTL in minutes; `null` means tokens never expire |
 | `auth.email` | `true` | Whether email-based authentication is accepted for login and registration |
@@ -199,6 +200,34 @@ MAGIC_STARTER_ROUTE_PREFIX=api/v1
 
 With this default, authentication endpoints are available at `/api/v1/login`, `/api/v1/register`, etc.
 
+### Route Middleware
+
+The package loads its routes from its own service provider rather than from your `routes/api.php`, so **they join no middleware group**. Laravel's `api` group, and anything you appended beside it, does not run on them.
+
+That is invisible until something in your group is load-bearing, and then it is invisible in a different way: nothing errors. A locale resolver reading the caller's stored language ran on every route the host wrote and on none of this package's, and a Turkish account read English refusals from exactly the screens this package owns.
+
+```php
+'route_middleware' => [
+    \App\Http\Middleware\SetApiLocale::class,
+],
+```
+
+This covers the routes in `api.php` only. The vendor webhook routes load separately and inherit nothing from here on purpose: a webhook is called by the vendor rather than by one of your users, so there is nobody for a locale resolver or a tenant scope to resolve, and an auth middleware would reject the call outright.
+
+Empty by default rather than `['api']`, so nothing changes for an existing install. Defaulting into your api group would be worse than doing nothing: every route here already declares the throttle it wants by name, and a group carrying `throttle:api` as well would silently halve a rate limit a prior release granted. Name what you want.
+
+### Translations
+
+Every user-facing sentence the API answers with resolves through `__('magic-starter::...')`, so a caller is answered in the locale the request resolved to. English and Turkish ship with the package. Publish them to override a wording or add a language:
+
+```bash
+php artisan vendor:publish --tag=magic-starter-lang
+```
+
+Note that a published file WINS over the package's own, and Laravel reads it before the shipped catalogue. A published copy left behind after an upgrade keeps serving the old wording, and a locale test can end up measuring the copy rather than the catalogue.
+
+Selecting the locale is your application's job. This package resolves nothing on its own: put your locale middleware in `route_middleware` above, or these routes answer in `config('app.locale')` whatever the caller asked for.
+
 <a name="storage-disks"></a>
 ## Storage Disks
 
@@ -213,6 +242,8 @@ Configure separate filesystem disks and path prefixes for user profile photos an
 ```
 
 The `team_photo_disk` defaults to the same value as `profile_photo_disk` if not explicitly set. When no photo has been uploaded, the `HasProfilePhoto` trait falls back to the `ui_avatars_url` service to generate a placeholder avatar.
+
+Set `ui_avatars_url` to an EMPTY string to send `profile_photo_url: null` instead, for both users and teams. That is usually what a JSON client wants: it draws its own initials already, and the generated image otherwise costs a third-party round trip per avatar on every screen, sends the person's NAME to that third party each time, fails offline, and arrives in colours your design system did not choose. A client also cannot tell the generated image apart from a real upload, so "has this person set a photo" becomes unanswerable. The switch governs the fallback only: a real upload still answers under an empty url.
 
 Override disks via environment variables for production (e.g., to use S3):
 

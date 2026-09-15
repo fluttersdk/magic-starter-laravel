@@ -64,7 +64,7 @@ class PushTestController
         //    a switched-off endpoint and nothing else, and it sends nothing.
         if (! (bool) config('magic-starter.onesignal.self_test_enabled', false)) {
             return response()->json([
-                'message' => 'The push test endpoint is not enabled for this application.',
+                'message' => __('magic-starter::notifications.push_test.disabled'),
             ], 501);
         }
 
@@ -74,7 +74,7 @@ class PushTestController
         //    spend somebody else's OneSignal quota.
         if ((bool) ($user->is_guest ?? false)) {
             return response()->json([
-                'message' => 'A guest account cannot send a test push notification.',
+                'message' => __('magic-starter::notifications.push_test.guest_refused'),
             ], 403);
         }
 
@@ -87,7 +87,7 @@ class PushTestController
         //    `meta.push_provisioned`.
         if (! Features::hasOnesignalFeatures() || MagicStarter::onesignalAppId() === null) {
             return response()->json([
-                'message' => 'Push notifications are not provisioned for this application.',
+                'message' => __('magic-starter::notifications.push_test.not_provisioned'),
             ], 409);
         }
 
@@ -129,7 +129,7 @@ class PushTestController
         } catch (Throwable $exception) {
             report($exception);
 
-            $payload = ['message' => 'The push provider could not be reached.'];
+            $payload = ['message' => __('magic-starter::notifications.push_test.provider_unreachable')];
 
             if (config('app.debug')) {
                 $payload['error'] = $exception->getMessage();

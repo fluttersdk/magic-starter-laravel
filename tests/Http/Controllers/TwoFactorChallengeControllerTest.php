@@ -14,6 +14,7 @@ use Illuminate\Foundation\Auth\Access\Authorizable;
 use Illuminate\Support\Facades\Hash;
 use Illuminate\Support\Facades\Route;
 use Illuminate\Support\Facades\Schema;
+use Illuminate\Support\Str;
 
 final class TwoFactorChallengeControllerTest extends TestCase
 {
@@ -195,6 +196,60 @@ final class TwoFactorChallengeControllerTest extends TestCase
         ])
             ->assertStatus(422)
             ->assertJsonValidationErrors(['two_factor_token']);
+    }
+
+    /**
+     * A well-formed, unexpired token naming a user who is gone is refused the
+     * same way a tampered one is.
+     *
+     * The account can disappear between the login that issued the challenge and
+     * the code being typed: a deletion, or a consumer swapping the user model
+     * under an already-issued token. The refusal deliberately reuses
+     * `invalid_token` rather than saying the account is missing, because the
+     * caller is unauthenticated at this point and a distinct sentence would
+     * turn the challenge endpoint into an account-existence oracle.
+     *
+     * The message is asserted, not just the field: expiry refuses on the same
+     * key, so a test that only checked `two_factor_token` would pass against
+     * either branch.
+     */
+    public function test_challenge_rejects_a_token_naming_a_user_that_no_longer_exists(): void
+    {
+        $challengeToken = encrypt(json_encode([
+            'user_id' => (string) Str::uuid(),
+            'expires_at' => now()->addMinutes(5)->timestamp,
+        ]));
+
+        $this->postJson('/auth/two-factor-challenge', [
+            'two_factor_token' => $challengeToken,
+            'code' => '123456',
+        ])
+            ->assertStatus(422)
+            ->assertJsonValidationErrors([
+                'two_factor_token' => 'Invalid two-factor authentication token.',
+            ]);
+    }
+
+    /**
+     * The same refusal reaches the caller in the caller's language.
+     */
+    public function test_challenge_answers_an_unknown_user_in_the_callers_locale(): void
+    {
+        $this->app->setLocale('tr');
+
+        $challengeToken = encrypt(json_encode([
+            'user_id' => (string) Str::uuid(),
+            'expires_at' => now()->addMinutes(5)->timestamp,
+        ]));
+
+        $this->postJson('/auth/two-factor-challenge', [
+            'two_factor_token' => $challengeToken,
+            'code' => '123456',
+        ])
+            ->assertStatus(422)
+            ->assertJsonValidationErrors([
+                'two_factor_token' => 'İki faktörlü doğrulama anahtarı geçersiz.',
+            ]);
     }
 
     public function test_challenge_rejects_tampered_token(): void
