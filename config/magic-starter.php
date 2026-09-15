@@ -129,6 +129,14 @@ return [
     'team_photo_disk' => env('MAGIC_STARTER_TEAM_PHOTO_DISK', env('MAGIC_STARTER_PROFILE_PHOTO_DISK', 'public')),
     'profile_photo_path' => env('MAGIC_STARTER_PROFILE_PHOTO_PATH', 'profile-photos'),
     'team_photo_path' => env('MAGIC_STARTER_TEAM_PHOTO_PATH', 'team-photos'),
+    /*
+    | Where a generated avatar comes from for an account that has uploaded no
+    | photo. Set it to an EMPTY string to send `profile_photo_url: null`
+    | instead, which is usually what a JSON client wants: it draws its own
+    | initials already, and the generated image otherwise costs a third-party
+    | round trip per avatar, sends the person's name to that third party, fails
+    | offline, and arrives in colours the client's design system did not pick.
+    */
     'ui_avatars_url' => env('MAGIC_STARTER_UI_AVATARS_URL', 'https://ui-avatars.com/api/'),
 
     /*
