@@ -19,7 +19,7 @@ use Illuminate\Support\Facades\Storage;
  * @property string $name
  * @property bool $personal_team
  * @property string|null $profile_photo_path
- * @property-read  string  $profile_photo_url
+ * @property-read  string|null  $profile_photo_url
  * @property Carbon|null $created_at
  * @property Carbon|null $updated_at
  * @property-read  Model $owner

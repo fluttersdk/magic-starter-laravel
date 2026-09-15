@@ -240,15 +240,15 @@ The `HasProfilePhoto` trait (`FlutterSdk\MagicStarter\Traits\HasProfilePhoto`) p
 
 ### profilePhotoUrl Accessor
 
-`getProfilePhotoUrlAttribute(): string`
+`getProfilePhotoUrlAttribute(): ?string`
 
 If `profile_photo_path` is set, returns the public URL from the configured filesystem disk (`magic-starter.profile_photo_disk`). If the disk driver supports the `url()` method, it generates the full URL; otherwise it returns the raw path.
 
 ### defaultProfilePhotoUrl
 
-`defaultProfilePhotoUrl(): string`
+`defaultProfilePhotoUrl(): ?string`
 
-When no custom photo is uploaded, generates a fallback avatar URL using [ui-avatars.com](https://ui-avatars.com). The initials are extracted from the user's `name` (first letter of each word). The base URL is configurable via `magic-starter.ui_avatars_url`.
+When no custom photo is uploaded, generates a fallback avatar URL using [ui-avatars.com](https://ui-avatars.com). The initials are extracted from the user's `name` (first letter of each word). The base URL is configurable via `magic-starter.ui_avatars_url`, and setting that key to an EMPTY string returns `null` instead, which is what a JSON client that draws its own initials usually wants.
 
 Default format:
 

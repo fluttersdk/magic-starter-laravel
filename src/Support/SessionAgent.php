@@ -49,26 +49,44 @@ class SessionAgent
         return [
             'browser' => $browser,
             'platform' => $platform,
-            'app' => self::detectNativeApp($userAgent),
+            'app' => self::nativeAgent($userAgent)['app'] ?? '',
             'is_desktop' => ! $isMobile,
             'is_mobile' => $isMobile,
         ];
     }
 
     /**
-     * The application name from a native agent, or an empty string.
+     * The whole native agent, or null when this is not one.
      *
-     * Matches `<App Name> (Flutter; <platform>)`, the shape `magic`'s network
-     * provider sends. The name is whatever precedes the parenthesis, trimmed,
-     * so an app called "Uptizm Field Ops" survives intact.
+     * ONE read, and the platform, the mobile flag and the app name all go
+     * through it. They were three separate `preg_match` calls deciding on
+     * different substrings, and an agent that satisfied one and not the others
+     * was read inconsistently: a browser string with a trailing
+     * `(Flutter; iOS)` reported `platform=iOS` and `browser=Safari` at the same
+     * time, and handed the whole `Mozilla/5.0 (...)` prefix back as the app
+     * name. Only a hand-rolled client reaches that, but three patterns drifting
+     * apart is precisely what these readers were rewritten to stop.
+     *
+     * Anchored, so the app name is what the agent OPENS with:
+     * `<App Name> (Flutter; <platform>)`, the shape `magic`'s network provider
+     * sends. The name is whatever precedes the parenthesis, trimmed, so an app
+     * called "Uptizm Field Ops" survives intact.
+     *
+     * The name may hold no parenthesis, which is what keeps a BROWSER agent out
+     * of this branch entirely. A user agent carrying a trailing `(Flutter; iOS)`
+     * after a `Mozilla/5.0 (Macintosh; ...)` prefix is not a native client, and
+     * without that exclusion it would have been read as one whose name is the
+     * whole prefix.
+     *
+     * @return array{app: string, platform: string}|null
      */
-    private static function detectNativeApp(string $userAgent): string
+    private static function nativeAgent(string $userAgent): ?array
     {
-        if (preg_match('/^(.*?)\s*\(Flutter;\s*[A-Za-z]+\)/', $userAgent, $matches) !== 1) {
-            return '';
+        if (preg_match('/^([^()]*?)\s*\(Flutter;\s*([A-Za-z]+)\)/', $userAgent, $matches) !== 1) {
+            return null;
         }
 
-        return trim($matches[1]);
+        return ['app' => trim($matches[1]), 'platform' => $matches[2]];
     }
 
     /**
@@ -103,8 +121,10 @@ class SessionAgent
         // A native app first, because its agent has to win before the browser
         // patterns run: `magic` sends `<App> (Flutter; iOS)`, and `/Linux/`
         // would otherwise claim an Android build whose agent names both.
-        if (preg_match('/\(Flutter;\s*([A-Za-z]+)\)/', $userAgent, $matches) === 1) {
-            return self::canonicalNativePlatform($matches[1]);
+        $native = self::nativeAgent($userAgent);
+
+        if ($native !== null) {
+            return self::canonicalNativePlatform($native['platform']);
         }
 
         $patterns = [
@@ -158,8 +178,10 @@ class SessionAgent
         // accident, while `(Flutter; Android)` would match on 'Android' and be
         // right for the wrong reason; naming both here is what keeps a future
         // platform from being judged by a coincidence.
-        if (preg_match('/\(Flutter;\s*([A-Za-z]+)\)/', $userAgent, $matches) === 1) {
-            return in_array(strtolower($matches[1]), ['ios', 'android'], true);
+        $native = self::nativeAgent($userAgent);
+
+        if ($native !== null) {
+            return in_array(strtolower($native['platform']), ['ios', 'android'], true);
         }
 
         $mobilePatterns = [

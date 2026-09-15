@@ -185,6 +185,28 @@ final class SessionAgentTest extends TestCase
      * A browser agent is untouched by the native branch, which is the half a
      * greedy pattern would have broken.
      */
+    /**
+     * A browser agent carrying a trailing native token is still a browser.
+     *
+     * The three native reads (platform, mobile, app name) used to be three
+     * separate patterns deciding on different substrings, so this string
+     * reported `platform=iOS` and `browser=Safari` at the same time and handed
+     * the whole `Mozilla/5.0 (...)` prefix back as the application's name. They
+     * now share one anchored read whose name part admits no parenthesis, which
+     * is what keeps a browser out of the native branch rather than merely
+     * making the three agree on a wrong answer.
+     */
+    public function test_a_browser_prefix_is_not_read_as_a_native_app(): void
+    {
+        $result = SessionAgent::parse(
+            'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) MyApp (Flutter; iOS)',
+        );
+
+        $this->assertSame('Mac', $result['platform']);
+        $this->assertSame('', $result['app']);
+        $this->assertFalse($result['is_mobile']);
+    }
+
     public function test_a_browser_agent_reports_no_app(): void
     {
         $result = SessionAgent::parse(

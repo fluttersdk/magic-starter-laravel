@@ -212,6 +212,8 @@ That is invisible until something in your group is load-bearing, and then it is 
 ],
 ```
 
+This covers the routes in `api.php` only. The vendor webhook routes load separately and inherit nothing from here on purpose: a webhook is called by the vendor rather than by one of your users, so there is nobody for a locale resolver or a tenant scope to resolve, and an auth middleware would reject the call outright.
+
 Empty by default rather than `['api']`, so nothing changes for an existing install. Defaulting into your api group would be worse than doing nothing: every route here already declares the throttle it wants by name, and a group carrying `throttle:api` as well would silently halve a rate limit a prior release granted. Name what you want.
 
 ### Translations

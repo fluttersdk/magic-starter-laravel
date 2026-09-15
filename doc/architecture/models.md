@@ -461,7 +461,7 @@ Every model class carries PHPDoc block annotations above the class declaration:
  * @property string      $name
  * @property bool        $personal_team
  * @property string|null $profile_photo_path
- * @property-read string $profile_photo_url Computed accessor
+ * @property-read string|null $profile_photo_url Computed accessor
  * @property Carbon|null $created_at
  * @property Carbon|null $updated_at
  * @property-read Model            $owner        Relation accessor

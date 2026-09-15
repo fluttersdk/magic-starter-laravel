@@ -151,7 +151,13 @@ return [
     'route_prefix' => env('MAGIC_STARTER_ROUTE_PREFIX', 'api/v1'),
 
     /*
-    | Middleware applied to every route this package registers.
+    | Middleware applied to every route in `src/routes/api.php`.
+    |
+    | NOT the vendor webhook routes. Those load from `src/routes/webhooks.php`
+    | under their own gate and deliberately inherit nothing from here: a webhook
+    | URL is registered in a vendor dashboard and is called by that vendor, not
+    | by your users, so a tenant scope or a locale resolver has nobody to resolve
+    | and an auth middleware would reject the call.
     |
     | These routes are loaded by the service provider rather than from the
     | host's `routes/api.php`, so they join NO middleware group on their own.
