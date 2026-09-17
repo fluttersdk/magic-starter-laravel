@@ -85,6 +85,77 @@ final class InstallCommandTest extends TestCase
     }
 
     /**
+     * The guest and phone columns follow the features that own them.
+     *
+     * `add_guest_and_phone_fields_to_users_table.php` adds `is_guest`,
+     * `device_id` and `phone_country`, and makes `email` and `password`
+     * nullable. Its only consumer is `Actions\CreateGuestUser`, and nothing in
+     * the teams feature reads any of it. It was published under `teams` alone,
+     * which cost both directions: selecting `guest-auth` or `phone-otp` left
+     * their columns absent, and selecting `teams` published columns no team
+     * code touches. The published `UserFactory` writes `is_guest` in its
+     * default state, so the first symptom in a consumer was every
+     * `User::factory()` call dying with
+     * `table users has no column named is_guest`.
+     */
+    public function test_guest_auth_feature_publishes_the_guest_and_phone_migration(): void
+    {
+        $this->artisan('magic-starter:install', [
+            '--features' => ['guest-auth'],
+        ])->assertExitCode(0);
+
+        $this->assertNotEmpty(
+            glob(database_path('migrations/*_add_guest_and_phone_fields_to_users_table.php')) ?: [],
+            'Expected guest-auth to publish the guest and phone migration.',
+        );
+    }
+
+    public function test_phone_otp_feature_publishes_the_guest_and_phone_migration(): void
+    {
+        $this->artisan('magic-starter:install', [
+            '--features' => ['phone-otp'],
+        ])->assertExitCode(0);
+
+        $this->assertNotEmpty(
+            glob(database_path('migrations/*_add_guest_and_phone_fields_to_users_table.php')) ?: [],
+            'Expected phone-otp to publish the guest and phone migration.',
+        );
+    }
+
+    public function test_teams_alone_does_not_publish_the_guest_and_phone_migration(): void
+    {
+        $this->artisan('magic-starter:install', [
+            '--features' => ['teams'],
+        ])->assertExitCode(0);
+
+        $this->assertEmpty(
+            glob(database_path('migrations/*_add_guest_and_phone_fields_to_users_table.php')) ?: [],
+            'Teams reads none of those columns and must not publish them.',
+        );
+    }
+
+    /**
+     * Both features listed against one file must still publish it once.
+     *
+     * `publishMigrations()` runs `array_unique()` over the assembled list, and
+     * this is the case that relies on it: two published copies would run the
+     * same `ALTER TABLE` twice, and the second would not be a no-op because the
+     * `email` and `password` nullable changes are unconditional.
+     */
+    public function test_guest_auth_and_phone_otp_together_publish_it_once(): void
+    {
+        $this->artisan('magic-starter:install', [
+            '--features' => ['guest-auth', 'phone-otp'],
+        ])->assertExitCode(0);
+
+        $this->assertCount(
+            1,
+            glob(database_path('migrations/*_add_guest_and_phone_fields_to_users_table.php')) ?: [],
+            'Expected exactly one copy of the guest and phone migration.',
+        );
+    }
+
+    /**
      * A second install run cannot stamp a migration ahead of the first run's.
      *
      * This is the invariant the provenance migration turned from cosmetic into

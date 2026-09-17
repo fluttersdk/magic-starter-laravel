@@ -31,7 +31,7 @@ class InstallCommand extends Command
      */
     protected $signature = 'magic-starter:install
         {--all : Install all features without prompting}
-        {--features=* : Features to install (teams, profile-photos, sessions, social-login, newsletter-subscription, extended-profile, notifications, email-verification)}
+        {--features=* : Features to install (teams, profile-photos, sessions, social-login, newsletter-subscription, extended-profile, notifications, email-verification, guest-auth, phone-otp, timezones, billing)}
         {--uuid : Use UUID primary keys}
         {--no-uuid : Use auto-incrementing integer primary keys}
         {--route-prefix= : Route prefix for package routes}
@@ -94,6 +94,20 @@ class InstallCommand extends Command
             'create_team_invitations_table.php',
             'add_current_team_id_to_users_table.php',
             'add_expires_at_to_team_invitations_table.php',
+        ],
+        // `add_guest_and_phone_fields_to_users_table.php` is listed under both
+        // of the features that own its columns, and `publishMigrations()` runs
+        // `array_unique()`, so enabling both publishes it once. It was under
+        // `teams` until now, which is the one feature that touches none of what
+        // it adds: `is_guest` and `device_id` have exactly one consumer,
+        // `Actions/CreateGuestUser.php`, and `phone_country` belongs to phone
+        // OTP. The cost of the misfiling was that `guest-auth` or `phone-otp`
+        // could be switched on and their columns never arrive, while `teams`
+        // alone published columns nothing in teams reads.
+        'guest-auth' => [
+            'add_guest_and_phone_fields_to_users_table.php',
+        ],
+        'phone-otp' => [
             'add_guest_and_phone_fields_to_users_table.php',
         ],
         'profile-photos' => [

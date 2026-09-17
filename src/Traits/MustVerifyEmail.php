@@ -2,6 +2,7 @@
 
 namespace FlutterSdk\MagicStarter\Traits;
 
+use FlutterSdk\MagicStarter\Features;
 use FlutterSdk\MagicStarter\Notifications\VerifyEmailNotification;
 use Illuminate\Auth\Events\Verified;
 use Illuminate\Support\Carbon;
@@ -81,6 +82,20 @@ trait MustVerifyEmail
      */
     public function sendEmailVerificationNotification(): void
     {
+        // The published User stub implements `MustVerifyEmailContract` and uses
+        // this trait unconditionally, while the `verification.verify` route is
+        // registered only when the `email-verification` feature is on. Without
+        // this guard, registering on an install that left the feature off built
+        // a signed URL for a route that does not exist: `POST /auth/register`
+        // answered 500 with `Route [verification.verify] not defined`, the user
+        // was created anyway because the event fires after the insert, and the
+        // obvious retry answered "The email has already been taken". Measured
+        // against Laravel 13 with sessions, extended-profile, notifications and
+        // social-login selected.
+        if (! Features::hasEmailVerificationFeatures()) {
+            return;
+        }
+
         if ($this->verificationNotificationSent) {
             return;
         }
