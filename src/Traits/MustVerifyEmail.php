@@ -92,7 +92,7 @@ trait MustVerifyEmail
         // obvious retry answered "The email has already been taken". Measured
         // against Laravel 13 with sessions, extended-profile, notifications and
         // social-login selected.
-        if (! Features::enabled(Features::emailVerification())) {
+        if (! Features::hasEmailVerificationFeatures()) {
             return;
         }
 

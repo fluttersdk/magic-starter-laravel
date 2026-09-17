@@ -29,10 +29,21 @@ return new class extends Migration
                     ->after('is_guest');
             }
 
+            // No `after('phone')`. That column is created by
+            // `add_profile_fields_to_users_table.php`, which only
+            // `extended-profile` publishes, so this file lands on installs
+            // where `phone` does not exist: `--features=guest-auth` alone would
+            // fail with `Unknown column 'phone' in 'users'`. Selecting
+            // `extended-profile` as well does not save it either, because
+            // `FEATURE_MIGRATIONS` declares the guest and phone features first
+            // and `publishMigrations()` stamps in declaration order.
+            //
+            // Only `MySqlGrammar` implements `modifyAfter`, so the modifier was
+            // cosmetic on every other driver and invisible to a SQLite suite,
+            // which is why nothing here can regression-test its absence.
             if (! Schema::hasColumn('users', 'phone_country')) {
                 $table->char('phone_country', 2)
-                    ->nullable()
-                    ->after('phone');
+                    ->nullable();
             }
         });
     }
