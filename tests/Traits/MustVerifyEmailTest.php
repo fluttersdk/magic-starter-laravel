@@ -2,6 +2,7 @@
 
 namespace FlutterSdk\MagicStarter\Tests\Traits;
 
+use FlutterSdk\MagicStarter\Features;
 use FlutterSdk\MagicStarter\MagicStarter;
 use FlutterSdk\MagicStarter\Notifications\VerifyEmailNotification;
 use FlutterSdk\MagicStarter\Tests\TestCase;
@@ -117,6 +118,8 @@ final class MustVerifyEmailTest extends TestCase
 
     public function test_send_email_verification_notification_dispatches_notification(): void
     {
+        config(['magic-starter.features' => [Features::emailVerification()]]);
+
         Notification::fake();
 
         $user = MustVerifyEmailTestUser::query()->create([
@@ -130,6 +133,32 @@ final class MustVerifyEmailTest extends TestCase
             $user,
             VerifyEmailNotification::class,
         );
+    }
+
+    /**
+     * The published User stub implements `MustVerifyEmailContract` and uses this
+     * trait whatever the operator selected, while `verification.verify` is
+     * registered only under the `email-verification` feature. So without the
+     * guard this asserts, registering on an install that left the feature off
+     * built a signed URL for a route that does not exist, and the observable
+     * result was a 500 on `POST /auth/register` with the user created anyway:
+     * the event fires after the insert, so the retry answered "The email has
+     * already been taken" and the account could never be reached.
+     */
+    public function test_it_sends_nothing_when_email_verification_is_off(): void
+    {
+        config(['magic-starter.features' => []]);
+
+        Notification::fake();
+
+        $user = MustVerifyEmailTestUser::query()->create([
+            'email' => 'test@example.com',
+            'email_verified_at' => null,
+        ]);
+
+        $user->sendEmailVerificationNotification();
+
+        Notification::assertNothingSent();
     }
 
     /**
