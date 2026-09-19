@@ -333,6 +333,8 @@ MagicStarter::useTeamModel(\App\Models\Team::class);
 > [!NOTE]
 > A stale Composer classmap can cause `class_exists()` to return incorrect results. Run `composer dump-autoload` if model auto-resolution is not picking up your custom models.
 
+`MagicStarter::serializeUserUsing()` belongs to the same family: it registers extra fields for `UserResource` to publish, which is how an application exposes a column it added to `users`. See [Publishing your own columns](/doc/basics/profile.md#publishing-your-own-columns).
+
 <a name="two-factor-authentication-settings"></a>
 ## Two-Factor Authentication Settings
 

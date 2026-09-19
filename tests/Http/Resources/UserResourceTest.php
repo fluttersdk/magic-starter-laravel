@@ -13,6 +13,7 @@ use Illuminate\Database\Schema\Blueprint;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Schema;
 use Illuminate\Support\Str;
+use InvalidArgumentException;
 
 /**
  * Tests for UserResource team field gating.
@@ -190,6 +191,26 @@ class UserResourceTest extends TestCase
         // calls build two of them, so comparing values compares object
         // identity rather than the thing this asserts.
         $this->assertSame($before, array_keys((new UserResource($user))->toArray(Request::create('/'))));
+    }
+
+    /**
+     * A callback that does not answer an array is the consumer's bug, and it
+     * has to read as one.
+     *
+     * `?callable` cannot constrain a closure's return, so without the check
+     * this fatals with "Only arrays and Traversables can be unpacked" on every
+     * endpoint that serialises a user rather than the one they were testing.
+     */
+    public function test_a_callback_that_returns_a_non_array_is_refused_by_name(): void
+    {
+        config(['magic-starter.features' => []]);
+
+        MagicStarter::serializeUserUsing(fn ($user, $request) => null);
+
+        $this->expectException(InvalidArgumentException::class);
+        $this->expectExceptionMessageMatches('/serializeUserUsing must return an array/');
+
+        (new UserResource($this->makeUser()))->toArray(Request::create('/'));
     }
 
     private function makeUser(): ConcreteUser

@@ -6,6 +6,7 @@ use FlutterSdk\MagicStarter\Models\Team;
 use FlutterSdk\MagicStarter\Models\TeamInvitation;
 use FlutterSdk\MagicStarter\Models\TeamUser;
 use Illuminate\Http\Request;
+use InvalidArgumentException;
 use RuntimeException;
 use Throwable;
 
@@ -372,7 +373,28 @@ class MagicStarter
     {
         $callback = static::$serializeUser;
 
-        return $callback === null ? [] : $callback($user, $request);
+        if ($callback === null) {
+            return [];
+        }
+
+        $fields = $callback($user, $request);
+
+        // Checked rather than unpacked on trust. `?callable` cannot constrain a
+        // closure's RETURN, so a consumer whose callback answers null or a
+        // scalar would otherwise fatal with "Only arrays and Traversables can
+        // be unpacked" on every endpoint that serialises a user, not just the
+        // one they were testing.
+        //
+        // A throw rather than a silent `[]`: their callback is wrong either
+        // way, and swallowing it would leave them looking for a missing field
+        // with nothing to read.
+        if (! is_array($fields)) {
+            throw new InvalidArgumentException(
+                'The callback given to MagicStarter::serializeUserUsing must return an array, ' . get_debug_type($fields) . ' returned.',
+            );
+        }
+
+        return $fields;
     }
 
     /**
