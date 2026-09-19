@@ -5,6 +5,21 @@ All notable changes to this project will be documented in this file.
 ## [Unreleased]
 
 ### Added
+- **`MagicStarter::serializeUserUsing`, because a consumer had no way to publish a column it owns.** `UserResource` is a fixed field list and is not resolved through the container, so a host app that adds a column to `users` can neither extend it nor swap it: every endpoint this package serialises a user through answers without the field. The remedies left were forking the resource or standing up a second endpoint for one value, and the reporting app did the latter.
+
+  The callback takes the user being serialised and the request, and returns a map MERGED over the package's own fields:
+
+  ```php
+  MagicStarter::serializeUserUsing(fn ($user, $request) => [
+      'sync_salt' => $user->syncSalt(),
+  ]);
+  ```
+
+  Merged rather than replacing, so a consumer gains fields without inheriting the job of keeping this package's list current: a field added here in a later release reaches them with no change on their side. A consumer key that collides with a package key wins, deliberately, since the alternative is a host unable to correct a value it owns. `MagicStarter::reset()` clears it, which is what keeps it out of the next test in a suite.
+
+  Found by `watchools`, which needed a per-user sync salt on the user payload and shipped a dedicated route instead. (`src/MagicStarter.php`, `src/Http/Resources/UserResource.php`, `tests/Http/Resources/UserResourceTest.php`)
+
+### Added
 - **Every user-facing sentence resolves through `__()`, in English and Turkish.** 68 literals across 23 files answered in English whatever the caller's locale, so a Turkish account read a Turkish interface and English refusals from exactly the screens this package owns. New catalogues under `lang/{en,tr}/`: `auth.php`, `profile.php`, `notifications.php`, plus additions to the existing `teams.php`. Publish with `--tag=magic-starter-lang` to override a wording. The two mail notifications are deliberately untouched: they already route through `Lang::get()`, render in the queue worker's locale rather than the request's, and converting them would silently drop a translation an adopter already wrote against the English sentence. Converting them would also not fix anything, since the worker's locale is not the caller's.
 
   **Two call sites did move off an English sentence used as a key**, `UpdateUserPassword` and `ConfirmPasswordRequest`, which were `__('The current password is incorrect.')`. Those DO render in the request's locale, so converting them is what fixes the reported defect, and it is the one case here where the adopter-translation cost is worth paying. An adopter who translated that sentence in their own `lang/*.json` moves it to `magic-starter::auth.password.current_incorrect`.

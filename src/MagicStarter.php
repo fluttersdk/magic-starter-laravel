@@ -5,6 +5,7 @@ namespace FlutterSdk\MagicStarter;
 use FlutterSdk\MagicStarter\Models\Team;
 use FlutterSdk\MagicStarter\Models\TeamInvitation;
 use FlutterSdk\MagicStarter\Models\TeamUser;
+use Illuminate\Http\Request;
 use RuntimeException;
 use Throwable;
 
@@ -36,6 +37,13 @@ class MagicStarter
      * @var array<string, class-string>
      */
     protected static array $using = [];
+
+    /**
+     * Extra fields a consumer publishes on `UserResource`.
+     *
+     * @var (callable(mixed, Request): array<string, mixed>)|null
+     */
+    protected static $serializeUser = null;
 
     /**
      * Package model classes mapped to their App\Models equivalents.
@@ -323,11 +331,57 @@ class MagicStarter
     }
 
     /**
+     * Register extra fields for `UserResource` to publish.
+     *
+     * A consumer that adds a column to `users` has no other way to expose it:
+     * every endpoint that serialises a user goes through `UserResource`, whose
+     * field list is fixed, and the resource is not resolved through the
+     * container so it cannot be swapped either. Without this a host app either
+     * forks the package or adds a second endpoint for one field.
+     *
+     * The callback receives the user and the request and returns a map merged
+     * over the package's own fields:
+     *
+     * ```php
+     * MagicStarter::serializeUserUsing(fn ($user, $request) => [
+     *     'sync_salt' => $user->syncSalt(),
+     * ]);
+     * ```
+     *
+     * It MERGES rather than replaces, so a consumer gains fields without
+     * inheriting the job of keeping the package's own list current: a field
+     * added here in a later release reaches them without a change on their
+     * side. A key that collides with a package field wins, deliberately, since
+     * the alternative is a host unable to correct a value it owns.
+     *
+     * @param  (callable(mixed, Request): array<string, mixed>)|null  $callback  Null clears it.
+     */
+    public static function serializeUserUsing(?callable $callback): static
+    {
+        static::$serializeUser = $callback;
+
+        return new static;
+    }
+
+    /**
+     * The extra fields a consumer registered, or an empty array.
+     *
+     * @return array<string, mixed>
+     */
+    public static function extraUserFields(mixed $user, Request $request): array
+    {
+        $callback = static::$serializeUser;
+
+        return $callback === null ? [] : $callback($user, $request);
+    }
+
+    /**
      * Reset all static configuration to defaults.
      */
     public static function reset(): void
     {
         static::$ignoreRoutes = false;
         static::$using = [];
+        static::$serializeUser = null;
     }
 }
