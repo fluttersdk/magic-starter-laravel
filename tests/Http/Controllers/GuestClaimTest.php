@@ -482,6 +482,47 @@ class GuestClaimTest extends TestCase
 
         Event::assertNotDispatched(GuestClaimed::class);
     }
+
+    /**
+     * Test 10: a guest that never carried a device id is claimable.
+     *
+     * The published `UserFactory` makes exactly this row: `is_guest` true and no
+     * `device_id`. An application that creates guests server side rather than
+     * through `POST auth/guest` has nothing else, so a claim that treated a
+     * missing device id as "already claimed" answered it with a silent no-op.
+     */
+    public function test_a_guest_with_no_device_id_is_claimable(): void
+    {
+        /** @var GuestClaimTestUser $guest */
+        $guest = GuestClaimTestUser::create([
+            'name' => 'Guest',
+            'is_guest' => true,
+        ]);
+
+        $guestToken = (string) $guest->createToken('auth_token')->plainTextToken;
+        $notificationId = $this->notificationFor($guest->getKey());
+        $account = $this->registeredAccount();
+
+        Event::fake([GuestClaimed::class]);
+
+        $this->withToken($account['token'])
+            ->postJson('/auth/guest/claim', ['guest_token' => $guestToken])
+            ->assertOk()
+            ->assertJsonPath('data.claimed', true);
+
+        $this->assertSame(
+            $account['user']->getKey(),
+            $this->notificationOwner($notificationId),
+            'The rows of a guest with no device id must move like any other.',
+        );
+
+        $this->withToken($account['token'])
+            ->postJson('/auth/guest/claim', ['guest_token' => $guestToken])
+            ->assertOk()
+            ->assertJsonPath('data.claimed', false);
+
+        Event::assertDispatchedTimes(GuestClaimed::class, 1);
+    }
 }
 
 // ---------------------------------------------------------------------------

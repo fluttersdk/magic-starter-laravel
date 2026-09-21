@@ -150,11 +150,9 @@ class ClaimGuestAccount implements ClaimsGuestAccounts
             //    either has deleted it, so without this the second would
             //    dispatch the event a second time and a consumer's listener
             //    would move the same rows twice. The lock serialises them and
-            //    the DEVICE ID is what the loser reads: a live guest always
-            //    carries one, a claim releases it, so a row that is a guest
-            //    with none is one this claim has already taken. The guest test
-            //    is beside it for the other race, a promotion landing between
-            //    the token resolving and this lock.
+            //    the guest's TOKENS are what the loser reads, in step 2 below.
+            //    The guest test here is for the other race, a promotion landing
+            //    between the token resolving and this lock.
             //
             //    Read through the CONFIGURED user model rather than off the
             //    resolved instance. `newQuery()` on something typed
@@ -168,24 +166,38 @@ class ClaimGuestAccount implements ClaimsGuestAccounts
                 ->lockForUpdate()
                 ->first();
 
-            if (! $locked instanceof Authenticatable
-                || ! $this->isGuest($locked)
-                || $locked->getAttribute('device_id') === null
-            ) {
+            if (! $locked instanceof Authenticatable || ! $this->isGuest($locked)) {
                 return false;
             }
 
-            // 2. Move the rows this package owns.
+            // 2. Has this claim already been made? The sentinel is the thing a
+            //    winner destroys rather than a column a guest may or may not
+            //    carry: the claim below deletes every token the guest holds, and
+            //    the credential that got us here was one of them, so a guest
+            //    with none is a guest somebody has already claimed. A missing
+            //    `device_id` was the earlier answer and it was wrong, because
+            //    the published UserFactory makes guests that never had one and
+            //    their claim would silently no-op.
+            //
+            //    A LOCKING read, so it is a current read on every isolation
+            //    level: under REPEATABLE READ a plain SELECT here could be
+            //    answered from a snapshot taken before the winner committed,
+            //    and the loser would dispatch the event a second time.
+            if (! $this->holdsTokens($locked)) {
+                return false;
+            }
+
+            // 3. Move the rows this package owns.
             $this->moveNotifications($locked, $target);
 
-            // 3. Hand the seam to the consumer. Synchronous and inside the
+            // 4. Hand the seam to the consumer. Synchronous and inside the
             //    transaction, so a listener that throws unwinds the whole claim
             //    rather than leaving a half-moved account behind. The guest is
             //    still intact here, tokens and device id included, because a
             //    listener may key its own rows on either.
             Event::dispatch(new GuestClaimed($locked, $target));
 
-            // 4. Consume the guest row. The tokens go, so no session survives.
+            // 5. Consume the guest row. The tokens go, so no session survives.
             //    The device id goes, so the guest lookup cannot match this row
             //    again and a later guest login from the same device opens a new
             //    one. Between them nothing can reach it: the row carries no
@@ -243,6 +255,27 @@ class ClaimGuestAccount implements ClaimsGuestAccounts
                 'notifiable_id' => $target->getAuthIdentifier(),
                 'updated_at' => now(),
             ]);
+    }
+
+    /**
+     * Determine whether the guest still holds any Sanctum token, under a lock.
+     *
+     * Only ever asked from inside the claim's transaction, where it answers
+     * "has another claim already taken this guest". Every caller reached here by
+     * presenting one of these tokens, so the answer can only turn false through
+     * {@see self::revokeTokens()}.
+     *
+     * @param  Authenticatable  $guest  The guest row already locked by the caller.
+     */
+    private function holdsTokens(Authenticatable $guest): bool
+    {
+        $tokenModel = Sanctum::personalAccessTokenModel();
+
+        return $tokenModel::query()
+            ->where('tokenable_type', $guest->getMorphClass())
+            ->where('tokenable_id', $guest->getAuthIdentifier())
+            ->lockForUpdate()
+            ->exists();
     }
 
     /**
