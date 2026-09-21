@@ -13,6 +13,7 @@ use Illuminate\Database\Schema\Blueprint;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Schema;
 use Illuminate\Support\Str;
+use InvalidArgumentException;
 
 /**
  * Tests for UserResource team field gating.
@@ -117,5 +118,107 @@ class UserResourceTest extends TestCase
         $resource = (new UserResource($user))->toArray($request);
 
         $this->assertArrayHasKey('all_teams', $resource);
+    }
+
+    /**
+     * A consumer publishes its own column without forking the resource.
+     *
+     * This resource is not resolved through the container, so a host app that
+     * adds a column to `users` cannot swap it and has no other way to expose
+     * the value on any endpoint this package owns.
+     */
+    public function test_consumer_fields_are_merged_into_the_payload(): void
+    {
+        config(['magic-starter.features' => []]);
+
+        MagicStarter::serializeUserUsing(fn ($user, $request) => ['sync_salt' => 'abc123']);
+
+        $resource = (new UserResource($this->makeUser()))->toArray(Request::create('/'));
+
+        $this->assertSame('abc123', $resource['sync_salt']);
+        // Merged rather than replacing: the package's own fields survive, so a
+        // consumer does not inherit the job of keeping that list current.
+        $this->assertSame('Test User', $resource['name']);
+    }
+
+    /**
+     * The callback sees the user it is serialising, not the authenticated one.
+     */
+    public function test_consumer_fields_receive_the_resource_being_serialised(): void
+    {
+        config(['magic-starter.features' => []]);
+
+        $seen = null;
+        MagicStarter::serializeUserUsing(function ($user, $request) use (&$seen): array {
+            $seen = $user;
+
+            return [];
+        });
+
+        $user = $this->makeUser();
+        (new UserResource($user))->toArray(Request::create('/'));
+
+        $this->assertTrue($seen instanceof ConcreteUser && $seen->is($user));
+    }
+
+    /**
+     * A consumer key wins over a package key, deliberately: the alternative is
+     * a host unable to correct a value it owns.
+     */
+    public function test_a_consumer_key_overrides_a_package_key(): void
+    {
+        config(['magic-starter.features' => []]);
+
+        MagicStarter::serializeUserUsing(fn ($user, $request) => ['name' => 'Overridden']);
+
+        $this->assertSame('Overridden', (new UserResource($this->makeUser()))->toArray(Request::create('/'))['name']);
+    }
+
+    /**
+     * No callback is the default, and `reset()` puts it back.
+     */
+    public function test_the_payload_is_unchanged_without_a_callback(): void
+    {
+        config(['magic-starter.features' => []]);
+
+        $user = $this->makeUser();
+        $before = array_keys((new UserResource($user))->toArray(Request::create('/')));
+
+        MagicStarter::serializeUserUsing(fn ($user, $request) => ['extra' => true]);
+        MagicStarter::reset();
+
+        // Compared on the KEYS: the payload carries Carbon instances, and two
+        // calls build two of them, so comparing values compares object
+        // identity rather than the thing this asserts.
+        $this->assertSame($before, array_keys((new UserResource($user))->toArray(Request::create('/'))));
+    }
+
+    /**
+     * A callback that does not answer an array is the consumer's bug, and it
+     * has to read as one.
+     *
+     * `?callable` cannot constrain a closure's return, so without the check
+     * this fatals with "Only arrays and Traversables can be unpacked" on every
+     * endpoint that serialises a user rather than the one they were testing.
+     */
+    public function test_a_callback_that_returns_a_non_array_is_refused_by_name(): void
+    {
+        config(['magic-starter.features' => []]);
+
+        MagicStarter::serializeUserUsing(fn ($user, $request) => null);
+
+        $this->expectException(InvalidArgumentException::class);
+        $this->expectExceptionMessageMatches('/serializeUserUsing must return an array/');
+
+        (new UserResource($this->makeUser()))->toArray(Request::create('/'));
+    }
+
+    private function makeUser(): ConcreteUser
+    {
+        return ConcreteUser::forceCreate([
+            'id' => (string) Str::uuid(),
+            'name' => 'Test User',
+            'email' => 'test@example.com',
+        ]);
     }
 }

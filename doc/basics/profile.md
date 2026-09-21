@@ -14,6 +14,7 @@ Magic Starter provides a full suite of profile management endpoints covering use
 - <a name="toc-newsletter"></a>[Newsletter Subscription](#newsletter)
 - <a name="toc-session-management"></a>[Session Management](#session-management)
 - <a name="toc-extended-profile"></a>[Extended Profile](#extended-profile)
+- <a name="toc-publishing-your-own-columns"></a>[Publishing Your Own Columns](#publishing-your-own-columns)
 
 ---
 
@@ -617,3 +618,21 @@ Enable the feature in `config/magic-starter.php`:
 
 'supported_locales' => ['en', 'tr', 'de'],
 ```
+
+## <a name="publishing-your-own-columns"></a>Publishing Your Own Columns
+
+`UserResource` is not resolved through the container, so an application that adds a column to `users` cannot swap the resource to expose it. Register the extra fields instead, from `AppServiceProvider::boot()`:
+
+```php
+use FlutterSdk\MagicStarter\MagicStarter;
+
+MagicStarter::serializeUserUsing(fn ($user, $request) => [
+    'subscription_tier' => $user->subscription_tier,
+]);
+```
+
+The callback receives the user being serialised and the current request, and its return value is **merged over** the package's fields. Merging rather than replacing is what keeps your payload current: a field this package adds in a later release reaches you with no change on your side.
+
+A key of yours that collides with one of the package's wins, so a value you own is yours to correct. The callback must return an array; anything else is refused by name rather than fataling inside the resource.
+
+`MagicStarter::reset()` clears it, which matters in a test suite.
