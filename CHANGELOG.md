@@ -4,6 +4,8 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [0.0.9] - 2026-09-21
+
 ### Added
 - **`MagicStarter::serializeUserUsing`, because a consumer had no way to publish a column it owns.** `UserResource` is a fixed field list and is not resolved through the container, so a host app that adds a column to `users` can neither extend it nor swap it: every endpoint this package serialises a user through answers without the field. The remedies left were forking the resource or standing up a second endpoint for one value, and the reporting app did the latter.
 
@@ -32,6 +34,12 @@ All notable changes to this project will be documented in this file.
 
 ### Fixed
 - **`SessionAgent` reads a native client instead of filing it under desktop.** It knew six browsers and five desktop/mobile OS patterns and nothing else, so a native app's agent matched none of them: `browser` and `platform` came back empty, `isMobile` came back false, and `is_desktop` therefore came back TRUE. A phone's own session rendered in the client as a browser session on an unknown desktop, beside a laptop icon; every field was wrong and none of them errored. It now reads `<App Name> (Flutter; <platform>)`, which `magic` sends by default. The native branch runs BEFORE the browser patterns, because `/Linux/` would otherwise claim an Android build whose agent names both, and `is_mobile` is decided by the token rather than by a substring sweep: `(Flutter; macOS)` would have read as a desktop by accident and `(Flutter; Android)` would have been right for the wrong reason. A hand-rolled client's casing is normalised so two clients naming one platform do not read differently in the same list, and an unrecognised token is passed through rather than emptied.
+
+- **The published `UserFactory` could not insert a row on an install without `teams`.** Its `definition()` wrote `is_guest`, and the migration adding that column was published only under `teams`, so every factory call on such an install died with `table users has no column named is_guest`, which is the first thing a consumer's own test suite hits. `is_guest` is now written only when `guest-auth` is enabled, and `locale` and `timezone` only when `extended-profile` is. The `guest()` and `withPhone()` states are deliberately not gated: a caller reaching for one is asking for exactly that column, so failing loudly on an install that lacks it is the honest answer. (`stubs/factories/UserFactory.php`)
+
+- **`add_guest_and_phone_fields_to_users_table` is published with `guest-auth` and `phone-otp`, the features that read its columns, instead of with `teams`, which reads none of them.** Switching either feature on used to leave its columns missing, while `teams` alone published columns no team code touches. Selecting both publishes one copy. An install that already has the file keeps it: the installer skips a migration whose name is already published, so re-running it after upgrading does not run the same `ALTER` twice. The migration also drops `->after('phone')`, because `phone` comes from `extended-profile`, which neither owning feature implies, and on MySQL `--features=guest-auth` failed with `Unknown column 'phone'`; the modifier is a no-op on every other grammar, which is why the SQLite suite never saw it. (`src/Console/InstallCommand.php`, `database/migrations/add_guest_and_phone_fields_to_users_table.php`)
+
+- **Registering with `email-verification` off answered 500 after creating the user.** The published User stub implements `MustVerifyEmail` whatever the operator selected, while `verification.verify` is registered only under that feature, so `POST /auth/register` built a signed URL for a route that does not exist and failed with `Route [verification.verify] not defined`. The user was already inserted, so the obvious retry answered "The email has already been taken" on an account nobody could reach. `sendEmailVerificationNotification()` returns early when the feature is off, which is the seam both the action and the framework listener pass through. (`src/Traits/MustVerifyEmail.php`)
 
 ## [0.0.8] - 2026-09-12
 
