@@ -108,6 +108,21 @@ Route::prefix((string) config('magic-starter.route_prefix', ''))
             Route::prefix('auth')->group(function (): void {
                 Route::post('logout', [AuthController::class, 'logout']);
                 Route::get('user', [AuthController::class, 'user']);
+
+                // The other half of guest auth, and the only one that needs a
+                // session: the caller authenticates as the TARGET account and
+                // presents the guest session's own token in the body, so the
+                // endpoint proves both halves by possession.
+                //
+                // It carries the guest-auth limiter rather than one of its own.
+                // That limiter buckets on the ip plus `device_id`, and this
+                // payload has no device id, so here it is ten a minute per
+                // address: a claim is one call per sign-in, so a client that
+                // reaches that bound is retrying rather than working.
+                if (Features::hasGuestAuthFeatures()) {
+                    Route::post('guest/claim', [GuestAuthController::class, 'claim'])
+                        ->middleware('throttle:magic-starter-guest-auth');
+                }
             });
 
             if (Features::enabled(Features::teams())) {
