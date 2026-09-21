@@ -14,6 +14,7 @@ Magic Starter provides a full suite of profile management endpoints covering use
 - <a name="toc-newsletter"></a>[Newsletter Subscription](#newsletter)
 - <a name="toc-session-management"></a>[Session Management](#session-management)
 - <a name="toc-extended-profile"></a>[Extended Profile](#extended-profile)
+- <a name="toc-publishing-your-own-columns"></a>[Publishing Your Own Columns](#publishing-your-own-columns)
 
 ---
 
@@ -605,7 +606,20 @@ The `timezone` field is also available when only the `timezones` feature is enab
 
 These fields are validated and stored by the `UpdateUserProfile` action. The `UserResource` always includes `locale`, `timezone`, and `phone` in its response regardless of the feature flag -- the feature flag only controls whether the update endpoint accepts these fields.
 
-### Publishing your own columns
+### Configuration
+
+Enable the feature in `config/magic-starter.php`:
+
+```php
+'features' => [
+    Features::extendedProfile(),
+    // ...
+],
+
+'supported_locales' => ['en', 'tr', 'de'],
+```
+
+## <a name="publishing-your-own-columns"></a>Publishing Your Own Columns
 
 `UserResource` is not resolved through the container, so an application that adds a column to `users` cannot swap the resource to expose it. Register the extra fields instead, from `AppServiceProvider::boot()`:
 
@@ -622,16 +636,3 @@ The callback receives the user being serialised and the current request, and its
 A key of yours that collides with one of the package's wins, so a value you own is yours to correct. The callback must return an array; anything else is refused by name rather than fataling inside the resource.
 
 `MagicStarter::reset()` clears it, which matters in a test suite.
-
-### Configuration
-
-Enable the feature in `config/magic-starter.php`:
-
-```php
-'features' => [
-    Features::extendedProfile(),
-    // ...
-],
-
-'supported_locales' => ['en', 'tr', 'de'],
-```
