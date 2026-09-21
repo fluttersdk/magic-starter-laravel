@@ -4,6 +4,26 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [0.0.10] - 2026-09-22
+
+### Fixed
+
+- **A guest device id opened the account that guest became.** `CreateGuestUser` found a user by `device_id` with no `is_guest` condition, neither promotion path released the column, and `GuestAuthController::login` then deleted every token on the row it found and issued a fresh one. So `POST auth/guest` carrying a registered user's device id answered with a full session as that user and signed their other devices out. The per-device throttle did not contain it: the limiter keys on ip plus device id, so every candidate value had its own bucket.
+
+  The identifier is an anonymous session key the endpoint accepts with no credential beside it. It is safe while the row is anonymous and becomes a password equivalent the moment the row stops being. The lookup now matches only a row that is still a guest, and both promotion paths release it: `UpdateUserProfile` for a guest that has an email and adds a password, `UpdateUserPassword` for one that does it the other way round. A promoted row that still carries the id, which is every account promoted before this release, has it freed on the next guest login rather than answering 409: the caller is a device holding no session, `device_id` is unique so the new guest row could not otherwise be inserted, and nothing reads the column on a registered account.
+
+  Both promotions now go through `forceFill`. Neither column is in the published User stub's `$fillable`, and mass assignment drops a guarded attribute without erroring, so on a real install the promotion had never landed at all: a guest that added an email and a password stayed `is_guest = true` for ever. The new tests use a stub-shaped fixture for that reason; this repository's own unguarded `ConcreteUser` cannot fail on a dropped write. (`src/Actions/CreateGuestUser.php`, `src/Actions/UpdateUserProfile.php`, `src/Actions/UpdateUserPassword.php`)
+
+### Added
+
+- **`POST auth/guest/claim`, for the person who signs in to an account they already had.** Guest conversion covers the guest who turns their own row into an account. The other half is a device that has been running as a guest whose owner signs in to an existing account: two different user rows, so everything the guest accumulated was scoped to a user id nobody would ever authenticate as again.
+
+  The caller authenticates as the target and presents the guest session's own token, so both halves are proved by possession; a device id would prove nothing, being client supplied and released on promotion. The transfer runs in one transaction that re-reads the guest under a row lock, moves the rows this package owns, dispatches `GuestClaimed` so a consumer can move its own tables in the same transaction, then revokes the guest's tokens and releases its device id. A listener that throws unwinds the whole claim, which is why the event is dispatched synchronously and a queued listener is not supported. A repeat call answers 200 with `claimed: false`.
+
+  A token is aged out the way Sanctum's own guard ages one out, `config('sanctum.expiration')` included, so a guest token captured days ago cannot move an account's rows after it has stopped authorising anything else. The tokenable is judged against the configured user model as well, so the token's owner and the row the transfer consumes cannot resolve to different tables. The guard against two clients racing one token asks whether the guest still holds tokens rather than reading a column, because a guest created server side through the published factory carries no `device_id` at all and a column sentinel made that row silently unclaimable.
+
+  Only notifications move. Notification settings would collide with choices the account has already made, a personal team is one the target already owns, and a newsletter subscription is keyed on an email address a guest never had. (`src/Actions/ClaimGuestAccount.php`, `src/Contracts/ClaimsGuestAccounts.php`, `src/Events/GuestClaimed.php`, `src/Http/Controllers/GuestAuthController.php`, `src/routes/api.php`, `doc/basics/authentication.md`)
+
 ## [0.0.9] - 2026-09-21
 
 ### Added
