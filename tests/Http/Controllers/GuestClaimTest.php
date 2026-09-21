@@ -88,6 +88,14 @@ class GuestClaimTest extends TestCase
             $table->timestamps();
         });
 
+        // A table for an authenticatable the application issues tokens to and
+        // that is NOT the configured user model.
+        Schema::create('devices', function (Blueprint $table): void {
+            $table->uuid('id')->primary();
+            $table->boolean('is_guest')->default(false);
+            $table->timestamps();
+        });
+
         Schema::create('notifications', function (Blueprint $table): void {
             $table->uuid('id')->primary();
             $table->string('type');
@@ -290,7 +298,51 @@ class GuestClaimTest extends TestCase
     }
 
     /**
-     * Test 5: a guest cannot claim itself.
+     * Test 5: a token issued to something other than the user model is rejected.
+     *
+     * The two halves of a claim resolve by different routes: the guest comes
+     * from the token's own tokenable, and the row the transfer locks comes from
+     * the configured user model. This is what stops them disagreeing, so the
+     * other tokenable below deliberately carries the guest's own key.
+     */
+    public function test_a_claim_whose_token_names_another_tokenable_is_rejected(): void
+    {
+        $guest = $this->startGuestSession();
+        $notificationId = $this->notificationFor($guest['user_id']);
+        $account = $this->registeredAccount();
+
+        $other = new GuestClaimOtherTokenable;
+        $other->forceFill([
+            'id' => $guest['user_id'],
+            'is_guest' => true,
+        ])->save();
+
+        Event::fake([GuestClaimed::class]);
+
+        $this->withToken($account['token'])
+            ->postJson('/auth/guest/claim', [
+                'guest_token' => (string) $other->createToken('auth_token')->plainTextToken,
+            ])
+            ->assertUnprocessable()
+            ->assertJsonValidationErrors(['guest_token']);
+
+        $this->assertSame(
+            $guest['user_id'],
+            $this->notificationOwner($notificationId),
+            'A refused claim must move nothing.',
+        );
+
+        $this->assertDatabaseHas('users', [
+            'id' => $guest['user_id'],
+            'device_id' => 'claim-device-001',
+            'is_guest' => true,
+        ]);
+
+        Event::assertNotDispatched(GuestClaimed::class);
+    }
+
+    /**
+     * Test 6: a guest cannot claim itself.
      */
     public function test_a_claim_into_the_guest_itself_is_rejected(): void
     {
@@ -307,7 +359,7 @@ class GuestClaimTest extends TestCase
     }
 
     /**
-     * Test 6: a listener that throws rolls the whole claim back.
+     * Test 7: a listener that throws rolls the whole claim back.
      *
      * This is what makes the event a usable seam for a consumer moving its own
      * tables: the listener runs inside the claim's transaction, so a failed move
@@ -352,7 +404,7 @@ class GuestClaimTest extends TestCase
     }
 
     /**
-     * Test 7: the claimed guest can never be authenticated again.
+     * Test 8: the claimed guest can never be authenticated again.
      */
     public function test_a_claimed_guest_can_never_be_authenticated_again(): void
     {
@@ -423,6 +475,35 @@ final class GuestClaimTestUser extends \Illuminate\Foundation\Auth\User
         return [
             'is_guest' => 'boolean',
             'email_verified_at' => 'datetime',
+        ];
+    }
+}
+
+/**
+ * A second authenticatable the application issues Sanctum tokens to.
+ *
+ * Authenticatable and flagged as a guest, so the only thing that separates it
+ * from a claimable guest is that it is not the configured user model.
+ *
+ * @property string $id
+ * @property bool $is_guest
+ */
+final class GuestClaimOtherTokenable extends \Illuminate\Foundation\Auth\User
+{
+    use \FlutterSdk\MagicStarter\Support\ConditionallyUsesUuids;
+    use \Laravel\Sanctum\HasApiTokens;
+
+    protected $table = 'devices';
+
+    protected $guarded = [];
+
+    /**
+     * @return array<string, string>
+     */
+    protected function casts(): array
+    {
+        return [
+            'is_guest' => 'boolean',
         ];
     }
 }

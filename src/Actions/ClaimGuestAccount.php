@@ -3,6 +3,7 @@
 namespace FlutterSdk\MagicStarter\Actions;
 
 use FlutterSdk\MagicStarter\Events\GuestClaimed;
+use FlutterSdk\MagicStarter\MagicStarter;
 use Illuminate\Contracts\Auth\Authenticatable;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Event;
@@ -84,13 +85,27 @@ class ClaimGuestAccount
         }
 
         $guest = $token->tokenable;
+        $userModel = MagicStarter::userModel();
 
-        // 3. One refusal for three causes, deliberately. A token may name
-        //    something that is not a user at all, a user that is not a guest, or
-        //    the caller themselves; telling them apart would turn this endpoint
-        //    into an oracle about other people's tokens, and all three are the
-        //    same mistake from the client's side.
-        if (! $guest instanceof Authenticatable || ! $this->isGuest($guest)) {
+        // 3. One refusal for four causes, deliberately. A token may name
+        //    something that cannot be authenticated at all, something that is
+        //    not the configured user model, a user that is not a guest, or the
+        //    caller themselves; telling them apart would turn this endpoint into
+        //    an oracle about other people's tokens, and all four are the same
+        //    mistake from the client's side.
+        //
+        //    The user-model test is not redundant beside the Authenticatable
+        //    one, and the difference is the row this claim goes on to consume.
+        //    The transfer locks the row by identifier IN THE CONFIGURED USER
+        //    MODEL, so an application that also issues Sanctum tokens to some
+        //    other authenticatable of its own could otherwise present one and
+        //    have the claim consume whichever user row happens to carry the same
+        //    key. Both halves resolve to the same table or the claim is refused.
+        //    The Authenticatable test stays because the return type rests on it.
+        if (! $guest instanceof Authenticatable
+            || ! $guest instanceof $userModel
+            || ! $this->isGuest($guest)
+        ) {
             throw $this->refusal();
         }
 
@@ -119,7 +134,15 @@ class ClaimGuestAccount
             //    the flag below is what the loser reads: the claim clears
             //    `is_guest`, so "still a guest" is the same question here as it
             //    was for the token.
-            $locked = $guest->newQuery()
+            //
+            //    Read through the CONFIGURED user model rather than off the
+            //    resolved instance. `newQuery()` on something typed
+            //    Authenticatable is a call whose generic return type Larastan
+            //    cannot complete, and it failed the analyser on CI's dependency
+            //    set while passing on this checkout's.
+            $userModel = MagicStarter::userModel();
+
+            $locked = $userModel::query()
                 ->whereKey($guest->getAuthIdentifier())
                 ->lockForUpdate()
                 ->first();
