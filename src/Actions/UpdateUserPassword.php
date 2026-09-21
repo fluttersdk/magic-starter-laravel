@@ -50,10 +50,33 @@ class UpdateUserPassword implements UpdatesUserPasswords
             $hasPhone = ! empty($fresh->phone);
 
             if ($hasEmail || $hasPhone) {
-                $fresh->update([
-                    'is_guest' => false,
-                ]);
+                $this->promote($fresh);
             }
         }
+    }
+
+    /**
+     * Turn a qualifying guest into a registered account.
+     *
+     * A guest that sets an email first and a password second is promoted here
+     * rather than in UpdateUserProfile, so both paths have to release the device
+     * id. It is an anonymous session key that POST auth/guest accepts with no
+     * credential beside it, and an account that has stopped being anonymous must
+     * stop answering to it. The account reaches itself through its own
+     * credentials from here.
+     *
+     * forceFill rather than update() because neither column is in the published
+     * User stub's $fillable (making is_guest mass-assignable would let a crafted
+     * payload flag any account as a guest), and mass assignment drops a guarded
+     * attribute without erroring, so the promotion never landed on a real install.
+     *
+     * @param  Authenticatable  $user  The guest that now qualifies as registered.
+     */
+    private function promote(Authenticatable $user): void
+    {
+        $user->forceFill([
+            'is_guest' => false,
+            'device_id' => null,
+        ])->save();
     }
 }

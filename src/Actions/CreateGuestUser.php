@@ -59,7 +59,7 @@ class CreateGuestUser implements CreatesGuestUsers
             $attributes['timezone'] = $detectedTimezone ?? ($defaults['timezone'] ?? 'UTC');
         }
 
-        // 6. Find existing guest by device_id, or create a new one.
+        // 6. Find the guest that still owns this device, or create a new one.
         //    `is_guest` and `device_id` are system-managed and deliberately kept
         //    out of the published User stub's $fillable (mirrors current_team_id):
         //    making `is_guest` mass-assignable would let a crafted payload flag any
@@ -67,13 +67,34 @@ class CreateGuestUser implements CreatesGuestUsers
         //    silently dropped both, so guests persisted with is_guest = false and a
         //    null device_id (breaking the find-existing idempotency). forceFill
         //    persists them past the guard.
+        //
+        //    The lookup is narrowed to rows that are still guests because this
+        //    endpoint asks for no credential at all: the device id is an anonymous
+        //    session key, and it silently became a password equivalent the moment a
+        //    row stopped being anonymous. Without that condition, replaying a
+        //    promoted account's device id answered with a full session as that
+        //    account and revoked its other devices' tokens on the way.
+        //
+        //    A promoted row that still carries the identifier (every account
+        //    promoted before UpdateUserProfile started releasing it) has it freed
+        //    here rather than being answered 409. The caller is a device holding no
+        //    session rather than an attacker to be told apart, a consumer that opens
+        //    a guest session on every launch needs a usable one, and `device_id` is
+        //    unique, so the new guest row cannot be inserted while a registered row
+        //    still holds the value. Nothing reads the column on a registered
+        //    account, so freeing it costs that account nothing.
         $userModel = MagicStarter::userModel();
 
         $user = $userModel::query()
             ->where('device_id', $validated['device_id'])
+            ->where('is_guest', true)
             ->first();
 
         if ($user === null) {
+            $userModel::query()
+                ->where('device_id', $validated['device_id'])
+                ->update(['device_id' => null]);
+
             $user = $userModel::query()->newModelInstance();
             $user->forceFill(array_merge($attributes, [
                 'device_id' => $validated['device_id'],
