@@ -2,13 +2,19 @@
 
 namespace FlutterSdk\MagicStarter\Tests\Http\Controllers;
 
+use FlutterSdk\MagicStarter\Http\Controllers\GuestAuthController;
 use FlutterSdk\MagicStarter\MagicStarter;
+use FlutterSdk\MagicStarter\Support\ConditionallyUsesUuids;
 use FlutterSdk\MagicStarter\Tests\Fixtures\ConcreteTeam;
 use FlutterSdk\MagicStarter\Tests\Fixtures\ConcreteTeamUser;
 use FlutterSdk\MagicStarter\Tests\Fixtures\ConcreteUser;
 use FlutterSdk\MagicStarter\Tests\TestCase;
+use FlutterSdk\MagicStarter\Traits\HasGuestSupport;
+use FlutterSdk\MagicStarter\Traits\HasProfilePhoto;
 use Illuminate\Database\Schema\Blueprint;
+use Illuminate\Foundation\Auth\User as AuthenticatableUser;
 use Illuminate\Support\Facades\Hash;
+use Illuminate\Support\Facades\Route;
 use Illuminate\Support\Facades\Schema;
 
 /**
@@ -95,6 +101,9 @@ class GuestConversionTest extends TestCase
 
         \Illuminate\Support\Facades\Route::put('/user/profile', [\FlutterSdk\MagicStarter\Http\Controllers\ProfileController::class, 'update']);
         \Illuminate\Support\Facades\Route::put('/user/password', [\FlutterSdk\MagicStarter\Http\Controllers\ProfileController::class, 'updatePassword']);
+
+        // Public, like the shipped route: guest login carries no credential.
+        Route::post('/auth/guest', [GuestAuthController::class, 'login']);
     }
 
     protected function tearDown(): void
@@ -394,5 +403,190 @@ class GuestConversionTest extends TestCase
         // Password should be set, but user needs email or phone to fully convert
         $this->assertTrue(Hash::check('Password123!', (string) $fresh->password), 'Password must be hashed and stored even without email');
         $this->assertTrue((bool) $fresh->is_guest, 'Guest must remain guest without email or phone identity');
+    }
+
+    /**
+     * Test 13: A promoted account cannot be reached by replaying its device id.
+     *
+     * The device id is an anonymous session key and POST auth/guest accepts it
+     * with no credential beside it, so a row that has stopped being anonymous
+     * must never be answered with a session as that account. The row is built
+     * here still carrying the identifier, which is the state of every account
+     * promoted before the release that frees it.
+     */
+    public function test_promoted_account_is_not_reachable_through_guest_login(): void
+    {
+        $this->useStubShapedUserModel();
+
+        $promoted = GuestConversionGuardedUser::query()->newModelInstance();
+        $promoted->forceFill([
+            'name' => 'Promoted User',
+            'email' => 'promoted@example.com',
+            'password' => Hash::make('Password123!'),
+            'is_guest' => false,
+            'device_id' => 'device-13',
+        ])->save();
+
+        $response = $this->postJson('/auth/guest', [
+            'device_id' => 'device-13',
+        ]);
+
+        $response->assertSuccessful();
+
+        $this->assertNotSame(
+            $promoted->getKey(),
+            $response->json('data.user.id'),
+            'Replaying a promoted account device id must not answer with a session as that account',
+        );
+        $this->assertTrue(
+            $response->json('data.user.is_guest'),
+            'The caller is a device holding no session, so it must receive a usable guest one',
+        );
+        $this->assertSame(
+            2,
+            GuestConversionGuardedUser::query()->count(),
+            'The guest must be a new row rather than the promoted one',
+        );
+        $this->assertNull(
+            $promoted->fresh()->device_id,
+            'A registered row must release an identifier it no longer answers to, which the unique index also requires',
+        );
+    }
+
+    /**
+     * Test 14: Promotion releases the device id.
+     *
+     * Runs against a model shaped like the published User stub, where is_guest
+     * and device_id sit outside $fillable. The fully unguarded fixture the tests
+     * above use cannot tell a persisted promotion from one that mass assignment
+     * dropped on the way to the database.
+     */
+    public function test_promotion_releases_the_device_id(): void
+    {
+        $this->useStubShapedUserModel();
+
+        $guest = GuestConversionGuardedUser::query()->newModelInstance();
+        $guest->forceFill([
+            'is_guest' => true,
+            'device_id' => 'device-14',
+        ])->save();
+
+        $this->actingAs($guest)
+            ->putJson('/user/profile', [
+                'name' => 'Promoted User',
+                'email' => 'promoted-14@example.com',
+                'password' => 'Password123!',
+                'password_confirmation' => 'Password123!',
+            ])
+            ->assertOk();
+
+        $fresh = $guest->fresh();
+
+        $this->assertFalse((bool) $fresh->is_guest, 'Promotion must persist past the mass-assignment guard');
+        $this->assertNull($fresh->device_id, 'A registered account must stop answering to the device id');
+    }
+
+    /**
+     * Test 15: Promotion through the password endpoint releases the device id too.
+     *
+     * A guest that sets an email first and a password second is promoted by
+     * UpdateUserPassword rather than UpdateUserProfile, and the identifier has to
+     * stop being a credential on whichever of the two paths gets there. Tests 2
+     * and 4 walk the same flow on the unguarded fixture, so neither can see a
+     * promotion write that mass assignment drops.
+     */
+    public function test_password_promotion_releases_the_device_id(): void
+    {
+        $this->useStubShapedUserModel();
+
+        $guest = GuestConversionGuardedUser::query()->newModelInstance();
+        $guest->forceFill([
+            'is_guest' => true,
+            'device_id' => 'device-15',
+        ])->save();
+
+        $this->actingAs($guest)
+            ->putJson('/user/profile', [
+                'email' => 'promoted-15@example.com',
+            ])
+            ->assertOk();
+
+        $this->assertSame(
+            'device-15',
+            $guest->fresh()->device_id,
+            'An email alone leaves the account a guest, so it keeps answering to the device id',
+        );
+
+        $this->actingAs($guest)
+            ->putJson('/user/password', [
+                // Notice: current_password is intentionally omitted, the guest has none yet.
+                'password' => 'Password123!',
+                'password_confirmation' => 'Password123!',
+            ])
+            ->assertOk();
+
+        $fresh = $guest->fresh();
+
+        $this->assertFalse((bool) $fresh->is_guest, 'Promotion must persist past the mass-assignment guard');
+        $this->assertNull($fresh->device_id, 'A registered account must stop answering to the device id');
+    }
+
+    /**
+     * Point the package at a user model shaped like the published stub.
+     *
+     * Every other case in this file runs on ConcreteUser, which is fully
+     * unguarded and therefore cannot fail on a write that mass assignment drops.
+     * The two cases above are about writes to is_guest and device_id, the exact
+     * pair the stub keeps out of $fillable.
+     */
+    private function useStubShapedUserModel(): void
+    {
+        MagicStarter::useUserModel(GuestConversionGuardedUser::class);
+
+        config([
+            'auth.providers.users.model' => GuestConversionGuardedUser::class,
+            'magic-starter.models.user' => GuestConversionGuardedUser::class,
+        ]);
+    }
+}
+
+/**
+ * Mirrors the published User stub's mass-assignment surface.
+ *
+ * is_guest, device_id and current_team_id are system-managed and deliberately
+ * absent from $fillable there, so only a forceFill can persist them.
+ *
+ * @property string|null $device_id
+ * @property bool $is_guest
+ */
+final class GuestConversionGuardedUser extends AuthenticatableUser
+{
+    use ConditionallyUsesUuids;
+    use HasGuestSupport;
+    use HasProfilePhoto;
+
+    protected $table = 'users';
+
+    /**
+     * @var array<int, string>
+     */
+    protected $fillable = [
+        'name',
+        'email',
+        'password',
+        'phone',
+        'phone_country',
+        'locale',
+        'timezone',
+    ];
+
+    /**
+     * @return array<string, string>
+     */
+    protected function casts(): array
+    {
+        return [
+            'is_guest' => 'boolean',
+        ];
     }
 }

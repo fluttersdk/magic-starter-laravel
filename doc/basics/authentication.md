@@ -454,6 +454,87 @@ Creates or retrieves a guest user identified by a device ID, and issues a Sanctu
 
 When a returning guest authenticates (same `device_id`), all previous tokens are revoked before issuing a new one to prevent session buildup.
 
+A `device_id` only ever matches a row that is still a guest. An account that was promoted out of a guest session, or a guest that was claimed by the endpoint below, releases the identifier, so a later call with that same `device_id` opens a NEW guest row (201) rather than returning the old one. Nothing reads `device_id` on a registered account, so releasing it costs that account nothing, and it is what stops an identifier that travels in a request body with no credential beside it from reopening somebody's promoted account.
+
+### Claim a Guest Session
+
+Moves a guest session into an account that already exists. This is the case conversion cannot serve: the person signs in to an account they already had, so the guest row and the account row are two different users and everything the guest accumulated is scoped to a user id nobody will authenticate as again.
+
+The caller authenticates as the TARGET account and presents the guest session's own token in the body, so both halves are proved by possession.
+
+**Endpoint:** `POST {prefix}/auth/guest/claim`
+
+**Middleware:** `auth:sanctum`, `throttle:magic-starter-guest-auth`
+
+**Rate Limit:** 10 requests per minute, keyed by IP (this payload carries no device ID).
+
+> [!NOTE]
+> This endpoint is only available when the `guest-auth` feature is enabled in `config('magic-starter.features')`.
+
+#### Request Body
+
+```json
+{
+  "guest_token": "3|xyz789..."
+}
+```
+
+| Field         | Type   | Rules                                                     |
+|---------------|--------|-----------------------------------------------------------|
+| `guest_token` | string | Required. The guest session's own plain-text Sanctum token. |
+
+#### Success Response (200)
+
+```json
+{
+  "data": {
+    "user": {
+      "id": "...",
+      "is_guest": false,
+      "..."
+    },
+    "claimed": true
+  }
+}
+```
+
+`claimed` reports whether this call performed the transfer. A repeat of a claim that already succeeded answers 200 with `claimed: false`, because the first call deleted the guest's tokens and there is no live guest session left to claim. That keeps a client's retry safe without pretending a second transfer took place, and the same answer covers a token that has expired or aged past `sanctum.expiration`.
+
+#### Refusal (422)
+
+```json
+{
+  "message": "The selected guest token is invalid.",
+  "errors": {
+    "guest_token": ["The selected guest token is invalid."]
+  }
+}
+```
+
+One refusal for four causes, deliberately: the token names something that cannot be authenticated, something that is not the configured user model, a user that is not a guest, or the caller themselves. Telling them apart would turn the endpoint into an oracle about other people's tokens.
+
+#### What Moves
+
+The whole transfer runs in one database transaction.
+
+1. The package moves the rows it owns. That is the guest's database notifications, and nothing else: notification settings carry a unique key per type and channel, so a guest's defaults would collide with choices the account has already made; a personal team is not moved because the target already owns one; newsletter subscriptions are keyed on an email address a guest never had.
+2. `FlutterSdk\MagicStarter\Events\GuestClaimed` is dispatched with both user models. This is the whole seam for your own data: reassign your tables from `$event->guest` to `$event->target` in a listener.
+3. The guest's tokens are deleted and its `device_id` is released. The row keeps `is_guest`, so a job pruning abandoned guests can still reclaim it; with no token, no device ID, no email and no password, nothing can authenticate as it again.
+
+> [!WARNING]
+> The event is dispatched SYNCHRONOUSLY, inside that transaction, and a queued listener is not supported. A listener that implements `ShouldQueue` would run after the commit, so its failure could no longer roll the claim back. Keep the listener synchronous and let it throw: a throw unwinds the whole claim and leaves the guest exactly as it was.
+
+```php
+use FlutterSdk\MagicStarter\Events\GuestClaimed;
+use Illuminate\Support\Facades\Event;
+
+Event::listen(GuestClaimed::class, function (GuestClaimed $event): void {
+    Bookmark::query()
+        ->where('user_id', $event->guest->getAuthIdentifier())
+        ->update(['user_id' => $event->target->getAuthIdentifier()]);
+});
+```
+
 ---
 
 <a name="phone-otp"></a>
