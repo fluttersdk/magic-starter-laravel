@@ -2,6 +2,7 @@
 
 namespace FlutterSdk\MagicStarter\Actions;
 
+use FlutterSdk\MagicStarter\Contracts\ClaimsGuestAccounts;
 use FlutterSdk\MagicStarter\Events\GuestClaimed;
 use FlutterSdk\MagicStarter\MagicStarter;
 use Illuminate\Contracts\Auth\Authenticatable;
@@ -24,7 +25,7 @@ use Laravel\Sanctum\Sanctum;
  * The caller authenticates as the TARGET and presents the guest session's own
  * token, so both halves are proved by possession rather than by assertion.
  */
-class ClaimGuestAccount
+class ClaimGuestAccount implements ClaimsGuestAccounts
 {
     /**
      * Claim a guest session into the authenticated account.
@@ -76,11 +77,29 @@ class ClaimGuestAccount
             return null;
         }
 
-        // 2. An expired token authorises nothing, which is exactly how Sanctum's
-        //    own guard reads it, so it cannot authorise moving a person's rows
-        //    into an account either. Answered as "nothing to claim" rather than
-        //    as a refusal, so the endpoint says nothing about which tokens exist.
+        // 2. A token Sanctum's own guard would refuse authorises nothing, so it
+        //    cannot authorise moving a person's rows into an account either.
+        //    Answered as "nothing to claim" rather than as a refusal, so the
+        //    endpoint says nothing about which tokens exist.
+        //
+        //    BOTH of the guard's rules, because the one that reads as the
+        //    obvious check is the one that never fires here. Guest tokens are
+        //    minted by `AuthenticatesUsers` with `createToken('auth_token')`
+        //    and no expiry, so `expires_at` is null on every token this package
+        //    issues; on an application that sets `sanctum.expiration` the age of
+        //    `created_at` is the ONLY rule that ages one out. Reading
+        //    `expires_at` alone left a captured guest token refused by every
+        //    other route and still able to move an account's rows.
+        //
+        //    The second comparison mirrors `Guard::isValidAccessToken`, falsy
+        //    expiration included: Sanctum reads 0 and null alike as "no window".
         if ($token->expires_at !== null && $token->expires_at->isPast()) {
+            return null;
+        }
+
+        $expiration = (int) config('sanctum.expiration');
+
+        if ($expiration > 0 && ! $token->created_at?->gt(now()->subMinutes($expiration))) {
             return null;
         }
 
@@ -131,9 +150,11 @@ class ClaimGuestAccount
             //    either has deleted it, so without this the second would
             //    dispatch the event a second time and a consumer's listener
             //    would move the same rows twice. The lock serialises them and
-            //    the flag below is what the loser reads: the claim clears
-            //    `is_guest`, so "still a guest" is the same question here as it
-            //    was for the token.
+            //    the DEVICE ID is what the loser reads: a live guest always
+            //    carries one, a claim releases it, so a row that is a guest
+            //    with none is one this claim has already taken. The guest test
+            //    is beside it for the other race, a promotion landing between
+            //    the token resolving and this lock.
             //
             //    Read through the CONFIGURED user model rather than off the
             //    resolved instance. `newQuery()` on something typed
@@ -147,7 +168,10 @@ class ClaimGuestAccount
                 ->lockForUpdate()
                 ->first();
 
-            if (! $locked instanceof Authenticatable || ! $this->isGuest($locked)) {
+            if (! $locked instanceof Authenticatable
+                || ! $this->isGuest($locked)
+                || $locked->getAttribute('device_id') === null
+            ) {
                 return false;
             }
 
@@ -161,22 +185,26 @@ class ClaimGuestAccount
             //    listener may key its own rows on either.
             Event::dispatch(new GuestClaimed($locked, $target));
 
-            // 4. Consume the guest row, which is three writes because a guest
-            //    can be reached three ways. The tokens go, so no session
-            //    survives. The device id goes, so a later guest login from the
-            //    same device opens a new row rather than this one. The flag
-            //    goes, so the guest lookup cannot match it even if the device id
-            //    is replayed, and so a racing second claim reads the row as
-            //    already claimed. Nothing is left to name it with: the row
-            //    carries no email and no password either.
+            // 4. Consume the guest row. The tokens go, so no session survives.
+            //    The device id goes, so the guest lookup cannot match this row
+            //    again and a later guest login from the same device opens a new
+            //    one. Between them nothing can reach it: the row carries no
+            //    email and no password either, so no credential can name it.
             //
-            //    `forceFill` because both columns are system-managed and
+            //    `is_guest` STAYS TRUE, and that is a decision rather than an
+            //    omission. The row never stopped being a guest; it is a spent
+            //    one, and an application pruning abandoned guests with
+            //    `where('is_guest', true)` has to be able to reclaim it.
+            //    Clearing the flag was the other candidate: it made the row
+            //    unprunable by the obvious query while protecting nothing the
+            //    absent tokens do not already protect. Deleting the row here
+            //    was rejected as well, because a consumer's listener may have
+            //    left rows pointing at it and this package cannot know.
+            //
+            //    `forceFill` because `device_id` is system-managed and
             //    deliberately outside the published User stub's $fillable.
             $this->revokeTokens($locked);
-            $locked->forceFill([
-                'is_guest' => false,
-                'device_id' => null,
-            ])->save();
+            $locked->forceFill(['device_id' => null])->save();
 
             return true;
         });

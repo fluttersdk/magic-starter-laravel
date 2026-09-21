@@ -2,7 +2,7 @@
 
 namespace FlutterSdk\MagicStarter\Http\Controllers;
 
-use FlutterSdk\MagicStarter\Actions\ClaimGuestAccount;
+use FlutterSdk\MagicStarter\Contracts\ClaimsGuestAccounts;
 use FlutterSdk\MagicStarter\Contracts\CreatesGuestUsers;
 use FlutterSdk\MagicStarter\Http\Controllers\Concerns\AuthenticatesUsers;
 use FlutterSdk\MagicStarter\Http\Requests\GuestLoginRequest;
@@ -75,7 +75,7 @@ class GuestAuthController
     {
         $target = $request->user();
 
-        $claimed = app(ClaimGuestAccount::class)->claim($target, $request->all());
+        $claimed = app(ClaimsGuestAccounts::class)->claim($target, $request->all());
 
         return response()->json([
             'data' => [

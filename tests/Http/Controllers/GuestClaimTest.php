@@ -420,12 +420,13 @@ class GuestClaimTest extends TestCase
             'tokenable_id' => $guest['user_id'],
         ]);
 
-        // And the row itself is consumed: no device id to be found by, and no
-        // guest flag for the guest lookup to match.
+        // And the row itself is consumed: no device id to be found by. The
+        // guest flag STAYS, so a job pruning abandoned guests can still reclaim
+        // the row; nothing can authenticate as it either way.
         $this->assertDatabaseHas('users', [
             'id' => $guest['user_id'],
             'device_id' => null,
-            'is_guest' => false,
+            'is_guest' => true,
         ]);
 
         // A fresh guest login from the same device reaches a NEW row rather
@@ -437,6 +438,49 @@ class GuestClaimTest extends TestCase
             $second['user_id'],
             'The consumed guest row must not be reachable by its old device id.',
         );
+    }
+
+    /**
+     * Test 9: a guest token older than `sanctum.expiration` claims nothing.
+     *
+     * Sanctum ages a token out on `created_at` as well as on `expires_at`
+     * (`Guard::isValidAccessToken`), and `createToken()` leaves `expires_at`
+     * null, so `created_at` is the ONLY rule that fires on an install which sets
+     * the expiration. A token the guard refuses everywhere else must not still
+     * move one account's rows into another here.
+     */
+    public function test_a_claim_with_a_token_past_the_sanctum_expiration_moves_nothing(): void
+    {
+        $guest = $this->startGuestSession();
+        $notificationId = $this->notificationFor($guest['user_id']);
+        $account = $this->registeredAccount();
+
+        config(['sanctum.expiration' => 60]);
+
+        DB::table('personal_access_tokens')
+            ->where('tokenable_id', $guest['user_id'])
+            ->update(['created_at' => now()->subMinutes(120)]);
+
+        Event::fake([GuestClaimed::class]);
+
+        $this->withToken($account['token'])
+            ->postJson('/auth/guest/claim', ['guest_token' => $guest['token']])
+            ->assertOk()
+            ->assertJsonPath('data.claimed', false);
+
+        $this->assertSame(
+            $guest['user_id'],
+            $this->notificationOwner($notificationId),
+            'A stale guest token must move nothing.',
+        );
+
+        $this->assertDatabaseHas('users', [
+            'id' => $guest['user_id'],
+            'device_id' => 'claim-device-001',
+            'is_guest' => true,
+        ]);
+
+        Event::assertNotDispatched(GuestClaimed::class);
     }
 }
 
