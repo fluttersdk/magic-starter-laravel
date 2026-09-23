@@ -4,6 +4,8 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [0.0.11] - 2026-09-23
+
 ### Changed
 
 - **BREAKING: `profile_photo_url` is `null` for a user or team with no uploaded photo.** It answered a generated ui-avatars.com image, green (`009E60`) for a user and blue for a team, so a client's own themed initial was replaced by the server's colours as soon as the account arrived: measured in a consumer whose guest session opens after the first frame, the sidebar drew its themed initial and then swapped it for a green image with no sign-in in between. The image also cost every client a third-party round trip per avatar, sent the person's name to that third party, failed offline, and could not be told apart from a real upload, so "has this person set a photo" had no answer on the wire.
