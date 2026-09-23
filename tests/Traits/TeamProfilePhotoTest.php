@@ -35,7 +35,12 @@ final class TeamProfilePhotoTest extends TestCase
 
     public function test_a_team_with_a_stored_photo_answers_its_url(): void
     {
+        // Both disk keys name the same disk on purpose. The team photo's
+        // writers and its reader disagree on which key they read (#42), and
+        // this test is about the stored branch answering a URL, not about
+        // which of the two keys is right.
         config([
+            'magic-starter.team_photo_disk' => 'team-photos',
             'magic-starter.profile_photo_disk' => 'team-photos',
             'filesystems.disks.team-photos' => [
                 'driver' => 'local',

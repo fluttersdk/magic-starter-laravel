@@ -4,6 +4,7 @@ namespace FlutterSdk\MagicStarter\Tests\Traits;
 
 use FlutterSdk\MagicStarter\Tests\TestCase;
 use FlutterSdk\MagicStarter\Traits\HasProfilePhoto;
+use Illuminate\Contracts\Filesystem\Filesystem;
 use Illuminate\Database\Eloquent\Model;
 
 final class HasProfilePhotoTest extends TestCase
@@ -32,6 +33,38 @@ final class HasProfilePhotoTest extends TestCase
             'https://cdn.example.test/profile-photos/avatars/alice.png',
             $user->profile_photo_url,
         );
+    }
+
+    public function test_profile_photo_url_uses_the_default_disk_when_none_is_configured(): void
+    {
+        config([
+            'magic-starter.profile_photo_disk' => null,
+            'filesystems.default' => 'profile-photos',
+        ]);
+
+        $user = new HasProfilePhotoTestUser;
+        $user->name = 'Alice Doe';
+        $user->profile_photo_path = 'avatars/alice.png';
+
+        $this->assertSame(
+            'https://cdn.example.test/profile-photos/avatars/alice.png',
+            $user->profile_photo_url,
+        );
+    }
+
+    public function test_a_disk_that_cannot_build_urls_answers_the_stored_path(): void
+    {
+        // A custom driver registered through Storage::extend can hand back a
+        // bare Filesystem with no url(); the stored path is the best answer
+        // left rather than a fatal on every serialised user.
+        app('filesystem')->set('bare', $this->createStub(Filesystem::class));
+        config(['magic-starter.profile_photo_disk' => 'bare']);
+
+        $user = new HasProfilePhotoTestUser;
+        $user->name = 'Alice Doe';
+        $user->profile_photo_path = 'avatars/alice.png';
+
+        $this->assertSame('avatars/alice.png', $user->profile_photo_url);
     }
 
     public function test_profile_photo_url_is_null_when_no_photo_is_stored(): void
