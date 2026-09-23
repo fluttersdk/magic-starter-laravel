@@ -2,11 +2,11 @@
 
 ## Where to Find It
 
-- `UpdateUserProfile` — profile, email, phone, timezone, locale updates; guest conversion
-- `UpdateUserPassword` — dedicated password change with current-password verification
-- `DeleteUser` — token revocation, photo deletion, user removal
+- `UpdateUserProfile`: profile, email, phone, timezone, locale updates; guest conversion
+- `UpdateUserPassword`: dedicated password change with current-password verification
+- `DeleteUser`: token revocation, photo deletion, user removal
 - `HasProfilePhoto`: profile photo URL resolution, null when none is stored
-- `SessionAgent` — device and browser detection from user agent strings
+- `SessionAgent`: device and browser detection from user agent strings
 
 ## What to Watch For
 
