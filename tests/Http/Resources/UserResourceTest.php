@@ -213,6 +213,30 @@ class UserResourceTest extends TestCase
         (new UserResource($this->makeUser()))->toArray(Request::create('/'));
     }
 
+    /**
+     * A guest with no upload answers null, so the client draws its own initial.
+     *
+     * It used to answer a generated ui-avatars.com image in the server's
+     * colours, which a client cannot tell apart from a real upload: measured
+     * in a consumer, the sidebar drew its themed initial and then replaced it
+     * with a green image the moment the guest session answered.
+     */
+    public function test_an_account_with_no_photo_answers_a_null_photo_url(): void
+    {
+        config(['magic-starter.features' => []]);
+
+        $guest = ConcreteUser::forceCreate([
+            'id' => (string) Str::uuid(),
+            'name' => 'Guest',
+            'is_guest' => true,
+        ]);
+
+        $resource = (new UserResource($guest))->resolve(Request::create('/'));
+
+        $this->assertArrayHasKey('profile_photo_url', $resource);
+        $this->assertNull($resource['profile_photo_url']);
+    }
+
     private function makeUser(): ConcreteUser
     {
         return ConcreteUser::forceCreate([

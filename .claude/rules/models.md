@@ -20,6 +20,6 @@ alsoApplyTo: "src/Traits/**/*.php"
 
 - Defensive: `method_exists($this, 'method')` before calling methods from other optional traits
 - Return typed morphMany/morphTo: `MorphMany<NotificationSetting, $this>`
-- HasProfilePhoto: falls back to ui-avatars.com URL using `config('magic-starter.ui_avatars_url')`
+- HasProfilePhoto: `null` when no photo is stored; the client draws its own initials, never a generated third-party image
 - HasNotifications: `prefers()` returns true by default if notification type not in registry
 - HasNotifications: `routeNotificationForOneSignal()` returns `['external_id' => ['user_'.$this->getKey()]]` for OneSignal v5 alias targeting; channel driver is `FlutterSdk\MagicStarter\Notifications\Channels\OneSignalChannel`

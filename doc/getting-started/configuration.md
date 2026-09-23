@@ -132,7 +132,6 @@ Every key available in `config/magic-starter.php`:
 | `team_photo_disk` | `'public'` | Laravel filesystem disk for team photos (defaults to `profile_photo_disk` value) |
 | `profile_photo_path` | `'profile-photos'` | Directory path within disk for user profile photos |
 | `team_photo_path` | `'team-photos'` | Directory path within disk for team photos |
-| `ui_avatars_url` | `'https://ui-avatars.com/api/'` | Fallback avatar service used when no photo is uploaded. An EMPTY string sends `profile_photo_url: null` instead |
 | `route_prefix` | `'api/v1'` | Global prefix applied to all package-registered routes |
 | `route_middleware` | `[]` | Middleware applied to every package-registered route. These routes join NO group on their own |
 | `invitation_expiry_days` | `7` | Number of days until a team invitation token expires |
@@ -238,12 +237,9 @@ Configure separate filesystem disks and path prefixes for user profile photos an
 'team_photo_disk'    => 'public',
 'profile_photo_path' => 'profile-photos',
 'team_photo_path'    => 'team-photos',
-'ui_avatars_url'     => 'https://ui-avatars.com/api/',
 ```
 
-The `team_photo_disk` defaults to the same value as `profile_photo_disk` if not explicitly set. When no photo has been uploaded, the `HasProfilePhoto` trait falls back to the `ui_avatars_url` service to generate a placeholder avatar.
-
-Set `ui_avatars_url` to an EMPTY string to send `profile_photo_url: null` instead, for both users and teams. That is usually what a JSON client wants: it draws its own initials already, and the generated image otherwise costs a third-party round trip per avatar on every screen, sends the person's NAME to that third party each time, fails offline, and arrives in colours your design system did not choose. A client also cannot tell the generated image apart from a real upload, so "has this person set a photo" becomes unanswerable. The switch governs the fallback only: a real upload still answers under an empty url.
+The `team_photo_disk` defaults to the same value as `profile_photo_disk` if not explicitly set. A user or team with no uploaded photo answers `profile_photo_url: null`, and the client draws its own initials.
 
 Override disks via environment variables for production (e.g., to use S3):
 
@@ -252,7 +248,6 @@ MAGIC_STARTER_PROFILE_PHOTO_DISK=s3
 MAGIC_STARTER_TEAM_PHOTO_DISK=s3
 MAGIC_STARTER_PROFILE_PHOTO_PATH=profile-photos
 MAGIC_STARTER_TEAM_PHOTO_PATH=team-photos
-MAGIC_STARTER_UI_AVATARS_URL=https://ui-avatars.com/api/
 ```
 
 > [!TIP]
@@ -377,7 +372,6 @@ All environment variables recognized by the package:
 | `MAGIC_STARTER_TEAM_PHOTO_DISK` | `team_photo_disk` | `'public'` | Filesystem disk for team photos |
 | `MAGIC_STARTER_PROFILE_PHOTO_PATH` | `profile_photo_path` | `'profile-photos'` | Directory for profile photos |
 | `MAGIC_STARTER_TEAM_PHOTO_PATH` | `team_photo_path` | `'team-photos'` | Directory for team photos |
-| `MAGIC_STARTER_UI_AVATARS_URL` | `ui_avatars_url` | `'https://ui-avatars.com/api/'` | Fallback avatar service URL |
 | `MAGIC_STARTER_ROUTE_PREFIX` | `route_prefix` | `'api/v1'` | Route prefix for all package routes |
 | `MAGIC_STARTER_INVITATION_EXPIRY_DAYS` | `invitation_expiry_days` | `7` | Team invitation expiry in days |
 | `MAGIC_STARTER_TOKEN_EXPIRATION` | `token_expiration_minutes` | `null` | Sanctum token TTL in minutes |
