@@ -6,7 +6,7 @@
 - `src/Support/MigrationHelper.php` — primaryKey(), foreignKey(), morphColumns()
 - `src/Models/` — Team, PersonalAccessToken (both use ConditionallyUsesUuids)
 - `src/Traits/` — HasProfilePhoto, HasNotifications, HasTeams, HasGuestSupport, TwoFactorAuthenticatable
-- `config/magic-starter.php` — use_uuids toggle, profile_photo_disk
+- `config/magic-starter.php`: use_uuids toggle, profile_photo_disk
 
 ## What to Watch For
 

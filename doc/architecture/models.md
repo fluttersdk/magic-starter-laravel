@@ -190,7 +190,7 @@ Represents a team (workspace). Teams can be personal (created automatically for 
 | `profile_photo_path` | string\|null | Stored path; URL resolved via accessor |
 | `created_at`, `updated_at` | timestamp | |
 
-**Accessor**: `profile_photo_url` (appended) — reads from the configured storage disk (`magic-starter.profile_photo_disk`, falling back to `filesystems.default`). Answers `null` when no photo is stored, so the client draws its own initials.
+**Accessor**: `profile_photo_url` (appended): reads from the configured storage disk (`magic-starter.profile_photo_disk`, falling back to `filesystems.default`). Answers `null` when no photo is stored, so the client draws its own initials.
 
 **Relations**
 
