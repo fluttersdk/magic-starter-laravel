@@ -74,7 +74,7 @@ Content-Type: application/json
         "email_verified_at": "2025-01-15T10:30:00.000000Z",
         "locale": "en",
         "timezone": "America/New_York",
-        "profile_photo_url": "https://ui-avatars.com/api/?name=J%20D&color=FFFFFF&background=009E60",
+        "profile_photo_url": null,
         "two_factor_enabled": false,
         "created_at": "2025-01-10T08:00:00.000000Z",
         "updated_at": "2025-01-15T10:30:00.000000Z"
@@ -224,7 +224,7 @@ photo: (binary image file)
 | **Controller** | `ProfilePhotoController@delete` |
 | **Response** | `UserResource` |
 
-Removes the photo file from disk and sets `profile_photo_path` to `null`. The `profile_photo_url` in the response falls back to the default avatar URL, or to `null` when `magic-starter.ui_avatars_url` is empty (see [HasProfilePhoto Trait](#has-profile-photo-trait)).
+Removes the photo file from disk and sets `profile_photo_path` to `null`. The `profile_photo_url` in the response is `null` again (see [HasProfilePhoto Trait](#has-profile-photo-trait)).
 
 #### Request Example
 
@@ -245,17 +245,7 @@ The `HasProfilePhoto` trait (`FlutterSdk\MagicStarter\Traits\HasProfilePhoto`) p
 
 If `profile_photo_path` is set, returns the public URL from the configured filesystem disk (`magic-starter.profile_photo_disk`). If the disk driver supports the `url()` method, it generates the full URL; otherwise it returns the raw path.
 
-### defaultProfilePhotoUrl
-
-`defaultProfilePhotoUrl(): ?string`
-
-When no custom photo is uploaded, generates a fallback avatar URL using [ui-avatars.com](https://ui-avatars.com). The initials are extracted from the user's `name` (first letter of each word). The base URL is configurable via `magic-starter.ui_avatars_url`, and setting that key to an EMPTY string returns `null` instead, which is what a JSON client that draws its own initials usually wants.
-
-Default format:
-
-```
-https://ui-avatars.com/api/?name=J%20D&color=FFFFFF&background=009E60
-```
+When no photo is stored it returns `null`, and the client draws its own initials. A generated image would cost a third-party round trip per avatar, send the person's name to that third party, fail offline, arrive in colours the client's design system did not choose, and be impossible to tell apart from a real upload.
 
 ### Configuration
 
@@ -263,7 +253,6 @@ https://ui-avatars.com/api/?name=J%20D&color=FFFFFF&background=009E60
 |------------|---------|-------------|
 | `magic-starter.profile_photo_disk` | `filesystems.default` | Filesystem disk for photo storage |
 | `magic-starter.profile_photo_path` | `profile-photos` | Storage directory within the disk |
-| `magic-starter.ui_avatars_url` | `https://ui-avatars.com/api/` | Base URL for fallback avatar generation |
 
 ---
 

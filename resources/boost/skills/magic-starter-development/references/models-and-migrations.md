@@ -6,7 +6,7 @@
 - `src/Support/MigrationHelper.php` — primaryKey(), foreignKey(), morphColumns()
 - `src/Models/` — Team, PersonalAccessToken (both use ConditionallyUsesUuids)
 - `src/Traits/` — HasProfilePhoto, HasNotifications, HasTeams, HasGuestSupport, TwoFactorAuthenticatable
-- `config/magic-starter.php` — use_uuids toggle, profile_photo_disk, ui_avatars_url
+- `config/magic-starter.php` — use_uuids toggle, profile_photo_disk
 
 ## What to Watch For
 
@@ -20,7 +20,7 @@ Relations never reference App\Models\* directly. All model classes are resolved 
 
 ### Five user traits provide optional functionality
 
-HasProfilePhoto exposes getProfilePhotoUrlAttribute(), resolving the configured disk URL when profile_photo_path is set, falling back to a ui-avatars.com URL built from name initials. The ui_avatars_url config key controls the base URL.
+HasProfilePhoto exposes getProfilePhotoUrlAttribute(), resolving the configured disk URL when profile_photo_path is set, and null when none is stored, so the client draws its own initials.
 
 HasNotifications provides morphMany notificationSettings() returning MorphMany<NotificationSetting, $this>, a prefers() method with a 3-step fallback (registry miss defaults to true, DB override wins, then registry default channels), and routeNotificationForOneSignal() returning ['external_id' => [MagicStarter::onesignalExternalIdPrefix() . $this->getKey()]] for OneSignal v5 alias targeting via OneSignalChannel driver.
 

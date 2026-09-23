@@ -190,7 +190,7 @@ Represents a team (workspace). Teams can be personal (created automatically for 
 | `profile_photo_path` | string\|null | Stored path; URL resolved via accessor |
 | `created_at`, `updated_at` | timestamp | |
 
-**Accessor**: `profile_photo_url` (appended) — reads from the configured storage disk (`magic-starter.profile_photo_disk`, falling back to `filesystems.default`). Falls back to a ui-avatars.com URL built from name initials when no photo is stored, or to `null` when `magic-starter.ui_avatars_url` is set to an empty string, which is what a JSON client that draws its own initials usually wants.
+**Accessor**: `profile_photo_url` (appended) — reads from the configured storage disk (`magic-starter.profile_photo_disk`, falling back to `filesystems.default`). Answers `null` when no photo is stored, so the client draws its own initials.
 
 **Relations**
 
@@ -341,11 +341,11 @@ Adds team-membership relationships and helper methods.
 
 Provides the `profile_photo_url` Eloquent accessor.
 
-**Accessor**: `getProfilePhotoUrlAttribute(): string`
+**Accessor**: `getProfilePhotoUrlAttribute(): ?string`
 
 Resolution order:
 1. If `profile_photo_path` is non-empty: resolves the URL via the `magic-starter.profile_photo_disk` filesystem disk (falling back to `filesystems.default`).
-2. Otherwise: calls `defaultProfilePhotoUrl()`, which generates a ui-avatars.com URL from name initials. The background color is `#009E60` and the text color is `#FFFFFF`.
+2. Otherwise: returns `null`. The client draws its own initials, in its own theme.
 
 > [!NOTE]
 > The `Team` model implements an equivalent `profilePhotoUrl` Attribute directly (not via this trait) with slightly different default colors (`#EBF4FF` / `#7F9CF5`). The trait is for user models only.

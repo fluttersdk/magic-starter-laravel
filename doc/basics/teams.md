@@ -119,7 +119,7 @@ Creates a new team. The authenticated user becomes the owner.
     "personal_team": false,
     "owner_id": "1a2b3c4d-...",
     "user_role": "owner",
-    "profile_photo_url": "https://ui-avatars.com/api/?name=N%20T&color=7F9CF5&background=EBF4FF",
+    "profile_photo_url": null,
     "created_at": "2026-03-25T12:00:00.000000Z",
     "updated_at": "2026-03-25T12:00:00.000000Z"
   }
@@ -560,7 +560,7 @@ The photo is stored using the disk configured in `magic-starter.team_photo_disk`
 DELETE /teams/{team}/profile-photo
 ```
 
-Removes the team's profile photo. Requires `update` policy authorization (owner only). The photo file is deleted from disk and `profile_photo_path` is set to `null`. The team falls back to a generated avatar URL via ui-avatars.com.
+Removes the team's profile photo. Requires `update` policy authorization (owner only). The photo file is deleted from disk and `profile_photo_path` is set to `null`. `profile_photo_url` answers `null` again, and the client draws its own placeholder.
 
 **Response:** `200 OK` -- returns updated `TeamResource`.
 
@@ -650,7 +650,7 @@ App providers boot after package providers, so the override takes precedence.
 | `name`                | string        | Team name                                       |
 | `personal_team`       | bool          | Whether this is a personal (non-deletable) team |
 | `profile_photo_path`  | string\|null  | Stored photo path on disk                       |
-| `profile_photo_url`   | string (read) | Computed URL -- stored photo or ui-avatars fallback |
+| `profile_photo_url`   | string\|null (read) | Stored photo URL, or `null` when none is stored |
 | `created_at`          | Carbon\|null  | Timestamp                                       |
 | `updated_at`          | Carbon\|null  | Timestamp                                       |
 

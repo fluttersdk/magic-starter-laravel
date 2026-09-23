@@ -92,7 +92,11 @@ class Team extends Model
     }
 
     /**
-     * Get the team's profile photo URL.
+     * Get the team's profile photo URL, or null when none is stored.
+     *
+     * Null for the same reason as the user's, in
+     * FlutterSdk\MagicStarter\Traits\HasProfilePhoto: the client draws its own
+     * initials, so a generated third-party image only overrides its theme.
      *
      * @return Attribute<string|null, never>
      */
@@ -101,37 +105,7 @@ class Team extends Model
         return Attribute::get(function (): ?string {
             return $this->profile_photo_path
                 ? Storage::disk(config('magic-starter.profile_photo_disk', config('filesystems.default')))->url($this->profile_photo_path)
-                : $this->defaultProfilePhotoUrl();
+                : null;
         });
-    }
-
-    /**
-     * Get the default profile photo URL for the team, or null when the host
-     * wants none.
-     *
-     * Same switch and same reasoning as the user's, in
-     * FlutterSdk\MagicStarter\Traits\HasProfilePhoto: an empty
-     * `magic-starter.ui_avatars_url` returns null so a JSON client can draw its
-     * own initials instead of fetching a third-party image per avatar.
-     */
-    protected function defaultProfilePhotoUrl(): ?string
-    {
-        $baseUrl = rtrim((string) config('magic-starter.ui_avatars_url', 'https://ui-avatars.com/api/'), '/');
-
-        if ($baseUrl === '') {
-            return null;
-        }
-
-        $initials = [];
-
-        foreach (preg_split('/\s+/', trim((string) $this->name)) ?: [] as $segment) {
-            if ($segment !== '') {
-                $initials[] = mb_substr($segment, 0, 1);
-            }
-        }
-
-        $name = implode(' ', $initials);
-
-        return $baseUrl . '/?name=' . urlencode($name) . '&color=7F9CF5&background=EBF4FF';
     }
 }

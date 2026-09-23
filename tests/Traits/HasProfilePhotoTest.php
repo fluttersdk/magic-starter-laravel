@@ -3,6 +3,7 @@
 namespace FlutterSdk\MagicStarter\Tests\Traits;
 
 use FlutterSdk\MagicStarter\Tests\TestCase;
+use FlutterSdk\MagicStarter\Traits\HasProfilePhoto;
 use Illuminate\Database\Eloquent\Model;
 
 final class HasProfilePhotoTest extends TestCase
@@ -33,28 +34,12 @@ final class HasProfilePhotoTest extends TestCase
         );
     }
 
-    public function test_profile_photo_url_falls_back_to_default_avatar_when_missing_path(): void
+    public function test_profile_photo_url_is_null_when_no_photo_is_stored(): void
     {
-        config(['magic-starter.profile_photo_disk' => 'profile-photos']);
-
-        $user = new HasProfilePhotoTestUser;
-        $user->name = 'Alice Bob';
-        $user->profile_photo_path = null;
-
-        $this->assertSame(
-            'https://ui-avatars.com/api/?name=A+B&color=FFFFFF&background=009E60',
-            $user->profile_photo_url,
-        );
-    }
-
-    public function test_an_empty_ui_avatars_url_sends_null_instead_of_a_generated_image(): void
-    {
-        // What a JSON client usually wants: it draws its own initials already,
-        // and a generated image otherwise costs a third-party round trip per
-        // avatar, sends the person's name to that third party, fails offline,
-        // and cannot be told apart from a real upload.
-        config(['magic-starter.ui_avatars_url' => '']);
-
+        // The client draws its own initials in its own theme. A generated
+        // image cost a third-party round trip per avatar, sent the person's
+        // name to that third party, failed offline, arrived in colours the
+        // client did not choose, and could not be told apart from an upload.
         $user = new HasProfilePhotoTestUser;
         $user->name = 'Alice Bob';
         $user->profile_photo_path = null;
@@ -62,30 +47,34 @@ final class HasProfilePhotoTest extends TestCase
         $this->assertNull($user->profile_photo_url);
     }
 
-    public function test_an_uploaded_photo_is_unaffected_by_the_switch(): void
+    public function test_an_empty_stored_path_is_no_photo(): void
     {
-        // The switch governs the FALLBACK only. A real upload still answers,
-        // which is the half that would break silently if the null were returned
-        // one branch too early.
-        config([
-            'magic-starter.profile_photo_disk' => 'profile-photos',
-            'magic-starter.ui_avatars_url' => '',
-        ]);
+        $user = new HasProfilePhotoTestUser;
+        $user->name = 'Alice Bob';
+        $user->profile_photo_path = '';
+
+        $this->assertNull($user->profile_photo_url);
+    }
+
+    public function test_a_published_config_still_naming_ui_avatars_generates_nothing(): void
+    {
+        // Every install that published config/magic-starter.php before this
+        // release carries the old `ui_avatars_url` key with the old URL in it,
+        // and `mergeConfigFrom` never overwrites a published key. A default
+        // flipped in the package's own config would have reached none of them.
+        config(['magic-starter.ui_avatars_url' => 'https://ui-avatars.com/api/']);
 
         $user = new HasProfilePhotoTestUser;
-        $user->name = 'Alice Doe';
-        $user->profile_photo_path = 'avatars/alice.png';
+        $user->name = 'Alice Bob';
+        $user->profile_photo_path = null;
 
-        $this->assertSame(
-            'https://cdn.example.test/profile-photos/avatars/alice.png',
-            $user->profile_photo_url,
-        );
+        $this->assertNull($user->profile_photo_url);
     }
 }
 
 final class HasProfilePhotoTestUser extends Model
 {
-    use \FlutterSdk\MagicStarter\Traits\HasProfilePhoto;
+    use HasProfilePhoto;
 
     protected $guarded = [];
 }

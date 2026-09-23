@@ -212,7 +212,7 @@ class User extends Authenticatable
 | `HasApiTokens` | `laravel/sanctum` | Token-based API authentication |
 | `HasUuids` | `illuminate/database` | UUID primary keys (only when `use_uuids` is `true`) |
 | `HasTeams` | `FlutterSdk\MagicStarter\Traits` | Team membership, current team, personal team |
-| `HasProfilePhoto` | `FlutterSdk\MagicStarter\Traits` | Profile photo URL with ui-avatars.com fallback |
+| `HasProfilePhoto` | `FlutterSdk\MagicStarter\Traits` | Profile photo URL, `null` when none is stored |
 
 ### Optional Traits
 

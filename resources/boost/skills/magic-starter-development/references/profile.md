@@ -5,7 +5,7 @@
 - `UpdateUserProfile` — profile, email, phone, timezone, locale updates; guest conversion
 - `UpdateUserPassword` — dedicated password change with current-password verification
 - `DeleteUser` — token revocation, photo deletion, user removal
-- `HasProfilePhoto` — profile photo URL resolution with ui-avatars fallback
+- `HasProfilePhoto` — profile photo URL resolution, null when none is stored
 - `SessionAgent` — device and browser detection from user agent strings
 
 ## What to Watch For
@@ -20,7 +20,7 @@ Guest users convert to regular users when they have both credentials (email or p
 
 ### Profile Photos
 
-The `HasProfilePhoto` trait provides `profile_photo_url` accessor. Stored photos resolve via configured disk; missing photos fall back to ui-avatars.com generated with user initials, white text on green background. Disk defaults to `magic-starter.profile_photo_disk` or Laravel's default filesystem.
+The `HasProfilePhoto` trait provides `profile_photo_url` accessor. Stored photos resolve via configured disk; a missing photo answers null, and the client draws its own initials. Disk defaults to `magic-starter.profile_photo_disk` or Laravel's default filesystem.
 
 ### Sessions and Device Detection
 

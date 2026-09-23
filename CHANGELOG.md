@@ -4,6 +4,14 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Changed
+
+- **Behaviour change: `profile_photo_url` is `null` for a user or team with no uploaded photo.** It answered a generated ui-avatars.com image, green (`009E60`) for a user and blue for a team, so a client's own themed initial was replaced by the server's colours as soon as the account arrived: measured in a consumer whose guest session opens after the first frame, the sidebar drew its themed initial and then swapped it for a green image with no sign-in in between. The image also cost every client a third-party round trip per avatar, sent the person's name to that third party, failed offline, and could not be told apart from a real upload, so "has this person set a photo" had no answer on the wire.
+
+  0.0.9's switch (an empty `magic-starter.ui_avatars_url`) is removed rather than made the default, because a default flipped in this package's config reaches no existing install: every host that published `config/magic-starter.php` carries the old URL in its own copy, and `mergeConfigFrom` never overwrites a published key. The key is ignored now and can be deleted from a published config; `MAGIC_STARTER_UI_AVATARS_URL` is read by nothing. This package answers JSON clients only, and a client that wants a generated avatar builds it from `name`.
+
+  A client that treated `profile_photo_url` as always a string has to handle `null`. `magic_starter` already does: its avatars draw the initial, or a person glyph, when the field is null or empty. An uploaded photo answers exactly as before. (`src/Traits/HasProfilePhoto.php`, `src/Models/Team.php`, `config/magic-starter.php`)
+
 ## [0.0.10] - 2026-09-22
 
 ### Fixed
