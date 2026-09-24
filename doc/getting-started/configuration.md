@@ -118,7 +118,7 @@ Every key available in `config/magic-starter.php`:
 
 | Key | Default | Description |
 |:----|:--------|:------------|
-| `use_uuids` | `true` | When `true`, all package migrations use UUID primary keys; when `false`, auto-incrementing integers |
+| `use_uuids` | `true` | When `true`, package migrations use UUID primary keys; when `false`, auto-incrementing integers. `notifications.id` is a UUID either way (see [UUID Configuration](#uuid-configuration)) |
 | `features` | `[]` | Array of enabled feature strings (populated via `Features::` method calls) |
 | `frontend_url` | `env('MAGIC_STARTER_FRONTEND_URL')` | Base URL for the frontend application, used in email invitation links |
 | `models.user` | `env('MAGIC_STARTER_USER_MODEL')` | Custom User model class; falls back to `auth.providers.users.model` via `MagicStarter::userModel()` |
@@ -266,6 +266,9 @@ The `use_uuids` key determines the primary key strategy for all package migratio
 |:------|:-------------|:-------------|:--------------|
 | `true` | `uuid()` columns | `foreignUuid()` references | UUID-based polymorphic columns |
 | `false` | `id()` auto-incrementing | `foreignId()` references | Integer-based polymorphic columns |
+
+> [!NOTE]
+> `notifications.id` is a UUID in both modes, because Laravel's `database` channel writes the notification's own UUID there; only its `notifiable` morph columns follow `use_uuids`. An install that migrated before this was true has an auto-incrementing id the channel cannot write to: copy `vendor/fluttersdk/magic-starter-laravel/database/migrations/rekey_notifications_table_by_uuid.php` into `database/migrations/` under a timestamp later than your notifications migration, then run `php artisan migrate`. Re-running `magic-starter:install` is not the way to get it, because the installer also rewrites the users migration and the feature list.
 
 This value is set automatically during installation based on your existing database schema. All package models include the `ConditionallyUsesUuids` trait, which reads this config at runtime to determine key behavior.
 

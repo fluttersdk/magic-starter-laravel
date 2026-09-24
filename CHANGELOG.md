@@ -4,6 +4,12 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Fixed
+
+- **The `notifications` table's `id` is a UUID in both key modes.** It followed `use_uuids`, so an application on integer keys got an auto-incrementing `id`, while Laravel's `database` channel always writes the notification's own UUID there: every `$user->notify()` through that channel failed at insert (SQLite and PostgreSQL refuse the value, as does MySQL in strict mode, Laravel's default), and the notifications screen could only ever be empty. The controller tests inserted rows by hand with a UUID of their own, so they never reached the channel. The `notifiable` morph columns still follow `use_uuids`.
+
+  The create migration's `hasTable` guard means the fix reaches fresh installs only, so a new `rekey_notifications_table_by_uuid` migration repairs an existing one: when the table's `id` auto-increments it rebuilds the table with a UUID key, carries any rows over under fresh UUIDs (a non-strict MySQL could have written some by coercing the UUID into a number, and anything creating a row through the model without an id got an integer one) and restores both indexes; on a table whose id is already a UUID it only adds whichever of those two indexes is missing. It refuses a table carrying a column it does not know rather than dropping it, and a run that stops part-way can be re-run. To upgrade, copy `vendor/fluttersdk/magic-starter-laravel/database/migrations/rekey_notifications_table_by_uuid.php` into `database/migrations/` under a timestamp later than your notifications migration, then run `php artisan migrate`. Do not re-run `magic-starter:install` for this: it also deletes a Laravel default users migration that still says `$table->id()` and re-applies feature toggles, and its prompt defaults to every feature. New installs publish the migration with the `notifications` feature.
+
 ## [0.0.11] - 2026-09-23
 
 ### Changed

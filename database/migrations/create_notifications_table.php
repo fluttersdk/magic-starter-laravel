@@ -14,7 +14,9 @@ return new class extends Migration
     {
         if (! Schema::hasTable('notifications')) {
             Schema::create('notifications', function (Blueprint $table) {
-                MigrationHelper::primaryKey($table);
+                // Always a UUID: Laravel's database channel writes the notification's own
+                // UUID as the id in either `use_uuids` mode. Only the morph key follows it.
+                $table->uuid('id')->primary();
                 $table->string('type');
                 MigrationHelper::morphColumns($table, 'notifiable');
                 $table->text('data');

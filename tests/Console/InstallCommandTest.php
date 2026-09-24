@@ -122,6 +122,33 @@ final class InstallCommandTest extends TestCase
         );
     }
 
+    /**
+     * The rekey repairs the table the create builds, so it has to sort after it,
+     * including when a later run publishes it beside an older create.
+     */
+    public function test_a_rerun_publishes_the_notifications_rekey_after_the_create(): void
+    {
+        $this->artisan('magic-starter:install', [
+            '--features' => ['notifications'],
+        ])->assertExitCode(0);
+
+        // An install published before the rekey existed.
+        File::delete(glob(database_path('migrations/*_rekey_notifications_table_by_uuid.php')) ?: []);
+
+        $this->artisan('magic-starter:install', [
+            '--features' => ['notifications'],
+        ])->assertExitCode(0);
+
+        $create = glob(database_path('migrations/*_create_notifications_table.php')) ?: [];
+        $rekey = glob(database_path('migrations/*_rekey_notifications_table_by_uuid.php')) ?: [];
+        $this->assertCount(1, $create);
+        $this->assertCount(1, $rekey);
+        $this->assertTrue(
+            basename($rekey[0]) > basename($create[0]),
+            'The rekey must sort after the create it repairs.',
+        );
+    }
+
     public function test_teams_alone_does_not_publish_the_guest_and_phone_migration(): void
     {
         $this->artisan('magic-starter:install', [

@@ -141,6 +141,9 @@ MigrationHelper::primaryKey(Blueprint $table): ColumnDefinition
 
 Never use raw `$table->id()` or `$table->uuid('id')` directly in package migrations.
 
+> [!NOTE]
+> `notifications` is the one table keyed by a UUID in both modes. Laravel's `database` channel sets `id` to the notification's own UUID in both modes, so the table always uses `$table->uuid('id')->primary()`; with an integer key every delivery fails at insert. Its `notifiable` morph columns still follow `use_uuids`. `rekey_notifications_table_by_uuid` rebuilds a table an earlier install created with an auto-incrementing id.
+
 ### <a name="foreignkey"></a>foreignKey
 
 ```php
