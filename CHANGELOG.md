@@ -4,6 +4,10 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Fixed
+
+- **The `notifications` table's `id` is a UUID in both key modes.** It followed `use_uuids`, so an application on integer keys got an auto-incrementing `id`, while Laravel's `database` channel always writes the notification's own UUID there: every `$user->notify()` through that channel failed at insert (SQLite reports `datatype mismatch`; MySQL and PostgreSQL refuse the value too), and the notifications screen could only ever be empty. The controller tests inserted rows by hand with a UUID of their own, so they never reached the channel. The `notifiable` morph columns still follow `use_uuids`. An existing integer-key install has a table nothing could have written to through the channel; republish the migration and recreate the table (`php artisan migrate:fresh` in development).
+
 ## [0.0.11] - 2026-09-23
 
 ### Changed
