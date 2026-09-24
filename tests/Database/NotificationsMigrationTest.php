@@ -13,6 +13,7 @@ use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Schema;
 use Illuminate\Support\Str;
 use PHPUnit\Framework\Attributes\DataProvider;
+use RuntimeException;
 
 /**
  * Locks the notifications table to the row Laravel's `database` channel writes.
@@ -107,11 +108,88 @@ class NotificationsMigrationTest extends TestCase
             Schema::hasIndex('notifications', 'notifications_notifiable_type_notifiable_id_read_at_index'),
         );
 
-        // 5. The channel can write again.
+        // 5. PostgreSQL names a primary key after the table it was created on, and
+        //    a rename keeps that name, so a repaired table has to match a fresh one.
+        if (DB::getDriverName() === 'pgsql') {
+            $this->assertSame(
+                'notifications_pkey',
+                DB::scalar(
+                    "select conname from pg_constraint where conrelid = 'notifications'::regclass and contype = 'p'",
+                ),
+            );
+        }
+
+        // 6. The channel can write again.
         $sent = new DatabaseChannelNotification;
         $sent->id = (string) Str::uuid();
         $user->notify($sent);
         $this->assertTrue(DatabaseNotification::query()->whereKey($sent->id)->exists());
+    }
+
+    public function test_the_rekey_finishes_a_run_that_stopped_between_the_drop_and_the_rename(): void
+    {
+        // 1. MySQL and SQLite run a migration outside a transaction, so a run can
+        //    stop with the rows in the scratch table and no notifications table.
+        config()->set('magic-starter.use_uuids', false);
+        $this->migrate('create_users_table.php');
+        $this->migrate('create_notifications_table.php');
+        $sent = new DatabaseChannelNotification;
+        $sent->id = (string) Str::uuid();
+        $this->createUser()->notify($sent);
+        Schema::table('notifications', function (Blueprint $table): void {
+            $table->dropIndex(['notifiable_type', 'notifiable_id']);
+            $table->dropIndex(['notifiable_type', 'notifiable_id', 'read_at']);
+        });
+        Schema::rename('notifications', 'notifications_rekeyed');
+
+        $this->migrate('rekey_notifications_table_by_uuid.php');
+
+        // 2. The rows are back under the real name, and so are both indexes.
+        $this->assertFalse(Schema::hasTable('notifications_rekeyed'));
+        $this->assertSame($sent->id, DatabaseNotification::query()->sole()->id);
+        $this->assertTrue(Schema::hasIndex('notifications', 'notifications_notifiable_type_notifiable_id_index'));
+        $this->assertTrue(
+            Schema::hasIndex('notifications', 'notifications_notifiable_type_notifiable_id_read_at_index'),
+        );
+    }
+
+    public function test_the_rekey_discards_a_scratch_table_left_beside_the_old_one(): void
+    {
+        config()->set('magic-starter.use_uuids', false);
+        $this->migrate('create_users_table.php');
+        $this->createIntegerKeyedNotificationsTable();
+        Schema::create('notifications_rekeyed', function (Blueprint $table): void {
+            $table->uuid('id')->primary();
+        });
+
+        $this->migrate('rekey_notifications_table_by_uuid.php');
+
+        $this->assertFalse(Schema::hasTable('notifications_rekeyed'));
+        $this->assertFalse($this->idAutoIncrements());
+    }
+
+    public function test_the_rekey_refuses_a_table_carrying_columns_it_would_drop(): void
+    {
+        // 1. An application that added its own column to the table.
+        config()->set('magic-starter.use_uuids', false);
+        $this->migrate('create_users_table.php');
+        $this->createIntegerKeyedNotificationsTable();
+        Schema::table('notifications', function (Blueprint $table): void {
+            $table->unsignedBigInteger('team_id')->nullable();
+        });
+
+        // 2. Rebuilding from the package's column list would lose it, so it stops.
+        $migration = require __DIR__ . '/../../database/migrations/rekey_notifications_table_by_uuid.php';
+
+        try {
+            $migration->up();
+            $this->fail('The rekey rebuilt a table carrying a column it does not know.');
+        } catch (RuntimeException $exception) {
+            $this->assertStringContainsString('team_id', $exception->getMessage());
+        }
+
+        $this->assertTrue($this->idAutoIncrements());
+        $this->assertTrue(Schema::hasColumn('notifications', 'team_id'));
     }
 
     public function test_the_rekey_leaves_a_uuid_keyed_table_untouched(): void

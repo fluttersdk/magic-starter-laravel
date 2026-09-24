@@ -268,7 +268,7 @@ The `use_uuids` key determines the primary key strategy for all package migratio
 | `false` | `id()` auto-incrementing | `foreignId()` references | Integer-based polymorphic columns |
 
 > [!NOTE]
-> `notifications.id` is a UUID in both modes, because Laravel's `database` channel writes the notification's own UUID there; only its `notifiable` morph columns follow `use_uuids`. An install that migrated before this was true has an auto-incrementing id the channel cannot write to: re-run `php artisan magic-starter:install` to publish `rekey_notifications_table_by_uuid`, then `php artisan migrate`.
+> `notifications.id` is a UUID in both modes, because Laravel's `database` channel writes the notification's own UUID there; only its `notifiable` morph columns follow `use_uuids`. An install that migrated before this was true has an auto-incrementing id the channel cannot write to: copy `vendor/fluttersdk/magic-starter-laravel/database/migrations/rekey_notifications_table_by_uuid.php` into `database/migrations/` under a timestamp later than your notifications migration, then run `php artisan migrate`. Re-running `magic-starter:install` is not the way to get it, because the installer also rewrites the users migration and the feature list.
 
 This value is set automatically during installation based on your existing database schema. All package models include the `ConditionallyUsesUuids` trait, which reads this config at runtime to determine key behavior.
 

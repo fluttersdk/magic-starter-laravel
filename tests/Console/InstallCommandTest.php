@@ -123,9 +123,8 @@ final class InstallCommandTest extends TestCase
     }
 
     /**
-     * The upgrade path for an install whose notifications table predates the
-     * UUID key: re-running the installer skips what is already published and
-     * adds the rekey, which has to run after the create it repairs.
+     * The rekey repairs the table the create builds, so it has to sort after it,
+     * including when a later run publishes it beside an older create.
      */
     public function test_a_rerun_publishes_the_notifications_rekey_after_the_create(): void
     {
