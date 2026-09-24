@@ -123,6 +123,10 @@ class InstallCommand extends Command
         ],
         'notifications' => [
             'create_notifications_table.php',
+            // After the create, which it repairs on an install that built the
+            // table before its id became a UUID in both key modes. A no-op on a
+            // table that is already right, so a fresh install runs it harmlessly.
+            'rekey_notifications_table_by_uuid.php',
             'create_notification_settings_table.php',
             'add_sms_registered_at_to_users_table.php',
         ],

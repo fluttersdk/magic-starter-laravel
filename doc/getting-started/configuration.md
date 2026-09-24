@@ -118,7 +118,7 @@ Every key available in `config/magic-starter.php`:
 
 | Key | Default | Description |
 |:----|:--------|:------------|
-| `use_uuids` | `true` | When `true`, all package migrations use UUID primary keys; when `false`, auto-incrementing integers |
+| `use_uuids` | `true` | When `true`, package migrations use UUID primary keys; when `false`, auto-incrementing integers. `notifications.id` is a UUID either way (see [UUID Configuration](#uuid-configuration)) |
 | `features` | `[]` | Array of enabled feature strings (populated via `Features::` method calls) |
 | `frontend_url` | `env('MAGIC_STARTER_FRONTEND_URL')` | Base URL for the frontend application, used in email invitation links |
 | `models.user` | `env('MAGIC_STARTER_USER_MODEL')` | Custom User model class; falls back to `auth.providers.users.model` via `MagicStarter::userModel()` |
@@ -266,6 +266,9 @@ The `use_uuids` key determines the primary key strategy for all package migratio
 |:------|:-------------|:-------------|:--------------|
 | `true` | `uuid()` columns | `foreignUuid()` references | UUID-based polymorphic columns |
 | `false` | `id()` auto-incrementing | `foreignId()` references | Integer-based polymorphic columns |
+
+> [!NOTE]
+> `notifications.id` is a UUID in both modes, because Laravel's `database` channel writes the notification's own UUID there; only its `notifiable` morph columns follow `use_uuids`. An install that migrated before this was true has an auto-incrementing id the channel cannot write to: re-run `php artisan magic-starter:install` to publish `rekey_notifications_table_by_uuid`, then `php artisan migrate`.
 
 This value is set automatically during installation based on your existing database schema. All package models include the `ConditionallyUsesUuids` trait, which reads this config at runtime to determine key behavior.
 

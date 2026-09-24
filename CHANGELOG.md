@@ -6,7 +6,9 @@ All notable changes to this project will be documented in this file.
 
 ### Fixed
 
-- **The `notifications` table's `id` is a UUID in both key modes.** It followed `use_uuids`, so an application on integer keys got an auto-incrementing `id`, while Laravel's `database` channel always writes the notification's own UUID there: every `$user->notify()` through that channel failed at insert (SQLite reports `datatype mismatch`; MySQL and PostgreSQL refuse the value too), and the notifications screen could only ever be empty. The controller tests inserted rows by hand with a UUID of their own, so they never reached the channel. The `notifiable` morph columns still follow `use_uuids`. An existing integer-key install has a table nothing could have written to through the channel; republish the migration and recreate the table (`php artisan migrate:fresh` in development).
+- **The `notifications` table's `id` is a UUID in both key modes.** It followed `use_uuids`, so an application on integer keys got an auto-incrementing `id`, while Laravel's `database` channel always writes the notification's own UUID there: every `$user->notify()` through that channel failed at insert (SQLite and PostgreSQL refuse the value, as does MySQL in strict mode, Laravel's default), and the notifications screen could only ever be empty. The controller tests inserted rows by hand with a UUID of their own, so they never reached the channel. The `notifiable` morph columns still follow `use_uuids`.
+
+  The create migration's `hasTable` guard means the fix reaches fresh installs only, so a new `rekey_notifications_table_by_uuid` migration repairs an existing one: when the table's `id` auto-increments it rebuilds the table with a UUID key, carries any rows over under fresh UUIDs (only a non-strict MySQL could have written one, by coercing the UUID into a number) and restores both indexes; on any other table it does nothing. To upgrade, re-run `php artisan magic-starter:install` with your features, which publishes the new migration and skips the ones you already have, then `php artisan migrate`.
 
 ## [0.0.11] - 2026-09-23
 
