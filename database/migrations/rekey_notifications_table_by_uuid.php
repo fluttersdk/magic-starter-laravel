@@ -15,7 +15,9 @@ use Illuminate\Support\Str;
  * that table refused every delivery (SQLite, PostgreSQL and strict-mode MySQL
  * reject the value). The create stub is fixed for fresh installs, but its
  * `hasTable` guard means it never touches a table that already exists; this is
- * the migration that does. On a table that is already right it does nothing.
+ * the migration that does. On a table whose id is already a UUID it only adds
+ * whichever of the create stub's two lookup indexes is missing, which is also
+ * what finishes a run that stopped before its indexes landed.
  *
  * MySQL and SQLite run a migration outside a transaction, so every step is
  * written to be re-run after a failure part-way through.
@@ -132,18 +134,22 @@ return new class extends Migration
         // PostgreSQL names a primary key after the table it was created on and a
         // rename keeps it, which would leave `dropPrimary()` looking for
         // `notifications_pkey` on a repaired install and finding nothing. Read
-        // rather than assumed, since the scratch table may not be ours.
+        // rather than assumed, since the scratch table may not be ours, and read
+        // through the schema builder so a table prefix and the search path are
+        // applied the same way `Schema::rename` applied them.
         if (DB::getDriverName() !== 'pgsql') {
             return;
         }
 
-        $name = DB::scalar(
-            "select conname from pg_constraint where conrelid = 'notifications'::regclass and contype = 'p'",
-        );
+        $current = collect(Schema::getIndexes('notifications'))->firstWhere('primary', true)['name'] ?? null;
+        $expected = DB::getTablePrefix() . 'notifications_pkey';
 
-        if ($name !== null && $name !== 'notifications_pkey') {
-            DB::statement(sprintf('alter table notifications rename constraint "%s" to notifications_pkey', $name));
+        if ($current === null || $current === $expected) {
+            return;
         }
+
+        // Renaming the index renames the constraint that owns it.
+        Schema::table('notifications', fn (Blueprint $table) => $table->renameIndex($current, $expected));
     }
 
     /**
