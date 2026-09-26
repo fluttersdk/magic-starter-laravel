@@ -4,6 +4,12 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Added
+
+- **Push device reachability: `POST devices/push-state` and `POST devices/push-state/release`, behind the `onesignal` feature.** OneSignal accepts a push for a subscription that cannot receive it without complaint, so whether a person's phone would actually ring is known only to the device. The client posts `PushDeliverySnapshot.toMap()` from `magic_notifications` on a lifecycle event and the row is upserted per (user, subscription id) into a new `push_devices` table; `PushDevice::canReachByPush($user)` answers true only for a device that said `on`, holds a subscription id, is subscribed under the user's own OneSignal alias, and reported within `PushDevice::FRESH_FOR_HOURS` (24) on the server's clock. The release removes the caller's named device on sign-out and leaves their other devices vouching.
+
+  Both routes write under the authenticated user only: a `user_id` in the body is ignored, an `external_id` naming another person's alias is refused with 422, and releasing a subscription id the caller does not own answers 404, the same as an unknown one, and changes nothing. The routes are named `magic-starter.devices.push-state` and `magic-starter.devices.push-state.release` so they cannot collide with a host's own. The `create_push_devices_table` migration is `hasTable` guarded, so an application that already built this table keeps it; `magic-starter:install` publishes it with the `notifications` feature, since `onesignal` is not an installable feature of its own. (`src/Http/Controllers/PushDeviceController.php`, `src/Models/PushDevice.php`, `database/migrations/create_push_devices_table.php`)
+
 ### Fixed
 
 - **The `notifications` table's `id` is a UUID in both key modes.** It followed `use_uuids`, so an application on integer keys got an auto-incrementing `id`, while Laravel's `database` channel always writes the notification's own UUID there: every `$user->notify()` through that channel failed at insert (SQLite and PostgreSQL refuse the value, as does MySQL in strict mode, Laravel's default), and the notifications screen could only ever be empty. The controller tests inserted rows by hand with a UUID of their own, so they never reached the channel. The `notifiable` morph columns still follow `use_uuids`.

@@ -21,6 +21,7 @@ use FlutterSdk\MagicStarter\Http\Controllers\OtpController;
 use FlutterSdk\MagicStarter\Http\Controllers\PasswordResetController;
 use FlutterSdk\MagicStarter\Http\Controllers\ProfileController;
 use FlutterSdk\MagicStarter\Http\Controllers\ProfilePhotoController;
+use FlutterSdk\MagicStarter\Http\Controllers\PushDeviceController;
 use FlutterSdk\MagicStarter\Http\Controllers\PushTestController;
 use FlutterSdk\MagicStarter\Http\Controllers\SessionController;
 use FlutterSdk\MagicStarter\Http\Controllers\SettingsController;
@@ -198,6 +199,23 @@ Route::prefix((string) config('magic-starter.route_prefix', ''))
                     Route::get('/', [NotificationPreferenceController::class, 'show']);
                     Route::put('/', [NotificationPreferenceController::class, 'update']);
                 });
+            }
+
+            // What the caller's own device knows about whether a push can
+            // reach it, and the sign-out that withdraws it. No `{user}`
+            // segment on either, and that is the authorisation: rows are
+            // written and released under the session's user only.
+            //
+            // Named under `magic-starter.` so they cannot collide with a
+            // host's own `api.v1.devices.push-state`. The release is a POST
+            // because the subscription id belongs in a body, not in a path
+            // segment or an access log, and magic's `Http` facade sends no
+            // body on a DELETE.
+            if (Features::hasOnesignalFeatures()) {
+                Route::post('devices/push-state', [PushDeviceController::class, 'store'])
+                    ->name('magic-starter.devices.push-state');
+                Route::post('devices/push-state/release', [PushDeviceController::class, 'release'])
+                    ->name('magic-starter.devices.push-state.release');
             }
 
             if (Features::enabled(Features::twoFactorAuthentication())) {
