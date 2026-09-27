@@ -4,6 +4,8 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [0.0.12] - 2026-09-27
+
 ### Added
 
 - **Push device reachability: `POST devices/push-state` and `POST devices/push-state/release`, behind the `onesignal` and `notifications` features.** OneSignal accepts a push for a subscription that cannot receive it without complaint, so whether a person's phone would actually ring is known only to the device. The client posts `PushDeliverySnapshot.toMap()` from `magic_notifications` on a lifecycle event and the row is upserted per (user, subscription id) into a new `push_devices` table; `PushDevice::canReachByPush($user)` answers true only for a device that said `on`, holds a subscription id, is subscribed under the user's own OneSignal alias, and reported within `PushDevice::FRESH_FOR_HOURS` (24) on the server's clock. The release removes the caller's named device on sign-out and leaves their other devices vouching.
