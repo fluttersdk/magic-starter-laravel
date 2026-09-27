@@ -4,6 +4,8 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [0.0.13] - 2026-09-27
+
 ### Changed
 
 - **`POST devices/push-state/release` answers 204 whether or not a row was removed.** 0.0.12 answered 404 for an unknown id, a repeated release and another user's subscription id. A sign-out is retried after a dropped answer, and `magic_notifications`' `PushStateReporter` treats a non-2xx as a failed release and keeps its memo of the report, so the next person signing in on the device could be deduped against it. Another user's id still removes nothing and answers the same 204 an unknown one does, so the answer confirms nothing about rows the caller does not own. (`src/Http/Controllers/PushDeviceController.php`)
