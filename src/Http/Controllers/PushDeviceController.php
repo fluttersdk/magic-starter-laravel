@@ -81,15 +81,18 @@ class PushDeviceController
      * without one names no device, and reading it as "release all of mine"
      * would strand the caller's other handsets.
      *
-     * Answers 204 when a row of the caller's was removed, and 404 otherwise.
-     * Another user's subscription id is a 404 exactly like an unknown one, so
-     * the answer confirms nothing about rows the caller does not own.
+     * Answers 204 whether or not a row of the caller's was there to remove. A
+     * sign-out is retried after a dropped answer, and a client treats a
+     * non-2xx as a failed release and keeps its memo of the report, which the
+     * next person signing in on the device would then be deduped against.
+     * Another user's subscription id answers the same 204 and removes nothing,
+     * so the answer confirms nothing about rows the caller does not own.
      */
     public function release(ReleasePushDeviceRequest $request): Response
     {
         $validated = $request->validated();
 
-        abort_unless(PushDevice::release($request->user(), $validated['subscription_id']), 404);
+        PushDevice::release($request->user(), $validated['subscription_id']);
 
         return response()->noContent();
     }

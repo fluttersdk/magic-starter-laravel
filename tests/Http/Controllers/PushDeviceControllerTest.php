@@ -199,7 +199,22 @@ final class PushDeviceControllerTest extends TestCase
         );
     }
 
-    public function test_release_of_another_users_device_is_404_and_leaves_the_row(): void
+    public function test_a_repeated_release_answers_204_again(): void
+    {
+        // A sign-out retried after a dropped answer must not read as a
+        // failure: the client keeps its memo of the report on a non-2xx, and
+        // the next person signing in on the device would then be deduped
+        // against it.
+        $user = $this->createUser('ada@example.test');
+        $this->report($user, $this->snapshot($user, subscriptionId: 'phone'))->assertNoContent();
+
+        $this->release($user, 'phone')->assertNoContent();
+        $this->release($user, 'phone')->assertNoContent();
+
+        $this->assertSame(0, PushDevice::query()->count());
+    }
+
+    public function test_release_of_another_users_device_is_204_and_leaves_the_row(): void
     {
         $owner = $this->createUser('owner@example.test');
         $intruder = $this->createUser('intruder@example.test');
@@ -207,7 +222,9 @@ final class PushDeviceControllerTest extends TestCase
             ->assertNoContent();
         $before = PushDevice::query()->sole()->getAttributes();
 
-        $this->release($intruder, 'owner-phone')->assertNotFound();
+        // The same answer an unknown id gets, so it confirms nothing about a
+        // row the caller does not own.
+        $this->release($intruder, 'owner-phone')->assertNoContent();
 
         $this->assertSame($before, PushDevice::query()->sole()->getAttributes());
         $this->assertTrue(PushDevice::canReachByPush($owner));
