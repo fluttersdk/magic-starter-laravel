@@ -270,6 +270,25 @@ final class PushDeviceControllerTest extends TestCase
     }
 
     /**
+     * `magic-starter:install` ships the `push_devices` table with the
+     * `notifications` feature, since `onesignal` is not installable, so routes
+     * registered under `onesignal` alone would answer an install that has no
+     * table with a 500 on the first report.
+     */
+    public function test_no_route_exists_while_the_notifications_feature_is_off(): void
+    {
+        $this->bootPackageRoutes([
+            Features::onesignal(),
+        ]);
+        $user = $this->createUser('ada@example.test');
+
+        $this->report($user, $this->snapshot($user))->assertNotFound();
+        $this->release($user, 'sub-1')->assertNotFound();
+        $this->assertNull(Route::getRoutes()->getByName('magic-starter.devices.push-state'));
+        $this->assertNull(Route::getRoutes()->getByName('magic-starter.devices.push-state.release'));
+    }
+
+    /**
      * Register the package routes under the given features.
      *
      * @param  list<string>|null  $features

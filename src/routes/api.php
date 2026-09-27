@@ -211,7 +211,12 @@ Route::prefix((string) config('magic-starter.route_prefix', ''))
             // because the subscription id belongs in a body, not in a path
             // segment or an access log, and magic's `Http` facade sends no
             // body on a DELETE.
-            if (Features::hasOnesignalFeatures()) {
+            //
+            // Gated on `notifications` too, because that is the feature
+            // `magic-starter:install` ships the `push_devices` table with
+            // (`onesignal` is not installable): under `onesignal` alone the
+            // first report would hit a missing table and answer 500.
+            if (Features::hasOnesignalFeatures() && Features::hasNotificationFeatures()) {
                 Route::post('devices/push-state', [PushDeviceController::class, 'store'])
                     ->name('magic-starter.devices.push-state');
                 Route::post('devices/push-state/release', [PushDeviceController::class, 'release'])
