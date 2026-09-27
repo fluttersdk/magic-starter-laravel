@@ -170,6 +170,19 @@ final class PushDeviceControllerTest extends TestCase
             ]);
     }
 
+    public function test_a_subscription_moving_to_another_user_releases_the_previous_owners_row(): void
+    {
+        $userA = $this->createUser('a@example.test');
+        $userB = $this->createUser('b@example.test');
+
+        $this->report($userA, $this->snapshot($userA, subscriptionId: 'shared-sub'))->assertNoContent();
+        $this->report($userB, $this->snapshot($userB, subscriptionId: 'shared-sub'))->assertNoContent();
+
+        $device = PushDevice::query()->sole();
+        $this->assertSame((string) $userB->getKey(), (string) $device->user_id);
+        $this->assertFalse(PushDevice::query()->where('user_id', $userA->getKey())->exists());
+    }
+
     public function test_release_removes_only_the_named_device_of_the_caller(): void
     {
         $user = $this->createUser('ada@example.test');

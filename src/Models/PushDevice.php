@@ -40,15 +40,17 @@ class PushDevice extends Model
      *
      * The client's `PushReachability` has three other cases (`unavailable`,
      * `blocked`, `off`), and all three mean "not now" here.
+     *
+     * @var string
      */
-    public const string REACHABLE = 'on';
+    public const REACHABLE = 'on';
 
     /**
      * Every value the client may report, in the client's own vocabulary.
      *
      * @var list<string>
      */
-    public const array REACHABILITY_VALUES = [
+    public const REACHABILITY_VALUES = [
         'unavailable',
         'blocked',
         'off',
@@ -65,8 +67,10 @@ class PushDevice extends Model
      * and OneSignal reports no failure for it. A client reports on every
      * launch, sign-in and permission change, so a device in daily use refreshes
      * well inside a day.
+     *
+     * @var int
      */
-    public const int FRESH_FOR_HOURS = 24;
+    public const FRESH_FOR_HOURS = 24;
 
     /**
      * @var list<string>

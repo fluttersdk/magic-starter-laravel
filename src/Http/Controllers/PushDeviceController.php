@@ -2,9 +2,9 @@
 
 namespace FlutterSdk\MagicStarter\Http\Controllers;
 
+use FlutterSdk\MagicStarter\Http\Requests\ReleasePushDeviceRequest;
 use FlutterSdk\MagicStarter\Http\Requests\StorePushDeviceStateRequest;
 use FlutterSdk\MagicStarter\Models\PushDevice;
-use Illuminate\Http\Request;
 use Illuminate\Http\Response;
 
 /**
@@ -26,19 +26,36 @@ class PushDeviceController
      *
      * Upserted per (user, subscription id), because one person may carry
      * several devices and a laptop that cannot be paged must not overwrite the
-     * phone that can. Answers 204: the client posts this as a side effect of a
-     * lifecycle event and reads nothing back.
+     * phone that can. A subscription id already held by another user is
+     * released from them first: a device subscription belongs to one person
+     * at a time, and a shared or reissued id must not go on vouching for
+     * whoever held it before. Answers 204: the client posts this as a side
+     * effect of a lifecycle event and reads nothing back.
      */
     public function store(StorePushDeviceStateRequest $request): Response
     {
         $attributes = $request->validated();
+        $subscriptionId = self::blankToNull($attributes['subscription_id']);
+
+        // A subscription id names one physical device, and OneSignal delivers
+        // to whoever currently holds it. A row of another user's under the
+        // same id is a stale claim left by that device moving to this
+        // caller, so it can no longer vouch for anybody: removing it can
+        // only take away a claim a crafted id has no right to, which fails
+        // safe.
+        if ($subscriptionId !== null) {
+            PushDevice::query()
+                ->where('subscription_id', $subscriptionId)
+                ->where('user_id', '!=', $request->user()->getKey())
+                ->delete();
+        }
 
         PushDevice::query()->updateOrCreate(
             [
                 'user_id' => $request->user()->getKey(),
                 // A blank string and a null are the same fact (no address), and
                 // keying on both would give one device two rows.
-                'subscription_id' => self::blankToNull($attributes['subscription_id']),
+                'subscription_id' => $subscriptionId,
             ],
             [
                 'external_id' => self::blankToNull($attributes['external_id']),
@@ -68,15 +85,9 @@ class PushDeviceController
      * Another user's subscription id is a 404 exactly like an unknown one, so
      * the answer confirms nothing about rows the caller does not own.
      */
-    public function release(Request $request): Response
+    public function release(ReleasePushDeviceRequest $request): Response
     {
-        $validated = $request->validate([
-            'subscription_id' => [
-                'required',
-                'string',
-                'max:255',
-            ],
-        ]);
+        $validated = $request->validated();
 
         abort_unless(PushDevice::release($request->user(), $validated['subscription_id']), 404);
 
