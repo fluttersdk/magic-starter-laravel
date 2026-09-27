@@ -129,6 +129,10 @@ class InstallCommand extends Command
             'rekey_notifications_table_by_uuid.php',
             'create_notification_settings_table.php',
             'add_sms_registered_at_to_users_table.php',
+            // The push-state rows the `onesignal` routes read and write. Not an
+            // installable feature of its own: OneSignal push rides on
+            // notifications, so the table ships with them.
+            'create_push_devices_table.php',
         ],
         'newsletter-subscription' => [
             'create_newsletter_subscribers_table.php',

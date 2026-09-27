@@ -180,7 +180,7 @@ All 14 features are opt-in. Enable them by uncommenting in `config/magic-starter
 | `guest-auth` | Guest-only authentication without a registered account |
 | `phone-otp` | Phone-based OTP send/verify login flow |
 | `timezones` | Timezone listing API endpoint |
-| `onesignal` | OneSignal push channel for the notification features |
+| `onesignal` | OneSignal push channel for the notification features, plus, with `notifications` on, `POST devices/push-state` and `POST devices/push-state/release`, where a client reports and withdraws its own device's push reachability (`PushDevice::canReachByPush()`) |
 | `billing` | Entitlement columns on the declared billable subject (`billing.billable`, a user or a team) and the arbitration contract that writes them |
 
 ---
