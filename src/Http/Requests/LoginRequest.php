@@ -5,6 +5,7 @@ namespace FlutterSdk\MagicStarter\Http\Requests;
 use FlutterSdk\MagicStarter\Features;
 use FlutterSdk\MagicStarter\Rules\E164Phone;
 use Illuminate\Foundation\Http\FormRequest;
+use Illuminate\Support\Str;
 
 /**
  * Validates incoming login requests.
@@ -21,6 +22,16 @@ class LoginRequest extends FormRequest
     public function authorize(): bool
     {
         return true;
+    }
+
+    /**
+     * Lower-case the email before validation so `unique` and every lookup compare normalized values.
+     */
+    protected function prepareForValidation(): void
+    {
+        if (is_string($this->input('email'))) {
+            $this->merge(['email' => Str::lower($this->input('email'))]);
+        }
     }
 
     /**

@@ -345,9 +345,58 @@ final class InstallCommandTest extends TestCase
             glob(database_path('migrations/*_create_personal_access_tokens_table.php')) ?: [],
         );
 
-        // Feature-specific migrations should NOT be published (social-login has none).
+        // Feature-specific migrations of OTHER features should NOT be published.
         $this->assertEmpty(
             glob(database_path('migrations/*_create_teams_table.php')) ?: [],
+        );
+    }
+
+    public function test_social_login_feature_publishes_the_social_accounts_migration(): void
+    {
+        $this->artisan('magic-starter:install', [
+            '--features' => ['social-login'],
+        ])->assertExitCode(0);
+
+        $socialAccounts = glob(database_path('migrations/*_create_social_accounts_table.php')) ?: [];
+        $users = glob(database_path('migrations/*_create_users_table.php')) ?: [];
+
+        $this->assertCount(1, $socialAccounts);
+        $this->assertCount(1, $users);
+        $this->assertTrue(
+            basename($socialAccounts[0]) > basename($users[0]),
+            'The social accounts migration references users, so it must sort after the users table.',
+        );
+    }
+
+    public function test_without_social_login_the_social_accounts_migration_is_skipped(): void
+    {
+        $this->artisan('magic-starter:install', [
+            '--features' => ['sessions'],
+        ])->assertExitCode(0);
+
+        $this->assertEmpty(
+            glob(database_path('migrations/*_create_social_accounts_table.php')) ?: [],
+        );
+    }
+
+    /**
+     * The deletion columns belong to the users table itself, so they ship
+     * whatever features were selected.
+     */
+    public function test_the_deletion_columns_migration_is_published_without_any_feature(): void
+    {
+        $this->artisan('magic-starter:install', [
+            '--features' => ['sessions'],
+        ])->assertExitCode(0);
+
+        $deletion = glob(database_path('migrations/*_add_deletion_columns_to_users_table.php')) ?: [];
+        $users = glob(database_path('migrations/*_create_users_table.php')) ?: [];
+
+        $this->assertCount(1, $deletion);
+        $this->assertCount(1, $users);
+        $this->assertTrue(
+            basename($deletion[0]) > basename($users[0]),
+            'The deletion columns alter users, so they must sort after the table is created.',
         );
     }
 

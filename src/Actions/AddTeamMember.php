@@ -6,6 +6,7 @@ use FlutterSdk\MagicStarter\Contracts\AddsTeamMembers;
 use FlutterSdk\MagicStarter\MagicStarter;
 use Illuminate\Contracts\Auth\Authenticatable;
 use Illuminate\Database\Eloquent\Model;
+use Illuminate\Support\Str;
 use Illuminate\Validation\ValidationException;
 
 /**
@@ -25,9 +26,9 @@ class AddTeamMember implements AddsTeamMembers
      */
     public function add(Authenticatable $user, Model $team, string $email, string $role): void
     {
-        // 1. Find the user by email using dynamic model resolution.
+        // 1. Find the user by email using dynamic model resolution. Stored emails are lower-case.
         $userModel = MagicStarter::userModel();
-        $teamMember = $userModel::query()->where('email', $email)->first();
+        $teamMember = $userModel::query()->where('email', Str::lower($email))->first();
 
         if (! $teamMember) {
             throw ValidationException::withMessages([

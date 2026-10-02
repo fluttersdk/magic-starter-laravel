@@ -627,6 +627,76 @@ return [
 
     /*
     |--------------------------------------------------------------------------
+    | Social Authentication
+    |--------------------------------------------------------------------------
+    |
+    | Configure OAuth providers, redirect targets, and credential keys for
+    | social sign-in flows. The `providers` array names which drivers are
+    | enabled; others are refused when a client requests them. Absent from
+    | the array means the provider is not supported. The `redirects` object
+    | carries platform-specific post-auth URLs for native and web clients,
+    | either of which may be null (the refusal is by design, not a silent
+    | fallback: the client sees it as "this platform is not configured").
+    |
+    | `audiences` lists are comma-separated, trimmed env values for `google`
+    | (Service Account client ids) and `apple` (Bundle identifiers); they are
+    | parsed into arrays at runtime. Absence means the provider is not
+    | provisioned, and any client request for it answers the known error.
+    |
+    | `apple` carries the five keys used for token verification and link
+    | generation: `team_id` (your Developer Team ID from Apple Developer),
+    | `key_id` (the key's own ID from the Signing Keys section), `private_key`
+    | (the PEM path or inlined PEM text), `bundle_id` (your app's main bundle),
+    | and `services_id` (the service identifier from your domain associations).
+    |
+    | `cache_store` names the Laravel cache driver used for state and code
+    | token storage; absence defaults to the app default. `state_ttl` (seconds,
+    | default 600) and `code_ttl` (default 60) control token lifetimes.
+    | `link_ticket_ttl` (default 300) gates login-link tickets, and
+    | `confirmation_ttl` (default 600) gates post-auth confirmation tokens.
+    |
+    */
+
+    'social' => [
+        'providers' => array_values(array_filter(array_map(
+            'trim',
+            explode(',', (string) env('MAGIC_STARTER_SOCIAL_PROVIDERS', 'google,apple,github,microsoft')),
+        ))),
+
+        'redirects' => [
+            'native' => env('MAGIC_STARTER_SOCIAL_NATIVE_REDIRECT'),
+            'web' => env('MAGIC_STARTER_SOCIAL_WEB_REDIRECT'),
+        ],
+
+        'audiences' => [
+            'google' => array_values(array_filter(array_map(
+                'trim',
+                explode(',', (string) env('MAGIC_STARTER_SOCIAL_GOOGLE_AUDIENCES', '')),
+            ))),
+            'apple' => array_values(array_filter(array_map(
+                'trim',
+                explode(',', (string) env('MAGIC_STARTER_SOCIAL_APPLE_AUDIENCES', '')),
+            ))),
+        ],
+
+        'apple' => [
+            'team_id' => env('MAGIC_STARTER_APPLE_TEAM_ID'),
+            'key_id' => env('MAGIC_STARTER_APPLE_KEY_ID'),
+            'private_key' => env('MAGIC_STARTER_APPLE_PRIVATE_KEY'),
+            'bundle_id' => env('MAGIC_STARTER_APPLE_BUNDLE_ID'),
+            'services_id' => env('MAGIC_STARTER_APPLE_SERVICES_ID'),
+        ],
+
+        'cache_store' => env('MAGIC_STARTER_SOCIAL_CACHE_STORE'),
+
+        'state_ttl' => (int) env('MAGIC_STARTER_SOCIAL_STATE_TTL', 600),
+        'code_ttl' => (int) env('MAGIC_STARTER_SOCIAL_CODE_TTL', 60),
+        'link_ticket_ttl' => (int) env('MAGIC_STARTER_SOCIAL_LINK_TICKET_TTL', 300),
+        'confirmation_ttl' => (int) env('MAGIC_STARTER_SOCIAL_CONFIRMATION_TTL', 600),
+    ],
+
+    /*
+    |--------------------------------------------------------------------------
     | OneSignal Push Notifications
     |--------------------------------------------------------------------------
     |
@@ -774,5 +844,27 @@ return [
         */
 
         'self_test_enabled' => (bool) env('MAGIC_STARTER_PUSH_SELF_TEST_ENABLED', false),
+    ],
+
+    /*
+    |--------------------------------------------------------------------------
+    | Account Deletion
+    |--------------------------------------------------------------------------
+    |
+    | Configure the grace period for account deletion. After a user requests
+    | account deletion, their account is scheduled for removal but remains
+    | accessible during the grace period. If they request cancellation
+    | before the grace period expires, the account remains active and the
+    | deletion is cancelled. Once the grace period expires, the account and
+    | all associated data are permanently deleted.
+    |
+    | `grace_days` is the number of days a user has to cancel their deletion
+    | request before the account is permanently deleted. Set to 0 to delete
+    | immediately with no grace period (not recommended for production).
+    |
+    */
+
+    'account_deletion' => [
+        'grace_days' => (int) env('MAGIC_STARTER_ACCOUNT_DELETION_GRACE_DAYS', 30),
     ],
 ];

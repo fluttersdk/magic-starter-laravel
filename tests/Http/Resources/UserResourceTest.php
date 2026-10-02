@@ -5,10 +5,12 @@ namespace FlutterSdk\MagicStarter\Tests\Http\Resources;
 use FlutterSdk\MagicStarter\Features;
 use FlutterSdk\MagicStarter\Http\Resources\UserResource;
 use FlutterSdk\MagicStarter\MagicStarter;
+use FlutterSdk\MagicStarter\Models\SocialAccount;
 use FlutterSdk\MagicStarter\Tests\Fixtures\ConcreteTeam;
 use FlutterSdk\MagicStarter\Tests\Fixtures\ConcreteTeamUser;
 use FlutterSdk\MagicStarter\Tests\Fixtures\ConcreteUser;
 use FlutterSdk\MagicStarter\Tests\TestCase;
+use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Schema\Blueprint;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Schema;
@@ -23,6 +25,16 @@ use InvalidArgumentException;
  */
 class UserResourceTest extends TestCase
 {
+    /**
+     * The refresh token is encrypted, and Testbench ships no application key.
+     */
+    protected function defineEnvironment($app): void
+    {
+        parent::defineEnvironment($app);
+
+        $app['config']->set('app.key', 'base64:' . base64_encode(str_repeat('k', 32)));
+    }
+
     protected function setUp(): void
     {
         parent::setUp();
@@ -48,6 +60,21 @@ class UserResourceTest extends TestCase
             $table->string('timezone')->default('UTC');
             $table->string('profile_photo_path')->nullable();
             $table->string('current_team_id')->nullable();
+            $table->timestamp('deletion_scheduled_at')->nullable();
+            $table->timestamp('orphaned_at')->nullable();
+            $table->timestamps();
+        });
+
+        Schema::create('social_accounts', function (Blueprint $table): void {
+            $table->uuid('id')->primary();
+            $table->uuid('user_id');
+            $table->string('provider');
+            $table->string('provider_user_id');
+            $table->string('tenant_id')->nullable();
+            $table->string('email_at_link')->nullable();
+            $table->string('client_id')->nullable();
+            $table->text('refresh_token')->nullable();
+            $table->timestamp('revoked_at')->nullable();
             $table->timestamps();
         });
 
@@ -235,6 +262,94 @@ class UserResourceTest extends TestCase
 
         $this->assertArrayHasKey('profile_photo_url', $resource);
         $this->assertNull($resource['profile_photo_url']);
+    }
+
+    /**
+     * The three sign-in fields reach the client when the user model carries
+     * `HasSocialAccounts`: a password flag, the linked providers, and the
+     * pending deletion moment.
+     */
+    public function test_social_fields_are_present_with_the_trait(): void
+    {
+        config(['magic-starter.features' => [Features::socialLogin()]]);
+
+        $user = ConcreteUser::forceCreate([
+            'id' => (string) Str::uuid(),
+            'name' => 'Test User',
+            'email' => 'test@example.com',
+            'password' => 'hashed-secret',
+            'deletion_scheduled_at' => '2026-11-01 00:00:00',
+        ]);
+        SocialAccount::query()->create([
+            'user_id' => $user->getKey(),
+            'provider' => 'google',
+            'provider_user_id' => 'g-1',
+            'email_at_link' => 'test@example.com',
+            'refresh_token' => 'never-published',
+        ]);
+
+        $resource = (new UserResource($user))->resolve(Request::create('/'));
+
+        $this->assertTrue($resource['has_password']);
+        $this->assertNotNull($resource['deletion_scheduled_at']);
+        $this->assertCount(1, $resource['social_accounts']);
+        $this->assertSame(
+            ['provider', 'email_at_link', 'created_at', 'revoked_at'],
+            array_keys($resource['social_accounts'][0]),
+        );
+        $this->assertSame('google', $resource['social_accounts'][0]['provider']);
+        $this->assertSame('test@example.com', $resource['social_accounts'][0]['email_at_link']);
+    }
+
+    public function test_has_password_is_false_for_a_social_only_account(): void
+    {
+        config(['magic-starter.features' => [Features::socialLogin()]]);
+
+        $resource = (new UserResource($this->makeUser()))->resolve(Request::create('/'));
+
+        $this->assertFalse($resource['has_password']);
+        $this->assertSame([], $resource['social_accounts']);
+        $this->assertNull($resource['deletion_scheduled_at']);
+    }
+
+    /**
+     * An application that has not added the trait to its user model still
+     * serialises: the three fields are left out rather than failing the call.
+     */
+    public function test_social_fields_are_absent_without_the_trait(): void
+    {
+        config(['magic-starter.features' => [Features::socialLogin()]]);
+
+        $user = new class extends Model
+        {
+            protected $table = 'users';
+        };
+        $user->forceFill([
+            'id' => (string) Str::uuid(),
+            'name' => 'Plain User',
+            'email' => 'plain@example.com',
+        ]);
+
+        $resource = (new UserResource($user))->resolve(Request::create('/'));
+
+        $this->assertSame('Plain User', $resource['name']);
+        $this->assertArrayNotHasKey('has_password', $resource);
+        $this->assertArrayNotHasKey('social_accounts', $resource);
+        $this->assertArrayNotHasKey('deletion_scheduled_at', $resource);
+    }
+
+    /**
+     * `social_accounts` is only published with the social-login feature, so a
+     * user model carrying the trait must not query a table that was never
+     * installed.
+     */
+    public function test_social_accounts_are_omitted_when_the_feature_is_off(): void
+    {
+        config(['magic-starter.features' => []]);
+
+        $resource = (new UserResource($this->makeUser()))->resolve(Request::create('/'));
+
+        $this->assertArrayNotHasKey('social_accounts', $resource);
     }
 
     private function makeUser(): ConcreteUser

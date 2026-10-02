@@ -19,6 +19,8 @@
     },
     "require": {
         "php": "^8.2",
+        "bacon/bacon-qr-code": "^3.0",
+        "firebase/php-jwt": "^7.0",
         "illuminate/auth": "^12.0|^13.0",
         "illuminate/bus": "^12.0|^13.0",
         "illuminate/console": "^12.0|^13.0",
@@ -31,9 +33,10 @@
         "laravel/cashier": "^16.6",
         "laravel/sanctum": "^4.0",
         "laravel/socialite": "^5.0",
+        "onesignal/onesignal-php-api": "^5.3",
         "pragmarx/google2fa": "^8.0|^9.0",
-        "bacon/bacon-qr-code": "^3.0",
-        "onesignal/onesignal-php-api": "^5.3"
+        "socialiteproviders/apple": "^6.1",
+        "socialiteproviders/microsoft": "^4.9"
     },
     "suggest": {
         "geoip2/geoip2": "Optional: for IP geolocation in session management"

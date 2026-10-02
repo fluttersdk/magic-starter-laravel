@@ -12,6 +12,7 @@ use Illuminate\Contracts\Auth\MustVerifyEmail;
 use Illuminate\Support\Arr;
 use Illuminate\Support\Facades\Hash;
 use Illuminate\Support\Facades\Validator;
+use Illuminate\Support\Str;
 use Illuminate\Validation\Rule;
 use Illuminate\Validation\ValidationException;
 
@@ -63,6 +64,12 @@ class CreateUser implements CreatesUsers
 
         if (Features::hasNewsletterSubscriptionFeatures()) {
             $rules['subscribe_newsletter'] = ['nullable', 'boolean'];
+        }
+
+        // 1a. Normalize the email so `unique` and the stored row compare lower-case values,
+        //     whoever called: the register endpoint and a consumer's own code alike.
+        if (is_string($input['email'] ?? null)) {
+            $input['email'] = Str::lower($input['email']);
         }
 
         $validated = Validator::make($input, $rules)->validate();

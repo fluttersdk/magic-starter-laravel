@@ -11,6 +11,7 @@ use Illuminate\Contracts\Auth\Authenticatable;
 use Illuminate\Contracts\Auth\MustVerifyEmail;
 use Illuminate\Support\Facades\Hash;
 use Illuminate\Support\Facades\Validator;
+use Illuminate\Support\Str;
 use Illuminate\Validation\Rule;
 use Illuminate\Validation\Rules\Password;
 use Illuminate\Validation\ValidationException;
@@ -92,6 +93,11 @@ class UpdateUserProfile implements UpdatesUserProfiles
                 'string',
                 Rule::in(DateTimeZone::listIdentifiers()),
             ];
+        }
+
+        // 1b. Normalize the email so `unique` and the stored row compare lower-case values.
+        if (is_string($input['email'] ?? null)) {
+            $input['email'] = Str::lower($input['email']);
         }
 
         $validated = Validator::make($input, $rules)->validate();
