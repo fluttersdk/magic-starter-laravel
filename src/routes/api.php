@@ -69,7 +69,9 @@ Route::prefix((string) config('magic-starter.route_prefix', ''))
         });
 
         Route::prefix('auth')->middleware(['throttle:magic-starter-auth-social'])->group(function (): void {
-            Route::post('social/{provider}', [AuthController::class, 'socialLogin']);
+            if (Features::hasSocialLoginFeatures()) {
+                Route::post('social/{provider}', [AuthController::class, 'socialLogin']);
+            }
         });
 
         Route::prefix('auth')->middleware(['throttle:magic-starter-auth-password-reset'])->group(function (): void {

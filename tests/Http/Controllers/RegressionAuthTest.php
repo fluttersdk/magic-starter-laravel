@@ -209,7 +209,7 @@ class RegressionAuthTest extends TestCase
         ]);
 
         $driver = Mockery::mock();
-        $driver->shouldReceive('userFromToken')->once()->with('access-token-1')->andReturn($socialUser);
+        $driver->shouldReceive('user')->once()->andReturn($socialUser);
 
         $socialiteFactory = new class($driver) implements SocialiteFactory
         {
@@ -223,8 +223,8 @@ class RegressionAuthTest extends TestCase
 
         $this->app->instance(SocialiteFactory::class, $socialiteFactory);
 
-        $response = $this->postJson('/auth/social/google', [
-            'access_token' => 'access-token-1',
+        $response = $this->postJson('/auth/social/github', [
+            'authorization_code' => 'code-1',
         ]);
 
         $response

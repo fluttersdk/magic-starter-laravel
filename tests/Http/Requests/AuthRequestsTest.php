@@ -262,11 +262,18 @@ final class AuthRequestsTest extends TestCase
             ->assertJsonValidationErrors(['email']);
     }
 
-    public function test_social_login_neither_token_nor_code_returns_422(): void
+    public function test_social_login_without_an_authorization_code_returns_422(): void
     {
         $this->postJson('/auth/social/github', [])
             ->assertUnprocessable()
-            ->assertJsonValidationErrors(['access_token', 'authorization_code']);
+            ->assertJsonValidationErrors(['authorization_code']);
+    }
+
+    public function test_social_login_with_only_an_access_token_returns_422(): void
+    {
+        $this->postJson('/auth/social/google', ['access_token' => 'token-minted-for-another-app'])
+            ->assertUnprocessable()
+            ->assertJsonValidationErrors(['authorization_code']);
     }
 
     public function test_forgot_password_missing_email_returns_422(): void

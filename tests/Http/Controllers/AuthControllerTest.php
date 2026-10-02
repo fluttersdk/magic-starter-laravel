@@ -283,22 +283,11 @@ class AuthControllerTest extends TestCase
         ]);
 
         $driver = Mockery::mock();
-        $driver->shouldReceive('userFromToken')->once()->with('token-1')->andReturn($socialUser);
+        $driver->shouldReceive('user')->once()->andReturn($socialUser);
+        $this->bindSocialiteDriver($driver);
 
-        $socialiteFactory = new class($driver) implements SocialiteFactory
-        {
-            public function __construct(private readonly mixed $driver) {}
-
-            public function driver($driver = null): mixed
-            {
-                return $this->driver;
-            }
-        };
-
-        $this->app->instance(SocialiteFactory::class, $socialiteFactory);
-
-        $response = $this->postJson('/social-login/google', [
-            'access_token' => 'token-1',
+        $response = $this->postJson('/social-login/github', [
+            'authorization_code' => 'code-1',
         ]);
 
         $response
@@ -328,10 +317,78 @@ class AuthControllerTest extends TestCase
 
         $this->bindSocialiteDriverThrowing(new RuntimeException('client_secret is invalid'));
 
-        $this->postJson('/social-login/google', ['access_token' => 'rejected-token'])
+        $this->postJson('/social-login/github', ['authorization_code' => 'rejected-code'])
             ->assertStatus(401)
             ->assertJsonPath('message', 'Invalid token or provider')
             ->assertJsonMissingPath('error');
+    }
+
+    /**
+     * A provider access token is refused before any provider is asked.
+     *
+     * `userFromToken()` asks the provider who owns the token, not which client
+     * it was minted for, so any app the user ever signed in to could replay
+     * its token here and be handed this user's account. Only an authorization
+     * code, which the provider binds to this server's client secret, is
+     * accepted.
+     */
+    public function test_social_login_refuses_a_provider_access_token(): void
+    {
+        $driver = Mockery::mock();
+        $driver->shouldNotReceive('userFromToken');
+        $driver->shouldNotReceive('user');
+        $this->bindSocialiteDriver($driver);
+
+        AuthControllerTestUser::query()->create([
+            'id' => (string) Str::uuid(),
+            'name' => 'Victim',
+            'email' => 'victim@example.com',
+            'password' => Hash::make('Password123'),
+            'locale' => 'en',
+            'timezone' => 'UTC',
+        ]);
+
+        $this->postJson('/social-login/google', ['access_token' => 'token-minted-for-another-app'])
+            ->assertUnprocessable()
+            ->assertJsonValidationErrors(['authorization_code'])
+            ->assertJsonMissingPath('data.token');
+    }
+
+    /**
+     * A provider that answers without an email signs nobody in.
+     *
+     * Matching a null email becomes `whereNull('email')`, which would hand the
+     * caller the first account that has no email (a guest, say).
+     */
+    public function test_social_login_refuses_a_provider_user_without_an_email(): void
+    {
+        AuthControllerTestUser::query()->create([
+            'id' => (string) Str::uuid(),
+            'name' => 'Guest',
+            'email' => null,
+            'password' => null,
+            'is_guest' => true,
+            'locale' => 'en',
+            'timezone' => 'UTC',
+        ]);
+
+        $socialUser = new SocialiteUser;
+        $socialUser->map([
+            'id' => 'social-no-email',
+            'name' => 'No Email',
+            'email' => null,
+        ]);
+
+        $driver = Mockery::mock();
+        $driver->shouldReceive('user')->once()->andReturn($socialUser);
+        $this->bindSocialiteDriver($driver);
+
+        $this->postJson('/social-login/github', ['authorization_code' => 'code-1'])
+            ->assertStatus(401)
+            ->assertJsonPath('message', 'Invalid token or provider')
+            ->assertJsonMissingPath('data.token');
+
+        $this->assertSame(1, AuthControllerTestUser::query()->count());
     }
 
     /**
@@ -344,7 +401,7 @@ class AuthControllerTest extends TestCase
 
         $this->bindSocialiteDriverThrowing(new RuntimeException('client_secret is invalid'));
 
-        $this->postJson('/social-login/google', ['access_token' => 'rejected-token'])
+        $this->postJson('/social-login/github', ['authorization_code' => 'rejected-code'])
             ->assertStatus(401)
             ->assertJsonPath('message', 'Invalid token or provider')
             ->assertJsonPath('error', 'client_secret is invalid');
@@ -361,19 +418,27 @@ class AuthControllerTest extends TestCase
 
         $this->bindSocialiteDriverThrowing(new RuntimeException('client_secret is invalid'));
 
-        $this->postJson('/social-login/google', ['access_token' => 'rejected-token'])
+        $this->postJson('/social-login/github', ['authorization_code' => 'rejected-code'])
             ->assertStatus(401)
             ->assertJsonPath('message', 'Geçersiz erişim anahtarı veya sağlayıcı');
     }
 
     /**
-     * Bind a Socialite factory whose driver throws on the token exchange.
+     * Bind a Socialite factory whose driver throws on the code exchange.
      */
     private function bindSocialiteDriverThrowing(Throwable $exception): void
     {
         $driver = Mockery::mock();
-        $driver->shouldReceive('userFromToken')->once()->andThrow($exception);
+        $driver->shouldReceive('user')->once()->andThrow($exception);
 
+        $this->bindSocialiteDriver($driver);
+    }
+
+    /**
+     * Bind a Socialite factory that hands out the given driver for every provider.
+     */
+    private function bindSocialiteDriver(mixed $driver): void
+    {
         $this->app->instance(SocialiteFactory::class, new class($driver) implements SocialiteFactory
         {
             public function __construct(private readonly mixed $driver) {}

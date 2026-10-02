@@ -61,11 +61,6 @@ parameters:
             identifier: missingType.iterableValue
             path: src/Models/*
 
-        # Socialite provider method (userFromToken exists at runtime)
-        -
-            message: '#Call to an undefined method Laravel\\Socialite\\Contracts\\Provider::userFromToken#'
-            path: src/Http/Controllers/AuthController.php
-
         # Nullsafe on pivot role — defensive, not harmful
         -
             identifier: nullsafe.neverNull
