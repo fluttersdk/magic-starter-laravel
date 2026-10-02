@@ -4,6 +4,14 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Security
+
+- **`POST auth/social/{provider}` no longer accepts a provider access token.** The `access_token` branch called Socialite's `userFromToken()`, which asks Google, GitHub or Microsoft Graph who owns the token but not which client it was issued to. Any app a user had ever signed in to with an email scope could replay that user's token here and receive a Sanctum token for the account with the same email, with two-factor authentication skipped. Socialite builds a provider as soon as the `services.<provider>` keys exist, even with empty values, so an application that never configured social login was exposed too. The endpoint now takes only `authorization_code`, which the provider binds to the server's client secret, and answers 422 to a body that carries only `access_token`. (`src/Http/Requests/SocialLoginRequest.php`, `src/Http/Controllers/AuthController.php`)
+- **The social login route registers only with `Features::socialLogin()` on.** It was registered unconditionally, so turning the feature off did not close it. (`src/routes/api.php`)
+- **A provider user without an email is refused with 401.** Matching a null email became `whereNull('email')` and signed the caller in as the first account without one, such as a guest. (`src/Http/Controllers/AuthController.php`)
+
+**Breaking:** social login is closed until its redesign ships. The remaining `authorization_code` path never worked on the package's session-less routes: Socialite's `user()` checks `state` against the session and answers "Session store not set on request.", which this endpoint turns into a 401. The access-token path was the only one that ever signed anyone in, so after this release no client can sign in socially, and magic_social_auth's Google driver, which sends only `access_token`, now gets a 422. Keep `Features::socialLogin()` off until the redesign.
+
 ## [0.0.13] - 2026-09-27
 
 ### Changed

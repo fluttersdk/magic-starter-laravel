@@ -268,6 +268,8 @@ Authenticates a user via a third-party OAuth provider using Laravel Socialite. I
 
 **Endpoint:** `POST {prefix}/auth/social/{provider}`
 
+**Feature:** `Features::socialLogin()`. The route is not registered while the feature is off.
+
 **Middleware:** `throttle:magic-starter-auth-social`
 
 **Rate Limit:** 10 requests per minute, keyed by IP + provider.
@@ -276,28 +278,23 @@ The `{provider}` parameter is the Socialite driver name (e.g., `google`, `apple`
 
 ### Request Body
 
-Provide either `access_token` or `authorization_code` -- at least one is required.
-
-**Using an access token:**
-
-```json
-{
-  "access_token": "ya29.a0AfH6..."
-}
-```
-
-**Using an authorization code (e.g., Sign in with Apple):**
-
 ```json
 {
   "authorization_code": "c1a2b3..."
 }
 ```
 
-| Field                | Type   | Rules                                     |
-|----------------------|--------|-------------------------------------------|
-| `access_token`       | string | Required without `authorization_code`.    |
-| `authorization_code` | string | Required without `access_token`.          |
+| Field                | Type   | Rules     |
+|----------------------|--------|-----------|
+| `authorization_code` | string | Required. |
+
+The server redeems the code with its own client secret, so a code issued to another client cannot sign anyone in.
+
+> [!WARNING]
+> Social login is closed until its redesign ships. On the package's session-less API routes the code exchange fails Socialite's `state` check and answers 401, so keep `Features::socialLogin()` off.
+
+> [!WARNING]
+> A provider access token is not accepted. Asking the provider who owns an access token says nothing about which client it was issued to, so any app the user ever signed in to could replay it here and take over the account.
 
 ### Success Response (200)
 
@@ -305,7 +302,7 @@ Same shape as the [Login](#login) success response.
 
 ### Error Response (401)
 
-Returned when the token is invalid or the provider rejects the credentials.
+Returned when the provider rejects the code, or answers without an email address.
 
 ```json
 {

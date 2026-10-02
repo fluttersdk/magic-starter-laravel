@@ -29,37 +29,34 @@ class AuthController
 
     /**
      * Handle a social login request.
+     *
+     * The authorization code is redeemed with this server's client secret, so
+     * a code minted for another client cannot sign anyone in. A provider user
+     * without an email is refused: matching a null email would resolve to the
+     * first account that has none.
      */
     public function socialLogin(SocialLoginRequest $request, string $provider): JsonResponse
     {
         try {
             $driver = Socialite::driver($provider);
 
-            if ($request->has('authorization_code')) {
-                $code = $request->input('authorization_code');
-                $originalCode = $request->input('code');
-                $request->merge(['code' => $code]);
-                $socialUser = $driver->user();
+            $originalCode = $request->input('code');
+            $request->merge(['code' => $request->input('authorization_code')]);
+            $socialUser = $driver->user();
 
-                if ($originalCode === null) {
-                    $request->request->remove('code');
-                } else {
-                    $request->merge(['code' => $originalCode]);
-                }
+            if ($originalCode === null) {
+                $request->request->remove('code');
             } else {
-                $accessToken = (string) $request->input('access_token');
-                $socialUser = $driver->userFromToken($accessToken);
+                $request->merge(['code' => $originalCode]);
             }
         } catch (Throwable $exception) {
             report($exception);
 
-            $payload = ['message' => __('magic-starter::auth.invalid_social_token')];
+            return $this->socialLoginRefused($exception->getMessage());
+        }
 
-            if (config('app.debug')) {
-                $payload['error'] = $exception->getMessage();
-            }
-
-            return response()->json($payload, 401);
+        if (blank($socialUser->getEmail())) {
+            return $this->socialLoginRefused('The provider returned no email address.');
         }
 
         $userModel = MagicStarter::userModel();
@@ -212,5 +209,21 @@ class AuthController
             'data' => new UserResource($request->user()->fresh()),
             'message' => __('magic-starter::teams.switched'),
         ]);
+    }
+
+    /**
+     * Refuse a social login with the one sentence every cause shares.
+     *
+     * @param  string  $detail  The untranslated cause, attached only under app.debug.
+     */
+    private function socialLoginRefused(string $detail): JsonResponse
+    {
+        $payload = ['message' => __('magic-starter::auth.invalid_social_token')];
+
+        if (config('app.debug')) {
+            $payload['error'] = $detail;
+        }
+
+        return response()->json($payload, 401);
     }
 }

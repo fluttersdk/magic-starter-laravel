@@ -30,6 +30,7 @@ final class RouteRegistrationTest extends TestCase
             Features::teams(),
             Features::sessions(),
             Features::profilePhotos(),
+            Features::socialLogin(),
         ]);
 
         $this->assertRouteExists('POST', '/auth/register');
@@ -155,6 +156,19 @@ final class RouteRegistrationTest extends TestCase
         $this->bootRoutesWithConfig([]);
 
         $this->assertRouteMissing('POST', '/auth/guest');
+    }
+
+    public function test_social_login_route_registered_conditionally(): void
+    {
+        $this->bootRoutesWithConfig([
+            Features::socialLogin(),
+        ]);
+
+        $this->assertRouteExists('POST', '/auth/social/google');
+
+        $this->bootRoutesWithConfig([]);
+
+        $this->assertRouteMissing('POST', '/auth/social/google');
     }
 
     public function test_phone_otp_routes_registered_conditionally(): void

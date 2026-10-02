@@ -17,13 +17,16 @@ class SocialLoginRequest extends FormRequest
     /**
      * Get the validation rules that apply to the social login request.
      *
+     * Only an authorization code is accepted. A provider access token proves
+     * who owns it, not which client it was minted for, so accepting one would
+     * let any app the user ever signed in to replay it here.
+     *
      * @return array<string, mixed>
      */
     public function rules(): array
     {
         return [
-            'access_token' => ['required_without:authorization_code', 'string'],
-            'authorization_code' => ['required_without:access_token', 'string'],
+            'authorization_code' => ['required', 'string'],
         ];
     }
 }
