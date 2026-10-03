@@ -22,6 +22,8 @@ use Illuminate\Support\ServiceProvider;
 use Laravel\Cashier\Cashier;
 use Laravel\Sanctum\Sanctum;
 use RuntimeException;
+use SocialiteProviders\Manager\SocialiteWasCalled;
+use SocialiteProviders\Microsoft\MicrosoftExtendSocialite;
 
 /**
  * Service provider for the Magic Starter package.
@@ -282,6 +284,19 @@ class MagicStarterServiceProvider extends ServiceProvider
             if (Features::hasBillingFeatures()) {
                 $this->loadRoutesFrom(__DIR__ . '/routes/webhooks.php');
             }
+
+            // 4c. The social callback, from its own file for the same reason:
+            // its url is registered in every provider's console.
+            if (Features::hasSocialLoginFeatures()) {
+                $this->loadRoutesFrom(__DIR__ . '/routes/social.php');
+            }
+        }
+
+        // 4d. Socialite has no core Microsoft driver; socialiteproviders adds it
+        // only for a SocialiteWasCalled listener, so the package wires the one
+        // driver it signs users in with rather than leaving every adopter to.
+        if (Features::hasSocialLoginFeatures()) {
+            Event::listen(SocialiteWasCalled::class, [MicrosoftExtendSocialite::class, 'handle']);
         }
 
         // 5. Console-only: publish config, migrations, and stubs.

@@ -20,8 +20,6 @@ use Illuminate\Support\Facades\Hash;
 use Illuminate\Support\Facades\Route;
 use Illuminate\Support\Facades\Schema;
 use Illuminate\Support\Str;
-use Laravel\Socialite\Contracts\Factory as SocialiteFactory;
-use Laravel\Socialite\Two\User as SocialiteUser;
 use Mockery;
 
 /**
@@ -128,7 +126,6 @@ class RegressionAuthTest extends TestCase
         // Register routes explicitly — tests bypass the service provider route loading.
         Route::post('/auth/register', [AuthController::class, 'register']);
         Route::post('/auth/login', [AuthController::class, 'login']);
-        Route::post('/auth/social/{provider}', [AuthController::class, 'socialLogin']);
         Route::put('/user/profile', [ProfileController::class, 'update']);
         Route::put('/user/password', [ProfileController::class, 'updatePassword']);
     }
@@ -190,47 +187,6 @@ class RegressionAuthTest extends TestCase
             ->assertOk()
             ->assertJsonPath('message', 'Login successful')
             ->assertJsonPath('data.user.email', 'login-regression@example.com')
-            ->assertJsonStructure([
-                'data' => ['user', 'token'],
-                'message',
-            ]);
-    }
-
-    /**
-     * Test 3: Social login still works when guest-auth is also enabled.
-     */
-    public function test_social_login_still_works(): void
-    {
-        $socialUser = new SocialiteUser;
-        $socialUser->map([
-            'id' => 'social-regression-1',
-            'name' => 'Social Regression',
-            'email' => 'social-regression@example.com',
-        ]);
-
-        $driver = Mockery::mock();
-        $driver->shouldReceive('user')->once()->andReturn($socialUser);
-
-        $socialiteFactory = new class($driver) implements SocialiteFactory
-        {
-            public function __construct(private readonly mixed $driver) {}
-
-            public function driver($driver = null): mixed
-            {
-                return $this->driver;
-            }
-        };
-
-        $this->app->instance(SocialiteFactory::class, $socialiteFactory);
-
-        $response = $this->postJson('/auth/social/github', [
-            'authorization_code' => 'code-1',
-        ]);
-
-        $response
-            ->assertOk()
-            ->assertJsonPath('message', 'Login successful')
-            ->assertJsonPath('data.user.email', 'social-regression@example.com')
             ->assertJsonStructure([
                 'data' => ['user', 'token'],
                 'message',

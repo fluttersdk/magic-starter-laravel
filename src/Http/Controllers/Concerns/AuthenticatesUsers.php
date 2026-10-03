@@ -2,7 +2,9 @@
 
 namespace FlutterSdk\MagicStarter\Http\Controllers\Concerns;
 
+use FlutterSdk\MagicStarter\Features;
 use FlutterSdk\MagicStarter\Http\Resources\UserResource;
+use Illuminate\Database\Eloquent\Model;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Str;
@@ -57,6 +59,59 @@ trait AuthenticatesUsers
                 'token' => $token,
             ],
             'message' => $message,
+        ], $status);
+    }
+
+    /**
+     * Finish a sign-in: a 2FA challenge when the user confirmed 2FA, else a token.
+     *
+     * The one decision every sign-in path shares (password login, the social
+     * exchange), so a confirmed second factor cannot be skipped by choosing
+     * another way in. The challenge token is encrypted and expires after
+     * `magic-starter.two_factor.challenge_token_ttl` minutes; it is redeemed at
+     * `POST auth/two-factor-challenge`.
+     *
+     * @param  Model  $user  The user who proved the first factor.
+     * @param  string|null  $message  Response message, or null for the sign-in default.
+     */
+    protected function signInResponse(Model $user, Request $request, ?string $message = null): JsonResponse
+    {
+        if (
+            Features::hasTwoFactorAuthenticationFeatures() &&
+            method_exists($user, 'hasEnabledTwoFactorAuthentication') &&
+            $user->hasEnabledTwoFactorAuthentication()
+        ) {
+            $challengeToken = encrypt(json_encode([
+                'user_id' => $user->getKey(),
+                'expires_at' => now()->addMinutes(
+                    (int) config('magic-starter.two_factor.challenge_token_ttl', 5),
+                )->timestamp,
+            ]));
+
+            return response()->json([
+                'two_factor' => true,
+                'two_factor_token' => $challengeToken,
+            ]);
+        }
+
+        return $this->authenticatedResponse(
+            $user,
+            $request,
+            $this->createAuthToken($user, $request, true),
+            $message,
+        );
+    }
+
+    /**
+     * Refuse a social flow step with its translated sentence and stable code.
+     *
+     * @param  string  $code  a key of `lang/<locale>/social.php`, such as `flow_expired`
+     */
+    protected function socialRefusal(string $code, int $status): JsonResponse
+    {
+        return response()->json([
+            'message' => __('magic-starter::social.' . $code),
+            'code' => $code,
         ], $status);
     }
 

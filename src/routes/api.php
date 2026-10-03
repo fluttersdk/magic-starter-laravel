@@ -4,7 +4,7 @@
  * Magic Starter API route definitions.
  *
  * Registers authentication, team management, profile, session, notification,
- * and social login routes conditionally based on enabled features. All routes
+ * and social sign-in routes conditionally based on enabled features. All routes
  * respect the configured route prefix from `config('magic-starter.route_prefix')`.
  */
 
@@ -25,6 +25,8 @@ use FlutterSdk\MagicStarter\Http\Controllers\PushDeviceController;
 use FlutterSdk\MagicStarter\Http\Controllers\PushTestController;
 use FlutterSdk\MagicStarter\Http\Controllers\SessionController;
 use FlutterSdk\MagicStarter\Http\Controllers\SettingsController;
+use FlutterSdk\MagicStarter\Http\Controllers\SocialExchangeController;
+use FlutterSdk\MagicStarter\Http\Controllers\SocialRedirectController;
 use FlutterSdk\MagicStarter\Http\Controllers\TeamController;
 use FlutterSdk\MagicStarter\Http\Controllers\TeamInvitationController;
 use FlutterSdk\MagicStarter\Http\Controllers\TeamMemberController;
@@ -68,9 +70,13 @@ Route::prefix((string) config('magic-starter.route_prefix', ''))
             Route::post('register', [AuthController::class, 'register']);
         });
 
+        // The browser-facing start of a social flow, and the app's exchange of the
+        // one-time code it ends in. The provider's callback between them lives in
+        // `social.php`, outside this prefix, because provider consoles pin its url.
         Route::prefix('auth')->middleware(['throttle:magic-starter-auth-social'])->group(function (): void {
             if (Features::hasSocialLoginFeatures()) {
-                Route::post('social/{provider}', [AuthController::class, 'socialLogin']);
+                Route::get('social/{provider}/redirect', SocialRedirectController::class);
+                Route::post('social/exchange', SocialExchangeController::class);
             }
         });
 

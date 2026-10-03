@@ -216,7 +216,12 @@ function oauth_exchange_code(?callable $idToken): never
 
     unlink($file);
 
-    $response = ['access_token' => 'fake-access-' . bin2hex(random_bytes(8)), 'token_type' => 'bearer', 'scope' => 'user:email'];
+    $response = [
+        'access_token' => 'fake-access-' . bin2hex(random_bytes(8)),
+        'refresh_token' => 'fake-refresh-' . bin2hex(random_bytes(8)),
+        'token_type' => 'bearer',
+        'scope' => 'user:email',
+    ];
 
     if ($idToken !== null) {
         $response['id_token'] = $idToken($record);
