@@ -4,7 +4,7 @@ namespace FlutterSdk\MagicStarter\Actions;
 
 use FlutterSdk\MagicStarter\Contracts\SchedulesUserDeletion;
 use FlutterSdk\MagicStarter\Models\PushDevice;
-use FlutterSdk\MagicStarter\Support\ReadsBillableAttributes;
+use FlutterSdk\MagicStarter\Support\OwnedTeams;
 use Illuminate\Contracts\Auth\Authenticatable;
 use Illuminate\Database\Eloquent\Collection;
 use Illuminate\Database\Eloquent\Model;
@@ -24,16 +24,15 @@ use RuntimeException;
  * is deleted here: the HTTP request that asks for a deletion is not the place to
  * do something irreversible.
  *
- * The refusals mirror the purge's own. A shared team would take other people's
- * data with it, and a billing team would strand a charge, so a user who could
- * still act on either is told now rather than surprised in thirty days. An
+ * The refusals mirror the purge's own, through {@see OwnedTeams}. A shared team
+ * would take other people's data with it, and a billing team (or, under user
+ * billing, the user's own subscription) would strand a charge, so a user who
+ * could still act on either is told now rather than surprised in thirty days. An
  * orphan skips both: the provider has deleted the identity, nobody is left to
  * act, and the purge decides what happens to their teams.
  */
 class ScheduleUserDeletion implements SchedulesUserDeletion
 {
-    use ReadsBillableAttributes;
-
     /**
      * The two columns the pipeline reads, both added by
      * `add_deletion_columns_to_users_table.php`.
@@ -51,7 +50,8 @@ class ScheduleUserDeletion implements SchedulesUserDeletion
      *
      * @param  bool  $orphan  true when the identity provider deleted the account
      *
-     * @throws ValidationException When a shared or billing owned team refuses it.
+     * @throws ValidationException When a shared or billing owned team, or the
+     *                             user's own subscription, refuses it.
      * @throws RuntimeException When the users table lacks the deletion columns.
      */
     public function schedule(Authenticatable $user, bool $orphan = false): void
@@ -86,47 +86,27 @@ class ScheduleUserDeletion implements SchedulesUserDeletion
     }
 
     /**
-     * The teams this user owns that a store or a valid Cashier subscription is
-     * still billing.
-     *
-     * Shared with the purge, which holds an account back on the same answer, so
-     * the refusal now and the hold later cannot disagree.
-     *
-     * @return Collection<int, Model> empty for a user model without teams
-     */
-    public static function billingOwnedTeams(Authenticatable $user): Collection
-    {
-        if (! method_exists($user, 'ownedTeams')) {
-            return new Collection;
-        }
-
-        // The card-rail predicate is an instance method on the shared trait, so a
-        // throwaway instance reads through it rather than carrying a copy.
-        $reader = new self;
-
-        return $user->ownedTeams()->get()->filter(
-            fn (Model $team): bool => SubscriptionGuardedDeleteTeam::storeIsBilling($team)
-                || $reader->stripeIsBilling($team),
-        )->values();
-    }
-
-    /**
-     * Refuse a user who owns a shared team or a billing team.
+     * Refuse a user who owns a shared team or a billing team, or whom a
+     * subscription bills directly under user billing.
      *
      * @throws ValidationException
      */
     protected function refuseUnlessDeletable(Authenticatable $user): void
     {
-        $shared = DeleteUser::sharedOwnedTeams($user);
+        $shared = OwnedTeams::shared($user);
 
         if ($shared->isNotEmpty()) {
             $this->refuse('owns_shared_teams', $shared);
         }
 
-        $billing = self::billingOwnedTeams($user);
+        $billing = OwnedTeams::billing($user);
 
         if ($billing->isNotEmpty()) {
             $this->refuse('team_has_active_subscription', $billing);
+        }
+
+        if ($user instanceof Model && OwnedTeams::isBilling($user)) {
+            $this->refuse('subscription_active', new Collection);
         }
     }
 

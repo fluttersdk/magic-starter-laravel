@@ -8,6 +8,7 @@ use FlutterSdk\MagicStarter\Http\Controllers\Concerns\AuthenticatesUsers;
 use FlutterSdk\MagicStarter\Social\ProviderIdentity;
 use FlutterSdk\MagicStarter\Social\SocialFlowStore;
 use FlutterSdk\MagicStarter\Social\SocialSignInRefused;
+use FlutterSdk\MagicStarter\Social\VerifiedIdentity;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
@@ -90,7 +91,7 @@ class SocialCallbackController
      * Mint the one-time code for what this flow concluded.
      *
      * @param  array{provider: string, platform: string, challenge: string, intent: string, user_id: string|null, code_verifier: string|null, nonce: string|null}  $flow
-     * @param  array{identity: \FlutterSdk\MagicStarter\Social\VerifiedIdentity, refresh_token: string|null, client_id: string|null}  $verified
+     * @param  array{identity: VerifiedIdentity, refresh_token: string|null, client_id: string|null}  $verified
      *
      * @throws SocialSignInRefused When the identity may not sign in.
      */

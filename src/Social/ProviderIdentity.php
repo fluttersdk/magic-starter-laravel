@@ -65,11 +65,19 @@ class ProviderIdentity
     }
 
     /**
-     * Whether the deployment configured what the web flow needs; Apple's web flow runs as the Services ID.
+     * Whether the deployment configured what the web flow needs.
+     *
+     * Apple's web flow runs as the Services ID; every other provider needs its
+     * `services.<provider>` block, without which Socialite cannot even build
+     * the driver and the flow would end in a 500 instead of a refusal.
      */
     public function isConfigured(string $provider): bool
     {
-        return $provider !== 'apple' || $this->appleClientId() !== null;
+        if ($provider === 'apple') {
+            return $this->appleClientId() !== null;
+        }
+
+        return Claims::string(config("services.{$provider}.client_id")) !== null;
     }
 
     /**
@@ -163,7 +171,7 @@ class ProviderIdentity
 
         return [
             'identity' => $identity,
-            'refresh_token' => $provider === 'apple' ? $this->optionalString($user->refreshToken) : null,
+            'refresh_token' => $provider === 'apple' ? Claims::string($user->refreshToken) : null,
             'client_id' => $provider === 'apple' ? $this->appleClientId() : null,
         ];
     }
@@ -217,15 +225,15 @@ class ProviderIdentity
      */
     protected function github(SocialiteUser $user): VerifiedIdentity
     {
-        $email = $this->optionalString($user->getEmail());
+        $email = Claims::string($user->getEmail());
 
         return new VerifiedIdentity(
             provider: 'github',
             providerUserId: $this->subject($user->getId()),
             email: $email,
             emailVerified: $email !== null,
-            name: $this->optionalString($user->getName()) ?? $this->optionalString($user->getNickname()),
-            avatar: $this->optionalString($user->getAvatar()),
+            name: Claims::string($user->getName()) ?? Claims::string($user->getNickname()),
+            avatar: Claims::string($user->getAvatar()),
         );
     }
 
@@ -234,10 +242,10 @@ class ProviderIdentity
         return new VerifiedIdentity(
             provider: 'google',
             providerUserId: $this->subject($user->getId()),
-            email: $this->optionalString($user->getEmail()),
+            email: Claims::string($user->getEmail()),
             emailVerified: $this->isTrue($user->getRaw()['email_verified'] ?? null),
-            name: $this->optionalString($user->getName()),
-            avatar: $this->optionalString($user->getAvatar()),
+            name: Claims::string($user->getName()),
+            avatar: Claims::string($user->getAvatar()),
         );
     }
 
@@ -259,26 +267,29 @@ class ProviderIdentity
         return new VerifiedIdentity(
             provider: 'microsoft',
             providerUserId: $this->subject($claims->oid ?? null),
-            email: $this->optionalString($user->getEmail()),
+            email: Claims::string($user->getEmail()),
             emailVerified: false,
-            name: $this->optionalString($user->getName()),
+            name: Claims::string($user->getName()),
             tenantId: $this->subject($claims->tid ?? null),
         );
     }
 
     /**
      * The provider validated the id_token (signature, audience, nonce) before handing these claims over.
+     *
+     * The address counts as verified only when Apple's `email_verified` claim
+     * says so, the same rule IdTokenVerifier applies to a native token.
      */
     protected function appleIdentity(SocialiteUser $user): VerifiedIdentity
     {
-        $email = $this->optionalString($user->getEmail());
+        $email = Claims::string($user->getEmail());
 
         return new VerifiedIdentity(
             provider: 'apple',
             providerUserId: $this->subject($user->getId()),
             email: $email,
             emailVerified: $email !== null && $this->isTrue($user->getRaw()['email_verified'] ?? null),
-            name: $this->optionalString($user->getName()),
+            name: Claims::string($user->getName()),
         );
     }
 
@@ -299,7 +310,7 @@ class ProviderIdentity
 
     protected function appleClientId(): ?string
     {
-        return $this->optionalString(config('magic-starter.social.apple.services_id'));
+        return Claims::string(config('magic-starter.social.apple.services_id'));
     }
 
     /**
@@ -320,10 +331,5 @@ class ProviderIdentity
     protected function isTrue(mixed $value): bool
     {
         return $value === true || $value === 'true';
-    }
-
-    protected function optionalString(mixed $value): ?string
-    {
-        return is_string($value) && $value !== '' ? $value : null;
     }
 }

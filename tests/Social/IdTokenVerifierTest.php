@@ -297,6 +297,51 @@ class IdTokenVerifierTest extends TestCase
         $this->assertFalse($identity->emailVerified);
     }
 
+    /**
+     * @return array<string, array{mixed, bool}>
+     */
+    public static function appleEmailVerifiedClaims(): array
+    {
+        return [
+            'boolean true' => [true, true],
+            'string true' => ['true', true],
+            'boolean false' => [false, false],
+            'string false' => ['false', false],
+            'absent' => [null, false],
+        ];
+    }
+
+    /**
+     * The same rule as the web flow in ProviderIdentity: Apple's claim decides, never the bare presence of an address.
+     */
+    #[DataProvider('appleEmailVerifiedClaims')]
+    public function test_apple_email_is_verified_only_when_the_claim_says_so(mixed $claim, bool $verified): void
+    {
+        $this->fakeAppleKeys();
+
+        $identity = $this->verifier()->apple(
+            $this->appleToken(['nonce' => hash('sha256', 'raw-nonce'), 'email_verified' => $claim]),
+            'raw-nonce',
+        );
+
+        $this->assertSame('jane@example.com', $identity->email);
+        $this->assertSame($verified, $identity->emailVerified);
+    }
+
+    public function test_apple_verification_needs_no_signing_key(): void
+    {
+        config([
+            'magic-starter.social.apple.team_id' => null,
+            'magic-starter.social.apple.key_id' => null,
+            'magic-starter.social.apple.private_key' => null,
+        ]);
+        $this->fakeAppleKeys();
+
+        $identity = $this->verifier()->apple($this->appleToken(['nonce' => hash('sha256', 'raw-nonce')]), 'raw-nonce');
+
+        $this->assertSame('apple-sub-1', $identity->providerUserId);
+    }
+
     public function test_apple_is_refused_without_a_nonce(): void
     {
         $this->fakeAppleKeys();

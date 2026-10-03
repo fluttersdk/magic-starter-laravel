@@ -8,6 +8,7 @@ use FlutterSdk\MagicStarter\MagicStarterServiceProvider;
 use FlutterSdk\MagicStarter\Models\SocialAccount;
 use FlutterSdk\MagicStarter\Social\AppleProviderFactory;
 use FlutterSdk\MagicStarter\Social\SocialFlowStore;
+use FlutterSdk\MagicStarter\Social\StepUpConfirmations;
 use FlutterSdk\MagicStarter\Tests\TestCase;
 use FlutterSdk\MagicStarter\Traits\HasSocialAccounts;
 use GuzzleHttp\Client;
@@ -97,12 +98,13 @@ class SocialAccountControllerTest extends TestCase
 
     public function test_a_link_ticket_is_returned_in_the_body_and_redeems_once_for_its_user(): void
     {
-        $user = $this->actingAsUser();
+        $user = $this->actingAsUser(password: 'secret-password');
         $challenge = $this->challenge();
 
         $response = $this->postJson('/user/social-accounts/link-ticket', [
             'provider' => 'github',
             'challenge' => $challenge,
+            'password' => 'secret-password',
         ]);
 
         $response->assertOk();
@@ -120,12 +122,13 @@ class SocialAccountControllerTest extends TestCase
 
     public function test_a_link_ticket_presented_with_another_challenge_is_refused_and_burned(): void
     {
-        $this->actingAsUser();
+        $user = $this->actingAsUser();
         $challenge = $this->challenge();
 
         $ticket = (string) $this->postJson('/user/social-accounts/link-ticket', [
             'provider' => 'github',
             'challenge' => $challenge,
+            'confirmation_token' => $this->mint($user),
         ])->assertOk()->json('data.ticket');
 
         $store = app(SocialFlowStore::class);
@@ -137,11 +140,12 @@ class SocialAccountControllerTest extends TestCase
 
     public function test_a_link_ticket_is_refused_for_a_provider_the_deployment_does_not_allow(): void
     {
-        $this->actingAsUser();
+        $user = $this->actingAsUser();
 
         $this->postJson('/user/social-accounts/link-ticket', [
             'provider' => 'microsoft',
             'challenge' => $this->challenge(),
+            'confirmation_token' => $this->mint($user),
         ])->assertNotFound()->assertJsonPath('code', 'provider_not_supported');
     }
 
@@ -153,6 +157,38 @@ class SocialAccountControllerTest extends TestCase
             'provider' => 'github',
             'challenge' => 'too-short',
         ])->assertUnprocessable()->assertJsonValidationErrors('challenge');
+    }
+
+    public function test_a_link_ticket_without_proof_must_step_up(): void
+    {
+        $this->actingAsUser();
+
+        $this->postJson('/user/social-accounts/link-ticket', [
+            'provider' => 'github',
+            'challenge' => $this->challenge(),
+        ])
+            ->assertUnprocessable()
+            ->assertJsonPath('code', 'step_up_required')
+            ->assertJsonPath('accepts', [
+                'confirmation_token',
+            ])
+            ->assertJsonMissingPath('data.ticket');
+    }
+
+    public function test_a_link_ticket_for_a_password_user_needs_the_right_password(): void
+    {
+        $this->actingAsUser(password: 'secret-password');
+
+        $this->postJson('/user/social-accounts/link-ticket', [
+            'provider' => 'github',
+            'challenge' => $this->challenge(),
+        ])->assertUnprocessable()->assertJsonValidationErrors('password');
+
+        $this->postJson('/user/social-accounts/link-ticket', [
+            'provider' => 'github',
+            'challenge' => $this->challenge(),
+            'password' => 'wrong-password',
+        ])->assertUnprocessable()->assertJsonValidationErrors('password')->assertJsonMissingPath('data.ticket');
     }
 
     public function test_a_link_ticket_requires_an_authenticated_caller(): void
@@ -268,9 +304,13 @@ class SocialAccountControllerTest extends TestCase
         $this->postJson('/user/password/set', [
             'password' => 'NewPassword123',
             'password_confirmation' => 'NewPassword123',
+            'confirmation_token' => $this->mint($user),
         ])->assertOk();
 
         $this->assertTrue(Hash::check('NewPassword123', (string) $user->fresh()?->getAuthPassword()));
+
+        // A later request loads the user afresh; the acting instance still holds the old row.
+        Sanctum::actingAs($user->fresh());
 
         $this->postJson('/user/password/set', [
             'password' => 'OtherPassword456',
@@ -283,18 +323,106 @@ class SocialAccountControllerTest extends TestCase
     public function test_setting_a_password_needs_a_matching_confirmation_and_the_package_rules(): void
     {
         $user = $this->actingAsUser(password: null);
+        $token = $this->mint($user);
 
         $this->postJson('/user/password/set', [
             'password' => 'NewPassword123',
             'password_confirmation' => 'Different123',
+            'confirmation_token' => $token,
         ])->assertUnprocessable()->assertJsonValidationErrors('password');
 
         $this->postJson('/user/password/set', [
             'password' => 'alllowercase',
             'password_confirmation' => 'alllowercase',
+            'confirmation_token' => $token,
         ])->assertUnprocessable()->assertJsonValidationErrors('password');
 
         $this->assertNull($user->fresh()?->getAuthPassword());
+        // Refused for the password alone, so the token is still spendable.
+        $this->assertTrue(app(StepUpConfirmations::class)->consume($user, $token));
+    }
+
+    public function test_setting_a_first_password_without_proof_must_step_up(): void
+    {
+        $user = $this->actingAsUser(password: null);
+
+        $this->postJson('/user/password/set', [
+            'password' => 'NewPassword123',
+            'password_confirmation' => 'NewPassword123',
+        ])
+            ->assertUnprocessable()
+            ->assertJsonPath('code', 'step_up_required')
+            ->assertJsonPath('accepts', [
+                'confirmation_token',
+            ]);
+
+        $this->assertNull($user->fresh()?->getAuthPassword());
+    }
+
+    public function test_setting_a_first_password_with_a_spent_confirmation_token_must_step_up(): void
+    {
+        $user = $this->actingAsUser(password: null);
+        $token = $this->mint($user);
+        $this->assertTrue(app(StepUpConfirmations::class)->consume($user, $token));
+
+        $this->postJson('/user/password/set', [
+            'password' => 'NewPassword123',
+            'password_confirmation' => 'NewPassword123',
+            'confirmation_token' => $token,
+        ])
+            ->assertUnprocessable()
+            ->assertJsonPath('code', 'step_up_required');
+
+        $this->assertNull($user->fresh()?->getAuthPassword());
+    }
+
+    public function test_a_password_user_cannot_set_a_first_password(): void
+    {
+        $user = $this->actingAsUser(password: 'secret-password');
+
+        $this->postJson('/user/password/set', [
+            'password' => 'NewPassword123',
+            'password_confirmation' => 'NewPassword123',
+            'confirmation_token' => $this->mint($user),
+        ])
+            ->assertUnprocessable()
+            ->assertJsonPath('code', 'password_already_set');
+
+        $this->assertTrue(Hash::check('secret-password', (string) $user->fresh()?->getAuthPassword()));
+    }
+
+    public function test_a_user_model_without_the_social_trait_disconnects_and_sets_a_password(): void
+    {
+        config([
+            'auth.providers.users.model' => PlainSocialAccountTestUser::class,
+            'magic-starter.models.user' => PlainSocialAccountTestUser::class,
+        ]);
+        MagicStarter::useUserModel(PlainSocialAccountTestUser::class);
+
+        $withPassword = PlainSocialAccountTestUser::query()->create([
+            'name' => 'Person',
+            'email' => 'password@example.test',
+            'password' => Hash::make('secret-password'),
+        ]);
+        $this->linkAccount($withPassword, 'github');
+        Sanctum::actingAs($withPassword);
+
+        $this->deleteJson('/user/social-accounts/github')->assertNoContent();
+
+        $withoutPassword = PlainSocialAccountTestUser::query()->create([
+            'name' => 'Person',
+            'email' => 'social@example.test',
+            'password' => null,
+        ]);
+        Sanctum::actingAs($withoutPassword);
+
+        $this->postJson('/user/password/set', [
+            'password' => 'NewPassword123',
+            'password_confirmation' => 'NewPassword123',
+            'confirmation_token' => $this->mint($withoutPassword),
+        ])->assertOk();
+
+        $this->assertTrue(Hash::check('NewPassword123', (string) $withoutPassword->fresh()?->getAuthPassword()));
     }
 
     private function actingAsUser(?string $password = null): SocialAccountTestUser
@@ -315,8 +443,13 @@ class SocialAccountControllerTest extends TestCase
         ]);
     }
 
+    private function mint(Authenticatable $user): string
+    {
+        return app(StepUpConfirmations::class)->mint($user);
+    }
+
     private function linkAccount(
-        SocialAccountTestUser $user,
+        Authenticatable $user,
         string $provider,
         bool $revoked = false,
         ?string $refreshToken = null,
@@ -371,6 +504,19 @@ class SocialAccountTestUser extends Authenticatable
 {
     use HasApiTokens;
     use HasSocialAccounts;
+    use HasUuids;
+
+    protected $table = 'users';
+
+    protected $guarded = [];
+}
+
+/**
+ * A consumer User that never adopted the package's `HasSocialAccounts` trait.
+ */
+class PlainSocialAccountTestUser extends Authenticatable
+{
+    use HasApiTokens;
     use HasUuids;
 
     protected $table = 'users';

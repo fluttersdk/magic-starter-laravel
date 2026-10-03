@@ -4,6 +4,10 @@ namespace FlutterSdk\MagicStarter\Http\Controllers\Concerns;
 
 use FlutterSdk\MagicStarter\Features;
 use FlutterSdk\MagicStarter\Http\Resources\UserResource;
+use FlutterSdk\MagicStarter\MagicStarter;
+use FlutterSdk\MagicStarter\Social\StepUpConfirmations;
+use FlutterSdk\MagicStarter\Social\VerifiedIdentity;
+use Illuminate\Contracts\Auth\Authenticatable;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
@@ -134,6 +138,43 @@ trait AuthenticatesUsers
             'message' => __('magic-starter::social.' . $code),
             'code' => $code,
         ], $status);
+    }
+
+    /**
+     * Mint a step-up confirmation when the identity is linked to the caller.
+     *
+     * Shared by the browser exchange and the native token endpoint, so both
+     * ways of proving an identity hold the caller to the same link.
+     */
+    protected function confirmSocialIdentity(Authenticatable $bearer, VerifiedIdentity $identity): JsonResponse
+    {
+        $linked = MagicStarter::socialAccountModel()::query()
+            ->where('provider', $identity->provider)
+            ->where('provider_user_id', $identity->providerUserId)
+            ->where('user_id', $bearer->getAuthIdentifier())
+            // A link the provider revoked no longer proves the caller is its owner.
+            ->whereNull('revoked_at')
+            ->exists();
+
+        if (! $linked) {
+            return $this->socialRefusal('invalid_identity', 403);
+        }
+
+        return response()->json([
+            'data' => [
+                'confirmation_token' => app(StepUpConfirmations::class)->mint($bearer),
+            ],
+        ]);
+    }
+
+    /**
+     * Refuse a social step that needs the caller's bearer and has none, or another's.
+     */
+    protected function unauthenticated(): JsonResponse
+    {
+        return response()->json([
+            'message' => __('Unauthenticated.'),
+        ], 401);
     }
 
     /**

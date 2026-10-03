@@ -10,8 +10,10 @@ use FlutterSdk\MagicStarter\Models\SocialAccount;
 use FlutterSdk\MagicStarter\Tests\TestCase;
 use FlutterSdk\MagicStarter\Traits\HasSocialAccounts;
 use Illuminate\Database\Eloquent\Concerns\HasUuids;
+use Illuminate\Database\Events\QueryExecuted;
 use Illuminate\Database\Schema\Blueprint;
 use Illuminate\Foundation\Auth\User as Authenticatable;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Hash;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Schema;
@@ -174,6 +176,41 @@ class AppleNotificationTest extends TestCase
         $this->postJson(self::ENDPOINT, ['payload' => 'not.a.jwt'])->assertStatus(400);
     }
 
+    public function test_a_refusal_answers_the_invalid_identity_code(): void
+    {
+        $this->fakeAppleKeys();
+
+        $this->postJson(self::ENDPOINT, ['payload' => 'not.a.jwt'])
+            ->assertStatus(400)
+            ->assertExactJson([
+                'message' => __('magic-starter::social.invalid_identity'),
+                'code' => 'invalid_identity',
+            ]);
+    }
+
+    public function test_a_payload_issued_before_the_replay_window_is_refused(): void
+    {
+        $this->fakeAppleKeys();
+        [$user, $account] = $this->appleUser();
+
+        // Its jti could have been forgotten by now, so a replay would no longer be caught.
+        $this->notify($this->payload('consent-revoked', ['iat' => time() - 7 * 86400 - 60]))->assertStatus(400);
+
+        $this->assertNull($account->fresh()?->revoked_at);
+        $this->assertSame(1, $user->tokens()->count());
+    }
+
+    public function test_a_payload_without_an_issue_time_is_refused(): void
+    {
+        $this->fakeAppleKeys();
+        [$user, $account] = $this->appleUser();
+
+        $this->notify($this->payload('consent-revoked', ['iat' => null]))->assertStatus(400);
+
+        $this->assertNull($account->fresh()?->revoked_at);
+        $this->assertSame(1, $user->tokens()->count());
+    }
+
     // ---------------------------------------------------------------------
     // Events
     // ---------------------------------------------------------------------
@@ -235,6 +272,24 @@ class AppleNotificationTest extends TestCase
         $this->assertNotNull($user->getAttribute('orphaned_at'));
         $this->assertNotNull($account->fresh()?->revoked_at);
         $this->assertNull($account->fresh()?->refresh_token);
+        $this->assertSame(0, $user->tokens()->count());
+    }
+
+    public function test_account_deleted_that_schedules_a_deletion_revokes_the_tokens_once(): void
+    {
+        $this->fakeAppleKeys();
+        [$user] = $this->appleUser(password: null);
+        $tokenDeletes = 0;
+        DB::listen(function (QueryExecuted $query) use (&$tokenDeletes): void {
+            if (str_starts_with(strtolower($query->sql), 'delete from "personal_access_tokens"')) {
+                $tokenDeletes++;
+            }
+        });
+
+        $this->notify($this->payload('account-deleted'))->assertOk();
+
+        // Scheduling the deletion locks the account, which is what revokes its tokens.
+        $this->assertSame(1, $tokenDeletes);
         $this->assertSame(0, $user->tokens()->count());
     }
 
@@ -442,7 +497,7 @@ class AppleNotificationTest extends TestCase
     }
 
     /**
-     * @param  array<string, mixed>  $overrides  top-level claims to replace
+     * @param  array<string, mixed>  $overrides  top-level claims to replace; a null value drops the claim
      */
     private function payload(
         string $type,
@@ -460,14 +515,21 @@ class AppleNotificationTest extends TestCase
             'is_private_email' => in_array($type, ['email-enabled', 'email-disabled'], true) ? 'true' : null,
         ], fn (mixed $value): bool => $value !== null);
 
-        return JWT::encode([
+        $claims = [
             'iss' => 'https://appleid.apple.com',
             'aud' => self::AUDIENCE,
             'iat' => time() - 5,
             'jti' => (string) Str::uuid(),
             'events' => $eventsAsString ? (string) json_encode($events) : $events,
             ...$overrides,
-        ], $key ?? $this->signingKey, 'ES256', 'apple-key');
+        ];
+
+        return JWT::encode(
+            array_filter($claims, fn (mixed $value): bool => $value !== null),
+            $key ?? $this->signingKey,
+            'ES256',
+            'apple-key',
+        );
     }
 }
 

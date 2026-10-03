@@ -3,6 +3,7 @@
 namespace FlutterSdk\MagicStarter\Http\Controllers;
 
 use FlutterSdk\MagicStarter\MagicStarter;
+use FlutterSdk\MagicStarter\Social\UnconfirmedLinks;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 
@@ -42,14 +43,20 @@ class EmailVerificationController
      *
      * The route is protected by a signed URL — no auth:sanctum required.
      * The hash parameter is validated against the user's current email address
-     * to prevent link re-use after an email change.
+     * to prevent link re-use after an email change. A completed verification
+     * proves control of the mailbox, so it also severs the provider links that
+     * mailbox's owner never confirmed.
      *
      * @param  Request  $request  The incoming HTTP request.
      * @param  string  $id  The user's primary key.
      * @param  string  $hash  The SHA-1 hash of the user's email address.
      */
-    public function verify(Request $request, string $id, string $hash): JsonResponse
-    {
+    public function verify(
+        Request $request,
+        string $id,
+        string $hash,
+        UnconfirmedLinks $unconfirmedLinks,
+    ): JsonResponse {
         // 1. Resolve the user by ID — 404 if not found.
         $user = app(MagicStarter::userModel())->findOrFail($id);
 
@@ -64,7 +71,10 @@ class EmailVerificationController
         }
 
         // 4. Mark as verified — the MustVerifyEmail trait fires the Verified event internally.
-        $user->markEmailAsVerified();
+        //    Only a verification that took severs the links the owner never confirmed.
+        if ($user->markEmailAsVerified()) {
+            $unconfirmedLinks->sever($user);
+        }
 
         return response()->json(['message' => __('magic-starter::auth.verification.verified')], 200);
     }

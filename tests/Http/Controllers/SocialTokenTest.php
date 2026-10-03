@@ -219,6 +219,18 @@ class SocialTokenTest extends TestCase
         $this->assertSame(0, SocialTokenTestUser::query()->count());
     }
 
+    public function test_a_google_key_set_answer_without_keys_is_a_service_failure_not_a_verdict(): void
+    {
+        Http::fake([
+            self::GOOGLE_CERTS => Http::response(['unexpected' => true], 200),
+        ]);
+
+        $this->postToken('google', ['id_token' => $this->googleToken()])
+            ->assertStatus(503)
+            ->assertJsonPath('code', 'provider_unavailable')
+            ->assertJsonMissingPath('data.token');
+    }
+
     public function test_an_unreachable_google_key_set_is_a_service_failure_not_a_verdict(): void
     {
         Http::fake([
@@ -341,6 +353,47 @@ class SocialTokenTest extends TestCase
         $this->assertCount(2, $this->appleRequests);
     }
 
+    public function test_a_refused_apple_signin_never_redeems_the_authorization_code(): void
+    {
+        $this->fakeApple([
+            $this->appleKeysResponse(),
+            new Response(200, [], (string) json_encode([
+                'refresh_token' => 'apple-refresh-orphan',
+            ])),
+        ]);
+        $this->makeUser('jane@privaterelay.appleid.com');
+
+        $this->postToken('apple', [
+            'id_token' => $this->appleToken(['nonce' => hash('sha256', 'raw-nonce')]),
+            'nonce' => 'raw-nonce',
+            'authorization_code' => 'apple-code-refused',
+        ])
+            ->assertStatus(409)
+            ->assertJsonPath('code', 'social_email_taken')
+            ->assertJsonMissingPath('data.token');
+
+        // Only the key set was fetched: no refresh token was minted that nobody stores.
+        $this->assertCount(1, $this->appleRequests);
+        $this->assertSame(0, SocialAccount::query()->count());
+    }
+
+    public function test_a_configuration_error_during_verification_is_not_reported_as_an_outage(): void
+    {
+        $this->fakeApple([]);
+        config([
+            'magic-starter.social.apple.team_id' => '',
+        ]);
+
+        $response = $this->postToken('apple', [
+            'id_token' => $this->appleToken(['nonce' => hash('sha256', 'raw-nonce')]),
+            'nonce' => 'raw-nonce',
+        ]);
+
+        $response->assertStatus(500)->assertJsonMissingPath('data.token');
+        $this->assertNotSame('provider_unavailable', $response->json('code'));
+        $this->assertSame([], $this->appleRequests);
+    }
+
     public function test_an_apple_signin_with_a_user_field_that_is_not_json_still_signs_in(): void
     {
         $this->fakeApple([
@@ -403,6 +456,7 @@ class SocialTokenTest extends TestCase
         $response = $this->postToken('google', [
             'id_token' => $this->googleToken(),
             'intent' => 'connect',
+            'password' => 'Password123',
         ], $user->createToken('t')->plainTextToken);
 
         $response->assertOk()
@@ -430,6 +484,7 @@ class SocialTokenTest extends TestCase
             'nonce' => 'raw-nonce',
             'authorization_code' => 'apple-code-2',
             'intent' => 'connect',
+            'password' => 'Password123',
         ], $user->createToken('t')->plainTextToken)->assertOk()->assertJsonPath('data.provider', 'apple');
 
         $account = SocialAccount::query()->sole();
@@ -448,11 +503,68 @@ class SocialTokenTest extends TestCase
         $this->postToken('google', [
             'id_token' => $this->googleToken(),
             'intent' => 'connect',
+            'password' => 'Password123',
         ], $user->createToken('t')->plainTextToken)
             ->assertStatus(409)
             ->assertJsonPath('code', 'social_account_taken')
             ->assertJsonMissingPath('data.token');
         $this->assertSame((string) $owner->getKey(), (string) SocialAccount::query()->sole()->user_id);
+    }
+
+    public function test_a_connect_without_proof_must_step_up_before_the_token_is_spent(): void
+    {
+        Http::fake();
+        $user = $this->makeUser('owner@example.test', [
+            'password' => null,
+        ]);
+
+        $this->postToken('google', [
+            'id_token' => $this->googleToken(),
+            'intent' => 'connect',
+        ], $user->createToken('t')->plainTextToken)
+            ->assertStatus(422)
+            ->assertJsonPath('code', 'step_up_required')
+            ->assertJsonPath('accepts', [
+                'confirmation_token',
+            ]);
+
+        $this->assertSame(0, SocialAccount::query()->count());
+        Http::assertNothingSent();
+    }
+
+    public function test_a_password_user_connecting_with_a_wrong_password_is_refused(): void
+    {
+        Http::fake();
+        $user = $this->makeUser('owner@example.test');
+
+        $this->postToken('google', [
+            'id_token' => $this->googleToken(),
+            'intent' => 'connect',
+            'password' => 'wrong-password',
+        ], $user->createToken('t')->plainTextToken)
+            ->assertStatus(422)
+            ->assertJsonValidationErrors('password');
+
+        $this->assertSame(0, SocialAccount::query()->count());
+        Http::assertNothingSent();
+    }
+
+    public function test_a_passwordless_connect_with_a_confirmation_token_links_the_identity(): void
+    {
+        $this->fakeGoogleKeys();
+        $user = $this->makeUser('owner@example.test', [
+            'password' => null,
+        ]);
+
+        $this->postToken('google', [
+            'id_token' => $this->googleToken(),
+            'intent' => 'connect',
+            'confirmation_token' => app(StepUpConfirmations::class)->mint($user),
+        ], $user->createToken('t')->plainTextToken)
+            ->assertOk()
+            ->assertJsonPath('data.provider', 'google');
+
+        $this->assertSame((string) $user->getKey(), (string) SocialAccount::query()->sole()->user_id);
     }
 
     // ---------------------------------------------------------------------

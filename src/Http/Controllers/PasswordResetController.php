@@ -4,7 +4,9 @@ namespace FlutterSdk\MagicStarter\Http\Controllers;
 
 use FlutterSdk\MagicStarter\Http\Requests\ForgotPasswordRequest;
 use FlutterSdk\MagicStarter\Http\Requests\ResetPasswordRequest;
+use FlutterSdk\MagicStarter\Social\UnconfirmedLinks;
 use Illuminate\Auth\Events\PasswordReset;
+use Illuminate\Contracts\Auth\Authenticatable;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Support\Facades\Hash;
 use Illuminate\Support\Facades\Password;
@@ -34,12 +36,15 @@ class PasswordResetController
 
     /**
      * Reset the user's password.
+     *
+     * A completed reset proves control of the mailbox, so it also severs the
+     * provider links that mailbox's owner never confirmed.
      */
-    public function reset(ResetPasswordRequest $request): JsonResponse
+    public function reset(ResetPasswordRequest $request, UnconfirmedLinks $unconfirmedLinks): JsonResponse
     {
         $status = Password::reset(
             $request->validated(),
-            function (mixed $user, string $password): void {
+            function (mixed $user, string $password) use ($unconfirmedLinks): void {
                 $user->forceFill([
                     'password' => Hash::make($password),
                 ])->setRememberToken(Str::random(60));
@@ -47,6 +52,10 @@ class PasswordResetController
                 $user->save();
 
                 event(new PasswordReset($user));
+
+                if ($user instanceof Authenticatable) {
+                    $unconfirmedLinks->sever($user);
+                }
             },
         );
 

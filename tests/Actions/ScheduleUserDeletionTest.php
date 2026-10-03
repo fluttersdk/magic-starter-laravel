@@ -5,6 +5,7 @@ namespace FlutterSdk\MagicStarter\Tests\Actions;
 use FlutterSdk\MagicStarter\Actions\ScheduleUserDeletion;
 use FlutterSdk\MagicStarter\Contracts\SchedulesUserDeletion;
 use FlutterSdk\MagicStarter\Http\Controllers\AuthController;
+use FlutterSdk\MagicStarter\Http\Controllers\ProfileController;
 use FlutterSdk\MagicStarter\MagicStarter;
 use FlutterSdk\MagicStarter\Tests\Fixtures\ConcreteTeam;
 use FlutterSdk\MagicStarter\Tests\Fixtures\ConcreteUser;
@@ -19,6 +20,7 @@ use Illuminate\Support\Facades\Hash;
 use Illuminate\Support\Facades\Route;
 use Illuminate\Support\Facades\Schema;
 use Illuminate\Validation\ValidationException;
+use Laravel\Cashier\Billable;
 use Laravel\Sanctum\HasApiTokens;
 use RuntimeException;
 
@@ -51,6 +53,9 @@ class ScheduleUserDeletionTest extends TestCase
             $table->string('locale')->nullable();
             $table->string('timezone')->nullable();
             $table->uuid('current_team_id')->nullable();
+            $table->string('plan')->nullable();
+            $table->string('plan_status')->nullable();
+            $table->string('plan_provider')->nullable();
             $table->timestamp('deletion_scheduled_at')->nullable();
             $table->timestamp('orphaned_at')->nullable();
             $table->timestamps();
@@ -99,7 +104,32 @@ class ScheduleUserDeletionTest extends TestCase
             $table->timestamps();
         });
 
+        Schema::create('subscriptions', function (Blueprint $table): void {
+            $table->id();
+            $table->uuid('user_id');
+            $table->string('type');
+            $table->string('stripe_id')->unique();
+            $table->string('stripe_status');
+            $table->string('stripe_price')->nullable();
+            $table->integer('quantity')->nullable();
+            $table->timestamp('trial_ends_at')->nullable();
+            $table->timestamp('ends_at')->nullable();
+            $table->timestamps();
+        });
+
+        // Cashier's subscription model eager-loads its items on every read.
+        Schema::create('subscription_items', function (Blueprint $table): void {
+            $table->id();
+            $table->unsignedBigInteger('subscription_id');
+            $table->string('stripe_id')->unique();
+            $table->string('stripe_product');
+            $table->string('stripe_price');
+            $table->integer('quantity')->nullable();
+            $table->timestamps();
+        });
+
         Route::post('/login', [AuthController::class, 'login']);
+        Route::delete('/user', [ProfileController::class, 'destroy']);
     }
 
     public function test_the_contract_resolves_to_the_default_action(): void
@@ -152,6 +182,63 @@ class ScheduleUserDeletionTest extends TestCase
         $this->assertSame([(string) $team->getKey()], $body['team_ids']);
         $this->assertNull($user->refresh()->deletion_scheduled_at);
         $this->assertSame('pro', $team->refresh()->plan, 'Nothing is cancelled on the customer\'s behalf.');
+    }
+
+    /**
+     * Under user billing the money is on the user's own row: a valid Cashier
+     * subscription refuses DELETE /user with the user-level code, and the
+     * account keeps its tokens and its schedule stays empty.
+     */
+    public function test_under_user_billing_a_valid_stripe_subscription_refuses_delete_user(): void
+    {
+        $user = $this->useBillableUsers('card@example.test');
+        $this->subscribe($user, 'active');
+        $user->createToken('device');
+
+        $this->actingAs($user)
+            ->deleteJson('/user', ['password' => 'Password123'])
+            ->assertStatus(422)
+            ->assertJsonPath('code', 'subscription_active')
+            ->assertJsonPath('message', __('magic-starter::social.subscription_active'))
+            ->assertJsonPath('team_ids', []);
+
+        $user->refresh();
+        $this->assertNull($user->deletion_scheduled_at);
+        $this->assertSame(1, $user->tokens()->count());
+        $this->assertSame('active', $user->subscriptions()->first()?->stripe_status);
+    }
+
+    /**
+     * A store subscription on the user's row refuses the same way.
+     */
+    public function test_under_user_billing_a_store_billed_user_refuses(): void
+    {
+        $user = $this->useBillableUsers('store@example.test');
+        $user->forceFill([
+            'plan' => 'pro',
+            'plan_status' => 'active',
+            'plan_provider' => 'app_store',
+        ])->save();
+
+        $body = $this->refusalBody(fn () => $this->app->make(SchedulesUserDeletion::class)->schedule($user));
+
+        $this->assertSame('subscription_active', $body['code']);
+        $this->assertNull($user->refresh()->deletion_scheduled_at);
+        $this->assertSame('pro', $user->plan, 'Nothing is cancelled on the customer\'s behalf.');
+    }
+
+    /**
+     * A subscription Cashier no longer calls valid bills nobody, so it does not
+     * stand in the way.
+     */
+    public function test_under_user_billing_an_ended_subscription_schedules(): void
+    {
+        $user = $this->useBillableUsers('ended@example.test');
+        $this->subscribe($user, 'canceled', endsAt: now()->subDay());
+
+        $this->app->make(SchedulesUserDeletion::class)->schedule($user);
+
+        $this->assertNotNull($user->refresh()->deletion_scheduled_at);
     }
 
     /**
@@ -343,6 +430,41 @@ class ScheduleUserDeletionTest extends TestCase
         ]);
     }
 
+    /**
+     * Switch to user billing on a user model carrying Cashier's trait, and
+     * create one user on it.
+     */
+    private function useBillableUsers(string $email): ScheduleUserDeletionTestBillableUser
+    {
+        MagicStarter::useUserModel(ScheduleUserDeletionTestBillableUser::class);
+
+        config([
+            'auth.providers.users.model' => ScheduleUserDeletionTestBillableUser::class,
+            'magic-starter.billing.billable' => 'user',
+        ]);
+
+        return ScheduleUserDeletionTestBillableUser::query()->create([
+            'name' => 'User',
+            'email' => $email,
+            'password' => Hash::make('Password123'),
+        ]);
+    }
+
+    private function subscribe(
+        ScheduleUserDeletionTestBillableUser $user,
+        string $status,
+        ?Carbon $endsAt = null,
+    ): void {
+        $user->subscriptions()->create([
+            'type' => 'default',
+            'stripe_id' => 'sub_' . bin2hex(random_bytes(6)),
+            'stripe_status' => $status,
+            'stripe_price' => 'price_pro',
+            'quantity' => 1,
+            'ends_at' => $endsAt,
+        ]);
+    }
+
     private function createTeam(Model $owner, string $name, bool $personal = false): ConcreteTeam
     {
         $team = ConcreteTeam::query()->forceCreate([
@@ -375,4 +497,18 @@ class ScheduleUserDeletionTest extends TestCase
 class ScheduleUserDeletionTestUser extends ConcreteUser
 {
     use HasApiTokens;
+}
+
+/**
+ * A user Cashier bills, for the user-billing cases. The foreign key is pinned
+ * because Cashier derives it from the class basename.
+ */
+class ScheduleUserDeletionTestBillableUser extends ScheduleUserDeletionTestUser
+{
+    use Billable;
+
+    public function getForeignKey(): string
+    {
+        return 'user_id';
+    }
 }

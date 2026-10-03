@@ -83,6 +83,17 @@ class SocialAccountTest extends TestCase
         $this->assertSame(2, $user->socialAccounts()->count());
     }
 
+    public function test_a_link_is_owner_confirmed_unless_written_otherwise(): void
+    {
+        $user = $this->makeUser('a@example.com');
+
+        $confirmed = $this->link($user, 'google', 'g-1');
+        $unconfirmed = $this->link($user, 'microsoft', 'm-1', ['owner_confirmed' => false]);
+
+        $this->assertTrue($confirmed->fresh()?->owner_confirmed);
+        $this->assertFalse($unconfirmed->fresh()?->owner_confirmed);
+    }
+
     public function test_the_refresh_token_is_encrypted_at_rest(): void
     {
         $account = $this->link($this->makeUser('a@example.com'), 'apple', 'a-1', ['refresh_token' => 'r-plain']);

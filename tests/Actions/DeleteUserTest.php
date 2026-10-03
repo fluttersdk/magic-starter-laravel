@@ -22,8 +22,11 @@ use Illuminate\Database\Schema\Blueprint;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Schema;
+use Illuminate\Support\Facades\Storage;
 use Illuminate\Validation\ValidationException;
+use Laravel\Cashier\Billable;
 use Laravel\Sanctum\HasApiTokens;
+use RuntimeException;
 
 /**
  * The account-deletion action the purge runs: owned teams go through
@@ -112,6 +115,30 @@ class DeleteUserTest extends TestCase
             $table->string('client_id')->nullable();
             $table->text('refresh_token')->nullable();
             $table->timestamp('revoked_at')->nullable();
+            $table->timestamps();
+        });
+
+        Schema::create('subscriptions', function (Blueprint $table): void {
+            $table->id();
+            $table->uuid('user_id');
+            $table->string('type');
+            $table->string('stripe_id')->unique();
+            $table->string('stripe_status');
+            $table->string('stripe_price')->nullable();
+            $table->integer('quantity')->nullable();
+            $table->timestamp('trial_ends_at')->nullable();
+            $table->timestamp('ends_at')->nullable();
+            $table->timestamps();
+        });
+
+        // Cashier's subscription model eager-loads its items on every read.
+        Schema::create('subscription_items', function (Blueprint $table): void {
+            $table->id();
+            $table->unsignedBigInteger('subscription_id');
+            $table->string('stripe_id')->unique();
+            $table->string('stripe_product');
+            $table->string('stripe_price');
+            $table->integer('quantity')->nullable();
             $table->timestamps();
         });
     }
@@ -288,6 +315,109 @@ class DeleteUserTest extends TestCase
     }
 
     /**
+     * The Apple grant and the profile photo cannot be rolled back, so they go
+     * only once the deletion has committed: a failure at the final delete
+     * leaves the grant unrevoked, the photo on disk and the rows in place.
+     */
+    public function test_a_failed_final_delete_revokes_nothing_and_keeps_the_photo(): void
+    {
+        Storage::fake('public');
+        Storage::disk('public')->put('profile-photos/kept.jpg', 'photo');
+
+        $history = [];
+        $stack = HandlerStack::create(new MockHandler([
+            new Response(200),
+        ]));
+        $stack->push(Middleware::history($history));
+        $this->app->make(AppleProviderFactory::class)->setHttpClient(new Client(['handler' => $stack]));
+
+        $user = $this->createUser('Apple User');
+        $user->forceFill([
+            'profile_photo_path' => 'profile-photos/kept.jpg',
+        ])->save();
+        SocialAccount::query()->create([
+            'user_id' => $user->getKey(),
+            'provider' => 'apple',
+            'provider_user_id' => 'apple-sub-3',
+            'client_id' => 'com.example.app',
+            'refresh_token' => 'stored-apple-refresh-token',
+        ]);
+
+        DeleteUserTestUser::deleting(function (): void {
+            throw new RuntimeException('The database went away.');
+        });
+
+        try {
+            $this->app->make(DeletesUsers::class)->delete($user);
+            $this->fail('Expected the forced failure.');
+        } catch (RuntimeException $exception) {
+            $this->assertSame('The database went away.', $exception->getMessage());
+        }
+
+        $this->assertSame([], $history, 'No grant is revoked for an account that still exists.');
+        Storage::disk('public')->assertExists('profile-photos/kept.jpg');
+        $this->assertSame(1, DB::table('social_accounts')->count());
+        $this->assertNotNull(DeleteUserTestUser::query()->find($user->getKey()));
+    }
+
+    /**
+     * Under user billing the user's own row is the billable: a valid Cashier
+     * subscription refuses the deletion and nothing changes.
+     */
+    public function test_under_user_billing_a_subscribed_user_is_refused_and_nothing_changes(): void
+    {
+        MagicStarter::useUserModel(DeleteUserTestBillableUser::class);
+        config([
+            'magic-starter.billing.billable' => 'user',
+        ]);
+
+        $user = DeleteUserTestBillableUser::query()->create([
+            'name' => 'Payer',
+        ]);
+        $team = $this->createTeam($user, 'Personal', personal: true);
+        $user->subscriptions()->create([
+            'type' => 'default',
+            'stripe_id' => 'sub_payer',
+            'stripe_status' => 'trialing',
+            'stripe_price' => 'price_pro',
+            'quantity' => 1,
+            'trial_ends_at' => now()->addWeek(),
+        ]);
+
+        try {
+            $this->app->make(DeletesUsers::class)->delete($user);
+            $this->fail('Expected the user-level billing refusal.');
+        } catch (ValidationException $exception) {
+            $this->assertSame(
+                __('magic-starter::social.subscription_active'),
+                $exception->errors()['user'][0],
+            );
+        }
+
+        $this->assertNotNull(DeleteUserTestUser::query()->find($user->getKey()));
+        $this->assertNotNull(ConcreteTeam::query()->find($team->getKey()));
+    }
+
+    /**
+     * Under user billing a user nothing bills is deleted as usual.
+     */
+    public function test_under_user_billing_an_unsubscribed_user_is_deleted(): void
+    {
+        MagicStarter::useUserModel(DeleteUserTestBillableUser::class);
+        config([
+            'magic-starter.billing.billable' => 'user',
+        ]);
+
+        $user = DeleteUserTestBillableUser::query()->create([
+            'name' => 'Free',
+        ]);
+
+        $this->app->make(DeletesUsers::class)->delete($user);
+
+        $this->assertNull(DeleteUserTestUser::query()->find($user->getKey()));
+    }
+
+    /**
      * A consumer who never installed social login has no table to read; the
      * deletion must not assume one.
      */
@@ -339,6 +469,20 @@ class DeleteUserTest extends TestCase
 class DeleteUserTestUser extends ConcreteUser
 {
     use HasApiTokens;
+}
+
+/**
+ * A user Cashier bills, for the user-billing cases. The foreign key is pinned
+ * because Cashier derives it from the class basename.
+ */
+class DeleteUserTestBillableUser extends DeleteUserTestUser
+{
+    use Billable;
+
+    public function getForeignKey(): string
+    {
+        return 'user_id';
+    }
 }
 
 /**

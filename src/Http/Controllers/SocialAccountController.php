@@ -27,7 +27,8 @@ class SocialAccountController
     use AuthenticatesUsers;
 
     /**
-     * Mint the single-use ticket that turns the next redirect into a connect for the caller.
+     * Mint the single-use ticket that turns the next redirect into a connect for the caller,
+     * once the request has re-confirmed the caller.
      *
      * The ticket travels in the response body only: in a url it would sit in
      * browser history and access logs for as long as it can be redeemed.
@@ -69,7 +70,7 @@ class SocialAccountController
     }
 
     /**
-     * Set the caller's first password; no current password exists to confirm.
+     * Set the caller's first password, once the request has stepped the caller up.
      */
     public function setPassword(SetPasswordRequest $request): JsonResponse
     {

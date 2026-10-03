@@ -20,6 +20,11 @@ use Illuminate\Support\Carbon;
  * Apple refresh token, which Sign in with Apple needs to revoke the grant when
  * an account is deleted; it is encrypted at rest and hidden from serialisation.
  *
+ * `owner_confirmed` is false for a link nobody has shown to belong to the
+ * owner of the user's mailbox (an account created from an address the provider
+ * did not verify); {@see \FlutterSdk\MagicStarter\Social\UnconfirmedLinks}
+ * severs such links once the mailbox owner proves control.
+ *
  * @property string|int $id
  * @property string|int $user_id
  * @property string $provider
@@ -28,6 +33,7 @@ use Illuminate\Support\Carbon;
  * @property string|null $email_at_link
  * @property string|null $client_id
  * @property string|null $refresh_token
+ * @property bool $owner_confirmed
  * @property Carbon|null $revoked_at
  * @property Carbon|null $created_at
  * @property Carbon|null $updated_at
@@ -48,6 +54,7 @@ class SocialAccount extends Model
         'email_at_link',
         'client_id',
         'refresh_token',
+        'owner_confirmed',
         'revoked_at',
     ];
 
@@ -67,6 +74,7 @@ class SocialAccount extends Model
     {
         return [
             'refresh_token' => 'encrypted',
+            'owner_confirmed' => 'boolean',
             'revoked_at' => 'datetime',
         ];
     }

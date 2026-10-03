@@ -302,6 +302,9 @@ class MagicStarterServiceProvider extends ServiceProvider
         // driver it signs users in with rather than leaving every adopter to.
         if (Features::hasSocialLoginFeatures()) {
             Event::listen(SocialiteWasCalled::class, [MicrosoftExtendSocialite::class, 'handle']);
+
+            // 4e. Say once that the Android target can be claimed by another app.
+            $this->warnAboutInterceptableAndroidTarget();
         }
 
         // 5. Console-only: publish config, migrations, and stubs.
@@ -469,6 +472,34 @@ class MagicStarterServiceProvider extends ServiceProvider
             [
                 'reason' => 'store_rail_without_webhook_secret',
                 'path' => config('magic-starter.billing.revenuecat.path', 'webhooks/revenuecat'),
+            ],
+        );
+    }
+
+    /**
+     * Log, once per boot, that the Android social redirect target is not an https App Link.
+     *
+     * Any Android app can register the same custom scheme, and the system may
+     * hand it the browser's return, one-time code included; a verified App
+     * Link can only open the app that owns the domain. The code stays bound to
+     * the starting app's PKCE verifier, so an interceptor cannot redeem it, but
+     * it can still swallow the sign-in. A warning rather than a refusal: the
+     * target works, it is only weaker than it should be.
+     */
+    private function warnAboutInterceptableAndroidTarget(): void
+    {
+        $target = config('magic-starter.social.redirects.android');
+
+        if (! is_string($target) || $target === '' || str_starts_with(strtolower($target), 'https://')) {
+            return;
+        }
+
+        Log::warning(
+            '[magic-starter.social.redirects.android] is not an https App Link, so another app registering '
+            . 'the same scheme can catch the sign-in. Point MAGIC_STARTER_SOCIAL_ANDROID_REDIRECT at a verified '
+            . 'https App Link.',
+            [
+                'target' => $target,
             ],
         );
     }

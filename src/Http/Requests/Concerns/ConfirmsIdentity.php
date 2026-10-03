@@ -4,6 +4,7 @@ namespace FlutterSdk\MagicStarter\Http\Requests\Concerns;
 
 use FlutterSdk\MagicStarter\Social\StepUpConfirmations;
 use FlutterSdk\MagicStarter\Support\TwoFactorAuthenticationProvider;
+use FlutterSdk\MagicStarter\Support\UserPassword;
 use Illuminate\Contracts\Auth\Authenticatable;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Support\Facades\Hash;
@@ -80,7 +81,9 @@ trait ConfirmsIdentity
     ): void {
         // 1. A password account confirms exactly as it always has.
         if ($this->userHasPassword()) {
-            if (! Hash::check((string) $this->input($passwordField), (string) $this->user()?->getAuthPassword())) {
+            $hash = (string) $this->confirmingUser()?->getAuthPassword();
+
+            if (! Hash::check((string) $this->input($passwordField), $hash)) {
                 $validator->errors()->add($passwordField, $mismatchMessage);
             }
 
@@ -105,15 +108,22 @@ trait ConfirmsIdentity
      */
     protected function userHasPassword(): bool
     {
+        $user = $this->confirmingUser();
+
+        return $user !== null && UserPassword::isSet($user);
+    }
+
+    /**
+     * The account whose identity is confirmed.
+     *
+     * The request's user by default; a request whose route reads its caller
+     * from another guard than the default overrides this.
+     */
+    protected function confirmingUser(): ?Authenticatable
+    {
         $user = $this->user();
 
-        if (! $user instanceof Authenticatable) {
-            return false;
-        }
-
-        return method_exists($user, 'hasPassword')
-            ? (bool) $user->hasPassword()
-            : (string) $user->getAuthPassword() !== '';
+        return $user instanceof Authenticatable ? $user : null;
     }
 
     /**
@@ -121,9 +131,9 @@ trait ConfirmsIdentity
      */
     protected function isGuestWithoutPassword(): bool
     {
-        $user = $this->user();
+        $user = $this->confirmingUser();
 
-        return $user instanceof Authenticatable
+        return $user !== null
             && (bool) ($user->is_guest ?? false)
             && ! $this->userHasPassword();
     }
@@ -164,7 +174,7 @@ trait ConfirmsIdentity
     private function confirmStepUp(Validator $validator): void
     {
         /** @var Authenticatable $user */
-        $user = $this->user();
+        $user = $this->confirmingUser();
         $secret = $this->confirmedTwoFactorSecret($user);
 
         if ($secret !== null && $this->filled('code')) {

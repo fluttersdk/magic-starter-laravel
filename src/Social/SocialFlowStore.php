@@ -46,10 +46,16 @@ class SocialFlowStore
     public const INTENT_CONFIRM = 'confirm';
 
     /**
-     * The platforms a flow can return to, each with a configured target.
+     * The platforms a flow can return to, each with its own configured target.
+     *
+     * Android and iOS are apart because they need different targets: any app
+     * can register an Android custom scheme and catch the code, so Android
+     * wants an https App Link, while iOS hands an ASWebAuthenticationSession
+     * callback only to the app that started it.
      */
     public const PLATFORMS = [
-        'native',
+        'ios',
+        'android',
         'web',
     ];
 

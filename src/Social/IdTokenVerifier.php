@@ -3,13 +3,10 @@
 namespace FlutterSdk\MagicStarter\Social;
 
 use DomainException;
-use Firebase\JWT\JWK;
-use Firebase\JWT\JWT;
 use Illuminate\Contracts\Cache\Repository;
 use Illuminate\Http\Client\ConnectionException;
 use Illuminate\Http\Client\RequestException;
 use Illuminate\Support\Facades\Cache;
-use Illuminate\Support\Facades\Http;
 use InvalidArgumentException;
 use Lcobucci\JWT\Exception as LcobucciException;
 use RuntimeException;
@@ -41,17 +38,6 @@ class IdTokenVerifier
         'accounts.google.com',
     ];
 
-    /**
-     * How long Google's key set is trusted before it is fetched again, in seconds.
-     */
-    protected const GOOGLE_JWKS_TTL = 3600;
-
-    /**
-     * Minimum seconds between two unknown-kid refetches, so a stream of tokens
-     * carrying invented key ids cannot turn into a stream of requests to Google.
-     */
-    protected const GOOGLE_REFETCH_COOLDOWN = 60;
-
     protected const CACHE_PREFIX = 'magic-starter:social:';
 
     public function __construct(
@@ -64,6 +50,7 @@ class IdTokenVerifier
      * @throws InvalidIdentityException When the token fails any check or was already used.
      * @throws ConnectionException When Google's key set cannot be reached.
      * @throws RequestException When Google answers the key set request with an error.
+     * @throws RuntimeException When Google answers the key set request without a key set.
      */
     public function google(string $jwt): VerifiedIdentity
     {
@@ -97,10 +84,10 @@ class IdTokenVerifier
         return new VerifiedIdentity(
             provider: 'google',
             providerUserId: $subject,
-            email: $this->optionalString($claims->email ?? null),
+            email: Claims::string($claims->email ?? null),
             emailVerified: $verified === true || $verified === 'true',
-            name: $this->optionalString($claims->name ?? null),
-            avatar: $this->optionalString($claims->picture ?? null),
+            name: Claims::string($claims->name ?? null),
+            avatar: Claims::string($claims->picture ?? null),
         );
     }
 
@@ -113,7 +100,6 @@ class IdTokenVerifier
      * @param  string  $rawNonce  the unhashed nonce; required and accepted once
      *
      * @throws InvalidIdentityException When the token fails any check or the nonce was already used.
-     * @throws RuntimeException When Sign in with Apple is not configured.
      */
     public function apple(string $jwt, string $rawNonce): VerifiedIdentity
     {
@@ -128,10 +114,10 @@ class IdTokenVerifier
             throw new InvalidIdentityException('No Apple bundle id is configured.');
         }
 
-        // 2. Signature, issuer, audience and nonce through the Apple provider.
+        // 2. Signature, issuer, audience and nonce through the Apple provider; verifying signs nothing.
         try {
             $user = $this->apple
-                ->make($bundleId)
+                ->verifier($bundleId)
                 ->userByIdentityToken($jwt, hash('sha256', $rawNonce));
         } catch (InvalidArgumentException|UnexpectedValueException|DomainException|LcobucciException $failure) {
             throw new InvalidIdentityException('The Apple token failed verification.', $failure);
@@ -144,81 +130,31 @@ class IdTokenVerifier
         // 4. Single use per nonce, for as long as a token carrying it could be accepted.
         $this->claimOnce('apple-nonce:' . hash('sha256', $rawNonce), $expiresAt, 'The Apple nonce was already used.');
 
-        $email = $this->optionalString($user->getEmail());
+        $email = Claims::string($user->getEmail());
+        $verified = $claims['email_verified'] ?? null;
 
         return new VerifiedIdentity(
             provider: 'apple',
             providerUserId: $this->subject($user->getId()),
             email: $email,
-            // Apple only releases addresses it has verified, private relay ones included.
-            emailVerified: $email !== null,
-            name: $this->optionalString($user->getName()),
+            // The same rule as the web flow in ProviderIdentity: Apple's own claim, never the bare address.
+            emailVerified: $email !== null && ($verified === true || $verified === 'true'),
+            name: Claims::string($user->getName()),
         );
     }
 
     /**
-     * Decode a Google token, refetching the key set once when it names a key id we have not seen.
+     * Decode a Google token against Google's published keys.
      *
      * @throws InvalidIdentityException When the token is malformed, badly signed or outside its time window.
      */
     protected function decodeGoogle(string $jwt): stdClass
     {
         try {
-            $keys = JWK::parseKeySet($this->googleKeySet());
-            $kid = $this->keyId($jwt);
-
-            if ($kid !== null && ! isset($keys[$kid]) && $this->mayRefetchGoogleKeys()) {
-                $keys = JWK::parseKeySet($this->googleKeySet(fresh: true));
-            }
-
-            return JWT::decode($jwt, $keys);
+            return (new JwksKeySet(self::GOOGLE_JWKS_URL, self::CACHE_PREFIX . 'google-jwks'))->decode($jwt);
         } catch (UnexpectedValueException|DomainException|InvalidArgumentException $failure) {
             throw new InvalidIdentityException('The Google token failed verification.', $failure);
         }
-    }
-
-    /**
-     * Google's key set, from the cache unless a fresh copy is asked for.
-     *
-     * @return array<string, mixed>
-     */
-    protected function googleKeySet(bool $fresh = false): array
-    {
-        $key = self::CACHE_PREFIX . 'google-jwks';
-
-        if ($fresh) {
-            $this->cache()->forget($key);
-        }
-
-        return $this->cache()->remember($key, self::GOOGLE_JWKS_TTL, function (): array {
-            $keySet = Http::acceptJson()->get(self::GOOGLE_JWKS_URL)->throw()->json();
-
-            // A body without keys is not cached: an hour of refusals would follow it.
-            if (! is_array($keySet) || ! is_array($keySet['keys'] ?? null)) {
-                throw new RuntimeException('Google answered the key set request without a key set.');
-            }
-
-            return $keySet;
-        });
-    }
-
-    /**
-     * Whether an unknown key id may trigger a refetch now; at most one per cooldown.
-     */
-    protected function mayRefetchGoogleKeys(): bool
-    {
-        return $this->cache()->add(self::CACHE_PREFIX . 'google-jwks-refetch', true, self::GOOGLE_REFETCH_COOLDOWN);
-    }
-
-    /**
-     * The `kid` header of a compact JWT, read before verification only to pick a key.
-     */
-    protected function keyId(string $jwt): ?string
-    {
-        $header = JWT::jsonDecode(JWT::urlsafeB64Decode(explode('.', $jwt)[0]));
-        $kid = $header->kid ?? null;
-
-        return is_string($kid) ? $kid : null;
     }
 
     /**
@@ -255,11 +191,6 @@ class IdTokenVerifier
         }
 
         return $sub;
-    }
-
-    protected function optionalString(mixed $value): ?string
-    {
-        return is_string($value) && $value !== '' ? $value : null;
     }
 
     /**

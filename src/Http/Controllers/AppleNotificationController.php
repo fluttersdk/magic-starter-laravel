@@ -3,9 +3,11 @@
 namespace FlutterSdk\MagicStarter\Http\Controllers;
 
 use FlutterSdk\MagicStarter\Contracts\SchedulesUserDeletion;
+use FlutterSdk\MagicStarter\Http\Controllers\Concerns\AuthenticatesUsers;
 use FlutterSdk\MagicStarter\MagicStarter;
 use FlutterSdk\MagicStarter\Social\AppleNotificationVerifier;
 use FlutterSdk\MagicStarter\Social\InvalidIdentityException;
+use FlutterSdk\MagicStarter\Traits\HasSocialAccounts;
 use Illuminate\Contracts\Auth\Authenticatable;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Http\JsonResponse;
@@ -33,6 +35,8 @@ use Throwable;
  */
 class AppleNotificationController
 {
+    use AuthenticatesUsers;
+
     /**
      * Apply one Apple notification.
      *
@@ -48,9 +52,7 @@ class AppleNotificationController
         try {
             $notification = $verifier->verify(is_string($payload) ? $payload : '');
         } catch (InvalidIdentityException) {
-            return response()->json([
-                'message' => 'The notification could not be verified.',
-            ], 400);
+            return $this->socialRefusal(InvalidIdentityException::ERROR_CODE, 400);
         }
 
         // 2. A delivery already applied is acknowledged, not applied twice.
@@ -103,16 +105,51 @@ class AppleNotificationController
     }
 
     /**
-     * Stop the link signing anybody in: mark it revoked, drop the refresh token
-     * Apple has already invalidated, and sign the user out everywhere.
+     * Stop the link signing anybody in, and sign the user out everywhere.
      */
     protected function revoke(Model $account): void
+    {
+        $this->markRevoked($account);
+        $this->signOut($account);
+    }
+
+    /**
+     * Revoke the link, then schedule an orphan deletion when it was the user's last way in.
+     *
+     * Scheduling locks the account, which already revokes every token, so the
+     * user is signed out here only when nothing is scheduled.
+     */
+    protected function forget(Model $account): void
+    {
+        $this->markRevoked($account);
+
+        $user = $account->getAttribute('user');
+
+        if ($user instanceof Authenticatable && $this->wasLastWayIn($user, $account)) {
+            app(SchedulesUserDeletion::class)->schedule($user, orphan: true);
+
+            return;
+        }
+
+        $this->signOut($account);
+    }
+
+    /**
+     * Mark the link revoked and drop the refresh token Apple has already invalidated.
+     */
+    protected function markRevoked(Model $account): void
     {
         $account->forceFill([
             'revoked_at' => $account->getAttribute('revoked_at') ?? now(),
             'refresh_token' => null,
         ])->save();
+    }
 
+    /**
+     * Revoke every Sanctum token of the link's user.
+     */
+    protected function signOut(Model $account): void
+    {
         $user = $account->getAttribute('user');
 
         if ($user instanceof Authenticatable) {
@@ -121,25 +158,9 @@ class AppleNotificationController
     }
 
     /**
-     * Revoke the link, then schedule an orphan deletion when it was the user's last way in.
-     */
-    protected function forget(Model $account): void
-    {
-        $this->revoke($account);
-
-        $user = $account->getAttribute('user');
-
-        if (! $user instanceof Authenticatable || ! $this->wasLastWayIn($user, $account)) {
-            return;
-        }
-
-        app(SchedulesUserDeletion::class)->schedule($user, orphan: true);
-    }
-
-    /**
      * Whether the user has no password and no other active provider link.
      *
-     * A user model without {@see \FlutterSdk\MagicStarter\Traits\HasSocialAccounts}
+     * A user model without {@see HasSocialAccounts}
      * cannot say whether it has a password, so it is treated as having one: a
      * wrong answer here would schedule a deletion nobody asked for.
      */

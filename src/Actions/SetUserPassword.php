@@ -5,6 +5,7 @@ namespace FlutterSdk\MagicStarter\Actions;
 use FlutterSdk\MagicStarter\Contracts\SetsUserPasswords;
 use FlutterSdk\MagicStarter\MagicStarter;
 use FlutterSdk\MagicStarter\Social\SocialSignInRefused;
+use FlutterSdk\MagicStarter\Support\UserPassword;
 use Illuminate\Contracts\Auth\Authenticatable;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Hash;
@@ -40,7 +41,7 @@ class SetUserPassword implements SetsUserPasswords
                 ->lockForUpdate()
                 ->firstOrFail();
 
-            if ($locked->hasPassword()) {
+            if (UserPassword::isSet($locked)) {
                 throw new SocialSignInRefused('password_already_set');
             }
 

@@ -6,8 +6,8 @@ use FlutterSdk\MagicStarter\Contracts\DeletesTeams;
 use FlutterSdk\MagicStarter\Contracts\DeletesUsers;
 use FlutterSdk\MagicStarter\Models\SocialAccount;
 use FlutterSdk\MagicStarter\Social\AppleProviderFactory;
+use FlutterSdk\MagicStarter\Support\OwnedTeams;
 use Illuminate\Contracts\Auth\Authenticatable;
-use Illuminate\Database\Eloquent\Collection;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Schema;
@@ -25,8 +25,10 @@ use Illuminate\Validation\ValidationException;
  * its owner; the purge hands it on or un-schedules the account first, and this
  * action refuses if neither happened.
  *
- * Everything runs in one transaction, so a team refused half way (its billing
- * guard) rolls back the teams already deleted and leaves the account whole.
+ * Everything in the database runs in one transaction, so a team refused half
+ * way (its billing guard) rolls back the teams already deleted and leaves the
+ * account whole. The Apple revocations and the profile photo cannot be rolled
+ * back, so they run only after that transaction commits.
  */
 class DeleteUser implements DeletesUsers
 {
@@ -41,17 +43,15 @@ class DeleteUser implements DeletesUsers
      * @param  Authenticatable  $user  The user to delete.
      *
      * @throws ValidationException When the user still owns a team another member
-     *                             belongs to, or `DeletesTeams` refuses a solo team.
+     *                             belongs to, a subscription bills the user, or
+     *                             `DeletesTeams` refuses a solo team.
      */
     public function delete(Authenticatable $user): void
     {
-        DB::transaction(function () use ($user): void {
-            // 1. A shared team would take other people's data with it.
-            if (self::sharedOwnedTeams($user)->isNotEmpty()) {
-                throw ValidationException::withMessages([
-                    'user' => __('magic-starter::social.owns_shared_teams'),
-                ]);
-            }
+        [$appleAccounts, $photoPath] = DB::transaction(function () use ($user): array {
+            // 1. A shared team would take other people's data with it, and a
+            //    subscription on the user's own row would keep charging nobody.
+            $this->refuseUnlessDeletable($user);
 
             // 2. Through the contract, so the billing guards run on every team.
             if (method_exists($user, 'ownedTeams')) {
@@ -65,72 +65,89 @@ class DeleteUser implements DeletesUsers
                 $user->teams()->detach();
             }
 
-            // 4. Apple review requires the grant revoked; the factory reports a
-            //    failure instead of throwing, so it cannot block the deletion.
-            $this->deleteSocialAccounts($user);
+            // 4. The linked identities, keeping the Apple rows to revoke later.
+            $appleAccounts = $this->deleteSocialAccounts($user);
 
             // 5. The account itself.
             $user->tokens()->delete();
 
-            if (! empty($user->profile_photo_path)) {
-                Storage::disk(config('magic-starter.profile_photo_disk', 'public'))
-                    ->delete((string) $user->profile_photo_path);
-            }
+            $photoPath = empty($user->profile_photo_path) ? null : (string) $user->profile_photo_path;
 
             $user->delete();
+
+            return [
+                $appleAccounts,
+                $photoPath,
+            ];
+        });
+
+        // 6. Neither can be rolled back, so both wait for the OUTERMOST commit:
+        //    the purge runs this inside its own transaction, and a grant revoked
+        //    for an account that then survives cannot be restored. Apple review
+        //    requires the revocation; the factory reports a failure instead of
+        //    throwing, so it cannot undo the deletion.
+        DB::afterCommit(function () use ($appleAccounts, $photoPath): void {
+            foreach ($appleAccounts as $account) {
+                $this->apple->revoke($account);
+            }
+
+            if ($photoPath !== null) {
+                Storage::disk(config('magic-starter.profile_photo_disk', 'public'))->delete($photoPath);
+            }
         });
     }
 
     /**
-     * The teams this user owns that at least one other person belongs to.
+     * Refuse a user who still owns a shared team or whom a subscription bills.
      *
-     * Shared by the scheduler (which refuses), the purge (which un-schedules or
-     * hands the team on) and this action (which refuses), so the three cannot
-     * disagree about what "shared" means. Membership is the `team_user` pivot;
-     * a pending invitation is not a member.
-     *
-     * @return Collection<int, Model> empty for a user model without teams
+     * @throws ValidationException
      */
-    public static function sharedOwnedTeams(Authenticatable $user): Collection
+    protected function refuseUnlessDeletable(Authenticatable $user): void
     {
-        if (! method_exists($user, 'ownedTeams')) {
-            return new Collection;
+        if (OwnedTeams::shared($user)->isNotEmpty()) {
+            throw ValidationException::withMessages([
+                'user' => __('magic-starter::social.owns_shared_teams'),
+            ]);
         }
 
-        $userKey = $user->getAuthIdentifier();
-
-        return $user->ownedTeams()
-            ->whereHas(
-                'users',
-                fn ($members) => $members->where('team_user.user_id', '!=', $userKey),
-            )
-            ->get();
+        if ($user instanceof Model && OwnedTeams::isBilling($user)) {
+            throw ValidationException::withMessages([
+                'user' => __('magic-starter::social.subscription_active'),
+            ]);
+        }
     }
 
     /**
-     * Revoke each Apple grant, then delete every linked identity row.
+     * Delete every linked identity row and return the Apple ones, whose grants
+     * are revoked once the deletion has committed.
      *
      * Read only when the table exists: an application that never installed
      * social login has no `social_accounts` table, and querying it would fail.
+     *
+     * @return list<SocialAccount>
      */
-    protected function deleteSocialAccounts(Authenticatable $user): void
+    protected function deleteSocialAccounts(Authenticatable $user): array
     {
         if (! method_exists($user, 'socialAccounts')) {
-            return;
+            return [];
         }
 
         $relation = $user->socialAccounts();
 
         if (! Schema::hasTable($relation->getRelated()->getTable())) {
-            return;
+            return [];
         }
+
+        $appleAccounts = [];
 
         foreach ($relation->get() as $account) {
             if ($account instanceof SocialAccount && $account->provider === 'apple') {
-                $this->apple->revoke($account);
+                $appleAccounts[] = $account;
             }
         }
 
         $relation->delete();
+
+        return $appleAccounts;
     }
 }

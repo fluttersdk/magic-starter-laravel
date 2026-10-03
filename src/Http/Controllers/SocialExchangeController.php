@@ -8,7 +8,6 @@ use FlutterSdk\MagicStarter\Http\Requests\SocialExchangeRequest;
 use FlutterSdk\MagicStarter\MagicStarter;
 use FlutterSdk\MagicStarter\Social\SocialFlowStore;
 use FlutterSdk\MagicStarter\Social\SocialSignInRefused;
-use FlutterSdk\MagicStarter\Social\StepUpConfirmations;
 use FlutterSdk\MagicStarter\Social\VerifiedIdentity;
 use Illuminate\Contracts\Auth\Authenticatable;
 use Illuminate\Http\JsonResponse;
@@ -60,7 +59,7 @@ class SocialExchangeController
 
         return $outcome['intent'] === SocialFlowStore::INTENT_CONNECT
             ? $this->connect($bearer, $identity, $outcome)
-            : $this->confirm($bearer, $identity);
+            : $this->confirmSocialIdentity($bearer, $identity);
     }
 
     /**
@@ -91,36 +90,5 @@ class SocialExchangeController
                 'email' => $account->getAttribute('email_at_link'),
             ],
         ]);
-    }
-
-    /**
-     * Mint a step-up confirmation when the identity is linked to the caller.
-     */
-    private function confirm(Authenticatable $bearer, VerifiedIdentity $identity): JsonResponse
-    {
-        $linked = MagicStarter::socialAccountModel()::query()
-            ->where('provider', $identity->provider)
-            ->where('provider_user_id', $identity->providerUserId)
-            ->where('user_id', $bearer->getAuthIdentifier())
-            // A link the provider revoked no longer proves the caller is its owner.
-            ->whereNull('revoked_at')
-            ->exists();
-
-        if (! $linked) {
-            return $this->socialRefusal('invalid_identity', 403);
-        }
-
-        return response()->json([
-            'data' => [
-                'confirmation_token' => app(StepUpConfirmations::class)->mint($bearer),
-            ],
-        ]);
-    }
-
-    private function unauthenticated(): JsonResponse
-    {
-        return response()->json([
-            'message' => __('Unauthenticated.'),
-        ], 401);
     }
 }

@@ -3,30 +3,22 @@
 namespace FlutterSdk\MagicStarter\Http\Requests;
 
 use DateTimeZone;
+use FlutterSdk\MagicStarter\Http\Requests\Concerns\NormalizesEmailInput;
 use FlutterSdk\MagicStarter\Rules\E164Phone;
 use Illuminate\Foundation\Http\FormRequest;
-use Illuminate\Support\Str;
 use Illuminate\Validation\Rule;
 use Illuminate\Validation\Rules\Password;
 
 class UpdateProfileRequest extends FormRequest
 {
+    use NormalizesEmailInput;
+
     /**
      * Determine if the user is authorized to make this request.
      */
     public function authorize(): bool
     {
         return true;
-    }
-
-    /**
-     * Lower-case the email before validation so `unique` and every lookup compare normalized values.
-     */
-    protected function prepareForValidation(): void
-    {
-        if (is_string($this->input('email'))) {
-            $this->merge(['email' => Str::lower($this->input('email'))]);
-        }
     }
 
     /**

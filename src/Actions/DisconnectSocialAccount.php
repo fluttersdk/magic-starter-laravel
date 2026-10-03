@@ -7,6 +7,7 @@ use FlutterSdk\MagicStarter\MagicStarter;
 use FlutterSdk\MagicStarter\Models\SocialAccount;
 use FlutterSdk\MagicStarter\Social\AppleProviderFactory;
 use FlutterSdk\MagicStarter\Social\SocialSignInRefused;
+use FlutterSdk\MagicStarter\Support\UserPassword;
 use Illuminate\Contracts\Auth\Authenticatable;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Support\Facades\DB;
@@ -53,7 +54,7 @@ class DisconnectSocialAccount implements DisconnectsSocialAccounts
             //    line, whatever the client chose to show.
             $removesAMethod = $account->getAttribute('revoked_at') === null;
 
-            if ($removesAMethod && ! $locked->hasPassword() && ! $this->holdsAnotherActiveAccount($account)) {
+            if ($removesAMethod && ! UserPassword::isSet($locked) && ! $this->holdsAnotherActiveAccount($account)) {
                 throw new SocialSignInRefused('last_login_method');
             }
 

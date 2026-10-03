@@ -6,17 +6,19 @@ use FlutterSdk\MagicStarter\Contracts\ConnectsSocialAccounts;
 use FlutterSdk\MagicStarter\Contracts\ResolvesSocialUsers;
 use FlutterSdk\MagicStarter\Http\Controllers\Concerns\AuthenticatesUsers;
 use FlutterSdk\MagicStarter\Http\Requests\SocialTokenRequest;
-use FlutterSdk\MagicStarter\MagicStarter;
 use FlutterSdk\MagicStarter\Social\AppleProviderFactory;
 use FlutterSdk\MagicStarter\Social\IdTokenVerifier;
 use FlutterSdk\MagicStarter\Social\InvalidIdentityException;
+use FlutterSdk\MagicStarter\Social\KeySetUnavailableException;
 use FlutterSdk\MagicStarter\Social\ProviderIdentity;
 use FlutterSdk\MagicStarter\Social\SocialFlowStore;
 use FlutterSdk\MagicStarter\Social\SocialSignInRefused;
-use FlutterSdk\MagicStarter\Social\StepUpConfirmations;
 use FlutterSdk\MagicStarter\Social\VerifiedIdentity;
+use GuzzleHttp\Exception\GuzzleException;
 use Illuminate\Contracts\Auth\Authenticatable;
 use Illuminate\Database\Eloquent\Model;
+use Illuminate\Http\Client\ConnectionException;
+use Illuminate\Http\Client\RequestException;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
@@ -32,6 +34,8 @@ use Throwable;
  * Apple's nonce and that it was never presented before. Apple may add its
  * one-time authorization code: redeemed for the refresh token that account
  * deletion revokes, and best effort, because a sign-in must not depend on it.
+ * It is redeemed only once the sign-in or connect has been accepted, so a
+ * refused one never mints a refresh token nobody stores.
  *
  * A sign-in ends like every other sign-in, in a 2FA challenge when the account
  * confirmed one. A connect and a confirm need the caller's bearer, read here
@@ -67,32 +71,27 @@ class SocialTokenController
             return $this->unauthenticated();
         }
 
-        // 3. Verify. A key set that cannot be fetched is an outage, not a verdict on the token.
+        // 3. Verify. A provider that cannot be reached is an outage, not a verdict on the
+        //    token; a configuration or programming error is neither, and propagates.
         try {
             $identity = $this->verify($request, $provider);
         } catch (InvalidIdentityException $exception) {
             return $this->invalidIdentity($exception);
-        } catch (Throwable $exception) {
+        } catch (ConnectionException|RequestException|GuzzleException|KeySetUnavailableException $exception) {
             report($exception);
 
             return $this->providerUnavailable($exception);
         }
 
-        // 4. Only a sign-in and a connect keep a link, so only they redeem Apple's code.
-        $refreshToken = $provider === 'apple' && $intent !== SocialFlowStore::INTENT_CONFIRM
-            ? $this->appleRefreshToken($request->validated('authorization_code'))
-            : null;
-        $clientId = $refreshToken === null ? null : $this->appleBundleId();
-
-        // 5. Finish the flow; only a sign-in has no bearer by now.
+        // 4. Finish the flow; only a sign-in has no bearer by now.
         try {
             if ($bearer === null) {
-                return $this->signIn($request, $identity, $refreshToken, $clientId);
+                return $this->signIn($request, $identity);
             }
 
             return $intent === SocialFlowStore::INTENT_CONNECT
-                ? $this->connect($bearer, $identity, $refreshToken, $clientId)
-                : $this->confirm($bearer, $identity);
+                ? $this->connect($request, $bearer, $identity)
+                : $this->confirmSocialIdentity($bearer, $identity);
         } catch (SocialSignInRefused $refusal) {
             return $this->socialRefusal($refusal->code(), 409);
         }
@@ -102,6 +101,10 @@ class SocialTokenController
      * Verify the token against the provider's published keys.
      *
      * @throws InvalidIdentityException When the token fails any check or was already used.
+     * @throws ConnectionException When Google's key set cannot be reached.
+     * @throws RequestException When Google answers the key set request with an error.
+     * @throws GuzzleException When Apple's key set cannot be fetched.
+     * @throws KeySetUnavailableException When a provider answers without a key set.
      */
     private function verify(SocialTokenRequest $request, string $provider): VerifiedIdentity
     {
@@ -125,19 +128,13 @@ class SocialTokenController
      * @throws SocialSignInRefused When the identity may not sign in.
      * @throws LogicException When a rebound resolver answers with a user that is not an Eloquent model.
      */
-    private function signIn(
-        Request $request,
-        VerifiedIdentity $identity,
-        ?string $refreshToken,
-        ?string $clientId,
-    ): JsonResponse {
+    private function signIn(SocialTokenRequest $request, VerifiedIdentity $identity): JsonResponse
+    {
         $user = app(ResolvesSocialUsers::class)->resolve($identity, $request);
 
         // Apple's refresh token is what account deletion revokes, so a sign-in
-        // keeps it on the link; connect() refreshes the row it just resolved.
-        if ($refreshToken !== null) {
-            app(ConnectsSocialAccounts::class)->connect($user, $identity, $refreshToken, $clientId);
-        }
+        // keeps it on the link the resolver just accepted.
+        $this->keepAppleGrant($request, $user, $identity);
 
         // The token and 2FA response read Eloquent state the Authenticatable contract does not promise.
         if (! $user instanceof Model) {
@@ -153,12 +150,12 @@ class SocialTokenController
      * @throws SocialSignInRefused When another user owns the identity or the caller holds another of that provider.
      */
     private function connect(
+        SocialTokenRequest $request,
         Authenticatable $bearer,
         VerifiedIdentity $identity,
-        ?string $refreshToken,
-        ?string $clientId,
     ): JsonResponse {
-        $account = app(ConnectsSocialAccounts::class)->connect($bearer, $identity, $refreshToken, $clientId);
+        $account = app(ConnectsSocialAccounts::class)->connect($bearer, $identity);
+        $account = $this->keepAppleGrant($request, $bearer, $identity) ?? $account;
 
         return response()->json([
             'data' => [
@@ -169,27 +166,31 @@ class SocialTokenController
     }
 
     /**
-     * Mint a step-up confirmation when the identity is linked to the caller.
+     * Redeem Apple's code and keep its refresh token on the user's accepted link.
+     *
+     * Called only after the link was accepted, so the code is never spent on a
+     * refused flow; re-connecting the same identity refreshes that link.
+     *
+     * @return Model|null the refreshed link, or null when nothing was kept
+     *
+     * @throws SocialSignInRefused When the link was taken between the accept and the refresh.
      */
-    private function confirm(Authenticatable $bearer, VerifiedIdentity $identity): JsonResponse
-    {
-        $linked = MagicStarter::socialAccountModel()::query()
-            ->where('provider', $identity->provider)
-            ->where('provider_user_id', $identity->providerUserId)
-            ->where('user_id', $bearer->getAuthIdentifier())
-            // A link the provider revoked no longer proves the caller is its owner.
-            ->whereNull('revoked_at')
-            ->exists();
-
-        if (! $linked) {
-            return $this->socialRefusal('invalid_identity', 403);
+    private function keepAppleGrant(
+        SocialTokenRequest $request,
+        Authenticatable $user,
+        VerifiedIdentity $identity,
+    ): ?Model {
+        if ($identity->provider !== 'apple') {
+            return null;
         }
 
-        return response()->json([
-            'data' => [
-                'confirmation_token' => app(StepUpConfirmations::class)->mint($bearer),
-            ],
-        ]);
+        $refreshToken = $this->appleRefreshToken($request->validated('authorization_code'));
+
+        if ($refreshToken === null) {
+            return null;
+        }
+
+        return app(ConnectsSocialAccounts::class)->connect($user, $identity, $refreshToken, $this->appleBundleId());
     }
 
     /**
@@ -267,12 +268,5 @@ class SocialTokenController
         }
 
         return response()->json($payload, 503);
-    }
-
-    private function unauthenticated(): JsonResponse
-    {
-        return response()->json([
-            'message' => __('Unauthenticated.'),
-        ], 401);
     }
 }

@@ -122,6 +122,62 @@ class AppleProviderFactoryTest extends TestCase
         $this->assertCount(2, $history);
     }
 
+    /**
+     * Apple accepts `redirect_uri` on the token request only when the authorization request carried one,
+     * and a native authorization carries none.
+     */
+    public function test_a_code_exchange_without_a_redirect_sends_no_redirect_uri(): void
+    {
+        $history = [];
+        $factory = $this->app->make(AppleProviderFactory::class);
+        $factory->setHttpClient($this->mockClient([
+            new Response(200, [], '{"refresh_token":"r"}'),
+        ], $history));
+
+        $factory->make(self::BUNDLE_ID)->getAccessTokenResponse('native-code');
+
+        parse_str((string) $history[0]['request']->getBody(), $form);
+        $this->assertSame('authorization_code', $form['grant_type']);
+        $this->assertSame('native-code', $form['code']);
+        $this->assertSame(self::BUNDLE_ID, $form['client_id']);
+        $this->assertArrayNotHasKey('redirect_uri', $form);
+    }
+
+    public function test_a_code_exchange_with_a_redirect_sends_it(): void
+    {
+        $history = [];
+        $factory = $this->app->make(AppleProviderFactory::class);
+        $factory->setHttpClient($this->mockClient([
+            new Response(200, [], '{"refresh_token":"r"}'),
+        ], $history));
+
+        $factory->make(self::SERVICES_ID, 'https://api.example.test/callback')->getAccessTokenResponse('web-code');
+
+        parse_str((string) $history[0]['request']->getBody(), $form);
+        $this->assertSame('https://api.example.test/callback', $form['redirect_uri']);
+    }
+
+    public function test_a_verifier_is_built_without_the_signing_key(): void
+    {
+        config([
+            'magic-starter.social.apple' => [
+                'bundle_id' => self::BUNDLE_ID,
+            ],
+            'services.apple.client_secret' => 'untouched',
+        ]);
+
+        $provider = $this->app->make(AppleProviderFactory::class)->verifier(self::BUNDLE_ID);
+
+        $this->assertSame('untouched', config('services.apple.client_secret'));
+        $this->assertSame(
+            [
+                self::BUNDLE_ID,
+                self::SERVICES_ID,
+            ],
+            (fn (): array => $this->audiences())->call($provider),
+        );
+    }
+
     public function test_revoke_posts_the_stored_refresh_token_as_the_rows_client(): void
     {
         $history = [];

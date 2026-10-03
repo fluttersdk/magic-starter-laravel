@@ -2,12 +2,12 @@
 
 namespace FlutterSdk\MagicStarter\Console;
 
-use FlutterSdk\MagicStarter\Actions\DeleteUser;
-use FlutterSdk\MagicStarter\Actions\ScheduleUserDeletion;
+use Carbon\CarbonInterface;
 use FlutterSdk\MagicStarter\Contracts\DeletesUsers;
 use FlutterSdk\MagicStarter\Contracts\UpdatesTeamMemberRoles;
 use FlutterSdk\MagicStarter\Enums\Role;
 use FlutterSdk\MagicStarter\MagicStarter;
+use FlutterSdk\MagicStarter\Support\OwnedTeams;
 use Illuminate\Console\Command;
 use Illuminate\Contracts\Auth\Authenticatable;
 use Illuminate\Database\Eloquent\Collection;
@@ -25,11 +25,13 @@ use Throwable;
  * Everything the scheduler checked is checked again here, because the grace
  * period is long enough for it to change:
  *
+ * - an account whose schedule was cleared since the walk loaded it (a sign-in)
+ *   is left alone, read again under a row lock;
  * - a user who asked, and whose team has since gained a member, is un-scheduled
  *   and reported, since deleting them would take that member's team with them;
- * - an account owning a team a store or Cashier is still billing is HELD and
- *   reported, since deleting the team strands the charge and this package never
- *   cancels a subscription for anyone;
+ * - an account owning a team a store or Cashier is still billing, or billed
+ *   itself under user billing, is HELD and reported, since deleting it strands
+ *   the charge and this package never cancels a subscription for anyone;
  * - an orphan's shared teams are handed on, to the earliest-joined admin and
  *   else the earliest-joined member, who becomes owner;
  * - the rest are deleted through {@see DeletesUsers}.
@@ -73,12 +75,14 @@ class PurgeDeletedUsersCommand extends Command
             return self::SUCCESS;
         }
 
-        $cutoff = now()->subDays(max(0, (int) config('magic-starter.account_deletion.grace_days', 30)));
+        $graceDays = max(0, (int) config('magic-starter.account_deletion.grace_days', 30));
+        $cutoff = now()->subDays($graceDays);
 
         $tally = [
             'deleted' => 0,
             'held' => 0,
             'unscheduled' => 0,
+            'cancelled' => 0,
             'failed' => 0,
         ];
 
@@ -90,20 +94,25 @@ class PurgeDeletedUsersCommand extends Command
 
         foreach ($due as $user) {
             try {
-                $tally[$this->purge($user, $deleter, $roles)]++;
+                $tally[$this->purge($user, $cutoff, $deleter, $roles)]++;
             } catch (Throwable $failure) {
                 report($failure);
-                $this->components->error(sprintf('User [%s] could not be purged: %s', $user->getKey(), $failure->getMessage()));
+                $this->components->error(sprintf(
+                    'User [%s] could not be purged: %s',
+                    $user->getKey(),
+                    $failure->getMessage(),
+                ));
                 $tally['failed']++;
             }
         }
 
         // 3. One line a person reading the run can act on.
         $this->components->info(sprintf(
-            'Purge finished: %d deleted, %d held, %d un-scheduled, %d failed.',
+            'Purge finished: %d deleted, %d held, %d un-scheduled, %d cancelled, %d failed.',
             $tally['deleted'],
             $tally['held'],
             $tally['unscheduled'],
+            $tally['cancelled'],
             $tally['failed'],
         ));
 
@@ -113,58 +122,94 @@ class PurgeDeletedUsersCommand extends Command
     /**
      * Decide one account and carry the decision out.
      *
-     * @return 'deleted'|'held'|'unscheduled'
+     * The walk hands over a row loaded before any of this ran, so the decision
+     * is made on the row read again under a lock: a sign-in that cleared the
+     * schedule in between is honoured, and one landing after waits for this
+     * transaction rather than racing the deletion.
+     *
+     * @param  Model  $loaded  the row as the walk loaded it, possibly stale
+     * @param  CarbonInterface  $cutoff  the latest schedule date still due
+     * @return 'deleted'|'held'|'unscheduled'|'cancelled'
      */
-    protected function purge(Model $user, DeletesUsers $deleter, UpdatesTeamMemberRoles $roles): string
-    {
-        if (! $user instanceof Authenticatable) {
+    protected function purge(
+        Model $loaded,
+        CarbonInterface $cutoff,
+        DeletesUsers $deleter,
+        UpdatesTeamMemberRoles $roles,
+    ): string {
+        if (! $loaded instanceof Authenticatable) {
             throw new RuntimeException(sprintf(
                 'The configured user model [%s] must implement %s to be deleted.',
-                $user::class,
+                $loaded::class,
                 Authenticatable::class,
             ));
         }
 
-        $orphan = $user->getAttribute('orphaned_at') !== null;
-        $shared = DeleteUser::sharedOwnedTeams($user);
+        return DB::transaction(function () use ($loaded, $cutoff, $deleter, $roles): string {
+            // 1. Only a row that is still due; a cleared schedule means the user
+            //    took the request back after the walk loaded them.
+            $user = $loaded->newQuery()
+                ->whereKey($loaded->getKey())
+                ->whereNotNull('deletion_scheduled_at')
+                ->where('deletion_scheduled_at', '<=', $cutoff)
+                ->lockForUpdate()
+                ->first();
 
-        // 1. The user can still resolve a shared team themselves, and deleting
-        //    it would take its other members' data with it.
-        if (! $orphan && $shared->isNotEmpty()) {
-            $user->forceFill([
-                'deletion_scheduled_at' => null,
-            ])->save();
+            if (! $user instanceof Authenticatable) {
+                return 'cancelled';
+            }
 
-            $this->reportSkipped($user, 'un-scheduled: owns a team that gained a member during the grace period', $shared);
+            $orphan = $user->getAttribute('orphaned_at') !== null;
+            $shared = OwnedTeams::shared($user);
 
-            return 'unscheduled';
-        }
+            // 2. The user can still resolve a shared team themselves, and deleting
+            //    it would take its other members' data with it.
+            if (! $orphan && $shared->isNotEmpty()) {
+                $user->forceFill([
+                    'deletion_scheduled_at' => null,
+                ])->save();
 
-        // 2. Before any hand-on, so a held account is left exactly as it was.
-        $billing = ScheduleUserDeletion::billingOwnedTeams($user);
+                $this->reportSkipped(
+                    $user,
+                    'un-scheduled: owns a team that gained a member during the grace period',
+                    $shared,
+                );
 
-        if ($billing->isNotEmpty()) {
-            $this->reportSkipped($user, 'held: owns a team a subscription is still billing', $billing);
+                return 'unscheduled';
+            }
 
-            return 'held';
-        }
+            // 3. Before any hand-on, so a held account is left exactly as it was.
+            //    An orphan is held too: nobody may delete a paying subscriber.
+            $billing = OwnedTeams::billing($user);
 
-        // 3. Hand on and delete together, so a failed deletion does not leave an
-        //    orphan's teams transferred to someone else.
-        DB::transaction(function () use ($user, $shared, $deleter, $roles): void {
+            if ($billing->isNotEmpty()) {
+                $this->reportSkipped($user, 'held: owns a team a subscription is still billing', $billing);
+
+                return 'held';
+            }
+
+            if (OwnedTeams::isBilling($user)) {
+                $this->reportSkipped($user, 'held: a subscription is still billing the account', new Collection);
+
+                return 'held';
+            }
+
+            // 4. Hand on and delete together, so a failed deletion does not leave
+            //    an orphan's teams transferred to someone else.
             foreach ($shared as $team) {
                 $this->handOn($team, $user, $roles);
             }
 
             $deleter->delete($user);
-        });
 
-        return 'deleted';
+            return 'deleted';
+        });
     }
 
     /**
      * Make the earliest-joined admin, else the earliest-joined member, the
-     * team's owner.
+     * team's owner; the membership key breaks a tie on join time, so the heir
+     * never depends on the database's scan order.
      *
      * Ownership is `teams.user_id` plus the `owner` role on the pivot, the pair
      * the package writes when it creates a team; the role goes through
@@ -179,6 +224,7 @@ class PurgeDeletedUsersCommand extends Command
             ->where('team_id', $team->getKey())
             ->where('user_id', '!=', $owner->getKey())
             ->orderBy('created_at')
+            ->orderBy('id')
             ->get();
 
         $heirship = $memberships->first(
@@ -198,13 +244,18 @@ class PurgeDeletedUsersCommand extends Command
     /**
      * Print and log an account the run did not delete, with the teams behind it.
      *
-     * @param  Collection<int, Model>  $teams
+     * @param  Collection<int, Model>  $teams  empty when the account itself is the reason
      */
     protected function reportSkipped(Model $user, string $outcome, Collection $teams): void
     {
         $teamIds = $teams->map(fn (Model $team): string => (string) $team->getKey())->all();
 
-        $this->components->warn(sprintf('User [%s] %s (teams: %s).', $user->getKey(), $outcome, implode(', ', $teamIds)));
+        $this->components->warn(sprintf(
+            'User [%s] %s%s.',
+            $user->getKey(),
+            $outcome,
+            $teamIds === [] ? '' : ' (teams: ' . implode(', ', $teamIds) . ')',
+        ));
 
         Log::warning('An account due for deletion was not purged.', [
             'user_id' => $user->getKey(),

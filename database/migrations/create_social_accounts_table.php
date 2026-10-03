@@ -19,6 +19,7 @@ return new class extends Migration
                 $table->string('email_at_link', 255)->nullable();
                 $table->string('client_id', 255)->nullable();
                 $table->text('refresh_token')->nullable();
+                $table->boolean('owner_confirmed')->default(true);
                 $table->timestamp('revoked_at')->nullable();
                 $table->timestamps();
 

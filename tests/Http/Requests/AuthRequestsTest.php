@@ -292,7 +292,7 @@ final class AuthRequestsTest extends TestCase
     public function test_social_redirect_with_both_a_ticket_and_the_confirm_intent_returns_422(): void
     {
         $this->getJson('/auth/social/github/redirect?' . http_build_query([
-            'platform' => 'native',
+            'platform' => 'ios',
             'intent' => 'confirm',
             'ticket' => 't',
             'challenge' => str_repeat('a', 43),

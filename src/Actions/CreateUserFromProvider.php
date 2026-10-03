@@ -49,7 +49,9 @@ class CreateUserFromProvider implements CreatesUsersFromProvider
 
             // 2. Link the identity. The unique (provider, provider_user_id) index
             //    is what stops a concurrent first sign-in from linking twice.
-            $this->connector->connect($user, $identity);
+            //    The link is unconfirmed when the provider did not vouch for the
+            //    address, so a later proof of mailbox control can sever it.
+            $this->connector->connect($user, $identity, ownerConfirmed: $identity->emailVerified);
 
             // 3. Let the package's listeners (the personal team) and the
             //    framework's (the verification mail) see the new account.

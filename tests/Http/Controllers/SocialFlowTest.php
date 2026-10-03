@@ -8,7 +8,6 @@ use FlutterSdk\MagicStarter\Features;
 use FlutterSdk\MagicStarter\MagicStarter;
 use FlutterSdk\MagicStarter\MagicStarterServiceProvider;
 use FlutterSdk\MagicStarter\Models\SocialAccount;
-use FlutterSdk\MagicStarter\Social\AppleClientSecret;
 use FlutterSdk\MagicStarter\Social\AppleProviderFactory;
 use FlutterSdk\MagicStarter\Social\SocialFlowStore;
 use FlutterSdk\MagicStarter\Social\StepUpConfirmations;
@@ -35,9 +34,7 @@ use Laravel\Sanctum\SanctumServiceProvider;
 use Laravel\Socialite\Facades\Socialite;
 use Laravel\Socialite\SocialiteServiceProvider;
 use Laravel\Socialite\Two\GoogleProvider;
-use Laravel\Socialite\Two\InvalidStateException;
 use Psr\Http\Message\RequestInterface;
-use SocialiteProviders\Apple\Provider as AppleProvider;
 use SocialiteProviders\Manager\Config;
 use SocialiteProviders\Microsoft\Provider as MicrosoftProvider;
 
@@ -46,21 +43,46 @@ use SocialiteProviders\Microsoft\Provider as MicrosoftProvider;
  *
  * The provider legs run against {@see FakeOAuthServer} on a real socket: the
  * test follows the redirect to the harness the way a browser would, and the
- * harness sends the browser back to the fixed callback route. Only the
- * provider CLASSES are test doubles (pointed at the harness); every request
- * the package makes to them is real, which is how the harness log can prove
- * what was sent.
+ * harness sends the browser back to the fixed callback route. GitHub and
+ * Microsoft use provider classes pointed at the harness; Apple runs through
+ * the production AppleProviderFactory with only its transport redirected (see
+ * {@see self::appleHandler()} for the one leg still doubled). Every request
+ * the package makes is real, which is how the logs can prove what was sent.
  *
  * Every refusal asserts that no token came back, because a refused flow that
  * still signs someone in is the failure this suite exists to catch.
  */
 class SocialFlowTest extends TestCase
 {
-    private const NATIVE_TARGET = 'com.example.app://auth/social';
+    private const IOS_TARGET = 'com.example.app://auth/social';
+
+    private const ANDROID_TARGET = 'https://app.example.test/android/auth/social';
 
     private const WEB_TARGET = 'https://app.example.test/auth/social?from=web';
 
     private FakeOAuthServer $harness;
+
+    /**
+     * The public half of the key production signs Apple's client secret with.
+     */
+    private string $applePublicPem;
+
+    /**
+     * The nonce the production authorize url sent to Apple, echoed into the id_token the token leg answers with.
+     */
+    private string $appleNonce = '';
+
+    /**
+     * The issuer the doubled token leg signs into its id_token.
+     */
+    private string $appleIssuer = 'https://appleid.apple.com';
+
+    /**
+     * Every request production sent to Apple's token endpoint.
+     *
+     * @var list<RequestInterface>
+     */
+    private array $appleTokenRequests = [];
 
     /**
      * @param  \Illuminate\Foundation\Application  $app
@@ -100,10 +122,27 @@ class SocialFlowTest extends TestCase
             'microsoft',
         ]);
         $app['config']->set('magic-starter.social.redirects', [
-            'native' => self::NATIVE_TARGET,
+            'ios' => self::IOS_TARGET,
+            'android' => self::ANDROID_TARGET,
             'web' => self::WEB_TARGET,
         ]);
-        $app['config']->set('magic-starter.social.apple.services_id', FakeOAuthServer::CLIENT_ID);
+        $app['config']->set('services.github.client_id', FakeOAuthServer::CLIENT_ID);
+        $app['config']->set('services.google.client_id', 'google-client');
+        $app['config']->set('services.microsoft.client_id', FakeOAuthServer::CLIENT_ID);
+
+        // A real signing key, so production signs Apple's client secret for every exchange.
+        $key = openssl_pkey_new([
+            'private_key_type' => OPENSSL_KEYTYPE_EC,
+            'curve_name' => 'prime256v1',
+        ]);
+        openssl_pkey_export($key, $privatePem);
+        $this->applePublicPem = openssl_pkey_get_details($key)['key'];
+        $app['config']->set('magic-starter.social.apple', [
+            'team_id' => 'TEAM123456',
+            'key_id' => 'KEY1234567',
+            'private_key' => $privatePem,
+            'services_id' => FakeOAuthServer::CLIENT_ID,
+        ]);
     }
 
     protected function setUp(): void
@@ -159,7 +198,7 @@ class SocialFlowTest extends TestCase
         $callback = $this->landOnCallback($this->providerRedirect('github', $challenge));
 
         $callback->assertStatus(302);
-        $this->assertSame(self::NATIVE_TARGET, strtok((string) $callback->headers->get('Location'), '?'));
+        $this->assertSame(self::IOS_TARGET, strtok((string) $callback->headers->get('Location'), '?'));
         $this->assertSame(['code'], array_keys($this->locationQuery($callback)));
         $this->assertSame('no-referrer', $callback->headers->get('Referrer-Policy'));
         $this->assertStringContainsString('no-store', (string) $callback->headers->get('Cache-Control'));
@@ -245,6 +284,30 @@ class SocialFlowTest extends TestCase
         $this->assertNotEmpty($authorize['query']['nonce']);
         $this->assertSame('form_post', $authorize['query']['response_mode']);
         $this->assertArrayNotHasKey('code_challenge', $authorize['query']);
+
+        // Production built the provider: it signed the client secret as the Services ID,
+        // sent the callback it authorised, and verified the id_token against the harness keys.
+        $this->assertCount(1, $this->appleTokenRequests);
+        parse_str((string) $this->appleTokenRequests[0]->getBody(), $form);
+        $this->assertSame(FakeOAuthServer::CLIENT_ID, $form['client_id']);
+        $this->assertSame('http://localhost/magic-starter/social/apple/callback', $form['redirect_uri']);
+        $this->assertSame(
+            FakeOAuthServer::CLIENT_ID,
+            JWT::decode($form['client_secret'], new Key($this->applePublicPem, 'ES256'))->sub,
+        );
+        $this->assertNotNull($this->harnessRequest('GET', '/apple/auth/keys'));
+    }
+
+    public function test_an_apple_token_leg_answered_with_a_foreign_issuer_is_refused(): void
+    {
+        [, $challenge] = $this->pkce();
+        $this->appleIssuer = 'https://evil.example.test';
+
+        $location = $this->startFlow('apple', $challenge)->headers->get('Location');
+        $callback = $this->post('/magic-starter/social/apple/callback', $this->appleFormPost((string) $location));
+
+        $this->assertSame(['error' => 'invalid_identity'], $this->locationQuery($callback));
+        $this->assertSame(0, SocialAccount::query()->count());
     }
 
     public function test_an_apple_callback_with_a_user_field_that_is_not_json_still_signs_in(): void
@@ -297,6 +360,48 @@ class SocialFlowTest extends TestCase
         $this->assertStringStartsWith(self::WEB_TARGET . '&code=', $location);
     }
 
+    public function test_each_platform_returns_to_its_own_target(): void
+    {
+        $targets = [
+            'ios' => self::IOS_TARGET,
+            'android' => self::ANDROID_TARGET,
+            'web' => self::WEB_TARGET,
+        ];
+
+        foreach ($targets as $platform => $target) {
+            [, $challenge] = $this->pkce();
+
+            $callback = $this->landOnCallback($this->providerRedirect('github', $challenge, ['platform' => $platform]));
+
+            $location = (string) $callback->headers->get('Location');
+            $separator = str_contains($target, '?') ? '&' : '?';
+            $this->assertStringStartsWith($target . $separator . 'code=', $location, "[{$platform}]");
+        }
+    }
+
+    public function test_the_retired_native_platform_is_refused(): void
+    {
+        [, $challenge] = $this->pkce();
+
+        $this->startFlow('github', $challenge, ['platform' => 'native'])
+            ->assertStatus(422)
+            ->assertJsonValidationErrors(['platform']);
+
+        $this->assertSame([], $this->harness->requests());
+    }
+
+    public function test_a_provider_without_its_services_block_is_refused_not_failed(): void
+    {
+        config(['services.github' => null]);
+        [, $challenge] = $this->pkce();
+
+        $this->startFlow('github', $challenge)
+            ->assertStatus(422)
+            ->assertJsonPath('code', 'platform_not_configured');
+
+        $this->assertSame([], $this->harness->requests());
+    }
+
     public function test_a_reused_state_is_refused(): void
     {
         [, $challenge] = $this->pkce();
@@ -305,7 +410,7 @@ class SocialFlowTest extends TestCase
         $this->landOnCallback($callbackUrl)->assertStatus(302);
         $replay = $this->landOnCallback($callbackUrl);
 
-        $this->assertSame(self::NATIVE_TARGET, strtok((string) $replay->headers->get('Location'), '?'));
+        $this->assertSame(self::IOS_TARGET, strtok((string) $replay->headers->get('Location'), '?'));
         $this->assertSame(['error' => 'flow_expired'], $this->locationQuery($replay));
         $this->assertSame(1, $this->harnessCount('POST', '/login/oauth/access_token'));
     }
@@ -388,7 +493,7 @@ class SocialFlowTest extends TestCase
 
     public function test_a_malformed_challenge_is_refused_as_json_even_for_a_browser(): void
     {
-        $this->get('/auth/social/github/redirect?platform=native&challenge=short')
+        $this->get('/auth/social/github/redirect?platform=ios&challenge=short')
             ->assertStatus(422)
             ->assertJsonValidationErrors(['challenge']);
     }
@@ -673,57 +778,78 @@ class SocialFlowTest extends TestCase
             ]));
         });
 
-        $this->app->instance(AppleProviderFactory::class, new class(new AppleClientSecret, $harness) extends AppleProviderFactory
-        {
-            public function __construct(AppleClientSecret $secret, private FakeOAuthServer $harness)
-            {
-                parent::__construct($secret);
+        // Apple runs through the production factory; only its transport is pointed elsewhere.
+        app(AppleProviderFactory::class)->setHttpClient(new Client([
+            'handler' => $this->appleHandler(),
+        ]));
+    }
+
+    /**
+     * Apple's transport: the key set comes from the harness, the token leg is answered here.
+     *
+     * The token leg is the one part still doubled, for two reasons the harness cannot meet: the
+     * provider pins the id_token issuer to `https://appleid.apple.com` while the harness signs
+     * `<origin>/apple`, and the harness demands its fixed client secret while production signs a
+     * fresh ES256 one. So this answers with an id_token under Apple's own issuer, signed by the
+     * harness key whose JWKS the provider really fetches, and the provider's own `validateToken`
+     * checks signature, issuer, audience and nonce exactly as it would against Apple.
+     */
+    private function appleHandler(): HandlerStack
+    {
+        $harness = parse_url($this->harness->baseUrl());
+        $stack = HandlerStack::create();
+        $route = function (callable $next, RequestInterface $request, array $options) use ($harness) {
+            $uri = $request->getUri();
+
+            if ($uri->getHost() === 'appleid.apple.com' && $uri->getPath() === '/auth/token') {
+                $this->appleTokenRequests[] = $request;
+
+                return Create::promiseFor($this->appleTokenResponse($request));
             }
 
-            public function make(string $clientId, ?string $redirectUrl = null): AppleProvider
-            {
-                $provider = new class(request(), $clientId, FakeOAuthServer::CLIENT_SECRET, (string) $redirectUrl, [], $this->harness) extends AppleProvider
-                {
-                    public function __construct($request, $clientId, $clientSecret, $redirectUrl, $guzzle, private FakeOAuthServer $harness)
-                    {
-                        parent::__construct($request, $clientId, $clientSecret, $redirectUrl, $guzzle);
-                    }
-
-                    protected function getAuthUrl($state): string
-                    {
-                        return $this->buildAuthUrlFromBase($this->harness->url('/apple/auth/authorize'), $state);
-                    }
-
-                    protected function getTokenUrl(): string
-                    {
-                        return $this->harness->url('/apple/auth/token');
-                    }
-
-                    /**
-                     * The vendor pins the issuer to appleid.apple.com, so the same checks run against the harness issuer.
-                     */
-                    protected function validateToken(string $jwt, ?string $nonce, array $audiences): bool
-                    {
-                        $claims = JWT::decode($jwt, new Key($this->harness->publicKeyPem(), 'RS256'));
-
-                        if ($claims->iss !== $this->harness->url('/apple')
-                            || ! in_array($claims->aud, $audiences, true)
-                            || ($nonce !== null && ($claims->nonce ?? null) !== $nonce)
-                        ) {
-                            throw new InvalidStateException('The harness id_token failed verification.');
-                        }
-
-                        return true;
-                    }
-                };
-
-                $provider->setConfig(new Config($clientId, FakeOAuthServer::CLIENT_SECRET, (string) $redirectUrl, [
-                    'private_key' => '',
-                ]));
-
-                return $provider;
+            if ($uri->getHost() === 'appleid.apple.com') {
+                $request = $request->withUri($uri->withScheme('http')
+                    ->withHost($harness['host'])
+                    ->withPort($harness['port'])
+                    ->withPath('/apple' . $uri->getPath()));
             }
-        });
+
+            return $next($request, $options);
+        };
+        $stack->push(fn (callable $next): callable => fn (RequestInterface $request, array $options) => $route(
+            $next,
+            $request,
+            $options,
+        ));
+
+        return $stack;
+    }
+
+    /**
+     * Apple's token response for the code exchange production just sent.
+     */
+    private function appleTokenResponse(RequestInterface $request): Response
+    {
+        parse_str((string) $request->getBody(), $form);
+
+        $idToken = JWT::encode([
+            'iss' => $this->appleIssuer,
+            'aud' => $form['client_id'] ?? null,
+            'sub' => '000042.apple.sub',
+            'email' => 'octocat@example.test',
+            'email_verified' => true,
+            'nonce' => $this->appleNonce,
+            'iat' => time(),
+            'exp' => time() + 600,
+        ], $this->harness->signingKeyPem(), 'RS256', FakeOAuthServer::KEY_ID);
+
+        return new Response(200, ['Content-Type' => 'application/json'], (string) json_encode([
+            'access_token' => 'fake-access',
+            'token_type' => 'bearer',
+            'expires_in' => 3600,
+            'refresh_token' => 'fake-refresh-' . bin2hex(random_bytes(8)),
+            'id_token' => $idToken,
+        ]));
     }
 
     /**
@@ -810,7 +936,7 @@ class SocialFlowTest extends TestCase
     private function startFlow(string $provider, string $challenge, array $query = []): TestResponse
     {
         return $this->get('/auth/social/' . $provider . '/redirect?' . http_build_query([
-            'platform' => 'native',
+            'platform' => 'ios',
             'challenge' => $challenge,
             ...$query,
         ]));
@@ -848,7 +974,13 @@ class SocialFlowTest extends TestCase
      */
     private function appleFormPost(string $location): array
     {
-        $html = (string) (new Client)->get($location)->getBody();
+        // The browser leg: production sends the browser to Apple; the harness plays Apple's authorize page.
+        $this->assertStringStartsWith('https://appleid.apple.com/auth/authorize?', $location);
+        $query = (string) parse_url($location, PHP_URL_QUERY);
+        parse_str($query, $authorize);
+        $this->appleNonce = (string) $authorize['nonce'];
+
+        $html = (string) (new Client)->get($this->harness->url('/apple/auth/authorize?' . $query))->getBody();
         preg_match_all('/<input type="hidden" name="([^"]+)" value="([^"]*)">/', $html, $matches, PREG_SET_ORDER);
 
         $fields = [];

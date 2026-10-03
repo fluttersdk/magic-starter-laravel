@@ -634,20 +634,28 @@ return [
     | social sign-in flows. The `providers` array names which drivers are
     | enabled; others are refused when a client requests them. Absent from
     | the array means the provider is not supported. The `redirects` object
-    | carries platform-specific post-auth URLs for native and web clients,
-    | either of which may be null (the refusal is by design, not a silent
-    | fallback: the client sees it as "this platform is not configured").
+    | carries the post-auth URL for each platform a flow may name (`ios`,
+    | `android`, `web`), any of which may be null (the refusal is by design,
+    | not a silent fallback: the client sees it as "this platform is not
+    | configured"). Point `android` at a verified https App Link: any app can
+    | register a custom scheme and catch the sign-in, and the package logs a
+    | warning at boot when it is anything else. `ios` may stay a custom
+    | scheme, since ASWebAuthenticationSession returns only to the app that
+    | started it.
     |
-    | `audiences` lists are comma-separated, trimmed env values for `google`
-    | (Service Account client ids) and `apple` (Bundle identifiers); they are
-    | parsed into arrays at runtime. Absence means the provider is not
-    | provisioned, and any client request for it answers the known error.
+    | `audiences` lists are comma-separated, trimmed env values naming the
+    | client ids an ID token may be issued to. For `google` those are the
+    | OAuth client ids (web, iOS, Android); for `apple` list the bundle id
+    | AND the Services ID, because a native token is issued to the first and
+    | a web one to the second. An empty list refuses every token for that
+    | provider.
     |
-    | `apple` carries the five keys used for token verification and link
-    | generation: `team_id` (your Developer Team ID from Apple Developer),
-    | `key_id` (the key's own ID from the Signing Keys section), `private_key`
-    | (the PEM path or inlined PEM text), `bundle_id` (your app's main bundle),
-    | and `services_id` (the service identifier from your domain associations).
+    | `apple` carries five keys: `team_id` (your Developer Team ID from Apple
+    | Developer), `key_id` (the key's own ID from the Signing Keys section),
+    | `private_key` (the PEM path or inlined PEM text), `bundle_id` (your
+    | app's main bundle), and `services_id` (the service identifier from your
+    | domain associations). The first three sign the client secret a code
+    | exchange or a revocation needs; verifying an identity token needs none.
     |
     | `cache_store` names the Laravel cache driver used for state and code
     | token storage; absence defaults to the app default. `state_ttl` (seconds,
@@ -664,7 +672,8 @@ return [
         ))),
 
         'redirects' => [
-            'native' => env('MAGIC_STARTER_SOCIAL_NATIVE_REDIRECT'),
+            'ios' => env('MAGIC_STARTER_SOCIAL_IOS_REDIRECT'),
+            'android' => env('MAGIC_STARTER_SOCIAL_ANDROID_REDIRECT'),
             'web' => env('MAGIC_STARTER_SOCIAL_WEB_REDIRECT'),
         ],
 
@@ -851,16 +860,17 @@ return [
     | Account Deletion
     |--------------------------------------------------------------------------
     |
-    | Configure the grace period for account deletion. After a user requests
-    | account deletion, their account is scheduled for removal but remains
-    | accessible during the grace period. If they request cancellation
-    | before the grace period expires, the account remains active and the
-    | deletion is cancelled. Once the grace period expires, the account and
-    | all associated data are permanently deleted.
+    | Configure the grace period for account deletion. Asking for a deletion
+    | schedules it and locks the account at once: every token is revoked and
+    | every push device dropped, while the data stays until the purge. There
+    | is no cancel endpoint; signing in again during the grace period is what
+    | cancels a deletion the user asked for. One an identity provider reported
+    | (an orphan) is not cancelled by a sign-in. The purge command deletes
+    | the account once the grace period has passed.
     |
-    | `grace_days` is the number of days a user has to cancel their deletion
-    | request before the account is permanently deleted. Set to 0 to delete
-    | immediately with no grace period (not recommended for production).
+    | `grace_days` is the number of days between the request and the purge.
+    | 0 means the account is purged at the next purge run, not at the moment
+    | of the request.
     |
     */
 

@@ -7,6 +7,7 @@ use FlutterSdk\MagicStarter\MagicStarter;
 use FlutterSdk\MagicStarter\Social\SocialSignInRefused;
 use FlutterSdk\MagicStarter\Social\VerifiedIdentity;
 use Illuminate\Contracts\Auth\Authenticatable;
+use Illuminate\Contracts\Auth\MustVerifyEmail;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\UniqueConstraintViolationException;
 
@@ -16,7 +17,8 @@ use Illuminate\Database\UniqueConstraintViolationException;
  * Linking the identity the user already holds re-confirms that link instead of
  * refusing it: the revocation mark clears and the address and Apple secrets
  * the provider sent this time replace the recorded ones. That is also how the
- * resolver refreshes a link on every sign-in.
+ * resolver refreshes a link on every sign-in, which is why a refresh keeps the
+ * stored `owner_confirmed` unless the caller states one.
  */
 class ConnectSocialAccount implements ConnectsSocialAccounts
 {
@@ -25,6 +27,7 @@ class ConnectSocialAccount implements ConnectsSocialAccounts
      *
      * @param  string|null  $refreshToken  the Apple refresh token, kept only to revoke the grant later
      * @param  string|null  $clientId  the provider client id the credential was issued to
+     * @param  bool|null  $ownerConfirmed  null keeps a held link's value and derives a new link's
      * @return Model the link, an instance of `MagicStarter::socialAccountModel()`
      *
      * @throws SocialSignInRefused
@@ -34,6 +37,7 @@ class ConnectSocialAccount implements ConnectsSocialAccounts
         VerifiedIdentity $identity,
         ?string $refreshToken = null,
         ?string $clientId = null,
+        ?bool $ownerConfirmed = null,
     ): Model {
         $socialAccountModel = MagicStarter::socialAccountModel();
         $userId = (string) $user->getAuthIdentifier();
@@ -50,7 +54,7 @@ class ConnectSocialAccount implements ConnectsSocialAccounts
                 throw new SocialSignInRefused('social_account_taken');
             }
 
-            return $this->reconfirm($link, $identity, $refreshToken, $clientId);
+            return $this->reconfirm($link, $identity, $refreshToken, $clientId, $ownerConfirmed);
         }
 
         // 2. One identity per provider: a second Google account on the same
@@ -75,6 +79,7 @@ class ConnectSocialAccount implements ConnectsSocialAccounts
                 'email_at_link' => $identity->email,
                 'client_id' => $clientId,
                 'refresh_token' => $refreshToken,
+                'owner_confirmed' => $ownerConfirmed ?? ! $this->isProvisional($user),
             ]);
         } catch (UniqueConstraintViolationException $exception) {
             throw new SocialSignInRefused('social_account_taken', $exception);
@@ -86,13 +91,14 @@ class ConnectSocialAccount implements ConnectsSocialAccounts
      *
      * A value the provider withheld keeps the recorded one: Apple sends the
      * address only on the first authorisation, and no refresh token on a plain
-     * sign-in.
+     * sign-in. So does a null `$ownerConfirmed`.
      */
     private function reconfirm(
         Model $link,
         VerifiedIdentity $identity,
         ?string $refreshToken,
         ?string $clientId,
+        ?bool $ownerConfirmed,
     ): Model {
         $link->forceFill(array_filter(
             [
@@ -106,8 +112,35 @@ class ConnectSocialAccount implements ConnectsSocialAccounts
         $link->forceFill([
             'revoked_at' => null,
         ]);
+
+        if ($ownerConfirmed !== null) {
+            $link->forceFill([
+                'owner_confirmed' => $ownerConfirmed,
+            ]);
+        }
+
         $link->save();
 
         return $link;
+    }
+
+    /**
+     * Whether a new link on this account waits for the mailbox owner.
+     *
+     * It does while the account holds an unconfirmed link, and while its
+     * address is unverified: otherwise whoever signed up through an unverified
+     * identity could drop that link, connect a fresh one, and keep it through
+     * the owner's password reset.
+     */
+    private function isProvisional(Authenticatable $user): bool
+    {
+        if ($user instanceof MustVerifyEmail && ! $user->hasVerifiedEmail()) {
+            return true;
+        }
+
+        return MagicStarter::socialAccountModel()::query()
+            ->where('user_id', (string) $user->getAuthIdentifier())
+            ->where('owner_confirmed', false)
+            ->exists();
     }
 }

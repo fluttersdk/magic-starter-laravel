@@ -293,6 +293,66 @@ class ResolveSocialUserTest extends TestCase
         $this->assertCounts(users: 1, accounts: 1, teams: 0);
     }
 
+    public function test_an_unverified_identity_creates_an_unconfirmed_link(): void
+    {
+        $this->resolve($this->identity('microsoft', 'm-1', 'ada@example.com', verified: false));
+
+        $this->assertFalse(SocialAccount::query()->sole()->owner_confirmed);
+    }
+
+    public function test_a_verified_identity_creates_a_confirmed_link(): void
+    {
+        $this->resolve($this->identity('google', 'g-1', 'ada@example.com'));
+
+        $this->assertTrue(SocialAccount::query()->sole()->owner_confirmed);
+    }
+
+    public function test_a_later_sign_in_through_an_unconfirmed_link_keeps_it_unconfirmed(): void
+    {
+        $first = $this->resolve($this->identity('microsoft', 'm-1', 'ada@example.com', verified: false));
+
+        $again = $this->resolve($this->identity('microsoft', 'm-1', 'ada@example.com', tenantId: 't-1'));
+
+        $this->assertSame($first->getAuthIdentifier(), $again->getAuthIdentifier());
+        $this->assertFalse(SocialAccount::query()->sole()->owner_confirmed);
+        $this->assertCounts(users: 1, accounts: 1, teams: 1);
+    }
+
+    public function test_a_link_added_while_the_user_holds_an_unconfirmed_link_is_unconfirmed(): void
+    {
+        $user = $this->resolve($this->identity('microsoft', 'm-1', 'ada@example.com', verified: false));
+        $this->assertInstanceOf(ConcreteUser::class, $user);
+
+        $google = $this->connect($user, $this->identity('google', 'g-1', 'someone@example.com'));
+
+        $this->assertFalse($google->fresh()?->owner_confirmed);
+    }
+
+    public function test_a_link_added_by_a_user_without_unconfirmed_links_is_confirmed(): void
+    {
+        $user = $this->makeUser('ada@example.com', 'hashed-secret');
+
+        $google = $this->connect($user, $this->identity('google', 'g-1', 'ada@example.com'));
+
+        $this->assertTrue($google->fresh()?->owner_confirmed);
+    }
+
+    public function test_an_explicit_owner_confirmation_is_written_on_a_refresh(): void
+    {
+        $user = $this->makeUser('ada@example.com');
+        $this->link($user, 'microsoft', 'm-1', [
+            'owner_confirmed' => false,
+        ]);
+
+        $this->app->make(ConnectsSocialAccounts::class)->connect(
+            $user,
+            $this->identity('microsoft', 'm-1', 'ada@example.com'),
+            ownerConfirmed: true,
+        );
+
+        $this->assertTrue(SocialAccount::query()->sole()->owner_confirmed);
+    }
+
     private function resolve(VerifiedIdentity $identity, ?Request $request = null): Authenticatable
     {
         return $this->app->make(ResolvesSocialUsers::class)->resolve(

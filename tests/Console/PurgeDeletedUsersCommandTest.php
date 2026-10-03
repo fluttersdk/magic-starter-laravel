@@ -18,6 +18,7 @@ use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Exceptions;
 use Illuminate\Support\Facades\Schema;
+use Laravel\Cashier\Billable;
 use Laravel\Sanctum\HasApiTokens;
 use RuntimeException;
 
@@ -92,6 +93,30 @@ class PurgeDeletedUsersCommandTest extends TestCase
             $table->timestamp('expires_at')->nullable();
             $table->string('ip_address', 45)->nullable();
             $table->text('user_agent')->nullable();
+            $table->timestamps();
+        });
+
+        Schema::create('subscriptions', function (Blueprint $table): void {
+            $table->id();
+            $table->uuid('user_id');
+            $table->string('type');
+            $table->string('stripe_id')->unique();
+            $table->string('stripe_status');
+            $table->string('stripe_price')->nullable();
+            $table->integer('quantity')->nullable();
+            $table->timestamp('trial_ends_at')->nullable();
+            $table->timestamp('ends_at')->nullable();
+            $table->timestamps();
+        });
+
+        // Cashier's subscription model eager-loads its items on every read.
+        Schema::create('subscription_items', function (Blueprint $table): void {
+            $table->id();
+            $table->unsignedBigInteger('subscription_id');
+            $table->string('stripe_id')->unique();
+            $table->string('stripe_product');
+            $table->string('stripe_price');
+            $table->integer('quantity')->nullable();
             $table->timestamps();
         });
 
@@ -266,6 +291,105 @@ class PurgeDeletedUsersCommandTest extends TestCase
     }
 
     /**
+     * Under user billing an orphan whose own row a valid subscription still
+     * bills is held: the orphan path skipped the refusal at schedule time, so
+     * the purge is the last line, and it never deletes a paying subscriber.
+     */
+    public function test_under_user_billing_a_subscribed_orphan_is_held(): void
+    {
+        MagicStarter::useUserModel(PurgeDeletedUsersCommandTestBillableUser::class);
+        config([
+            'magic-starter.billing.billable' => 'user',
+        ]);
+
+        $orphan = PurgeDeletedUsersCommandTestBillableUser::query()->create([
+            'name' => 'Paying Orphan',
+        ]);
+        $team = $this->createTeam($orphan, 'Personal', personal: true);
+        $this->schedule($orphan, orphan: true);
+        $orphan->subscriptions()->create([
+            'type' => 'default',
+            'stripe_id' => 'sub_orphan',
+            'stripe_status' => 'active',
+            'stripe_price' => 'price_pro',
+            'quantity' => 1,
+        ]);
+
+        $this->travel(31)->days();
+
+        $this->artisan(PurgeDeletedUsersCommand::NAME)
+            ->expectsOutputToContain('held')
+            ->assertSuccessful();
+
+        $this->assertNotNull(PurgeDeletedUsersCommandTestUser::query()->find($orphan->getKey()));
+        $this->assertNotNull($orphan->refresh()->deletion_scheduled_at, 'A held account stays scheduled.');
+        $this->assertNotNull(ConcreteTeam::query()->find($team->getKey()));
+        $this->assertSame([], $this->teamSpy->deleted);
+    }
+
+    /**
+     * A sign-in clears the schedule while the walk already holds the row it
+     * loaded: the purge re-reads the row under a lock and leaves the account.
+     */
+    public function test_a_schedule_cleared_after_the_walk_loaded_it_is_not_deleted(): void
+    {
+        $user = $this->createUser('Came Back');
+        $team = $this->createTeam($user, 'Personal');
+        $this->schedule($user);
+
+        $this->travel(31)->days();
+
+        // The walk hydrates the row, then the sign-in lands before it is acted on.
+        PurgeDeletedUsersCommandTestUser::retrieved(function (Model $loaded) use ($user): void {
+            if ($loaded->getKey() === $user->getKey()) {
+                DB::table('users')->where('id', $user->getKey())->update([
+                    'deletion_scheduled_at' => null,
+                ]);
+            }
+        });
+
+        $this->artisan(PurgeDeletedUsersCommand::NAME)->assertSuccessful();
+
+        $this->assertNotNull(PurgeDeletedUsersCommandTestUser::query()->find($user->getKey()));
+        $this->assertNotNull(ConcreteTeam::query()->find($team->getKey()));
+        $this->assertSame([], $this->teamSpy->deleted);
+    }
+
+    /**
+     * Two admins who joined in the same instant: the membership key breaks the
+     * tie, so the heir does not depend on the database's scan order.
+     */
+    public function test_a_tie_on_join_time_is_broken_by_the_membership_key(): void
+    {
+        $orphan = $this->createUser('Orphan');
+        $team = $this->createTeam($orphan, 'Shared');
+        $first = $this->createUser('Inserted First');
+        $second = $this->createUser('Inserted Second');
+
+        foreach ([
+            'ffffffff-ffff-4fff-8fff-ffffffffffff' => $first,
+            '00000000-0000-4000-8000-000000000000' => $second,
+        ] as $membershipKey => $member) {
+            DB::table('team_user')->insert([
+                'id' => $membershipKey,
+                'team_id' => $team->getKey(),
+                'user_id' => $member->getKey(),
+                'role' => 'admin',
+                'created_at' => now()->addSecond(),
+                'updated_at' => now()->addSecond(),
+            ]);
+        }
+
+        $this->schedule($orphan, orphan: true);
+
+        $this->travel(31)->days();
+
+        $this->artisan(PurgeDeletedUsersCommand::NAME)->assertSuccessful();
+
+        $this->assertSame($second->getKey(), ConcreteTeam::query()->findOrFail($team->getKey())->user_id);
+    }
+
+    /**
      * One account failing is reported and does not stop the others; the run
      * exits non-zero so a scheduler notices.
      */
@@ -356,6 +480,20 @@ class PurgeDeletedUsersCommandTest extends TestCase
 class PurgeDeletedUsersCommandTestUser extends ConcreteUser
 {
     use HasApiTokens;
+}
+
+/**
+ * A user Cashier bills, for the user-billing cases. The foreign key is pinned
+ * because Cashier derives it from the class basename.
+ */
+class PurgeDeletedUsersCommandTestBillableUser extends PurgeDeletedUsersCommandTestUser
+{
+    use Billable;
+
+    public function getForeignKey(): string
+    {
+        return 'user_id';
+    }
 }
 
 /**
