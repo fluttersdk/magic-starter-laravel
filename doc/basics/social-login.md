@@ -106,6 +106,8 @@ Apple is configured through `magic-starter.social.apple.*` rather than `services
 
 Register the callback URL as a return URL of the Services ID. List the client ids whose ID tokens you accept in `MAGIC_STARTER_SOCIAL_APPLE_AUDIENCES`. Without `services_id`, the browser flow answers `platform_not_configured` for Apple.
 
+`team_id`, `key_id` and `private_key` sign the client secret, so only the code exchange and the revocation of a grant need them. Verifying an Apple ID token needs no signing key: it is checked against Apple's published keys and your audiences.
+
 ---
 
 <a name="configuration"></a>
@@ -116,7 +118,8 @@ Everything else lives under `social` in `config/magic-starter.php`:
 | Key | Env | Default | Purpose |
 |-----|-----|---------|---------|
 | `providers` | `MAGIC_STARTER_SOCIAL_PROVIDERS` | `google,apple,github,microsoft` | Allowlist. Others answer `provider_not_supported`. |
-| `redirects.native` | `MAGIC_STARTER_SOCIAL_NATIVE_REDIRECT` | `null` | Where the browser lands for `platform=native`, usually the app's custom scheme or universal link. |
+| `redirects.ios` | `MAGIC_STARTER_SOCIAL_IOS_REDIRECT` | `null` | Where the browser lands for `platform=ios`. A custom scheme is fine. |
+| `redirects.android` | `MAGIC_STARTER_SOCIAL_ANDROID_REDIRECT` | `null` | Where the browser lands for `platform=android`. Use an https App Link. |
 | `redirects.web` | `MAGIC_STARTER_SOCIAL_WEB_REDIRECT` | `null` | Where the browser lands for `platform=web`. |
 | `audiences.google` | `MAGIC_STARTER_SOCIAL_GOOGLE_AUDIENCES` | empty | Comma-separated client ids accepted as an ID token audience. |
 | `audiences.apple` | `MAGIC_STARTER_SOCIAL_APPLE_AUDIENCES` | empty | Same, for Apple. |
@@ -127,6 +130,8 @@ Everything else lives under `social` in `config/magic-starter.php`:
 | `confirmation_ttl` | `MAGIC_STARTER_SOCIAL_CONFIRMATION_TTL` | `600` | Seconds a step-up confirmation token can be spent. |
 
 A platform with no redirect target is refused with `platform_not_configured`. The target comes only from config, so nothing a request carries can choose where a code is sent.
+
+Android and iOS have separate targets because they need different ones. Any Android app can register the same custom scheme, and the system may hand it the browser's return, so another app can swallow the sign-in. An https App Link opens only the app that owns the domain. The code stays bound to your PKCE verifier, so an interceptor cannot redeem it, but it can still break the sign-in. On iOS, `ASWebAuthenticationSession` delivers the return only to the app that started it, so a custom scheme is safe. The package logs a warning at boot when the Android target is set and is not an https URL.
 
 ---
 
@@ -143,7 +148,7 @@ The app first creates a PKCE pair. `code_verifier` is a random string of 43 to 1
 
 | Query | Rules |
 |-------|-------|
-| `platform` | Required. `native` or `web`. Picks the redirect target. |
+| `platform` | Required. `ios`, `android` or `web`. Picks the redirect target. |
 | `challenge` | Required. 43 base64url characters. |
 | `ticket` | Optional. A [link ticket](#connect-a-provider); makes the flow a connect. |
 | `intent` | Optional. Only `confirm`, a [step-up](#step-up-confirmation) re-authentication. Cannot be combined with `ticket`. |
@@ -271,15 +276,18 @@ A mobile app that uses the Google or Apple SDK already holds an ID token, so it 
 
 The token is the whole credential, so it is accepted only after its signature, issuer, audience (from `audiences.*`), expiry and, for Apple, nonce check out, and only once: a token or Apple nonce seen before is a replay and is refused.
 
-A `signin` answers like the [exchange](#3-exchange) sign-in, 2FA challenge included. `connect` answers `{data: {provider, email}}` and `confirm` answers `{data: {confirmation_token}}`; both need the caller's bearer token and are refused with 401 without it, before the ID token is spent.
+A `signin` answers like the [exchange](#3-exchange) sign-in, 2FA challenge included. `connect` answers `{data: {provider, email}}` and `confirm` answers `{data: {confirmation_token}}`; both need the caller's bearer token and are refused with 401 without it, before the ID token is spent. A `connect` also re-confirms the caller, see [Step-Up Confirmation](#step-up-confirmation).
 
 | Status | Code | Cause |
 |--------|------|-------|
 | 401 | `invalid_identity` | The ID token failed a check. With `APP_DEBUG=true` the response adds `error` with the reason. |
-| 503 | `provider_unavailable` | The provider's signing keys could not be fetched. The token is not at fault; retry later. |
+| 503 | `provider_unavailable` | The provider's key set could not be fetched, or the provider answered without keys. The token is not at fault; retry later. |
 | 404 | `provider_not_supported` | The provider is not on the allowlist. |
 | 403 | `invalid_identity` | A confirm for an identity not linked to the caller. |
 | 409 | `social_email_taken`, `provider_email_missing`, `social_account_taken` | The identity may not sign in or connect, see below. |
+| 422 | `step_up_required` | A `connect` without a live [step-up proof](#step-up-confirmation). |
+
+Only an unreachable provider is reported as an outage. A configuration error, such as a missing audience, is not: it fails loudly on the server instead of telling the app to retry.
 
 ---
 
@@ -300,6 +308,16 @@ Further rules:
 - Apple refresh tokens are stored encrypted, and revoked at Apple on disconnect and on account deletion.
 - The user resource gains `has_password`, `social_accounts` (`provider`, `email_at_link`, `created_at`, `revoked_at`) and `deletion_scheduled_at`, so a client can offer "set a password" instead of "change password".
 
+<a name="provisional-links"></a>
+### Provisional links
+
+A provider that does not verify an email lets someone register an address that is not theirs and wait for the real owner to arrive (pre-account hijacking). So a link is provisional (`social_accounts.owner_confirmed = false`) in two cases:
+
+- it is created together with a new account from an **unverified** provider email (Microsoft's always are);
+- it is added while the account's address is unverified, or while the account still holds another provisional link.
+
+When the mailbox owner completes a password reset or an email verification, the provisional links are deleted, Apple grants are revoked, and every token of the account is revoked. The owner signs in with the password they just set, and whoever held the identity is locked out. A link the provider vouched for is never touched.
+
 ---
 
 <a name="connect-a-provider"></a>
@@ -314,9 +332,12 @@ A signed-in user links a provider from their profile. The ticket carries the cal
 ```json
 {
   "provider": "github",
-  "challenge": "base64url-sha256-of-the-verifier"
+  "challenge": "base64url-sha256-of-the-verifier",
+  "password": "CurrentSecret123"
 }
 ```
+
+A linked identity is a new way into the account, so the caller re-confirms first. An account with a password sends `password`; a password-less one sends `code` or `confirmation_token` instead, see [Step-Up Confirmation](#step-up-confirmation).
 
 ```json
 {
@@ -326,7 +347,7 @@ A signed-in user links a provider from their profile. The ticket carries the cal
 }
 ```
 
-The ticket is single use, expires after `link_ticket_ttl`, and is bound to the user, the provider and the challenge. It travels in the response body only. The app then starts the [redirect](#1-redirect) with `ticket=<ticket>` and the same `challenge`, and finishes at the [exchange](#3-exchange) with its bearer token. A native app can instead post the provider's ID token to the [token endpoint](#native-token-endpoint) with `intent=connect`.
+The ticket is single use, expires after `link_ticket_ttl`, and is bound to the user, the provider and the challenge. It travels in the response body only. The app then starts the [redirect](#1-redirect) with `ticket=<ticket>` and the same `challenge`, and finishes at the [exchange](#3-exchange) with its bearer token. A native app can instead post the provider's ID token to the [token endpoint](#native-token-endpoint) with `intent=connect`, with the same proof beside it.
 
 An unknown provider answers 404 `provider_not_supported`.
 
@@ -362,11 +383,12 @@ A social-only account has no current password to change, so it sets its first on
 ```json
 {
   "password": "NewSecret123",
-  "password_confirmation": "NewSecret123"
+  "password_confirmation": "NewSecret123",
+  "confirmation_token": "c0nf1rm..."
 }
 ```
 
-The password follows the same rules as a [password change](profile.md): at least 8 characters with letters, numbers and mixed case, and it must be confirmed. The answer is `200` with `{"data": null, "message": "..."}`. An account that already has a password is refused with 422 `password_already_set`.
+A first password is a new way into the account, so the caller steps up with `code` (a TOTP code, when 2FA is confirmed) or `confirmation_token`; a guest without a password passes. See [Step-Up Confirmation](#step-up-confirmation). The password follows the same rules as a [password change](profile.md): at least 8 characters with letters, numbers and mixed case, and it must be confirmed. The answer is `200` with `{"data": null, "message": "..."}`. An account that already has a password is refused with 422 `password_already_set`.
 
 `PUT {prefix}/user/password` on a password-less account answers 422 `password_not_set`. Use this endpoint instead.
 
@@ -382,7 +404,19 @@ Sensitive endpoints re-confirm the caller. An account with a password sends `pas
 | `code` | A TOTP code, when 2FA is confirmed on the account. |
 | `confirmation_token` | A single-use token from the `confirm` intent, through the [browser flow](#1-redirect) (`intent=confirm`) or the [native endpoint](#native-token-endpoint). |
 
-It applies to enabling and disabling 2FA, showing and regenerating recovery codes, revoking sessions, and `DELETE {prefix}/user`. A code is judged on its own, so a mistyped code is reported as one instead of spending a token sent beside it. A confirmation token is consumed only when nothing else in the request failed.
+The proofs each endpoint accepts:
+
+| Endpoint | Account with a password | Password-less account |
+|----------|-------------------------|-----------------------|
+| `POST {prefix}/two-factor-authentication`, `DELETE {prefix}/two-factor-authentication` | `password` | `code` or `confirmation_token` |
+| `POST {prefix}/two-factor-recovery-codes/show`, `POST {prefix}/two-factor-recovery-codes` | `password` | `code` or `confirmation_token` |
+| `DELETE {prefix}/sessions/{token}`, `DELETE {prefix}/sessions/other` | `password` | `code` or `confirmation_token` |
+| `DELETE {prefix}/user` | `password` | `code` or `confirmation_token` |
+| `POST {prefix}/user/social-accounts/link-ticket` | `password` | `code` or `confirmation_token` |
+| `POST {prefix}/auth/social/{provider}/token` with `intent=connect` | `password` | `code` or `confirmation_token` |
+| `POST {prefix}/user/password/set` | refused with 422 `password_already_set` | `code` or `confirmation_token` |
+
+On the token endpoint only a `connect` carrying a bearer is stepped up; a sign-in or a `confirm` needs no proof. A code is judged on its own, so a mistyped code is reported as one instead of spending a token sent beside it. A confirmation token is consumed only when nothing else in the request failed.
 
 Without a live proof the answer is 422:
 
@@ -409,7 +443,7 @@ Apple posts server-to-server notifications when a user stops using Sign in with 
 
 **Endpoint:** `POST /magic-starter/social/apple/notifications`
 
-The route has no prefix and no middleware. The JWS signature is the only credential and is verified before anything is read: an unverifiable payload answers 400, and every verified one answers 200, including an unknown subject, so Apple does not retry what no retry can fix.
+The route has no prefix and no middleware. The JWS signature is the only credential and is verified before anything is read. A payload that fails verification answers 400 `{"message": "...", "code": "invalid_identity"}`. That includes a payload with no `iat`, or one issued more than 7 days ago, since a delivery id is remembered for 7 days and anything older could be a replay. Every verified payload answers 200, including an unknown subject, so Apple does not retry what no retry can fix.
 
 | Event | Effect |
 |-------|--------|
@@ -437,8 +471,9 @@ Every code is a key of `lang/en/social.php`, and its sentence is translated. A c
 | `password_already_set` | The account already has a password. |
 | `password_not_set` | The account has no password to change; set one instead. |
 | `step_up_required` | A sensitive action needs a `code` or `confirmation_token`. |
-| `provider_unavailable` | The provider's keys could not be fetched; retry later. |
+| `provider_unavailable` | The provider's key set could not be fetched, or came back without keys (503); retry later. |
 | `owns_shared_teams` | Account deletion refused, see [Account Deletion](account-deletion.md). |
 | `team_has_active_subscription` | Account or team deletion refused while a subscription is live. |
-| `deletion_scheduled` | The account is scheduled for deletion. |
+| `subscription_active` | Account deletion refused while a subscription bills the user directly. |
+| `deletion_scheduled` | The account is scheduled for deletion; signing in again within the grace period cancels it. |
 | `deletion_cancelled` | A sign-in cancelled a scheduled deletion. |

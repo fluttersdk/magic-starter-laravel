@@ -36,9 +36,11 @@ The caller confirms their identity with `password`. A password-less account uses
   "data": {
     "deletion_scheduled_at": "2026-10-03T12:00:00.000000Z"
   },
-  "message": "Your account will be deleted in 30 days. You can cancel this anytime."
+  "message": "Your account will be deleted in 30 days. Sign in again before then to cancel the deletion."
 }
 ```
+
+The sentence tells the user how to cancel because every session was just signed out: signing in again within the grace period is the only way back.
 
 In one transaction, every Sanctum token of the user is revoked and every push device row is dropped, so the account stops signing in and stops ringing at once. The rows that hold the user's data stay until the purge. Scheduling an account that is already scheduled keeps the earlier date.
 
@@ -47,7 +49,7 @@ In one transaction, every Sanctum token of the user is revoked and every push de
 <a name="refusals"></a>
 ## Refusals
 
-A user who still owns a team that deletion would damage is refused before anything is locked:
+A user who owns a team that deletion would damage, or whom a subscription bills directly, is refused before anything is locked:
 
 ```json
 {
@@ -60,12 +62,13 @@ A user who still owns a team that deletion would damage is refused before anythi
 }
 ```
 
-The status is 422, and the client switches on `code` and uses `team_ids` to point the user at the teams to resolve.
+The status is 422, and the client switches on `code` and uses `team_ids` to point the user at the teams to resolve. For `subscription_active` `team_ids` is empty, since the account itself is the reason.
 
 | Code | Cause |
 |------|-------|
 | `owns_shared_teams` | The user owns a team that another person belongs to. Deleting the user would take that person's data with it. Transfer ownership or delete the team first. A pending invitation is not a member. |
 | `team_has_active_subscription` | The user owns a team that a store subscription or a valid Stripe subscription is still billing. Cancel it first. |
+| `subscription_active` | The user itself is the billable subject (`magic-starter.billing.billable` is `user`) and a store or valid Stripe subscription is billing it. Cancel it first. |
 
 The Stripe check is Cashier's `valid()`, so a trial, a `past_due` dunning period and a subscription cancelled at period end all count as live until the period is over. This package never cancels a subscription for anyone.
 
@@ -107,16 +110,17 @@ The command selects every account whose `deletion_scheduled_at` is older than th
 | Situation | Outcome |
 |-----------|---------|
 | The user owns a shared team (it gained a member during the grace period). | **Un-scheduled** and reported. Deleting the user would take the new member's team with them. |
-| The account owns a team that a subscription is still billing. | **Held** and reported. It is left exactly as it was and retried on the next run. |
+| The account owns a team that a subscription is still billing, or is itself billed by one. | **Held** and reported. It is left exactly as it was and retried on the next run. |
+| The user signed in after the walk loaded them (the schedule was cleared). | **Cancelled**: skipped without a change. The row is read again under a lock, so a sign-in that lands during the purge waits for it instead of racing the deletion. |
 | An orphan owns shared teams. | Each team moves to its earliest-joined admin, else its earliest-joined member, who becomes owner. Then the account is deleted. |
 | Anything else. | **Deleted.** |
 
-Deletion goes through the `DeletesUsers` contract in one transaction. The user's solo teams are deleted through `DeletesTeams`, so the [billing guard](#team-deletion-guard) runs on every one of them; memberships of other people's teams are detached; every linked social identity is removed, after the Apple grant is revoked; tokens and the profile photo are deleted. A refusal part way rolls back the teams already deleted.
+Deletion goes through the `DeletesUsers` contract in one transaction. The user's solo teams are deleted through `DeletesTeams`, so the [billing guard](#team-deletion-guard) runs on every one of them; memberships of other people's teams are detached; every linked social identity and every token is removed. A refusal part way rolls back the teams already deleted. The Apple grants are revoked and the profile photo is deleted only after the outermost transaction commits, because neither can be rolled back: a grant revoked for an account that then survives could not be restored.
 
 Held and un-scheduled accounts are logged as well as printed, because the output of a scheduled run is usually discarded. One account failing is reported and the run moves on, and the exit code is non-zero when any failed. The last line is a tally:
 
 ```
-Purge finished: 12 deleted, 1 held, 0 un-scheduled, 0 failed.
+Purge finished: 12 deleted, 1 held, 0 un-scheduled, 0 cancelled, 0 failed.
 ```
 
 ---

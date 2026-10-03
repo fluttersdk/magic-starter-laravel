@@ -104,7 +104,7 @@ Updates the authenticated user's password.
 | `password` | string | Required, min:8, letters + numbers + mixed case, confirmed |
 | `password_confirmation` | string | Required |
 
-The `current_password` is verified against the stored hash via `Hash::check()`. Guest users who have no password set yet can skip the `current_password` field.
+The `current_password` is verified against the stored hash via `Hash::check()`. Guest users who have no password set yet can skip the `current_password` field. An account with no password at all (a social-only one) answers 422 `password_not_set`; it sets its first password through [Set a Password](social-login.md#set-a-password).
 
 ### Request Example
 
@@ -168,7 +168,7 @@ Content-Type: application/json
 
 ### Response
 
-`202 Accepted` with `data.deletion_scheduled_at` and a `message`. An owned team that another member belongs to, or that holds a live subscription, answers 422 with `code` `owns_shared_teams` or `team_has_active_subscription` and the `team_ids` to resolve first.
+`202 Accepted` with `data.deletion_scheduled_at` and a `message`. An owned team that another member belongs to, or that holds a live subscription, answers 422 with `code` `owns_shared_teams` or `team_has_active_subscription` and the `team_ids` to resolve first. A live subscription billing the user directly answers 422 `subscription_active` with an empty `team_ids`.
 
 ---
 
