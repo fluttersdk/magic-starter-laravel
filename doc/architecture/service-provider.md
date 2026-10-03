@@ -131,6 +131,8 @@ The route prefix is read from `config('magic-starter.route_prefix')` (default: `
 
 The `magic-starter-otp` limiter is a single named limiter that branches internally on whether the request path contains `otp/send`.
 
+The `magic-starter-auth-social` limiter covers every social route: the redirect, the exchange, the native token endpoint, the provider callback, and the authenticated link ticket, disconnect and set-password routes. The `provider` half of the key is the `{provider}` route segment, so it is empty on the routes that carry none, and those share one bucket per IP. See [Social Login](../basics/social-login.md).
+
 <a name="sanctum-customization"></a>
 ## Sanctum Customization
 

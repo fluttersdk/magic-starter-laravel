@@ -6,7 +6,7 @@
 
 <p align="center">
   <strong>Pre-built Auth, Profile, Teams & Notifications API for Laravel.</strong><br/>
-  14 opt-in features — every action overridable.
+  14 opt-in features - every action overridable.
 </p>
 
 <p align="center">
@@ -26,15 +26,15 @@
 
 ---
 
-> **Alpha** — `magic-starter-laravel` is under active development. APIs may change between minor versions until `1.0.0`.
+> **Alpha** - `magic-starter-laravel` is under active development. APIs may change between minor versions until `1.0.0`.
 
 ---
 
 ## Why Magic Starter Laravel?
 
-Stop rebuilding authentication, profile management, and team features from scratch in every Laravel project. The same controllers, the same validation, the same service bindings — over and over.
+Stop rebuilding authentication, profile management, and team features from scratch in every Laravel project. The same controllers, the same validation, the same service bindings - over and over.
 
-**Magic Starter Laravel** gives you a production-ready JSON API for auth, profile, teams, and notifications out of the box. Everything is config-driven with 14 opt-in feature toggles. Every action is overridable via contract bindings — swap any business logic from your host app without touching the package.
+**Magic Starter Laravel** gives you a production-ready JSON API for auth, profile, teams, and notifications out of the box. Everything is config-driven with 14 opt-in feature toggles. Every action is overridable via contract bindings - swap any business logic from your host app without touching the package.
 
 > **Config-driven API starter kit.** Enable only what you need. Override any action. Ship faster.
 
@@ -45,8 +45,9 @@ Stop rebuilding authentication, profile management, and team features from scrat
 | | Feature | Description |
 |---|---------|-------------|
 | :key: | **Authentication** | Login, register, forgot/reset password, social login |
+| :link: | **Social Login** | Google, Apple, GitHub and Microsoft through a backend-hosted flow and a native ID-token endpoint, with connect, disconnect and set-password |
 | :shield: | **Two-Factor Auth** | Enable/disable 2FA with QR code, OTP confirm, recovery codes |
-| :bust_in_silhouette: | **Profile Management** | Photo upload, email/password change, account deletion |
+| :bust_in_silhouette: | **Profile Management** | Photo upload, email/password change, scheduled account deletion with a grace period |
 | :busts_in_silhouette: | **Teams** | Create, switch, invite members, manage roles, team photos |
 | :bell: | **Notifications** | Listing, unread count, mark read/unread, preference matrix |
 | :iphone: | **OTP Login** | Phone-based authentication with send/verify flow |
@@ -140,7 +141,7 @@ class User extends Authenticatable
 }
 ```
 
-That's it — auth, profile, teams, and notifications API endpoints are ready to use.
+That's it - auth, profile, teams, and notifications API endpoints are ready to use.
 
 ---
 
@@ -203,7 +204,7 @@ The `billing` feature declares **what** you bill through `magic-starter.billing.
 
 ```
 Request → Route (feature-gated, rate-limited)
-  → Controller (thin — injects contract)
+  → Controller (thin - injects contract)
     → Contract interface
       → Action (business logic, validator, model resolution)
         → Model (ConditionallyUsesUuids, dynamic resolution)
@@ -215,7 +216,7 @@ Request → Route (feature-gated, rate-limited)
 |---------|---------------|
 | Contract-Action | Controllers inject interfaces from `Contracts/`, bound in ServiceProvider |
 | Feature Toggles | `Features::enabled()` gates routes, logic, and resource fields |
-| Dynamic Model Resolution | `MagicStarter::userModel()`, `::teamModel()` — never hardcode classes |
+| Dynamic Model Resolution | `MagicStarter::userModel()`, `::teamModel()` - never hardcode classes |
 | Service Provider | Contract bindings, route registration, rate limiters, password reset URL |
 | Rate Limiters | Per-endpoint throttle groups: auth, register, social, 2FA, OTP, etc. |
 
@@ -244,7 +245,7 @@ Contributions are welcome! Please see the [issues page](https://github.com/flutt
 
 1. Fork the repository
 2. Create your feature branch (`git checkout -b feature/amazing-feature`)
-3. Write tests following the TDD flow — red, green, refactor
+3. Write tests following the TDD flow - red, green, refactor
 4. Ensure all checks pass: `composer test`, `composer lint`, `composer analyse`
 5. Submit a pull request
 

@@ -133,7 +133,7 @@ Content-Type: application/json
 
 ## <a name="delete-account"></a>Delete Account
 
-Permanently deletes the authenticated user's account.
+Schedules the authenticated user's account for deletion. Nothing is deleted in the request: every token is revoked now and the account is purged after the grace period, and signing in again before then cancels it. See [Account Deletion](account-deletion.md) for the pipeline.
 
 | Property | Value |
 |----------|-------|
@@ -142,15 +142,17 @@ Permanently deletes the authenticated user's account.
 | **Auth** | `auth:sanctum` |
 | **Controller** | `ProfileController@destroy` |
 | **Request** | `DeleteAccountRequest` |
-| **Response** | `204 No Content` |
+| **Response** | `202 Accepted` |
 
 ### Fields
 
 | Field | Type | Rules |
 |-------|------|-------|
-| `password` | string | Required (optional for guest users without a password) |
+| `password` | string | Required for a user with a password |
+| `code` | string | A current TOTP code, for a password-less user with confirmed 2FA |
+| `confirmation_token` | string | A step-up token from the social confirm flow, for a password-less user |
 
-The password is verified via `Hash::check()` before proceeding. Guest users without a password can delete their account without providing one.
+A user with a password confirms with it. A guest without a password needs no proof. Any other password-less user sends `code` or `confirmation_token`, or the request answers 422 `step_up_required`.
 
 ### Request Example
 
@@ -166,7 +168,7 @@ Content-Type: application/json
 
 ### Response
 
-`204 No Content` -- empty body on success.
+`202 Accepted` with `data.deletion_scheduled_at` and a `message`. An owned team that another member belongs to, or that holds a live subscription, answers 422 with `code` `owns_shared_teams` or `team_has_active_subscription` and the `team_ids` to resolve first.
 
 ---
 
