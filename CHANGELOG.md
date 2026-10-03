@@ -4,6 +4,8 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [0.0.14] - 2026-10-03
+
 ### Security
 
 - **`POST auth/social/{provider}` no longer accepts a provider access token.** The `access_token` branch called Socialite's `userFromToken()`, which asks Google, GitHub or Microsoft Graph who owns the token but not which client it was issued to. Any app a user had ever signed in to with an email scope could replay that user's token here and receive a Sanctum token for the account with the same email, with two-factor authentication skipped. Socialite builds a provider as soon as the `services.<provider>` keys exist, even with empty values, so an application that never configured social login was exposed too. The endpoint now takes only `authorization_code`, which the provider binds to the server's client secret, and answers 422 to a body that carries only `access_token`. (`src/Http/Requests/SocialLoginRequest.php`, `src/Http/Controllers/AuthController.php`)
