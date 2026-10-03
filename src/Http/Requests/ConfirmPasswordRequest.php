@@ -2,18 +2,21 @@
 
 namespace FlutterSdk\MagicStarter\Http\Requests;
 
+use FlutterSdk\MagicStarter\Http\Requests\Concerns\ConfirmsIdentity;
 use Illuminate\Foundation\Http\FormRequest;
-use Illuminate\Support\Facades\Hash;
 use Illuminate\Validation\Validator;
 
 /**
- * Validates password confirmation for sensitive operations (sudo mode).
+ * Confirms the caller's identity for sensitive operations (sudo mode).
  *
- * Used by any endpoint that requires the user to re-confirm their
- * password before proceeding (e.g., 2FA enable/disable, recovery codes).
+ * Used by any endpoint that requires the user to re-confirm themselves before
+ * proceeding (e.g., 2FA disable, recovery codes, session revocation). A
+ * password-less account steps up instead, see {@see ConfirmsIdentity}.
  */
 class ConfirmPasswordRequest extends FormRequest
 {
+    use ConfirmsIdentity;
+
     /**
      * Determine if the user is authorized to make this request.
      */
@@ -29,42 +32,16 @@ class ConfirmPasswordRequest extends FormRequest
      */
     public function rules(): array
     {
-        return [
-            'password' => [
-                $this->isGuestWithoutPassword() ? 'sometimes' : 'required',
-                'string',
-            ],
-        ];
+        return $this->identityRules();
     }
 
     /**
      * Configure the validator instance.
-     *
-     * Verifies that the provided password matches the authenticated
-     * user's current password via Hash::check().
      */
     public function withValidator(Validator $validator): void
     {
-        $validator->after(function ($validator) {
-            if ($this->isGuestWithoutPassword()) {
-                return;
-            }
-
-            if (! Hash::check((string) $this->input('password'), (string) $this->user()?->getAuthPassword())) {
-                $validator->errors()->add('password', __('magic-starter::auth.password.confirmation_mismatch'));
-            }
+        $validator->after(function (Validator $validator): void {
+            $this->confirmIdentity($validator, __('magic-starter::auth.password.confirmation_mismatch'));
         });
-    }
-
-    /**
-     * Determine if the authenticated user is a guest without a password.
-     */
-    protected function isGuestWithoutPassword(): bool
-    {
-        $user = $this->user();
-
-        return $user
-            && (bool) ($user->is_guest ?? false)
-            && empty($user->getAuthPassword());
     }
 }

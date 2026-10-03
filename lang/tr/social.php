@@ -92,4 +92,15 @@ return [
      */
     'step_up_required' => 'Devam etmek için lütfen kimliğinizi onaylayınız.',
 
+    /*
+     * Password not set: a social-only account asked to change a password it
+     * does not have.
+     */
+    'password_not_set' => 'Bu hesabın henüz bir şifresi yok. Değiştirmek yerine yeni bir şifre belirleyin.',
+
+    /*
+     * Provider unavailable: the provider's signing keys could not be fetched.
+     */
+    'provider_unavailable' => 'Giriş sağlayıcısına ulaşılamadı. Lütfen daha sonra tekrar deneyin.',
+
 ];

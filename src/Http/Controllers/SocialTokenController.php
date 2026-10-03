@@ -258,8 +258,8 @@ class SocialTokenController
     private function providerUnavailable(Throwable $exception): JsonResponse
     {
         $payload = [
-            'message' => __('magic-starter::social.platform_not_configured'),
-            'code' => 'platform_not_configured',
+            'message' => __('magic-starter::social.provider_unavailable'),
+            'code' => 'provider_unavailable',
         ];
 
         if (config('app.debug')) {

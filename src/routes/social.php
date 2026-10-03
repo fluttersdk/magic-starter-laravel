@@ -15,6 +15,7 @@
  * either; the flow it finishes lives in the state the redirect recorded.
  */
 
+use FlutterSdk\MagicStarter\Http\Controllers\AppleNotificationController;
 use FlutterSdk\MagicStarter\Http\Controllers\SocialCallbackController;
 use FlutterSdk\MagicStarter\Social\ProviderIdentity;
 use Illuminate\Support\Facades\Route;
@@ -22,3 +23,9 @@ use Illuminate\Support\Facades\Route;
 Route::match(['GET', 'POST'], ProviderIdentity::CALLBACK_PATH, SocialCallbackController::class)
     ->middleware('throttle:magic-starter-auth-social')
     ->name('magic-starter.social.callback');
+
+// Apple's server-to-server notification url is registered in the Apple
+// Developer console too. Apple posts it unauthenticated: the JWS signature is
+// the credential, verified by the controller before anything is read.
+Route::post('magic-starter/social/apple/notifications', AppleNotificationController::class)
+    ->name('magic-starter.social.apple.notifications');

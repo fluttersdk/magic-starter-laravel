@@ -83,6 +83,8 @@ class MagicStarterServiceProvider extends ServiceProvider
         $this->app->bind(Contracts\ResolvesSocialUsers::class, Actions\ResolveSocialUser::class);
         $this->app->bind(Contracts\CreatesUsersFromProvider::class, Actions\CreateUserFromProvider::class);
         $this->app->bind(Contracts\ConnectsSocialAccounts::class, Actions\ConnectSocialAccount::class);
+        $this->app->bind(Contracts\DisconnectsSocialAccounts::class, Actions\DisconnectSocialAccount::class);
+        $this->app->bind(Contracts\SetsUserPasswords::class, Actions\SetUserPassword::class);
         $this->app->bind(Contracts\EnablesTwoFactorAuthentication::class, Actions\EnableTwoFactorAuthentication::class);
         $this->app->bind(Contracts\ConfirmsTwoFactorAuthentication::class, Actions\ConfirmTwoFactorAuthentication::class);
         $this->app->bind(Contracts\DisablesTwoFactorAuthentication::class, Actions\DisableTwoFactorAuthentication::class);

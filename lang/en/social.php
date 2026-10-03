@@ -114,4 +114,16 @@ return [
      */
     'step_up_required' => 'Please confirm your identity to continue.',
 
+    /*
+     * Password not set: a social-only account asked to change a password it
+     * does not have; setting one is a separate, unconfirmed action.
+     */
+    'password_not_set' => 'This account has no password yet. Set one instead of changing it.',
+
+    /*
+     * Provider unavailable: the provider's signing keys could not be fetched,
+     * which says nothing about the token, so the caller is asked to retry.
+     */
+    'provider_unavailable' => 'The sign-in provider could not be reached. Please try again later.',
+
 ];

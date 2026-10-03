@@ -227,7 +227,9 @@ class SocialTokenTest extends TestCase
 
         $response = $this->postToken('google', ['id_token' => $this->googleToken()]);
 
-        $response->assertStatus(503)->assertJsonMissingPath('data.token');
+        $response->assertStatus(503)
+            ->assertJsonPath('code', 'provider_unavailable')
+            ->assertJsonMissingPath('data.token');
         $this->assertNotSame('invalid_identity', $response->json('code'));
         $this->assertSame(0, SocialTokenTestUser::query()->count());
     }

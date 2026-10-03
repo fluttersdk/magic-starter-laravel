@@ -25,6 +25,7 @@ use FlutterSdk\MagicStarter\Http\Controllers\PushDeviceController;
 use FlutterSdk\MagicStarter\Http\Controllers\PushTestController;
 use FlutterSdk\MagicStarter\Http\Controllers\SessionController;
 use FlutterSdk\MagicStarter\Http\Controllers\SettingsController;
+use FlutterSdk\MagicStarter\Http\Controllers\SocialAccountController;
 use FlutterSdk\MagicStarter\Http\Controllers\SocialExchangeController;
 use FlutterSdk\MagicStarter\Http\Controllers\SocialRedirectController;
 use FlutterSdk\MagicStarter\Http\Controllers\SocialTokenController;
@@ -173,6 +174,16 @@ Route::prefix((string) config('magic-starter.route_prefix', ''))
                 if (Features::enabled(Features::profilePhotos())) {
                     Route::post('profile-photo', [ProfilePhotoController::class, 'update']);
                     Route::delete('profile-photo', [ProfilePhotoController::class, 'delete']);
+                }
+
+                // The profile's sign-in methods. The link ticket starts a
+                // connect that finishes in the browser flow above.
+                if (Features::hasSocialLoginFeatures()) {
+                    Route::middleware(['throttle:magic-starter-auth-social'])->group(function (): void {
+                        Route::post('social-accounts/link-ticket', [SocialAccountController::class, 'linkTicket']);
+                        Route::delete('social-accounts/{provider}', [SocialAccountController::class, 'destroy']);
+                        Route::post('password/set', [SocialAccountController::class, 'setPassword']);
+                    });
                 }
             });
 

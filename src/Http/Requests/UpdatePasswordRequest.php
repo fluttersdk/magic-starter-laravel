@@ -2,13 +2,22 @@
 
 namespace FlutterSdk\MagicStarter\Http\Requests;
 
+use FlutterSdk\MagicStarter\Http\Requests\Concerns\ConfirmsIdentity;
 use Illuminate\Foundation\Http\FormRequest;
-use Illuminate\Support\Facades\Hash;
 use Illuminate\Validation\Rules\Password;
 use Illuminate\Validation\Validator;
 
+/**
+ * Validates a password change against the current password.
+ *
+ * A guest without a password sets its first one here, as before. Any other
+ * password-less account has no current password to change and is refused with
+ * 422 `password_not_set`, pointing it at `user/password/set`.
+ */
 class UpdatePasswordRequest extends FormRequest
 {
+    use ConfirmsIdentity;
+
     /**
      * Determine if the user is authorized to make this request.
      */
@@ -24,11 +33,8 @@ class UpdatePasswordRequest extends FormRequest
      */
     public function rules(): array
     {
-        $user = $this->user();
-        $isGuestWithoutPassword = $user && (bool) ($user->is_guest ?? false) && empty($user->password);
-
         return [
-            'current_password' => $isGuestWithoutPassword ? ['sometimes', 'string'] : ['required', 'string'],
+            ...$this->identityRules('current_password'),
             'password' => [
                 'required',
                 'string',
@@ -47,13 +53,22 @@ class UpdatePasswordRequest extends FormRequest
      */
     public function withValidator(Validator $validator): void
     {
-        $validator->after(function (Validator $validator) {
-            $user = $this->user();
-            $isGuestWithoutPassword = $user && (bool) ($user->is_guest ?? false) && empty($user->password);
-
-            if (! $isGuestWithoutPassword && ! Hash::check((string) $this->input('current_password'), (string) $user?->getAuthPassword())) {
-                $validator->errors()->add('current_password', __('magic-starter::auth.password.current_incorrect'));
+        $validator->after(function (Validator $validator): void {
+            if (! $this->userHasPassword() && ! $this->isGuestWithoutPassword()) {
+                $this->refuseWithCode(
+                    'password_not_set',
+                    (string) __('magic-starter::social.password_not_set'),
+                    [
+                        'current_password',
+                    ],
+                );
             }
+
+            $this->confirmIdentity(
+                $validator,
+                __('magic-starter::auth.password.current_incorrect'),
+                'current_password',
+            );
         });
     }
 }
