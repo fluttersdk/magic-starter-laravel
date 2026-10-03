@@ -136,6 +136,7 @@ class InstallCommand extends Command
             'create_push_devices_table.php',
         ],
         'social-login' => [
+            'make_password_nullable_on_users_table.php',
             'create_social_accounts_table.php',
         ],
         'newsletter-subscription' => [

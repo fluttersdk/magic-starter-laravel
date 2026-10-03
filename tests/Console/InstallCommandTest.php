@@ -3,7 +3,9 @@
 namespace FlutterSdk\MagicStarter\Tests\Console;
 
 use FlutterSdk\MagicStarter\Tests\TestCase;
+use Illuminate\Database\Schema\Blueprint;
 use Illuminate\Support\Facades\File;
+use Illuminate\Support\Facades\Schema;
 
 final class InstallCommandTest extends TestCase
 {
@@ -366,6 +368,42 @@ final class InstallCommandTest extends TestCase
             basename($socialAccounts[0]) > basename($users[0]),
             'The social accounts migration references users, so it must sort after the users table.',
         );
+    }
+
+    /**
+     * A provider-created account has no password, and the core users table
+     * declares the column NOT NULL; only guest-auth and phone-otp relaxed it
+     * before, so a social-login-only install could not create a single user.
+     */
+    public function test_social_login_feature_publishes_the_nullable_password_migration(): void
+    {
+        $this->artisan('magic-starter:install', [
+            '--features' => ['social-login'],
+        ])->assertExitCode(0);
+
+        $nullablePassword = glob(database_path('migrations/*_make_password_nullable_on_users_table.php')) ?: [];
+        $users = glob(database_path('migrations/*_create_users_table.php')) ?: [];
+
+        $this->assertCount(1, $nullablePassword);
+        $this->assertTrue(basename($nullablePassword[0]) > basename($users[0]));
+    }
+
+    public function test_the_nullable_password_migration_relaxes_a_not_null_password_column(): void
+    {
+        Schema::dropIfExists('users');
+        Schema::create('users', function (Blueprint $table): void {
+            $table->id();
+            $table->string('email');
+            $table->string('password');
+        });
+
+        $migration = require __DIR__ . '/../../database/migrations/make_password_nullable_on_users_table.php';
+        $migration->up();
+        $migration->up();
+
+        $password = collect(Schema::getColumns('users'))->firstWhere('name', 'password');
+
+        $this->assertTrue($password['nullable']);
     }
 
     public function test_without_social_login_the_social_accounts_migration_is_skipped(): void

@@ -75,6 +75,9 @@ class MagicStarterServiceProvider extends ServiceProvider
         // A singleton (not the `#[Singleton]` attribute, which needs Laravel 12.21
         // while the package floors at 12.0) so tests hand every Apple provider one client.
         $this->app->singleton(Social\AppleProviderFactory::class);
+        $this->app->bind(Contracts\ResolvesSocialUsers::class, Actions\ResolveSocialUser::class);
+        $this->app->bind(Contracts\CreatesUsersFromProvider::class, Actions\CreateUserFromProvider::class);
+        $this->app->bind(Contracts\ConnectsSocialAccounts::class, Actions\ConnectSocialAccount::class);
         $this->app->bind(Contracts\EnablesTwoFactorAuthentication::class, Actions\EnableTwoFactorAuthentication::class);
         $this->app->bind(Contracts\ConfirmsTwoFactorAuthentication::class, Actions\ConfirmTwoFactorAuthentication::class);
         $this->app->bind(Contracts\DisablesTwoFactorAuthentication::class, Actions\DisableTwoFactorAuthentication::class);
