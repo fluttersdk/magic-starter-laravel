@@ -2,8 +2,10 @@
 
 namespace FlutterSdk\MagicStarter\Tests\Actions;
 
-use FlutterSdk\MagicStarter\Actions\StoreSubscriptionGuardedDeleteTeam;
+use Carbon\CarbonInterface;
+use FlutterSdk\MagicStarter\Actions\SubscriptionGuardedDeleteTeam;
 use FlutterSdk\MagicStarter\Contracts\DeletesTeams;
+use FlutterSdk\MagicStarter\MagicStarter;
 use FlutterSdk\MagicStarter\Tests\Fixtures\ConcreteTeam;
 use FlutterSdk\MagicStarter\Tests\Fixtures\ConcreteUser;
 use FlutterSdk\MagicStarter\Tests\TestCase;
@@ -12,10 +14,12 @@ use Illuminate\Database\Schema\Blueprint;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\Schema;
 use Illuminate\Validation\ValidationException;
+use Laravel\Cashier\Billable;
 
 /**
- * The store-owned delete guard: a team a store is still billing cannot be
- * deleted through this action, and every other team can.
+ * The subscription delete guard: a team a store is still billing, or one that
+ * carries a valid Cashier subscription, cannot be deleted through this action,
+ * and every other team can. Each rail refuses with its own sentence.
  *
  * The tier half of the guard is a NULL CHECK and nothing more, because this
  * package has no tier vocabulary to name a "free" plan with. The application
@@ -30,7 +34,7 @@ use Illuminate\Validation\ValidationException;
  * `!== 'free'` comparison answers true for it, and a team the store stopped
  * billing would never be deletable again.
  */
-class StoreSubscriptionGuardedDeleteTest extends TestCase
+class SubscriptionGuardedDeleteTeamTest extends TestCase
 {
     use RefreshDatabase;
 
@@ -73,14 +77,41 @@ class StoreSubscriptionGuardedDeleteTest extends TestCase
         // it. The fixture bound in TestCase is `ConcreteTeam`, so the column
         // this action's inherited `parent::delete()` actually queries is
         // `concrete_team_id`, not `team_id`.
+        // `CashierTeam` pins its foreign key to `team_id`, which moves this
+        // inferred column with it, so both shapes are present.
         Schema::create('team_invitations', function (Blueprint $table): void {
             $table->uuid('id')->primary();
-            $table->uuid('concrete_team_id');
+            $table->uuid('concrete_team_id')->nullable();
+            $table->uuid('team_id')->nullable();
             $table->string('email');
             $table->string('role')->nullable();
             $table->string('token');
             $table->timestamp('expires_at')->nullable();
             $table->timestamp('created_at')->nullable();
+        });
+
+        Schema::create('subscriptions', function (Blueprint $table): void {
+            $table->id();
+            $table->uuid('team_id');
+            $table->string('type');
+            $table->string('stripe_id')->unique();
+            $table->string('stripe_status');
+            $table->string('stripe_price')->nullable();
+            $table->integer('quantity')->nullable();
+            $table->timestamp('trial_ends_at')->nullable();
+            $table->timestamp('ends_at')->nullable();
+            $table->timestamps();
+        });
+
+        // Cashier's subscription model eager-loads its items on every read.
+        Schema::create('subscription_items', function (Blueprint $table): void {
+            $table->id();
+            $table->unsignedBigInteger('subscription_id');
+            $table->string('stripe_id')->unique();
+            $table->string('stripe_product');
+            $table->string('stripe_price');
+            $table->integer('quantity')->nullable();
+            $table->timestamps();
         });
     }
 
@@ -101,7 +132,7 @@ class StoreSubscriptionGuardedDeleteTest extends TestCase
     public function test_the_contract_resolves_to_the_guarded_action(): void
     {
         $this->assertInstanceOf(
-            StoreSubscriptionGuardedDeleteTeam::class,
+            SubscriptionGuardedDeleteTeam::class,
             $this->app->make(DeletesTeams::class),
         );
     }
@@ -119,7 +150,7 @@ class StoreSubscriptionGuardedDeleteTest extends TestCase
             ]);
 
             try {
-                (new StoreSubscriptionGuardedDeleteTeam)->delete($team);
+                (new SubscriptionGuardedDeleteTeam)->delete($team);
                 $this->fail(sprintf('Expected a refusal for provider [%s].', $provider));
             } catch (ValidationException $exception) {
                 $this->assertSame('deleteTeam', $exception->errorBag);
@@ -180,15 +211,16 @@ class StoreSubscriptionGuardedDeleteTest extends TestCase
             ]);
 
             $this->expectException(ValidationException::class);
-            (new StoreSubscriptionGuardedDeleteTeam)->delete($team);
+            (new SubscriptionGuardedDeleteTeam)->delete($team);
         }
     }
 
     /**
-     * A Stripe-funded team is not this guard's concern: the application is the
-     * merchant on that rail, so deleting the team is the end of the story.
+     * `plan_provider = 'stripe'` is provenance, not a subscription: the card
+     * rail's guard reads Cashier's own subscription rows, so a team whose row
+     * merely names the rail, with no subscription behind it, is deletable.
      */
-    public function test_a_stripe_funded_team_can_be_deleted(): void
+    public function test_stripe_provenance_without_a_cashier_subscription_can_be_deleted(): void
     {
         $team = $this->makeTeam([
             'plan' => 'pro',
@@ -196,9 +228,122 @@ class StoreSubscriptionGuardedDeleteTest extends TestCase
             'plan_provider' => 'stripe',
         ]);
 
-        (new StoreSubscriptionGuardedDeleteTeam)->delete($team);
+        (new SubscriptionGuardedDeleteTeam)->delete($team);
 
         $this->assertNull(ConcreteTeam::query()->find($team->getKey()));
+    }
+
+    /**
+     * A valid Cashier subscription refuses the deletion with the card rail's
+     * own sentence, and the team, its members and its subscription stay.
+     *
+     * Nothing is cancelled on the customer's behalf: deleting the team would
+     * leave Stripe charging a subject that no longer exists, and cancelling
+     * for them is a decision this package does not take.
+     */
+    public function test_a_team_with_an_active_stripe_subscription_cannot_be_deleted(): void
+    {
+        $team = $this->makeCashierTeam();
+        $member = ConcreteUser::query()->create(['name' => 'Member']);
+        $team->users()->attach($member->getKey(), ['role' => 'member']);
+        $this->subscribe($team, 'active');
+
+        try {
+            (new SubscriptionGuardedDeleteTeam)->delete($team);
+            $this->fail('Expected a refusal for a valid Stripe subscription.');
+        } catch (ValidationException $exception) {
+            $this->assertSame('deleteTeam', $exception->errorBag);
+            $this->assertSame(
+                __('magic-starter::billing.refusals.stripe_subscription_active'),
+                $exception->errors()['team'][0],
+            );
+        }
+
+        $this->assertNotNull(CashierTeam::query()->find($team->getKey()));
+        $this->assertSame(1, $team->users()->count(), 'A refused deletion must leave the members attached.');
+        $this->assertSame('active', $team->subscriptions()->first()?->stripe_status);
+    }
+
+    /**
+     * Cashier's `valid()` is the definition, so a subscription cancelled at
+     * period end still refuses until that period is over, and a trial refuses
+     * like a paid period does.
+     */
+    public function test_a_cancelled_subscription_still_inside_its_paid_period_refuses(): void
+    {
+        $graceTeam = $this->makeCashierTeam();
+        $this->subscribe($graceTeam, 'active', endsAt: now()->addDays(10));
+
+        $trialTeam = $this->makeCashierTeam();
+        $this->subscribe($trialTeam, 'trialing', trialEndsAt: now()->addDays(5));
+
+        foreach ([$graceTeam, $trialTeam] as $team) {
+            $this->assertTrue(
+                $this->readsStripeBilling($team),
+                'A subscription Cashier still calls valid must keep the team inside the guard.',
+            );
+        }
+    }
+
+    /**
+     * An ended or unpaid subscription no longer bills anything, so the team is
+     * deletable outright.
+     */
+    public function test_an_ended_or_unpaid_stripe_subscription_does_not_refuse(): void
+    {
+        $endedTeam = $this->makeCashierTeam();
+        $this->subscribe($endedTeam, 'canceled', endsAt: now()->subDay());
+
+        $unpaidTeam = $this->makeCashierTeam();
+        $this->subscribe($unpaidTeam, 'unpaid');
+
+        foreach ([$endedTeam, $unpaidTeam] as $team) {
+            $this->assertFalse($this->readsStripeBilling($team));
+
+            (new SubscriptionGuardedDeleteTeam)->delete($team);
+
+            $this->assertNull(CashierTeam::query()->find($team->getKey()));
+        }
+    }
+
+    /**
+     * Under user billing a team's own subscriptions are not the billable
+     * subject's, so the card guard does not fire on the team.
+     */
+    public function test_the_stripe_guard_does_not_apply_when_the_billable_subject_is_the_user(): void
+    {
+        $team = $this->makeCashierTeam();
+        $this->subscribe($team, 'active');
+
+        config(['magic-starter.billing.billable' => 'user']);
+
+        $this->assertFalse($this->readsStripeBilling($team));
+    }
+
+    /**
+     * Both rails refuse with their own sentence, in both locales, and the two
+     * sentences differ: "cancel it in the store" and "cancel it in billing"
+     * are different instructions.
+     */
+    public function test_the_stripe_refusal_reads_from_the_shipped_catalogue_in_both_locales(): void
+    {
+        $englishCatalogue = require __DIR__ . '/../../lang/en/billing.php';
+        $turkishCatalogue = require __DIR__ . '/../../lang/tr/billing.php';
+
+        $team = $this->makeCashierTeam();
+        $this->subscribe($team, 'active');
+
+        $this->app->setLocale('tr');
+        $this->assertRefusalMessage($team, $turkishCatalogue['refusals']['stripe_subscription_active']);
+
+        $this->assertNotSame(
+            $englishCatalogue['refusals']['stripe_subscription_active'],
+            $turkishCatalogue['refusals']['stripe_subscription_active'],
+        );
+        $this->assertNotSame(
+            $englishCatalogue['refusals']['stripe_subscription_active'],
+            $englishCatalogue['refusals']['store_subscription_active'],
+        );
     }
 
     /**
@@ -212,7 +357,7 @@ class StoreSubscriptionGuardedDeleteTest extends TestCase
             'plan_provider' => 'manual',
         ]);
 
-        (new StoreSubscriptionGuardedDeleteTeam)->delete($team);
+        (new SubscriptionGuardedDeleteTeam)->delete($team);
 
         $this->assertNull(ConcreteTeam::query()->find($team->getKey()));
     }
@@ -228,7 +373,7 @@ class StoreSubscriptionGuardedDeleteTest extends TestCase
             'plan_provider' => null,
         ]);
 
-        (new StoreSubscriptionGuardedDeleteTeam)->delete($team);
+        (new SubscriptionGuardedDeleteTeam)->delete($team);
 
         $this->assertNull(ConcreteTeam::query()->find($team->getKey()));
     }
@@ -247,9 +392,9 @@ class StoreSubscriptionGuardedDeleteTest extends TestCase
             'plan_provider' => 'app_store',
         ]);
 
-        $this->assertFalse(StoreSubscriptionGuardedDeleteTeam::storeIsBilling($team));
+        $this->assertFalse(SubscriptionGuardedDeleteTeam::storeIsBilling($team));
 
-        (new StoreSubscriptionGuardedDeleteTeam)->delete($team);
+        (new SubscriptionGuardedDeleteTeam)->delete($team);
 
         $this->assertNull(ConcreteTeam::query()->find($team->getKey()));
     }
@@ -276,7 +421,7 @@ class StoreSubscriptionGuardedDeleteTest extends TestCase
         ]);
 
         $this->assertFalse(
-            StoreSubscriptionGuardedDeleteTeam::storeIsBilling($team),
+            SubscriptionGuardedDeleteTeam::storeIsBilling($team),
             'A NULL plan must read as "not above free", the same as an explicit free tier would.',
         );
     }
@@ -306,14 +451,14 @@ class StoreSubscriptionGuardedDeleteTest extends TestCase
         ]);
 
         $this->assertFalse(
-            StoreSubscriptionGuardedDeleteTeam::storeIsBilling($team),
+            SubscriptionGuardedDeleteTeam::storeIsBilling($team),
             'A subject on the catalogue\'s floor tier holds nothing anybody is paying for.',
         );
 
         $team->forceFill(['plan' => 'pro'])->save();
 
         $this->assertTrue(
-            StoreSubscriptionGuardedDeleteTeam::storeIsBilling($team),
+            SubscriptionGuardedDeleteTeam::storeIsBilling($team),
             'The tier above the floor is the control: without it, a predicate that always '
             . 'answered false would pass the assertion above.',
         );
@@ -336,7 +481,7 @@ class StoreSubscriptionGuardedDeleteTest extends TestCase
         ]);
 
         $this->assertTrue(
-            StoreSubscriptionGuardedDeleteTeam::storeIsBilling($team),
+            SubscriptionGuardedDeleteTeam::storeIsBilling($team),
             'With no catalogue there is no floor to recognise, so a named tier reads as paid, '
             . 'exactly as it did before the floor was read at all.',
         );
@@ -360,9 +505,9 @@ class StoreSubscriptionGuardedDeleteTest extends TestCase
         // predicate the question with the subject pointed at the user.
         config(['magic-starter.billing.billable' => 'user']);
 
-        $this->assertFalse(StoreSubscriptionGuardedDeleteTeam::storeIsBilling($team));
+        $this->assertFalse(SubscriptionGuardedDeleteTeam::storeIsBilling($team));
 
-        (new StoreSubscriptionGuardedDeleteTeam)->delete($team);
+        (new SubscriptionGuardedDeleteTeam)->delete($team);
 
         $this->assertNull(ConcreteTeam::query()->find($team->getKey()));
     }
@@ -374,17 +519,65 @@ class StoreSubscriptionGuardedDeleteTest extends TestCase
     {
         config(['magic-starter.billing.billable' => 'team']);
 
-        $this->assertFalse(StoreSubscriptionGuardedDeleteTeam::storeIsBilling(new ConcreteUser));
+        $this->assertFalse(SubscriptionGuardedDeleteTeam::storeIsBilling(new ConcreteUser));
     }
 
     private function assertRefusalMessage(Model $team, string $expected): void
     {
         try {
-            (new StoreSubscriptionGuardedDeleteTeam)->delete($team);
+            (new SubscriptionGuardedDeleteTeam)->delete($team);
             $this->fail('Expected the store-billed team to be refused.');
         } catch (ValidationException $exception) {
             $this->assertSame($expected, $exception->errors()['team'][0]);
         }
+    }
+
+    /**
+     * Ask the trait's predicate through the guard, the one class that uses it here.
+     */
+    private function readsStripeBilling(Model $team): bool
+    {
+        $guard = new class extends SubscriptionGuardedDeleteTeam
+        {
+            public function asks(Model $team): bool
+            {
+                return $this->stripeIsBilling($team);
+            }
+        };
+
+        return $guard->asks($team);
+    }
+
+    private function makeCashierTeam(): CashierTeam
+    {
+        MagicStarter::useTeamModel(CashierTeam::class);
+
+        $owner = ConcreteUser::query()->create([
+            'name' => 'Card Owner',
+        ]);
+
+        return CashierTeam::query()->forceCreate([
+            'user_id' => $owner->getKey(),
+            'name' => 'Card Team',
+            'personal_team' => false,
+        ]);
+    }
+
+    private function subscribe(
+        CashierTeam $team,
+        string $status,
+        ?CarbonInterface $endsAt = null,
+        ?CarbonInterface $trialEndsAt = null,
+    ): void {
+        $team->subscriptions()->create([
+            'type' => 'default',
+            'stripe_id' => 'sub_' . bin2hex(random_bytes(6)),
+            'stripe_status' => $status,
+            'stripe_price' => 'price_pro',
+            'quantity' => 1,
+            'ends_at' => $endsAt,
+            'trial_ends_at' => $trialEndsAt,
+        ]);
     }
 
     private function makeTeam(array $overrides): ConcreteTeam
@@ -399,5 +592,20 @@ class StoreSubscriptionGuardedDeleteTest extends TestCase
             'personal_team' => false,
             ...$overrides,
         ]);
+    }
+}
+
+/**
+ * A team that carries Cashier's billable trait, the shape a team-billing
+ * adopter ships. The foreign key is pinned to `team_id` because Cashier
+ * derives it from the class basename, which no real subscriptions table uses.
+ */
+class CashierTeam extends ConcreteTeam
+{
+    use Billable;
+
+    public function getForeignKey(): string
+    {
+        return 'team_id';
     }
 }

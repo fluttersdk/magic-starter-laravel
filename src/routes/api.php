@@ -27,6 +27,7 @@ use FlutterSdk\MagicStarter\Http\Controllers\SessionController;
 use FlutterSdk\MagicStarter\Http\Controllers\SettingsController;
 use FlutterSdk\MagicStarter\Http\Controllers\SocialExchangeController;
 use FlutterSdk\MagicStarter\Http\Controllers\SocialRedirectController;
+use FlutterSdk\MagicStarter\Http\Controllers\SocialTokenController;
 use FlutterSdk\MagicStarter\Http\Controllers\TeamController;
 use FlutterSdk\MagicStarter\Http\Controllers\TeamInvitationController;
 use FlutterSdk\MagicStarter\Http\Controllers\TeamMemberController;
@@ -73,10 +74,13 @@ Route::prefix((string) config('magic-starter.route_prefix', ''))
         // The browser-facing start of a social flow, and the app's exchange of the
         // one-time code it ends in. The provider's callback between them lives in
         // `social.php`, outside this prefix, because provider consoles pin its url.
+        // A native SDK skips the browser and posts its provider's ID token instead.
         Route::prefix('auth')->middleware(['throttle:magic-starter-auth-social'])->group(function (): void {
             if (Features::hasSocialLoginFeatures()) {
                 Route::get('social/{provider}/redirect', SocialRedirectController::class);
                 Route::post('social/exchange', SocialExchangeController::class);
+                Route::post('social/{provider}/token', SocialTokenController::class)
+                    ->whereIn('provider', SocialTokenController::PROVIDERS);
             }
         });
 

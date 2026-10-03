@@ -62,6 +62,7 @@ return [
      */
     'refusals' => [
         'store_subscription_active' => 'A store subscription is still billing this team. Cancel it in the store account that bought it first: deleting the team now would remove the plan and leave the store charging you, and this app cannot cancel it for you.',
+        'stripe_subscription_active' => 'A card subscription is still active on this team. Cancel it in billing and wait for the paid period to end before deleting the team.',
 
         /*
          * The two 409 sentences the billing endpoints raise, and they are

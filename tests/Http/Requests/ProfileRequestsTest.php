@@ -2,7 +2,7 @@
 
 namespace FlutterSdk\MagicStarter\Tests\Http\Requests;
 
-use FlutterSdk\MagicStarter\Contracts\DeletesUsers;
+use FlutterSdk\MagicStarter\Contracts\SchedulesUserDeletion;
 use FlutterSdk\MagicStarter\Contracts\UpdatesUserPasswords;
 use FlutterSdk\MagicStarter\Contracts\UpdatesUserProfiles;
 use FlutterSdk\MagicStarter\Http\Controllers\ProfileController;
@@ -90,12 +90,12 @@ final class ProfileRequestsTest extends TestCase
             }
         });
 
-        \call_user_func('app')->instance(DeletesUsers::class, new class implements DeletesUsers
+        // The deletion endpoint schedules; validation must refuse before it runs.
+        \call_user_func('app')->instance(SchedulesUserDeletion::class, new class implements SchedulesUserDeletion
         {
-            public function delete(\Illuminate\Contracts\Auth\Authenticatable $user): void
+            public function schedule(\Illuminate\Contracts\Auth\Authenticatable $user, bool $orphan = false): void
             {
-                $user->tokens()->delete();
-                $user->delete();
+                throw new \LogicException('A request that failed validation must not reach the scheduler.');
             }
         });
 

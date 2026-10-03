@@ -7,8 +7,10 @@ use Carbon\CarbonInterface;
 use Carbon\Exceptions\InvalidFormatException;
 use DateTimeInterface;
 use FlutterSdk\MagicStarter\Enums\PlanStatus;
+use FlutterSdk\MagicStarter\MagicStarter;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Support\Carbon;
+use Laravel\Cashier\Subscription;
 
 /**
  * The one place this package decodes a billable's billing state.
@@ -168,6 +170,39 @@ trait ReadsBillableAttributes
         return $tier !== null
             && $tier !== ($this->tierOrder()[0] ?? null)
             && $status->grants();
+    }
+
+    /**
+     * Whether a valid Cashier subscription is billing this subject right now.
+     *
+     * The card-rail half of "is anybody paying for this", beside the store half
+     * on {@see \FlutterSdk\MagicStarter\Actions\SubscriptionGuardedDeleteTeam::storeIsBilling()}.
+     * It reads Cashier's own subscription rows rather than `plan_provider`,
+     * because the provenance column survives a subscription ending and Cashier's
+     * rows are what Stripe's webhooks keep current. `valid()` is the definition:
+     * an active period, a trial, and a subscription cancelled at period end all
+     * count, since each is a period the customer has been or is being charged for.
+     *
+     * Every subscription type is read, not only the package's `default`, because
+     * an adopter driving Cashier directly may bill under a name of their own.
+     *
+     * A subject that is not the configured billable answers false, matching the
+     * store half: under user billing a team's rows are not where the money is. A
+     * model without Cashier's trait answers false as well.
+     */
+    protected function stripeIsBilling(Model $billable): bool
+    {
+        $billableClass = MagicStarter::billableModel();
+
+        if (! $billable instanceof $billableClass || ! method_exists($billable, 'subscriptions')) {
+            return false;
+        }
+
+        // Queried rather than read from a loaded relation, so a subscription that
+        // arrived after the subject was loaded still counts.
+        return $billable->subscriptions()->get()->contains(
+            static fn (mixed $subscription): bool => $subscription instanceof Subscription && $subscription->valid(),
+        );
     }
 
     /**

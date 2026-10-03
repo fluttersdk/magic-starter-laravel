@@ -15,9 +15,21 @@ use Illuminate\Support\Str;
  * Extracted from AuthController so that GuestAuthController
  * and any future auth controllers can reuse the same
  * token generation and response logic.
+ *
+ * Every path that issues a token (password login, the 2FA challenge, the
+ * social exchange, guest and OTP sign-in, registration) goes through
+ * {@see self::createAuthToken()} and then {@see self::authenticatedResponse()},
+ * which is why a sign-in cancelling a scheduled account deletion lives on that
+ * pair: the first clears the schedule, the second reports it.
  */
 trait AuthenticatesUsers
 {
+    /**
+     * The request attribute that carries "this sign-in cancelled a deletion"
+     * from the token to the response.
+     */
+    private const DELETION_CANCELLED_ATTRIBUTE = 'magic-starter.deletion_cancelled';
+
     /**
      * Build an authenticated JSON response with user and token.
      *
@@ -53,11 +65,20 @@ trait AuthenticatesUsers
         $request->setUserResolver($resolver);
         app('request')->setUserResolver($resolver);
 
+        $data = [
+            'user' => new UserResource($user),
+            'token' => $token,
+        ];
+
+        // The cancelled deletion outranks the caller's sentence: it is the one
+        // thing this sign-in did that the user did not ask for.
+        if ($request->attributes->get(self::DELETION_CANCELLED_ATTRIBUTE) === true) {
+            $data['deletion_cancelled'] = true;
+            $message = (string) __('magic-starter::social.deletion_cancelled');
+        }
+
         return response()->json([
-            'data' => [
-                'user' => new UserResource($user),
-                'token' => $token,
-            ],
+            'data' => $data,
             'message' => $message,
         ], $status);
     }
@@ -118,6 +139,9 @@ trait AuthenticatesUsers
     /**
      * Create an authentication token for the given user.
      *
+     * Signing in during the grace period of a deletion the user asked for
+     * cancels it first; see {@see self::cancelScheduledDeletion()}.
+     *
      * @param  mixed  $user  The user model instance.
      * @param  Request  $request  The current HTTP request (used for device info).
      * @param  bool  $storeDeviceInfo  Whether to persist ip/user_agent on the token.
@@ -125,6 +149,8 @@ trait AuthenticatesUsers
      */
     protected function createAuthToken(mixed $user, Request $request, bool $storeDeviceInfo = true): string
     {
+        $this->cancelScheduledDeletion($user, $request);
+
         if (! method_exists($user, 'createToken')) {
             return Str::random(80);
         }
@@ -146,5 +172,34 @@ trait AuthenticatesUsers
         }
 
         return (string) $plainTextToken;
+    }
+
+    /**
+     * Clear a deletion the user scheduled, and mark the request so the response
+     * says so.
+     *
+     * An orphan's schedule stays: the identity provider deleted the account, so
+     * signing in by another method is not the user taking the request back.
+     *
+     * Guarded by attribute presence rather than a schema query, so an older
+     * users table without the deletion columns reads null and pays nothing per
+     * sign-in. The flag rides on the REQUEST rather than on the controller,
+     * because a route caches its controller instance and a long-lived worker
+     * would carry one sign-in's flag into the next.
+     */
+    protected function cancelScheduledDeletion(mixed $user, Request $request): void
+    {
+        if (! $user instanceof Model
+            || $user->getAttribute('deletion_scheduled_at') === null
+            || $user->getAttribute('orphaned_at') !== null
+        ) {
+            return;
+        }
+
+        $user->forceFill([
+            'deletion_scheduled_at' => null,
+        ])->save();
+
+        $request->attributes->set(self::DELETION_CANCELLED_ATTRIBUTE, true);
     }
 }

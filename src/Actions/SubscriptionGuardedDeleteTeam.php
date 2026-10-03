@@ -11,27 +11,40 @@ use Illuminate\Database\Eloquent\Model;
 use Illuminate\Validation\ValidationException;
 
 /**
- * Wraps the default {@see DeleteTeam} with a refusal while a STORE is still
- * billing the team.
+ * Wraps the default {@see DeleteTeam} with a refusal while either rail is
+ * still billing the team: a STORE subscription, or a valid Cashier one.
  *
  * Bound over the {@see DeletesTeams} contract in the package's own
  * `MagicStarterServiceProvider::register()` (the same contract-action override
  * pattern every other action here uses), because team deletion is the
  * package's own endpoint and a consuming application owns no team route to put
- * a guard on.
+ * a guard on. Account deletion reaches it too: a user's solo teams are deleted
+ * through this contract, so the same refusal holds a purge back.
  *
- * WHY DELETION IS DIFFERENT ON THIS RAIL
+ * WHY THE STORE RAIL REFUSES
  *
- * On the card rail, deleting the team is the end of the story: the consuming
- * application is the merchant, so nothing keeps charging once the row is
- * gone. A store subscription lives in the customer's App Store or Play
- * account, which the application cannot cancel and cannot even see: a webhook
- * is the only thing that tells it anything about it. So deleting the team
- * removes the entitlement while the store keeps taking money every month, and
- * the only person who can stop it is the owner, in the store's own account
- * surface. Refusing the deletion until they have been there is the
- * difference between an ex-customer and a customer being charged for
- * nothing.
+ * A store subscription lives in the customer's App Store or Play account,
+ * which the application cannot cancel and cannot even see: a webhook is the
+ * only thing that tells it anything about it. So deleting the team removes
+ * the entitlement while the store keeps taking money every month, and the
+ * only person who can stop it is the owner, in the store's own account
+ * surface. Refusing the deletion until they have been there is the difference
+ * between an ex-customer and a customer being charged for nothing.
+ *
+ * WHY THE CARD RAIL REFUSES TOO
+ *
+ * On the card rail the application is the merchant, so it COULD cancel the
+ * subscription itself, and that is exactly why it does not: cancelling a
+ * customer's subscription as a side effect of a delete button is a billing
+ * decision nobody asked for, and deleting the team without cancelling leaves
+ * Stripe charging a subject that no longer exists. So the owner cancels from
+ * billing first. The predicate is Cashier's own `valid()`, which keeps a
+ * trial, a dunning `past_due` and a subscription cancelled at period end
+ * inside the guard: each of those is still a period the customer is owed or
+ * still being charged for.
+ *
+ * Each rail refuses with its own sentence, because "cancel it in the store
+ * that sold it" and "cancel it in billing" are different instructions.
  *
  * The refusal is thrown BEFORE `parent::delete()` runs, which is
  * load-bearing: the parent action detaches every member and deletes every
@@ -43,22 +56,29 @@ use Illuminate\Validation\ValidationException;
  * endpoint answering two refusals in two shapes would make the client's
  * error handling depend on which one it hit.
  */
-class StoreSubscriptionGuardedDeleteTeam extends DeleteTeam
+class SubscriptionGuardedDeleteTeam extends DeleteTeam
 {
     use ReadsBillableAttributes;
 
     /**
-     * Delete the team, unless a store is still billing it.
+     * Delete the team, unless a store or a valid Cashier subscription is still
+     * billing it.
      *
      * @param  Model  $team  The team to delete.
      *
-     * @throws ValidationException When a live store subscription funds the team.
+     * @throws ValidationException When either rail still funds the team.
      */
     public function delete(Model $team): void
     {
         if (self::storeIsBilling($team)) {
             throw ValidationException::withMessages([
                 'team' => __('magic-starter::billing.refusals.store_subscription_active'),
+            ])->errorBag('deleteTeam');
+        }
+
+        if ($this->stripeIsBilling($team)) {
+            throw ValidationException::withMessages([
+                'team' => __('magic-starter::billing.refusals.stripe_subscription_active'),
             ])->errorBag('deleteTeam');
         }
 

@@ -3,6 +3,7 @@
 namespace FlutterSdk\MagicStarter;
 
 use FlutterSdk\MagicStarter\Console\InstallCommand;
+use FlutterSdk\MagicStarter\Console\PurgeDeletedUsersCommand;
 use FlutterSdk\MagicStarter\Console\ReconcileBillingEntitlements;
 use FlutterSdk\MagicStarter\Support\FrontendUrl;
 use Illuminate\Auth\Events\Registered;
@@ -55,16 +56,18 @@ class MagicStarterServiceProvider extends ServiceProvider
         $this->app->bind(Contracts\UpdatesUserProfiles::class, Actions\UpdateUserProfile::class);
         $this->app->bind(Contracts\UpdatesUserPasswords::class, Actions\UpdateUserPassword::class);
         $this->app->bind(Contracts\DeletesUsers::class, Actions\DeleteUser::class);
+        $this->app->bind(Contracts\SchedulesUserDeletion::class, Actions\ScheduleUserDeletion::class);
         $this->app->bind(Contracts\CreatesTeams::class, Actions\CreateTeam::class);
         $this->app->bind(Contracts\UpdatesTeams::class, Actions\UpdateTeam::class);
-        // Bound to the store-guarded action rather than the plain one. The
-        // guard is unconditional like every binding above it: it reads
-        // `plan_provider`/`plan_status` through Eloquent's own attribute
-        // access, which answers null on a table that never got the
-        // provenance columns (billing feature off, or `billing.billable`
-        // pointed elsewhere), so the extra check is a safe no-op there and
-        // a real one only where the schema and the config both say it should be.
-        $this->app->bind(Contracts\DeletesTeams::class, Actions\StoreSubscriptionGuardedDeleteTeam::class);
+        // Bound to the subscription-guarded action rather than the plain one.
+        // The guard is unconditional like every binding above it: the store
+        // half reads `plan_provider`/`plan_status` through Eloquent's own
+        // attribute access, which answers null on a table that never got the
+        // provenance columns, and the card half answers false for a model
+        // without Cashier's trait (billing feature off, or `billing.billable`
+        // pointed elsewhere), so the extra checks are a safe no-op there and
+        // real ones only where the schema and the config both say they should be.
+        $this->app->bind(Contracts\DeletesTeams::class, Actions\SubscriptionGuardedDeleteTeam::class);
         $this->app->bind(Contracts\AddsTeamMembers::class, Actions\AddTeamMember::class);
         $this->app->bind(Contracts\RemovesTeamMembers::class, Actions\RemoveTeamMember::class);
         $this->app->bind(Contracts\InvitesTeamMembers::class, Actions\InviteTeamMember::class);
@@ -303,6 +306,7 @@ class MagicStarterServiceProvider extends ServiceProvider
         if ($this->app->runningInConsole()) {
             $this->commands([
                 InstallCommand::class,
+                PurgeDeletedUsersCommand::class,
             ]);
 
             // The reconciler is registered with the feature it belongs to, so an
