@@ -200,15 +200,16 @@ Namespace: `FlutterSdk\MagicStarter\Contracts\SchedulesUserDeletion`
 Default action: `Actions\ScheduleUserDeletion`
 
 ```php
-public function schedule(Authenticatable $user, bool $orphan = false): void;
+public function schedule(Authenticatable $user, bool $orphan = false, bool $immediately = false): void;
 ```
 
 The one entry point to the deletion pipeline, for a user's own request and for an identity provider
 reporting the account deleted (`$orphan = true`). It refuses a user who owns a shared team or a
 billing team, or whom a subscription bills directly (422 `owns_shared_teams`,
 `team_has_active_subscription` or `subscription_active`), then revokes every token, drops the push
-devices and stamps `deletion_scheduled_at`. Nothing is deleted. See
-[Account Deletion](../basics/account-deletion.md).
+devices, stamps `deletion_scheduled_at` and dispatches `UserDeletionScheduled`. Nothing is deleted
+in the request: with `$immediately` a queued `PurgeUserNow` purges the account right away instead
+of after the grace period. See [Account Deletion](../basics/account-deletion.md).
 
 ---
 
