@@ -438,6 +438,26 @@ final class InstallCommandTest extends TestCase
         );
     }
 
+    /**
+     * Every request lower-cases the email it looks up, so the rows written
+     * before that have to be lower-cased on every install, whatever its features.
+     */
+    public function test_the_email_lower_casing_migration_is_published_without_any_feature(): void
+    {
+        $this->artisan('magic-starter:install', [
+            '--features' => ['sessions'],
+        ])->assertExitCode(0);
+
+        $lowercase = glob(database_path('migrations/*_lowercase_user_emails.php')) ?: [];
+        $users = glob(database_path('migrations/*_create_users_table.php')) ?: [];
+
+        $this->assertCount(1, $lowercase);
+        $this->assertTrue(
+            basename($lowercase[0]) > basename($users[0]),
+            'The lower-casing reads users, so it must sort after the table is created.',
+        );
+    }
+
     // -------------------------------------------------------------------------
     // UUID / Integer Primary Key Tests
     // -------------------------------------------------------------------------

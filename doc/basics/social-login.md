@@ -48,6 +48,8 @@ class User extends Authenticatable
 
 `HasSocialAccounts` adds the `socialAccounts()` relation and `hasPassword()`. `NormalizesEmail` lower-cases an email on assignment, so `Bob@x.io` and `bob@x.io` cannot become two accounts. Add a `lower(email)` unique index as well, so the database refuses what the application missed.
 
+Every lookup compares the lower-cased address, so rows stored before the package normalized them must be lower-cased too, or their owners can no longer sign in. The core migration `lowercase_user_emails.php` does that for `users`, `team_invitations` and `newsletter_subscribers`, and refuses with the colliding addresses when two rows differ only in case. An existing install copies it from `vendor/fluttersdk/magic-starter-laravel/database/migrations/` under a new timestamp and runs it before upgrading, see the [changelog](../../CHANGELOG.md).
+
 Install the feature with `magic-starter:install --features=social-login`. It publishes two migrations: `make_password_nullable_on_users_table.php` (a social-only account has no password) and `create_social_accounts_table.php`. The deletion columns ship with the core migrations, see [Account Deletion](account-deletion.md).
 
 ---

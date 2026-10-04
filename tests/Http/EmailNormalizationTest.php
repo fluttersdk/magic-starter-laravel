@@ -20,11 +20,14 @@ use Illuminate\Contracts\Auth\CanResetPassword;
 use Illuminate\Database\Eloquent\Relations\HasMany;
 use Illuminate\Database\Schema\Blueprint;
 use Illuminate\Notifications\Notifiable;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Gate;
 use Illuminate\Support\Facades\Hash;
 use Illuminate\Support\Facades\Notification;
 use Illuminate\Support\Facades\Route;
 use Illuminate\Support\Facades\Schema;
+use Illuminate\Support\Str;
+use RuntimeException;
 
 /**
  * Pins that an email is compared case-insensitively on every write and lookup.
@@ -231,6 +234,80 @@ final class EmailNormalizationTest extends TestCase
         $this->assertTrue($team->users()->where('user_id', $member->id)->exists());
     }
 
+    public function test_a_user_stored_in_mixed_case_before_the_upgrade_signs_in_once_the_emails_are_lower_cased(): void
+    {
+        // 1. A row written before emails were normalized keeps its case.
+        $this->insertRawUser('Bob@Example.IO');
+
+        // 2. The request lower-cases the input, so an exact match misses the row.
+        $this->postJson('/login', ['email' => 'Bob@Example.IO', 'password' => 'Password123'])
+            ->assertUnauthorized();
+
+        // 3. The upgrade migration lower-cases the stored address and the sign-in finds it.
+        $this->lowercaseEmails();
+
+        $this->postJson('/login', ['email' => 'Bob@Example.IO', 'password' => 'Password123'])
+            ->assertOk()
+            ->assertJsonPath('data.user.email', 'bob@example.io');
+    }
+
+    public function test_a_user_stored_in_mixed_case_receives_the_reset_link_once_the_emails_are_lower_cased(): void
+    {
+        Notification::fake();
+        $this->insertRawUser('Bob@Example.IO');
+
+        $this->lowercaseEmails();
+        $this->postJson('/forgot-password', ['email' => 'Bob@Example.IO'])->assertOk();
+
+        Notification::assertSentTo(EmailNormalizationUser::query()->sole(), ResetPassword::class);
+    }
+
+    public function test_the_migration_lower_cases_pending_invitations(): void
+    {
+        $owner = $this->makeUser('owner@example.com');
+        DB::table('team_invitations')->insert([
+            'id' => (string) Str::uuid(),
+            'team_id' => (string) Str::uuid(),
+            'email' => 'Invitee@Example.COM',
+            'token' => 'tok',
+        ]);
+
+        $this->lowercaseEmails();
+
+        $this->assertSame(['invitee@example.com'], DB::table('team_invitations')->pluck('email')->all());
+        $this->assertSame('owner@example.com', $owner->fresh()->email);
+    }
+
+    public function test_the_migration_refuses_addresses_that_differ_only_in_case_and_changes_nothing(): void
+    {
+        $this->insertRawUser('Bob@Example.IO');
+        $this->insertRawUser('bob@example.io');
+        $this->insertRawUser('Carol@Example.IO');
+
+        try {
+            $this->lowercaseEmails();
+            $this->fail('The migration merged two accounts into one address.');
+        } catch (RuntimeException $exception) {
+            $this->assertStringContainsString('bob@example.io', $exception->getMessage());
+        }
+
+        $this->assertEqualsCanonicalizing(
+            ['Bob@Example.IO', 'bob@example.io', 'Carol@Example.IO'],
+            DB::table('users')->pluck('email')->all(),
+        );
+    }
+
+    public function test_the_migration_leaves_lower_case_and_missing_addresses_alone(): void
+    {
+        $this->makeUser('done@example.com');
+        EmailNormalizationUser::query()->create(['name' => 'Phone', 'email' => null, 'phone' => '+905550000000']);
+
+        $this->lowercaseEmails();
+        $this->lowercaseEmails();
+
+        $this->assertEqualsCanonicalizing(['done@example.com', null], DB::table('users')->pluck('email')->all());
+    }
+
     public function test_the_model_mutator_lower_cases_a_string_and_leaves_null_alone(): void
     {
         $withEmail = EmailNormalizationUser::query()->create(['name' => 'A', 'email' => 'A@B.Io']);
@@ -251,6 +328,25 @@ final class EmailNormalizationTest extends TestCase
             'password' => 'Password123',
             'password_confirmation' => 'Password123',
         ];
+    }
+
+    /**
+     * Write a row the way an install before email normalization stored it, past the model's mutator.
+     */
+    private function insertRawUser(string $email): void
+    {
+        DB::table('users')->insert([
+            'id' => (string) Str::uuid(),
+            'name' => 'Legacy',
+            'email' => $email,
+            'password' => Hash::make('Password123'),
+        ]);
+    }
+
+    private function lowercaseEmails(): void
+    {
+        $migration = require __DIR__ . '/../../database/migrations/lowercase_user_emails.php';
+        $migration->up();
     }
 
     private function makeUser(string $email): EmailNormalizationUser

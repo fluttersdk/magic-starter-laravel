@@ -85,6 +85,7 @@ class InstallCommand extends Command
         'create_personal_access_tokens_table.php',
         'add_two_factor_columns_to_users_table.php',
         'add_deletion_columns_to_users_table.php',
+        'lowercase_user_emails.php',
     ];
 
     /** @var array<string, list<string>> Feature key → associated migration files. */
