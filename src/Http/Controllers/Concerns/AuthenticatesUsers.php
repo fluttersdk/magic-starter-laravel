@@ -2,6 +2,7 @@
 
 namespace FlutterSdk\MagicStarter\Http\Controllers\Concerns;
 
+use FlutterSdk\MagicStarter\Events\UserDeletionCancelled;
 use FlutterSdk\MagicStarter\Features;
 use FlutterSdk\MagicStarter\Http\Resources\UserResource;
 use FlutterSdk\MagicStarter\MagicStarter;
@@ -11,6 +12,7 @@ use Illuminate\Contracts\Auth\Authenticatable;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Event;
 use Illuminate\Support\Str;
 
 /**
@@ -227,6 +229,9 @@ trait AuthenticatesUsers
      * sign-in. The flag rides on the REQUEST rather than on the controller,
      * because a route caches its controller instance and a long-lived worker
      * would carry one sign-in's flag into the next.
+     *
+     * Dispatches {@see UserDeletionCancelled} once the column is cleared, so a
+     * host resumes what it paused on the schedule.
      */
     protected function cancelScheduledDeletion(mixed $user, Request $request): void
     {
@@ -242,5 +247,9 @@ trait AuthenticatesUsers
         ])->save();
 
         $request->attributes->set(self::DELETION_CANCELLED_ATTRIBUTE, true);
+
+        if ($user instanceof Authenticatable) {
+            Event::dispatch(new UserDeletionCancelled($user));
+        }
     }
 }

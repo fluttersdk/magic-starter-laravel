@@ -6,6 +6,8 @@ use Carbon\CarbonInterface;
 use FlutterSdk\MagicStarter\Contracts\DeletesUsers;
 use FlutterSdk\MagicStarter\Contracts\UpdatesTeamMemberRoles;
 use FlutterSdk\MagicStarter\Enums\Role;
+use FlutterSdk\MagicStarter\Events\UserDeletionCancelled;
+use FlutterSdk\MagicStarter\Jobs\PurgeUserNow;
 use FlutterSdk\MagicStarter\MagicStarter;
 use FlutterSdk\MagicStarter\Support\OwnedTeams;
 use Illuminate\Console\Command;
@@ -13,6 +15,7 @@ use Illuminate\Contracts\Auth\Authenticatable;
 use Illuminate\Database\Eloquent\Collection;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Event;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Schema;
 use RuntimeException;
@@ -39,6 +42,9 @@ use Throwable;
  * The package registers the command and does not schedule it; the consuming
  * application decides when it runs. Held and un-scheduled accounts are logged
  * as well as printed, because a scheduled run's output is usually discarded.
+ *
+ * The per-account decision is {@see self::purge()}, which {@see PurgeUserNow}
+ * shares with a cutoff of now for an immediate deletion.
  */
 class PurgeDeletedUsersCommand extends Command
 {
@@ -122,16 +128,22 @@ class PurgeDeletedUsersCommand extends Command
     /**
      * Decide one account and carry the decision out.
      *
-     * The walk hands over a row loaded before any of this ran, so the decision
-     * is made on the row read again under a lock: a sign-in that cleared the
-     * schedule in between is honoured, and one landing after waits for this
-     * transaction rather than racing the deletion.
+     * The caller hands over a row loaded before any of this ran, so the
+     * decision is made on the row read again under a lock: a sign-in that
+     * cleared the schedule in between is honoured, and one landing after waits
+     * for this transaction rather than racing the deletion.
      *
-     * @param  Model  $loaded  the row as the walk loaded it, possibly stale
-     * @param  CarbonInterface  $cutoff  the latest schedule date still due
+     * Public for {@see PurgeUserNow}, which runs it outside a console run; a
+     * skipped account is then logged and not printed.
+     *
+     * @param  Model  $loaded  the row as the caller loaded it, possibly stale
+     * @param  CarbonInterface  $cutoff  the latest schedule date still due: the grace
+     *                                   cutoff for the walk, now for an immediate deletion
      * @return 'deleted'|'held'|'unscheduled'|'cancelled'
+     *
+     * @throws RuntimeException When the user model is not Authenticatable.
      */
-    protected function purge(
+    public function purge(
         Model $loaded,
         CarbonInterface $cutoff,
         DeletesUsers $deleter,
@@ -174,6 +186,9 @@ class PurgeDeletedUsersCommand extends Command
                     'un-scheduled: owns a team that gained a member during the grace period',
                     $shared,
                 );
+
+                // The account stays, so a host resumes what it paused.
+                Event::dispatch(new UserDeletionCancelled($user));
 
                 return 'unscheduled';
             }
@@ -250,12 +265,15 @@ class PurgeDeletedUsersCommand extends Command
     {
         $teamIds = $teams->map(fn (Model $team): string => (string) $team->getKey())->all();
 
-        $this->components->warn(sprintf(
-            'User [%s] %s%s.',
-            $user->getKey(),
-            $outcome,
-            $teamIds === [] ? '' : ' (teams: ' . implode(', ', $teamIds) . ')',
-        ));
+        // Absent when the job runs the decision: there is no console to print to.
+        if ($this->components !== null) {
+            $this->components->warn(sprintf(
+                'User [%s] %s%s.',
+                $user->getKey(),
+                $outcome,
+                $teamIds === [] ? '' : ' (teams: ' . implode(', ', $teamIds) . ')',
+            ));
+        }
 
         Log::warning('An account due for deletion was not purged.', [
             'user_id' => $user->getKey(),

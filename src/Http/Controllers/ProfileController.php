@@ -52,12 +52,28 @@ class ProfileController
      * now (every token revoked) and purged after `account_deletion.grace_days`,
      * and signing in again before then cancels it. A shared or billing owned
      * team answers the scheduler's 422 `{message, code, team_ids}` instead.
+     *
+     * With `immediately` the same schedule runs and the purge is queued at once
+     * rather than after the grace period; still 202, since the deletion happens
+     * on the queue, and `data.immediate` is true. Without it the body is the
+     * scheduled one, unchanged.
      */
     public function destroy(DeleteAccountRequest $request): JsonResponse
     {
         $user = $request->user();
+        $immediately = $request->boolean('immediately');
 
-        app(SchedulesUserDeletion::class)->schedule($user);
+        app(SchedulesUserDeletion::class)->schedule($user, immediately: $immediately);
+
+        if ($immediately) {
+            return response()->json([
+                'data' => [
+                    'deletion_scheduled_at' => $user->deletion_scheduled_at,
+                    'immediate' => true,
+                ],
+                'message' => __('magic-starter::social.deletion_immediate'),
+            ], 202);
+        }
 
         return response()->json([
             'data' => [

@@ -7,7 +7,8 @@ use Illuminate\Foundation\Http\FormRequest;
 use Illuminate\Validation\Validator;
 
 /**
- * Confirms the caller's identity before their account is scheduled for deletion.
+ * Confirms the caller's identity before their account is scheduled for deletion,
+ * and reads the optional `immediately` flag that queues the purge at once.
  */
 class DeleteAccountRequest extends FormRequest
 {
@@ -28,7 +29,13 @@ class DeleteAccountRequest extends FormRequest
      */
     public function rules(): array
     {
-        return $this->identityRules();
+        return [
+            ...$this->identityRules(),
+            'immediately' => [
+                'sometimes',
+                'boolean',
+            ],
+        ];
     }
 
     /**

@@ -14,7 +14,8 @@ use RuntimeException;
  * Scheduling locks the account at once and deletes nothing. The purge command
  * deletes it through {@see DeletesUsers} once `account_deletion.grace_days`
  * have passed, and a sign-in during that window cancels a schedule the user
- * asked for.
+ * asked for. An immediate deletion is the same schedule followed by a queued
+ * purge, never a deletion inside the caller's request.
  */
 interface SchedulesUserDeletion
 {
@@ -24,11 +25,13 @@ interface SchedulesUserDeletion
      * @param  bool  $orphan  true when the identity provider deleted the account; an
      *                        orphan is never refused (there is nobody left to act on
      *                        a refusal) and a sign-in does not cancel its schedule
+     * @param  bool  $immediately  true to queue the purge now instead of waiting out the
+     *                             grace period; the refusals and the lock are unchanged
      *
      * @throws ValidationException When the user owns a team someone else belongs to,
      *                             or a team a subscription is still billing; it renders
      *                             as a 422 `{message, code, team_ids}`.
      * @throws RuntimeException When the users table lacks `deletion_scheduled_at`.
      */
-    public function schedule(Authenticatable $user, bool $orphan = false): void;
+    public function schedule(Authenticatable $user, bool $orphan = false, bool $immediately = false): void;
 }

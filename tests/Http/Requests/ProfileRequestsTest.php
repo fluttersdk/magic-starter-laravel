@@ -93,8 +93,11 @@ final class ProfileRequestsTest extends TestCase
         // The deletion endpoint schedules; validation must refuse before it runs.
         \call_user_func('app')->instance(SchedulesUserDeletion::class, new class implements SchedulesUserDeletion
         {
-            public function schedule(\Illuminate\Contracts\Auth\Authenticatable $user, bool $orphan = false): void
-            {
+            public function schedule(
+                \Illuminate\Contracts\Auth\Authenticatable $user,
+                bool $orphan = false,
+                bool $immediately = false,
+            ): void {
                 throw new \LogicException('A request that failed validation must not reach the scheduler.');
             }
         });

@@ -3,6 +3,8 @@
 namespace FlutterSdk\MagicStarter\Actions;
 
 use FlutterSdk\MagicStarter\Contracts\SchedulesUserDeletion;
+use FlutterSdk\MagicStarter\Events\UserDeletionScheduled;
+use FlutterSdk\MagicStarter\Jobs\PurgeUserNow;
 use FlutterSdk\MagicStarter\Models\PushDevice;
 use FlutterSdk\MagicStarter\Support\OwnedTeams;
 use Illuminate\Contracts\Auth\Authenticatable;
@@ -10,6 +12,7 @@ use Illuminate\Database\Eloquent\Collection;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Event;
 use Illuminate\Support\Facades\Schema;
 use Illuminate\Validation\ValidationException;
 use RuntimeException;
@@ -22,7 +25,8 @@ use RuntimeException;
  * deleted, so the account stops signing in and stops ringing the moment the
  * user asks, while the rows that hold their data stay until the purge. Nothing
  * is deleted here: the HTTP request that asks for a deletion is not the place to
- * do something irreversible.
+ * do something irreversible, and an immediate deletion only queues
+ * {@see PurgeUserNow} once the lock has committed.
  *
  * The refusals mirror the purge's own, through {@see OwnedTeams}. A shared team
  * would take other people's data with it, and a billing team (or, under user
@@ -49,12 +53,13 @@ class ScheduleUserDeletion implements SchedulesUserDeletion
      * provider notification delivered twice cannot push the purge back.
      *
      * @param  bool  $orphan  true when the identity provider deleted the account
+     * @param  bool  $immediately  true to queue the purge now instead of after the grace period
      *
      * @throws ValidationException When a shared or billing owned team, or the
      *                             user's own subscription, refuses it.
      * @throws RuntimeException When the users table lacks the deletion columns.
      */
-    public function schedule(Authenticatable $user, bool $orphan = false): void
+    public function schedule(Authenticatable $user, bool $orphan = false, bool $immediately = false): void
     {
         // 1. Without the columns no purge could ever find this account, and
         //    locking it would strand it signed out forever.
@@ -83,6 +88,15 @@ class ScheduleUserDeletion implements SchedulesUserDeletion
                     : $user->getAttribute('orphaned_at'),
             ])->save();
         });
+
+        // 4. Only once the lock has committed, so a listener pausing the host's
+        //    resources and the purge both read the stamped row.
+        Event::dispatch(new UserDeletionScheduled($user, $immediately));
+
+        // 5. Queued, never run here: a team cascade can outlast the request.
+        if ($immediately) {
+            PurgeUserNow::dispatch($user->getAuthIdentifier());
+        }
     }
 
     /**

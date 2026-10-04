@@ -2,11 +2,13 @@
 
 - [Introduction](#introduction)
 - [Requesting Deletion](#requesting-deletion)
+- [Immediate Deletion](#immediate-deletion)
 - [Refusals](#refusals)
 - [Grace Period](#grace-period)
 - [Purging](#purging)
 - [Scheduling the Purge](#scheduling-the-purge)
 - [Team Deletion Guard](#team-deletion-guard)
+- [Lifecycle Events](#lifecycle-events)
 - [Customization](#customization)
 
 ---
@@ -14,7 +16,7 @@
 <a name="introduction"></a>
 ## Introduction
 
-Deleting an account is a two-step pipeline. The request only schedules the deletion and locks the account; nothing irreversible happens in an HTTP request. Once the grace period is over, the `magic-starter:purge-deleted-users` command deletes the account.
+Deleting an account is a two-step pipeline. The request only schedules the deletion and locks the account; nothing irreversible happens in an HTTP request. Once the grace period is over, the `magic-starter:purge-deleted-users` command deletes the account. A user who asks for an [immediate deletion](#immediate-deletion) skips the wait: the same schedule runs and a queued job purges the account at once.
 
 Throughout this document `{prefix}` is `config('magic-starter.route_prefix')`. The `users` table needs the `deletion_scheduled_at` and `orphaned_at` columns, published by `add_deletion_columns_to_users_table.php`, which is one of the core migrations `magic-starter:install` always publishes. Scheduling an account on a table without them fails with an exception that names the missing column.
 
@@ -43,6 +45,39 @@ The caller confirms their identity with `password`. A password-less account uses
 The sentence tells the user how to cancel because every session was just signed out: signing in again within the grace period is the only way back.
 
 In one transaction, every Sanctum token of the user is revoked and every push device row is dropped, so the account stops signing in and stops ringing at once. The rows that hold the user's data stay until the purge. Scheduling an account that is already scheduled keeps the earlier date.
+
+---
+
+<a name="immediate-deletion"></a>
+## Immediate Deletion
+
+App Store Review Guideline 5.1.1(v) accepts a scheduled deletion only beside an option to delete at once. Send `immediately: true` in the same request:
+
+```json
+{
+  "password": "CurrentP@ssw0rd",
+  "immediately": true
+}
+```
+
+The request runs exactly the scheduled path: the same [refusals](#refusals), the same step-up proof, the same lock and stamp. Only then is a `Jobs\PurgeUserNow` job queued for the account, and the answer is still 202, because the deletion happens on the queue and never inside the request:
+
+```json
+{
+  "data": {
+    "deletion_scheduled_at": "2026-10-03T12:00:00.000000Z",
+    "immediate": true
+  },
+  "message": "Your account is being deleted. This cannot be undone."
+}
+```
+
+A refusal or a missing proof answers as it does without the flag, and nothing is queued. A request without `immediately`, or with `false`, answers the scheduled body unchanged.
+
+The job runs the purge command's own per-account decision with a cutoff of now, so it re-reads the account under a row lock and re-checks everything the [purge](#purging) does: a schedule cleared by a sign-in in the meantime is left alone, a team that gained a member un-schedules the account, a billing subscription holds it, and the rest is deleted through `DeletesUsers`. It carries the account's key rather than the model, so a duplicate that runs after the account is gone does nothing.
+
+> [!WARNING]
+> The job is queued after the scheduling transaction commits. With the `sync` queue connection it runs inside the request after all, and a large team cascade can outlast it. Run a real queue worker.
 
 ---
 
@@ -140,6 +175,29 @@ Daily is enough: the grace period is counted in days.
 
 ---
 
+<a name="lifecycle-events"></a>
+## Lifecycle Events
+
+The package locks only what it owns. A host that runs work on the user's behalf (scheduled jobs, monitors, outgoing webhooks) pauses and resumes it on two events:
+
+| Event | Dispatched | Properties |
+|-------|------------|------------|
+| `Events\UserDeletionScheduled` | After the schedule commits: a user's request, an immediate one, or an orphan's. | `user`, `immediate` (`true` when the purge was queued at once) |
+| `Events\UserDeletionCancelled` | When a sign-in during the grace period clears the schedule, and when the purge un-schedules an account whose team gained a member. | `user` |
+
+```php
+use FlutterSdk\MagicStarter\Events\UserDeletionCancelled;
+use FlutterSdk\MagicStarter\Events\UserDeletionScheduled;
+use Illuminate\Support\Facades\Event;
+
+Event::listen(UserDeletionScheduled::class, fn (UserDeletionScheduled $event) => /* pause */);
+Event::listen(UserDeletionCancelled::class, fn (UserDeletionCancelled $event) => /* resume */);
+```
+
+`UserDeletionScheduled` fires again when an already scheduled account is scheduled once more, such as a provider notification delivered twice, so keep the listener idempotent. A deleted account fires no event of its own: its rows go with it through `DeletesUsers`.
+
+---
+
 <a name="team-deletion-guard"></a>
 ## Team Deletion Guard
 
@@ -162,7 +220,7 @@ Both halves are contract bindings, so a host can swap either:
 
 | Contract | Default action | Role |
 |----------|----------------|------|
-| `SchedulesUserDeletion` | `Actions\ScheduleUserDeletion` | Refuses, locks and stamps the account. |
+| `SchedulesUserDeletion` | `Actions\ScheduleUserDeletion` | Refuses, locks and stamps the account, and queues `PurgeUserNow` for an immediate deletion. |
 | `DeletesUsers` | `Actions\DeleteUser` | The irreversible end, run by the purge. |
 
 See [Action Contracts](../architecture/action-contracts.md) for how bindings work.

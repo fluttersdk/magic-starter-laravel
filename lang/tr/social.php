@@ -32,6 +32,8 @@ return [
 
     'deletion_scheduled' => 'Hesabınız :days gün sonra silinecek. Silme işlemini iptal etmek için bu süre içinde yeniden giriş yapınız.',
 
+    'deletion_immediate' => 'Hesabınız siliniyor. Bu işlem geri alınamaz.',
+
     'deletion_cancelled' => 'Hesap silme işlemi iptal edildi. Hesabınız yeniden aktif.',
 
     'step_up_required' => 'Devam etmek için lütfen kimliğinizi onaylayınız.',

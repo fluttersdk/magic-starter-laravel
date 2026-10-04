@@ -133,7 +133,7 @@ Content-Type: application/json
 
 ## <a name="delete-account"></a>Delete Account
 
-Schedules the authenticated user's account for deletion. Nothing is deleted in the request: every token is revoked now and the account is purged after the grace period, and signing in again before then cancels it. See [Account Deletion](account-deletion.md) for the pipeline.
+Schedules the authenticated user's account for deletion. Nothing is deleted in the request: every token is revoked now and the account is purged after the grace period, and signing in again before then cancels it. With `immediately: true` the purge is queued at once instead. See [Account Deletion](account-deletion.md) for the pipeline.
 
 | Property | Value |
 |----------|-------|
@@ -151,6 +151,7 @@ Schedules the authenticated user's account for deletion. Nothing is deleted in t
 | `password` | string | Required for a user with a password |
 | `code` | string | A current TOTP code, for a password-less user with confirmed 2FA |
 | `confirmation_token` | string | A step-up token from the social confirm flow, for a password-less user |
+| `immediately` | boolean | Optional. `true` queues the purge now instead of after the grace period |
 
 A user with a password confirms with it. A guest without a password needs no proof. Any other password-less user sends `code` or `confirmation_token`, or the request answers 422 `step_up_required`.
 
@@ -168,7 +169,7 @@ Content-Type: application/json
 
 ### Response
 
-`202 Accepted` with `data.deletion_scheduled_at` and a `message`. An owned team that another member belongs to, or that holds a live subscription, answers 422 with `code` `owns_shared_teams` or `team_has_active_subscription` and the `team_ids` to resolve first. A live subscription billing the user directly answers 422 `subscription_active` with an empty `team_ids`.
+`202 Accepted` with `data.deletion_scheduled_at` and a `message`. With `immediately: true` the body also carries `data.immediate: true` and the `deletion_immediate` message; without it the body is exactly the scheduled one. The refusals and the step-up are the same either way, and nothing is queued when one of them answers. An owned team that another member belongs to, or that holds a live subscription, answers 422 with `code` `owns_shared_teams` or `team_has_active_subscription` and the `team_ids` to resolve first. A live subscription billing the user directly answers 422 `subscription_active` with an empty `team_ids`.
 
 ---
 

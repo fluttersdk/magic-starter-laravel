@@ -37,6 +37,9 @@ return [
     // Every session was just signed out, so signing in again is the only way to cancel.
     'deletion_scheduled' => 'Your account will be deleted in :days days. Sign in again before then to cancel the deletion.',
 
+    // The purge is queued at once; signing in can no longer be relied on to cancel it.
+    'deletion_immediate' => 'Your account is being deleted. This cannot be undone.',
+
     'deletion_cancelled' => 'Account deletion cancelled. Your account is active again.',
 
     'step_up_required' => 'Please confirm your identity to continue.',
