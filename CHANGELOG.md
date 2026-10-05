@@ -4,6 +4,8 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [0.0.16] - 2026-10-06
+
 ### Added
 
 - **Optional Filament admin panel.** `php artisan magic-starter:filament:install` writes `app/Providers/Filament/AdminPanelProvider.php` (panel id `admin`, `->domain(config('magic-starter.admin.host'))`, `->path('admin')`, `->login()`, `->plugin(MagicStarterPlugin::make())`), lists it in `bootstrap/providers.php` once, and prints the user model lines and env keys; it is idempotent and takes `--force`. `MagicStarterPlugin` mounts Users, Teams, Subscriptions, Newsletter and Audits resources and a `/dashboard`, each behind the feature that owns its data, and takes `userResource()`, `teamResource()`, `resource()`, `withoutResources()`, `navigationGroup()`, `authorizeUsing()`, `horizon()`, `pulse()`, `telescope()` and `sentryUrl()`, set before `->plugin()`. It throws a `LogicException` when the user model does not implement `FilamentUser`. `filament/filament` (`^4.13.3|^5.8.3`), `laravel/horizon`, `laravel/pulse` and `laravel/telescope` are suggested and dev dependencies only; nothing requires them at runtime, and a composer `conflict` keeps out the Filament releases with multi-factor bypass and XSS advisories. (`src/Filament/`, `src/Console/FilamentInstallCommand.php`, `stubs/filament/AdminPanelProvider.php.stub`, `composer.json`)
