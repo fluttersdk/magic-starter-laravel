@@ -278,6 +278,20 @@ class MagicStarterServiceProvider extends ServiceProvider
             ]);
         }
 
+        // 3.65. Record every model create, update and delete when the audit
+        //       feature is on. Off by default: the listener is then never
+        //       registered and model events cost nothing extra.
+        if (Features::hasAuditFeatures()) {
+            Event::listen(
+                [
+                    'eloquent.created: *',
+                    'eloquent.updated: *',
+                    'eloquent.deleted: *',
+                ],
+                Audit\ModelAuditListener::class,
+            );
+        }
+
         // 3.7. Register package translations.
         $this->loadTranslationsFrom(__DIR__ . '/../lang', 'magic-starter');
 

@@ -31,6 +31,12 @@ parameters:
         -
             identifier: trait.unused
             path: src/Traits/*
+        -
+            identifier: trait.unused
+            path: src/Audit/HasAudits.php
+        -
+            identifier: trait.unused
+            path: src/Filament/Concerns/*
 
         # Fluent API returns new static() — intentional pattern
         -

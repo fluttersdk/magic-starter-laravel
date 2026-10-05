@@ -3,7 +3,7 @@
 namespace FlutterSdk\MagicStarter\Tests\Fixtures;
 
 use Filament\Models\Contracts\FilamentUser;
-use Filament\Panel;
+use FlutterSdk\MagicStarter\Filament\Concerns\AuthorizesAdminPanel;
 use FlutterSdk\MagicStarter\Models\PushDevice;
 use FlutterSdk\MagicStarter\Traits\MustVerifyEmail;
 use Illuminate\Contracts\Auth\MustVerifyEmail as MustVerifyEmailContract;
@@ -11,11 +11,11 @@ use Illuminate\Database\Eloquent\Relations\HasMany;
 use Laravel\Sanctum\HasApiTokens;
 
 /**
- * A panel user for Filament tests. Panel access is open until the package's
- * own access trait replaces `canAccessPanel()`.
+ * A panel user for Filament tests, gated by the package's own access trait.
  */
 class ConcreteAdminUser extends ConcreteUser implements FilamentUser, MustVerifyEmailContract
 {
+    use AuthorizesAdminPanel;
     use HasApiTokens;
     use MustVerifyEmail;
 
@@ -25,10 +25,5 @@ class ConcreteAdminUser extends ConcreteUser implements FilamentUser, MustVerify
     public function pushDevices(): HasMany
     {
         return $this->hasMany(PushDevice::class, 'user_id');
-    }
-
-    public function canAccessPanel(Panel $panel): bool
-    {
-        return true;
     }
 }
