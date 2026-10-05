@@ -9,6 +9,8 @@ use Filament\Support\Icons\Heroicon;
 use Filament\Tables\Table;
 use FlutterSdk\MagicStarter\Contracts\UpdatesTeams;
 use FlutterSdk\MagicStarter\Enums\Role;
+use FlutterSdk\MagicStarter\Features;
+use FlutterSdk\MagicStarter\Filament\Resources\Audits\RelationManagers\AuditsRelationManager;
 use FlutterSdk\MagicStarter\Filament\Resources\MagicStarterResource;
 use FlutterSdk\MagicStarter\Filament\Resources\Teams\Pages\EditTeam;
 use FlutterSdk\MagicStarter\Filament\Resources\Teams\Pages\ListTeams;
@@ -64,12 +66,18 @@ class TeamResource extends MagicStarterResource
         return TeamsTable::configure($table);
     }
 
+    /**
+     * The tabs under the edit form; the audit trail only with the audit feature.
+     *
+     * @return list<class-string>
+     */
     public static function getRelations(): array
     {
-        return [
+        return array_values(array_filter([
             MembersRelationManager::class,
             InvitationsRelationManager::class,
-        ];
+            Features::hasAuditFeatures() ? AuditsRelationManager::class : null,
+        ]));
     }
 
     public static function getPages(): array

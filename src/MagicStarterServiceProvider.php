@@ -2,6 +2,9 @@
 
 namespace FlutterSdk\MagicStarter;
 
+use Filament\Panel;
+use FlutterSdk\MagicStarter\Console\FilamentEjectCommand;
+use FlutterSdk\MagicStarter\Console\FilamentInstallCommand;
 use FlutterSdk\MagicStarter\Console\InstallCommand;
 use FlutterSdk\MagicStarter\Console\PruneAuditsCommand;
 use FlutterSdk\MagicStarter\Console\PurgeDeletedUsersCommand;
@@ -356,6 +359,15 @@ class MagicStarterServiceProvider extends ServiceProvider
             if (Features::hasAuditFeatures()) {
                 $this->commands([
                     PruneAuditsCommand::class,
+                ]);
+            }
+
+            // Filament is an optional dependency: its commands exist only where it
+            // is installed, so the package boots without it.
+            if (class_exists(Panel::class)) {
+                $this->commands([
+                    FilamentInstallCommand::class,
+                    FilamentEjectCommand::class,
                 ]);
             }
 

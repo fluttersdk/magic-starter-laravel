@@ -5,11 +5,22 @@ namespace FlutterSdk\MagicStarter\Filament;
 use Closure;
 use Filament\Contracts\Plugin;
 use Filament\Models\Contracts\FilamentUser;
-use Filament\Pages\Page;
+use Filament\Navigation\NavigationItem;
 use Filament\Panel;
-use Filament\Widgets\Widget;
+use Filament\Support\Icons\Heroicon;
 use FlutterSdk\MagicStarter\Features;
+use FlutterSdk\MagicStarter\Filament\Ops\OpsAuthorization;
+use FlutterSdk\MagicStarter\Filament\Ops\TelescopeRedaction;
+use FlutterSdk\MagicStarter\Filament\Pages\Dashboard;
+use FlutterSdk\MagicStarter\Filament\Widgets\HorizonStatusWidget;
+use FlutterSdk\MagicStarter\Filament\Widgets\PulseSummaryWidget;
+use FlutterSdk\MagicStarter\Filament\Widgets\StarterStatsWidget;
 use FlutterSdk\MagicStarter\MagicStarter;
+use Illuminate\Contracts\Auth\Access\Gate;
+use Illuminate\Contracts\Foundation\Application;
+use Laravel\Horizon\Horizon;
+use Laravel\Pulse\Pulse;
+use Laravel\Telescope\Telescope;
 use LogicException;
 
 /**
@@ -44,6 +55,14 @@ class MagicStarterPlugin implements Plugin
     protected ?string $navigationGroup = null;
 
     protected ?Closure $authorizeUsing = null;
+
+    protected bool $horizon = false;
+
+    protected bool $pulse = false;
+
+    protected bool $telescope = false;
+
+    protected ?string $sentryUrl = null;
 
     public static function make(): static
     {
@@ -146,6 +165,65 @@ class MagicStarterPlugin implements Plugin
     }
 
     /**
+     * Put Horizon behind the panel gate, link it under "Operations" and mount
+     * its status widget. Horizon keeps its own routes: mount them on the admin
+     * host with `HORIZON_DOMAIN` and `HORIZON_PATH`.
+     *
+     * @throws LogicException when laravel/horizon is not installed
+     */
+    public function horizon(): static
+    {
+        $this->ensureInstalled(Horizon::class, 'laravel/horizon');
+
+        $this->horizon = true;
+
+        return $this;
+    }
+
+    /**
+     * Put Pulse behind the panel gate, link it under "Operations" and mount
+     * its summary widget. Pulse keeps its own routes: mount them on the admin
+     * host with `PULSE_DOMAIN` and `PULSE_PATH`.
+     *
+     * @throws LogicException when laravel/pulse is not installed
+     */
+    public function pulse(): static
+    {
+        $this->ensureInstalled(Pulse::class, 'laravel/pulse');
+
+        $this->pulse = true;
+
+        return $this;
+    }
+
+    /**
+     * Put Telescope behind the panel gate, link it under "Operations", mask the
+     * starter's secrets in its entries and, outside `local`, keep only the
+     * batches worth reading. Telescope keeps its own routes: mount them on the
+     * admin host with `TELESCOPE_DOMAIN` and `TELESCOPE_PATH`.
+     *
+     * @throws LogicException when laravel/telescope is not installed
+     */
+    public function telescope(): static
+    {
+        $this->ensureInstalled(Telescope::class, 'laravel/telescope');
+
+        $this->telescope = true;
+
+        return $this;
+    }
+
+    /**
+     * Link an external Sentry project under "Operations"; null removes the link.
+     */
+    public function sentryUrl(?string $url): static
+    {
+        $this->sentryUrl = $url;
+
+        return $this;
+    }
+
+    /**
      * Mount the enabled resources, the dashboard and its widget on the panel.
      *
      * @throws LogicException when the user model does not implement FilamentUser
@@ -164,27 +242,131 @@ class MagicStarterPlugin implements Plugin
             );
         }
 
-        // 2. Classes the later admin steps add are skipped until they exist.
+        // 2. Resources, the dashboard and its headline widget.
         $panel->resources($this->enabledResources());
 
-        $dashboard = 'FlutterSdk\\MagicStarter\\Filament\\Pages\\Dashboard';
+        $panel->pages([
+            Dashboard::class,
+        ]);
 
-        if (is_subclass_of($dashboard, Page::class)) {
-            $panel->pages([
-                $dashboard,
-            ]);
-        }
+        $panel->widgets([
+            StarterStatsWidget::class,
+        ]);
 
-        $statsWidget = 'FlutterSdk\\MagicStarter\\Filament\\Widgets\\StarterStatsWidget';
-
-        if (is_subclass_of($statsWidget, Widget::class)) {
-            $panel->widgets([
-                $statsWidget,
-            ]);
-        }
+        // 3. The operations tools the app opted into.
+        $this->registerOperations($panel);
     }
 
     public function boot(Panel $panel): void {}
+
+    /**
+     * Link and summarise the enabled tools, then put them behind the panel gate.
+     */
+    protected function registerOperations(Panel $panel): void
+    {
+        // 1. Links and widgets.
+        $panel->navigationItems($this->operationsNavigationItems());
+
+        $panel->widgets([
+            ...($this->horizon ? [HorizonStatusWidget::class] : []),
+            ...($this->pulse ? [PulseSummaryWidget::class] : []),
+        ]);
+
+        if (! $this->horizon && ! $this->pulse && ! $this->telescope) {
+            return;
+        }
+
+        // 2. Each tool's rule is a slot its last writer owns, and an app's own
+        //    HorizonServiceProvider or published TelescopeServiceProvider writes
+        //    it in boot. Writing after boot keeps the panel gate in force.
+        $authorization = new OpsAuthorization($panel);
+
+        app()->booted(function (Application $app) use ($authorization): void {
+            if ($this->horizon) {
+                $authorization->guardHorizon();
+            }
+
+            if ($this->pulse) {
+                $authorization->guardPulse($app->make(Gate::class));
+            }
+
+            if ($this->telescope) {
+                $this->configureTelescope($app, $authorization);
+            }
+        });
+    }
+
+    /**
+     * Telescope's secrets are masked in every environment; outside `local` it
+     * keeps only the batches worth reading.
+     */
+    protected function configureTelescope(Application $app, OpsAuthorization $authorization): void
+    {
+        $authorization->guardTelescope();
+
+        TelescopeRedaction::hideSecrets();
+
+        if (! $app->environment('local')) {
+            TelescopeRedaction::keepNoteworthyBatches();
+        }
+    }
+
+    /**
+     * The "Operations" group: one link per enabled tool, by the route name the
+     * tool registers, plus the optional Sentry link.
+     *
+     * @return list<NavigationItem>
+     */
+    protected function operationsNavigationItems(): array
+    {
+        $tools = [
+            'horizon' => [$this->horizon, 'horizon.index', Heroicon::OutlinedQueueList],
+            'pulse' => [$this->pulse, 'pulse', Heroicon::OutlinedChartBar],
+            'telescope' => [$this->telescope, 'telescope', Heroicon::OutlinedMagnifyingGlass],
+        ];
+
+        $items = [];
+
+        foreach ($tools as $key => [$enabled, $route, $icon]) {
+            if (! $enabled) {
+                continue;
+            }
+
+            $items[] = $this->operationsItem($key, $icon)
+                ->url(static fn (): string => route($route));
+        }
+
+        if ($this->sentryUrl !== null) {
+            $items[] = $this->operationsItem('sentry', Heroicon::OutlinedBugAnt)
+                ->url($this->sentryUrl, shouldOpenInNewTab: true);
+        }
+
+        return $items;
+    }
+
+    /**
+     * Labels are closures so they translate in the request's locale, not the
+     * one the panel happened to be built in.
+     */
+    protected function operationsItem(string $key, Heroicon $icon): NavigationItem
+    {
+        return NavigationItem::make(static fn (): string => (string) __("magic-starter::admin_ops.navigation.{$key}"))
+            ->group(static fn (): string => (string) __('magic-starter::admin_ops.navigation_group'))
+            ->icon($icon);
+    }
+
+    /**
+     * @throws LogicException when the tool's package is not installed
+     */
+    protected function ensureInstalled(string $class, string $package): void
+    {
+        if (! class_exists($class)) {
+            throw new LogicException(
+                "The magic-starter plugin cannot put {$package} behind the panel gate: "
+                . "run `composer require {$package}` first.",
+            );
+        }
+    }
 
     /**
      * The resource classes to mount: defaults merged with overrides, minus the

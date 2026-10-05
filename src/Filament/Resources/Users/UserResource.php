@@ -9,6 +9,7 @@ use Filament\Tables\Table;
 use FlutterSdk\MagicStarter\Contracts\CreatesUsers;
 use FlutterSdk\MagicStarter\Contracts\UpdatesUserProfiles;
 use FlutterSdk\MagicStarter\Features;
+use FlutterSdk\MagicStarter\Filament\Resources\Audits\RelationManagers\AuditsRelationManager;
 use FlutterSdk\MagicStarter\Filament\Resources\MagicStarterResource;
 use FlutterSdk\MagicStarter\Filament\Resources\Users\Pages\CreateUser;
 use FlutterSdk\MagicStarter\Filament\Resources\Users\Pages\EditUser;
@@ -79,6 +80,7 @@ class UserResource extends MagicStarterResource
             Features::hasSocialLoginFeatures() ? SocialAccountsRelationManager::class : null,
             Features::hasOnesignalFeatures() ? PushDevicesRelationManager::class : null,
             Features::hasTeamFeatures() ? TeamsRelationManager::class : null,
+            Features::hasAuditFeatures() ? AuditsRelationManager::class : null,
         ]));
     }
 

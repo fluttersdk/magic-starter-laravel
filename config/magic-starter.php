@@ -100,6 +100,9 @@ return [
     */
 
     'admin' => [
+        // The host the generated admin panel answers on; null serves it on a path.
+        'host' => env('MAGIC_STARTER_ADMIN_HOST'),
+
         'emails' => array_values(array_filter(array_map(
             'trim',
             explode(',', (string) env('MAGIC_STARTER_ADMIN_EMAILS', '')),
