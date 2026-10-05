@@ -9,6 +9,7 @@ use Filament\Navigation\NavigationItem;
 use Filament\Panel;
 use Filament\Support\Icons\Heroicon;
 use FlutterSdk\MagicStarter\Features;
+use FlutterSdk\MagicStarter\Filament\Auth\TwoFactorAuthentication;
 use FlutterSdk\MagicStarter\Filament\Ops\OpsAuthorization;
 use FlutterSdk\MagicStarter\Filament\Ops\TelescopeRedaction;
 use FlutterSdk\MagicStarter\Filament\Pages\Dashboard;
@@ -253,7 +254,15 @@ class MagicStarterPlugin implements Plugin
             StarterStatsWidget::class,
         ]);
 
-        // 3. The operations tools the app opted into.
+        // 3. The starter's own second factor at login, unless the app already
+        //    configured multi-factor authentication on this panel. Its own setup
+        //    wins outright: `multiFactorAuthentication()` also resets the
+        //    required flag, so adding to it would quietly undo that choice.
+        if (! $panel->hasMultiFactorAuthentication()) {
+            $panel->multiFactorAuthentication([TwoFactorAuthentication::make()]);
+        }
+
+        // 4. The operations tools the app opted into.
         $this->registerOperations($panel);
     }
 

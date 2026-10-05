@@ -6,6 +6,7 @@ use Filament\Models\Contracts\FilamentUser;
 use FlutterSdk\MagicStarter\Filament\Concerns\AuthorizesAdminPanel;
 use FlutterSdk\MagicStarter\Models\PushDevice;
 use FlutterSdk\MagicStarter\Traits\MustVerifyEmail;
+use FlutterSdk\MagicStarter\Traits\TwoFactorAuthenticatable;
 use Illuminate\Contracts\Auth\MustVerifyEmail as MustVerifyEmailContract;
 use Illuminate\Database\Eloquent\Relations\HasMany;
 use Laravel\Sanctum\HasApiTokens;
@@ -18,6 +19,7 @@ class ConcreteAdminUser extends ConcreteUser implements FilamentUser, MustVerify
     use AuthorizesAdminPanel;
     use HasApiTokens;
     use MustVerifyEmail;
+    use TwoFactorAuthenticatable;
 
     /**
      * @return HasMany<PushDevice, $this>

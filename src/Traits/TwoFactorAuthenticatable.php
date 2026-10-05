@@ -7,7 +7,10 @@ use BaconQrCode\Renderer\ImageRenderer;
 use BaconQrCode\Renderer\RendererStyle\RendererStyle;
 use BaconQrCode\Writer;
 use FlutterSdk\MagicStarter\Support\TwoFactorAuthenticationProvider;
+use Illuminate\Support\Facades\Cache;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Str;
+use SensitiveParameter;
 
 /**
  * Trait TwoFactorAuthenticatable
@@ -77,6 +80,31 @@ trait TwoFactorAuthenticatable
         $this->forceFill([
             'two_factor_recovery_codes' => encrypt(json_encode(array_values($codes))),
         ])->save();
+    }
+
+    /**
+     * Spend a recovery code exactly once, replacing it with a fresh one.
+     *
+     * The row is re-read under a lock: two concurrent sign-ins with the same
+     * code, or one through the API and one through the admin panel, would
+     * otherwise both find it in the codes they loaded, and the later write
+     * would bring back a code the earlier one spent.
+     */
+    public function redeemRecoveryCode(#[SensitiveParameter] string $code): bool
+    {
+        $lock = 'magic-starter.two-factor-recovery.' . sha1(static::class . '|' . $this->getKey());
+
+        return Cache::lock($lock, 10)->block(10, fn (): bool => DB::transaction(function () use ($code): bool {
+            $locked = $this->newQuery()->whereKey($this->getKey())->lockForUpdate()->first();
+
+            if ($locked === null || ! in_array($code, $locked->recoveryCodes(), true)) {
+                return false;
+            }
+
+            $locked->replaceRecoveryCode($code);
+
+            return true;
+        }));
     }
 
     /**

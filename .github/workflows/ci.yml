@@ -64,7 +64,7 @@ jobs:
     strategy:
       fail-fast: true
       matrix:
-        filament: ['^4.0', '^5.0']
+        filament: ['^4.13.3', '^5.8.3']
 
     name: Filament ${{ matrix.filament }}
 

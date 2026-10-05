@@ -82,6 +82,8 @@ Set every option BEFORE `->plugin()`: Filament calls `register()` the moment the
 2. With `authorizeUsing()` set, the callback decides alone.
 3. Otherwise the lowercased, trimmed email must be in `magic-starter.admin.emails` and the address must be verified. An empty list admits nobody, and an empty email is refused.
 
+Sign in asks for the API's TOTP code (or a recovery code) when the `twoFactorAuthentication` feature is on and the user confirmed two-factor: `FlutterSdk\MagicStarter\Filament\Auth\TwoFactorAuthentication`, a Filament `MultiFactorAuthenticationProvider` over the `TwoFactorAuthenticatable` columns. Codes go through `TwoFactorAuthenticationProvider::verifyOnce()` and `redeemRecoveryCode()`, the same calls as the API challenge, so a code spent on one surface is spent on both. The plugin mounts it only on a panel with no `multiFactorAuthentication()` of its own when the panel is built; an app that configures one lists `TwoFactorAuthentication::make()` itself. It never writes a secret; the Users resource's `reset_two_factor` turns two-factor off and so also lifts the panel challenge.
+
 ## What the Plugin Mounts
 
 | Surface | Contents | Gate |

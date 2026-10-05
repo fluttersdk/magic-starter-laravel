@@ -21,7 +21,7 @@
 
 The package ships an optional [Filament](https://filamentphp.com) plugin that gives staff a panel over users, teams, subscriptions, newsletter subscribers and the audit trail. It is a back office for your own team, not part of the mobile API.
 
-Nothing requires Filament at runtime. `filament/filament` (`^4.0|^5.0`), `laravel/horizon`, `laravel/pulse` and `laravel/telescope` are suggested packages; install only the ones you use.
+Nothing requires Filament at runtime. `filament/filament` (`^4.13.3|^5.8.3`), `laravel/horizon`, `laravel/pulse` and `laravel/telescope` are suggested packages; install only the ones you use. The package declares a composer conflict with the Filament 4 and 5 releases below those floors, which carry multi-factor bypass and XSS advisories; an app whose own panel runs Filament 3 and only uses the API is not blocked.
 
 ---
 
@@ -78,6 +78,23 @@ MagicStarterPlugin::make()->authorizeUsing(
 ```
 
 The callback decides alone and admits only on `true`.
+
+### Two-factor authentication at sign in
+
+A user who turned on two-factor authentication through the API is asked for a code after the password, or for one of their recovery codes. The panel reads the same secret and recovery codes as the API and applies the same rule: the `twoFactorAuthentication` feature is on and the user confirmed a code. A user without two-factor signs in with the password alone.
+
+A code is accepted once: after it signs in, through the API or the panel, that code and every earlier one are refused. A recovery code is spent under a row lock, so two concurrent sign-ins cannot both use it.
+
+The panel never writes a secret. Two-factor is turned on in the app. It is turned off there, or by an admin with "Reset two-factor" on the Users resource, which also removes that user's panel challenge.
+
+The plugin mounts this challenge (`FlutterSdk\MagicStarter\Filament\Auth\TwoFactorAuthentication`) only when the panel has no multi-factor setup of its own while it is being built. A Closure provider list counts as a setup only if it returns providers at that point, before any request is authenticated. To combine the challenge with Filament's providers, or to require a second factor, configure the panel yourself before `->plugin()`:
+
+```php
+->multiFactorAuthentication([TwoFactorAuthentication::make()], isRequired: true)
+->plugin(MagicStarterPlugin::make())
+```
+
+With `isRequired: true`, a user who has not turned on two-factor in the app is stopped on Filament's set-up page after signing in and cannot continue until they do: the panel cannot set it up for them.
 
 ---
 
