@@ -32,13 +32,16 @@ class ContractAction
      * @param  Action|null  $action  The Filament action to halt; null from a page save, which halts the same way.
      * @param  Closure(): TResult  $call  The contract call.
      * @param  string  $event  The stable dotted name {@see AdminActionPerformed} carries, such as `user.updated`.
-     * @param  Model|null  $subject  The record the write targets.
+     * @param  Model|null  $subject  The record the write targets; null on a create, where the
+     *                               model the call returns becomes the subject.
+     * @param  array<string, mixed>  $context  Extra facts the audit row should carry, such as the
+     *                                         member a team action touched.
      * @return TResult
      *
      * @throws Halt when the contract refused
      * @throws AuthenticationException when no panel user is signed in
      */
-    public static function run(?Action $action, Closure $call, string $event, ?Model $subject): mixed
+    public static function run(?Action $action, Closure $call, string $event, ?Model $subject, array $context = []): mixed
     {
         $actor = Filament::auth()->user() ?? throw new AuthenticationException;
 
@@ -50,7 +53,9 @@ class ContractAction
             static::refuse($action, $exception->getMessage());
         }
 
-        Event::dispatch(new AdminActionPerformed($actor, $event, $subject));
+        $subject ??= $result instanceof Model ? $result : null;
+
+        Event::dispatch(new AdminActionPerformed($actor, $event, $subject, $context));
 
         return $result;
     }

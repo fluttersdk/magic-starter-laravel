@@ -3,6 +3,7 @@
 namespace FlutterSdk\MagicStarter;
 
 use FlutterSdk\MagicStarter\Console\InstallCommand;
+use FlutterSdk\MagicStarter\Console\PruneAuditsCommand;
 use FlutterSdk\MagicStarter\Console\PurgeDeletedUsersCommand;
 use FlutterSdk\MagicStarter\Console\ReconcileBillingEntitlements;
 use FlutterSdk\MagicStarter\Support\FrontendUrl;
@@ -290,6 +291,12 @@ class MagicStarterServiceProvider extends ServiceProvider
                 ],
                 Audit\ModelAuditListener::class,
             );
+
+            // The panel's own writes arrive as one event and become one `admin.*` row.
+            Event::listen(Events\AdminActionPerformed::class, Audit\RecordAdminAction::class);
+
+            // Without this the trail only grows; see schedulePruneAudits().
+            $this->schedulePruneAudits();
         }
 
         // 3.7. Register package translations.
@@ -341,6 +348,14 @@ class MagicStarterServiceProvider extends ServiceProvider
             if (Features::hasBillingFeatures()) {
                 $this->commands([
                     ReconcileBillingEntitlements::class,
+                ]);
+            }
+
+            // Registered with the feature, like the reconciler above: the table
+            // the command prunes exists only once the audit migration does.
+            if (Features::hasAuditFeatures()) {
+                $this->commands([
+                    PruneAuditsCommand::class,
                 ]);
             }
 
@@ -556,6 +571,26 @@ class MagicStarterServiceProvider extends ServiceProvider
                     ->withoutOverlapping()
                     ->onOneServer(),
             );
+        });
+    }
+
+    /**
+     * Put `magic-starter:audit:prune` on the schedule, daily.
+     *
+     * Attached through `callAfterResolving()` for the reason
+     * {@see self::scheduleEntitlementReconciler()} gives: only the processes
+     * that consult the scheduler build it. `withoutOverlapping()` keeps a run
+     * that outlasts its tick, on a trail that has grown for years, from racing
+     * its successor over the same rows. The cadence is not configurable:
+     * retention is counted in days, so a faster sweep finds nothing new.
+     */
+    private function schedulePruneAudits(): void
+    {
+        $this->callAfterResolving(Schedule::class, function (Schedule $schedule): void {
+            $schedule->command(PruneAuditsCommand::NAME)
+                ->name(PruneAuditsCommand::NAME)
+                ->daily()
+                ->withoutOverlapping();
         });
     }
 
