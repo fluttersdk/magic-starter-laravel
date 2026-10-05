@@ -22,6 +22,8 @@ class RemoveTeamMember implements RemovesTeamMembers
     {
         // TODO: Implement member removal logic.
         // Example: check authorization, cannot remove owner, detach from team pivot.
+        // Keep the owner guard the admin panel and the purge command rely on:
+        // \FlutterSdk\MagicStarter\Actions\RemoveTeamMember::ensureRemovable($team, $teamMember, leaving: false);
         throw new \RuntimeException('RemoveTeamMember action not implemented. Publish and implement this stub.');
     }
 }

@@ -122,6 +122,14 @@ class Features
     }
 
     /**
+     * Enable the audit trail feature.
+     */
+    public static function audit(): string
+    {
+        return 'audit';
+    }
+
+    /**
      * Determine whether the given feature is enabled.
      */
     public static function enabled(string $feature): bool
@@ -239,6 +247,14 @@ class Features
     public static function hasBillingFeatures(): bool
     {
         return static::enabled(static::billing());
+    }
+
+    /**
+     * Determine whether the audit trail feature is enabled.
+     */
+    public static function hasAuditFeatures(): bool
+    {
+        return static::enabled(static::audit());
     }
 
     /**

@@ -2,7 +2,10 @@
 
 namespace FlutterSdk\MagicStarter\Http\Controllers;
 
+use FlutterSdk\MagicStarter\Actions\RemoveTeamMember;
+use FlutterSdk\MagicStarter\Actions\UpdateTeamMemberRole;
 use FlutterSdk\MagicStarter\Contracts\RemovesTeamMembers;
+use FlutterSdk\MagicStarter\Contracts\UpdatesTeamMemberRoles;
 use FlutterSdk\MagicStarter\Enums\Role;
 use FlutterSdk\MagicStarter\Http\Requests\UpdateTeamMemberRequest;
 use FlutterSdk\MagicStarter\Http\Resources\TeamMemberResource;
@@ -10,9 +13,15 @@ use FlutterSdk\MagicStarter\MagicStarter;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Resources\Json\AnonymousResourceCollection;
 use Illuminate\Support\Facades\Gate;
+use Illuminate\Validation\ValidationException;
 
 /**
  * Manages team members: listing, adding, updating roles, removing, and leaving.
+ *
+ * The owner rules live in the default actions. Each endpoint runs the action's
+ * guard itself before the contract, so the rule holds whatever an application
+ * binds, and maps the action's 422 refusal back to the 403 this API has always
+ * answered.
  */
 class TeamMemberController
 {
@@ -48,13 +57,15 @@ class TeamMemberController
         $actor = $request->user();
         Gate::forUser($actor)->authorize('manageMembers', $teamModel);
 
-        if ((string) $teamModel->user_id === (string) $member->getKey()) {
-            abort(403, (string) __('magic-starter::teams.members.owner_role_locked'));
+        $role = (string) $request->validated('role');
+
+        try {
+            UpdateTeamMemberRole::ensureAssignable($teamModel, $member, $role);
+        } catch (ValidationException $refusal) {
+            abort(403, $refusal->getMessage());
         }
 
-        $teamModel->users()->updateExistingPivot($member->getKey(), [
-            'role' => $request->validated('role'),
-        ]);
+        app(UpdatesTeamMemberRoles::class)->update($actor, $teamModel, $member, $role);
 
         return response()->json(['message' => __('magic-starter::teams.members.updated')]);
     }
@@ -70,8 +81,10 @@ class TeamMemberController
         $actor = request()->user();
         Gate::forUser($actor)->authorize('manageMembers', $teamModel);
 
-        if ((string) $teamModel->user_id === (string) $member->getKey()) {
-            abort(403, (string) __('magic-starter::teams.members.owner_not_removable'));
+        try {
+            RemoveTeamMember::ensureRemovable($teamModel, $member, leaving: false);
+        } catch (ValidationException $refusal) {
+            abort(403, $refusal->getMessage());
         }
 
         $remover->remove($actor, $teamModel, $member);
@@ -88,8 +101,12 @@ class TeamMemberController
         $teamModel = $this->findTeam($team);
         $user = request()->user();
 
-        if ((string) $teamModel->user_id === (string) $user->getKey()) {
-            abort(403, (string) __('magic-starter::teams.members.owner_cannot_leave'));
+        // Before the membership check: an owner asking to leave is told why
+        // they cannot, not that they are not a member.
+        try {
+            RemoveTeamMember::ensureRemovable($teamModel, $user, leaving: true);
+        } catch (ValidationException $refusal) {
+            abort(403, $refusal->getMessage());
         }
 
         if (! $teamModel->users()->where('user_id', $user->getKey())->exists()) {

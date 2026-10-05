@@ -22,6 +22,8 @@ For deeper guidance, read the relevant reference file before implementing:
 - `references/notifications.md` — preference registry, channel gating, OneSignal routing
 - `references/models-and-migrations.md` — traits, relations, UUID support, MigrationHelper, casts
 - `references/overriding.md` — customizing actions, models, routes, config; consumer patterns
+- `references/admin-panel.md`: the optional Filament admin panel, adding an app resource, eject, ops tools, the rule list
+- `references/audit.md`: the audit trail, exclude and redact config, `Auditor`, pruning, what is not captured
 
 ## Contract-Action Pattern
 
@@ -63,6 +65,7 @@ Check `Features::enabled()` or the dedicated gate methods before any feature-spe
 | Guest auth | `Features::hasGuestAuthFeatures()` | `guest-auth` |
 | Phone OTP | `Features::hasPhoneOtpFeatures()` | `phone-otp` |
 | Timezones | `Features::hasTimezoneFeatures()` | `timezones` |
+| Audit trail | `Features::hasAuditFeatures()` | `audit` |
 
 Enable features in `config/magic-starter.php` under the `features` array.
 

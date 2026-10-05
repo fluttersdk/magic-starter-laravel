@@ -2,7 +2,7 @@
 
 namespace FlutterSdk\MagicStarter\Http\Controllers\Concerns;
 
-use FlutterSdk\MagicStarter\Events\UserDeletionCancelled;
+use FlutterSdk\MagicStarter\Contracts\CancelsUserDeletion;
 use FlutterSdk\MagicStarter\Features;
 use FlutterSdk\MagicStarter\Http\Resources\UserResource;
 use FlutterSdk\MagicStarter\MagicStarter;
@@ -12,7 +12,6 @@ use Illuminate\Contracts\Auth\Authenticatable;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
-use Illuminate\Support\Facades\Event;
 use Illuminate\Support\Str;
 
 /**
@@ -221,35 +220,19 @@ trait AuthenticatesUsers
      * Clear a deletion the user scheduled, and mark the request so the response
      * says so.
      *
-     * An orphan's schedule stays: the identity provider deleted the account, so
-     * signing in by another method is not the user taking the request back.
-     *
-     * Guarded by attribute presence rather than a schema query, so an older
-     * users table without the deletion columns reads null and pays nothing per
-     * sign-in. The flag rides on the REQUEST rather than on the controller,
-     * because a route caches its controller instance and a long-lived worker
-     * would carry one sign-in's flag into the next.
-     *
-     * Dispatches {@see UserDeletionCancelled} once the column is cleared, so a
-     * host resumes what it paused on the schedule.
+     * The rules (an orphan's schedule stays, the event that lets a host resume)
+     * are {@see CancelsUserDeletion}'s. The flag rides on the REQUEST rather
+     * than on the controller, because a route caches its controller instance
+     * and a long-lived worker would carry one sign-in's flag into the next.
      */
     protected function cancelScheduledDeletion(mixed $user, Request $request): void
     {
-        if (! $user instanceof Model
-            || $user->getAttribute('deletion_scheduled_at') === null
-            || $user->getAttribute('orphaned_at') !== null
-        ) {
+        if (! $user instanceof Authenticatable) {
             return;
         }
 
-        $user->forceFill([
-            'deletion_scheduled_at' => null,
-        ])->save();
-
-        $request->attributes->set(self::DELETION_CANCELLED_ATTRIBUTE, true);
-
-        if ($user instanceof Authenticatable) {
-            Event::dispatch(new UserDeletionCancelled($user));
+        if (app(CancelsUserDeletion::class)->cancel($user)) {
+            $request->attributes->set(self::DELETION_CANCELLED_ATTRIBUTE, true);
         }
     }
 }

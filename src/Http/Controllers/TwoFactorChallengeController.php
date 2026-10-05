@@ -62,15 +62,11 @@ class TwoFactorChallengeController extends AuthController
      */
     protected function verifyRecoveryCode(TwoFactorChallengeRequest $request, mixed $user): void
     {
-        $code = (string) $request->input('recovery_code');
-
-        if (! in_array($code, $user->recoveryCodes(), true)) {
+        if (! $user->redeemRecoveryCode((string) $request->input('recovery_code'))) {
             throw ValidationException::withMessages([
                 'recovery_code' => [__('magic-starter::auth.two_factor.invalid_recovery_code')],
             ]);
         }
-
-        $user->replaceRecoveryCode($code);
     }
 
     /**
@@ -80,7 +76,7 @@ class TwoFactorChallengeController extends AuthController
     {
         $code = (string) $request->input('code');
 
-        $isValid = app(TwoFactorAuthenticationProvider::class)->verify(
+        $isValid = app(TwoFactorAuthenticationProvider::class)->verifyOnce(
             $user->twoFactorSecret() ?? '',
             $code,
         );

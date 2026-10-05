@@ -44,6 +44,11 @@ In practice, most apps override nothing. Extend models with domain relations (e.
 | `RemovesTeamMembers` | `RemoveTeamMember` | `remove(Authenticatable $user, Model $team, Model $teamMember): void` |
 | `InvitesTeamMembers` | `InviteTeamMember` | `invite(Authenticatable $user, Model $team, string $email, string $role): Model` |
 | `UpdatesTeamMemberRoles` | `UpdateTeamMemberRole` | `update(Authenticatable $user, Model $team, Model $teamMember, string $role): void` |
+| `TransfersTeamOwnership` | `TransferTeamOwnership` | `transfer(Authenticatable $actor, Model $team, Model $newOwner): void` |
+| `CancelsTeamInvitations` | `CancelTeamInvitation` | `cancel(Authenticatable $actor, Model $invitation): void` |
+| `ResendsTeamInvitations` | `ResendTeamInvitation` | `resend(Authenticatable $actor, Model $invitation): void` |
+| `CancelsUserDeletion` | `CancelUserDeletion` | `cancel(Authenticatable $user): bool` |
+| `RevokesApiTokens` | `RevokeApiTokens` | `revoke(Authenticatable $user, ?string $tokenId = null): void` |
 | `CreatesGuestUsers` | `CreateGuestUser` | `create(array $input): Authenticatable` |
 | `SendsOtpCodes` | `LogOtpProvider` | `send(string $phone, string $code): void` |
 | `VerifiesOtpCodes` | `CacheOtpVerifier` | `verify(string $phone, string $code): bool` |
@@ -51,3 +56,7 @@ In practice, most apps override nothing. Extend models with domain relations (e.
 | `ConfirmsTwoFactorAuthentication` | `ConfirmTwoFactorAuthentication` | `confirm(mixed $user, string $code): void` |
 | `DisablesTwoFactorAuthentication` | `DisableTwoFactorAuthentication` | `disable(mixed $user): void` |
 | `GeneratesNewRecoveryCodes` | `GenerateNewRecoveryCodes` | `generate(mixed $user): array` |
+
+### Team owner guards live in the actions
+
+`RemoveTeamMember` refuses the owner (`owner_not_removable`, or `owner_cannot_leave` when the owner asks to go) and `UpdateTeamMemberRole` refuses to change the owner's role (`owner_role_locked`) or to hand out `owner` (`role_not_assignable`), each as a `ValidationException` with that `code`. The HTTP API maps them back to 403 through the public `ensureRemovable()` and `ensureAssignable()`, so the API holds whatever you bind. The admin panel and `PurgeDeletedUsersCommand` call the contracts, so a replacement of either action has to keep the guard (call the static helper from your override). Ownership itself moves only through `TransfersTeamOwnership`.

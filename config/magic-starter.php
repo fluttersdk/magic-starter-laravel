@@ -50,6 +50,63 @@ return [
         // \FlutterSdk\MagicStarter\Features::emailVerification(),
         // \FlutterSdk\MagicStarter\Features::timezones(),
         // \FlutterSdk\MagicStarter\Features::billing(),
+        // \FlutterSdk\MagicStarter\Features::audit(),
+    ],
+
+    /*
+    |--------------------------------------------------------------------------
+    | Audit Trail
+    |--------------------------------------------------------------------------
+    |
+    | With the audit feature on, every Eloquent create, update and delete is
+    | written to `magic_starter_audits` once its transaction commits, along
+    | with the acting user and the request it came from. Query-builder bulk
+    | writes fire no model events and are not recorded.
+    |
+    | `exclude` lists model classes (subclasses included) never recorded. The
+    | package already skips its own audit rows and every pivot.
+    |
+    | `redact` lists attribute names stored as `[redacted]`. It EXTENDS the
+    | built-in list (password, remember_token, two_factor_secret,
+    | two_factor_recovery_codes, token) and never replaces it; a model's
+    | `$hidden`, its encrypted and hashed casts and its own `$auditExclude`
+    | property are redacted too.
+    |
+    | Deleting a user erases the rows about that user and keeps the rows they
+    | acted in without the actor's key.
+    |
+    | `retention_days` is the age, in days, past which a row may be pruned.
+    |
+    */
+
+    'audit' => [
+        // Sanctum stamps `last_used_at` on every authenticated request, so
+        // auditing tokens would write one row per API call.
+        'exclude' => [
+            \Laravel\Sanctum\PersonalAccessToken::class,
+        ],
+        'redact' => [],
+        'retention_days' => 365,
+    ],
+
+    /*
+    |--------------------------------------------------------------------------
+    | Administrators
+    |--------------------------------------------------------------------------
+    |
+    | Email addresses allowed into the admin panel, from the comma-separated
+    | MAGIC_STARTER_ADMIN_EMAILS. Empty by default.
+    |
+    */
+
+    'admin' => [
+        // The host the generated admin panel answers on; null serves it on a path.
+        'host' => env('MAGIC_STARTER_ADMIN_HOST'),
+
+        'emails' => array_values(array_filter(array_map(
+            'trim',
+            explode(',', (string) env('MAGIC_STARTER_ADMIN_EMAILS', '')),
+        ))),
     ],
 
     /*

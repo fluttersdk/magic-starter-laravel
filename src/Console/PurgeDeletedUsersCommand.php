@@ -3,10 +3,11 @@
 namespace FlutterSdk\MagicStarter\Console;
 
 use Carbon\CarbonInterface;
+use FlutterSdk\MagicStarter\Contracts\CancelsUserDeletion;
 use FlutterSdk\MagicStarter\Contracts\DeletesUsers;
+use FlutterSdk\MagicStarter\Contracts\TransfersTeamOwnership;
 use FlutterSdk\MagicStarter\Contracts\UpdatesTeamMemberRoles;
 use FlutterSdk\MagicStarter\Enums\Role;
-use FlutterSdk\MagicStarter\Events\UserDeletionCancelled;
 use FlutterSdk\MagicStarter\Jobs\PurgeUserNow;
 use FlutterSdk\MagicStarter\MagicStarter;
 use FlutterSdk\MagicStarter\Support\OwnedTeams;
@@ -15,7 +16,6 @@ use Illuminate\Contracts\Auth\Authenticatable;
 use Illuminate\Database\Eloquent\Collection;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Support\Facades\DB;
-use Illuminate\Support\Facades\Event;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Schema;
 use RuntimeException;
@@ -60,6 +60,13 @@ class PurgeDeletedUsersCommand extends Command
      */
     protected $description = 'Delete the accounts whose deletion grace period has ended';
 
+    public function __construct(
+        protected TransfersTeamOwnership $ownership,
+        protected CancelsUserDeletion $cancellations,
+    ) {
+        parent::__construct();
+    }
+
     /**
      * Purge every account scheduled before the grace period's cutoff.
      *
@@ -67,7 +74,7 @@ class PurgeDeletedUsersCommand extends Command
      * single bad row cannot keep every other account alive; the exit code says
      * a failure happened.
      */
-    public function handle(DeletesUsers $deleter, UpdatesTeamMemberRoles $roles): int
+    public function handle(DeletesUsers $deleter): int
     {
         $userModel = MagicStarter::userModel();
 
@@ -100,7 +107,7 @@ class PurgeDeletedUsersCommand extends Command
 
         foreach ($due as $user) {
             try {
-                $tally[$this->purge($user, $cutoff, $deleter, $roles)]++;
+                $tally[$this->purge($user, $cutoff, $deleter)]++;
             } catch (Throwable $failure) {
                 report($failure);
                 $this->components->error(sprintf(
@@ -147,7 +154,6 @@ class PurgeDeletedUsersCommand extends Command
         Model $loaded,
         CarbonInterface $cutoff,
         DeletesUsers $deleter,
-        UpdatesTeamMemberRoles $roles,
     ): string {
         if (! $loaded instanceof Authenticatable) {
             throw new RuntimeException(sprintf(
@@ -157,7 +163,7 @@ class PurgeDeletedUsersCommand extends Command
             ));
         }
 
-        return DB::transaction(function () use ($loaded, $cutoff, $deleter, $roles): string {
+        return DB::transaction(function () use ($loaded, $cutoff, $deleter): string {
             // 1. Only a row that is still due; a cleared schedule means the user
             //    took the request back after the walk loaded them.
             $user = $loaded->newQuery()
@@ -177,18 +183,13 @@ class PurgeDeletedUsersCommand extends Command
             // 2. The user can still resolve a shared team themselves, and deleting
             //    it would take its other members' data with it.
             if (! $orphan && $shared->isNotEmpty()) {
-                $user->forceFill([
-                    'deletion_scheduled_at' => null,
-                ])->save();
+                $this->cancellations->cancel($user);
 
                 $this->reportSkipped(
                     $user,
                     'un-scheduled: owns a team that gained a member during the grace period',
                     $shared,
                 );
-
-                // The account stays, so a host resumes what it paused.
-                Event::dispatch(new UserDeletionCancelled($user));
 
                 return 'unscheduled';
             }
@@ -212,7 +213,7 @@ class PurgeDeletedUsersCommand extends Command
             // 4. Hand on and delete together, so a failed deletion does not leave
             //    an orphan's teams transferred to someone else.
             foreach ($shared as $team) {
-                $this->handOn($team, $user, $roles);
+                $this->handOn($team, $user);
             }
 
             $deleter->delete($user);
@@ -226,12 +227,11 @@ class PurgeDeletedUsersCommand extends Command
      * team's owner; the membership key breaks a tie on join time, so the heir
      * never depends on the database's scan order.
      *
-     * Ownership is `teams.user_id` plus the `owner` role on the pivot, the pair
-     * the package writes when it creates a team; the role goes through
-     * {@see UpdatesTeamMemberRoles} so an application's own role rules see it. A
-     * personal team stops being personal, since it is nobody's own any more.
+     * The transfer goes through {@see TransfersTeamOwnership}, which moves
+     * `teams.user_id` and the pivot roles together; {@see UpdatesTeamMemberRoles}
+     * refuses to hand out the `owner` role.
      */
-    protected function handOn(Model $team, Authenticatable&Model $owner, UpdatesTeamMemberRoles $roles): void
+    protected function handOn(Model $team, Authenticatable&Model $owner): void
     {
         $membershipModel = MagicStarter::membershipModel();
 
@@ -248,12 +248,7 @@ class PurgeDeletedUsersCommand extends Command
 
         $heir = $owner->newQuery()->findOrFail($heirship->getAttribute('user_id'));
 
-        $team->forceFill([
-            'user_id' => $heir->getKey(),
-            'personal_team' => false,
-        ])->save();
-
-        $roles->update($owner, $team, $heir, Role::OWNER->value);
+        $this->ownership->transfer($owner, $team, $heir);
     }
 
     /**

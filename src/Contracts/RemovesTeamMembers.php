@@ -16,6 +16,10 @@ interface RemovesTeamMembers
      * @param  Authenticatable  $user  The user performing the removal.
      * @param  Model  $team  The team to remove from.
      * @param  Model  $teamMember  The member being removed.
+     *
+     * @throws \Illuminate\Validation\ValidationException When the member owns the team
+     *                                                    (`owner_not_removable`, or `owner_cannot_leave`
+     *                                                    when the owner removes themselves).
      */
     public function remove(Authenticatable $user, Model $team, Model $teamMember): void;
 }

@@ -1,0 +1,53 @@
+<?php
+
+namespace App\Providers\Filament;
+
+use Filament\Http\Middleware\Authenticate;
+use Filament\Http\Middleware\AuthenticateSession;
+use Filament\Http\Middleware\DisableBladeIconComponents;
+use Filament\Http\Middleware\DispatchServingFilamentEvent;
+use Filament\Panel;
+use Filament\PanelProvider;
+use FlutterSdk\MagicStarter\Filament\MagicStarterPlugin;
+use Illuminate\Cookie\Middleware\AddQueuedCookiesToResponse;
+use Illuminate\Cookie\Middleware\EncryptCookies;
+use Illuminate\Routing\Middleware\SubstituteBindings;
+use Illuminate\Session\Middleware\StartSession;
+use Illuminate\View\Middleware\ShareErrorsFromSession;
+use {{ csrf }};
+
+/**
+ * The admin panel. The Magic Starter plugin mounts the resources, the
+ * dashboard and the operations links; who may enter is decided by the user
+ * model (`AuthorizesAdminPanel`) and `MAGIC_STARTER_ADMIN_EMAILS`.
+ *
+ * Set `MAGIC_STARTER_ADMIN_HOST` to serve the panel from its own host instead
+ * of a path. It is read through config, not `env()`, because `env()` answers
+ * null once the configuration is cached.
+ */
+class AdminPanelProvider extends PanelProvider
+{
+    public function panel(Panel $panel): Panel
+    {
+        return $panel
+            ->id('admin')
+            ->domain(config('magic-starter.admin.host'))
+            ->path('admin')
+            ->login()
+            ->plugin(MagicStarterPlugin::make())
+            ->middleware([
+                EncryptCookies::class,
+                AddQueuedCookiesToResponse::class,
+                StartSession::class,
+                AuthenticateSession::class,
+                ShareErrorsFromSession::class,
+                {{ csrfName }}::class,
+                SubstituteBindings::class,
+                DisableBladeIconComponents::class,
+                DispatchServingFilamentEvent::class,
+            ])
+            ->authMiddleware([
+                Authenticate::class,
+            ]);
+    }
+}

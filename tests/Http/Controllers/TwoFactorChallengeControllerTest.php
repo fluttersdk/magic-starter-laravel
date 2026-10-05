@@ -92,6 +92,35 @@ final class TwoFactorChallengeControllerTest extends TestCase
             ]);
     }
 
+    public function test_a_code_that_signed_in_once_is_refused_the_second_time(): void
+    {
+        /** @var TwoFactorAuthenticationProvider $provider */
+        $provider = app(TwoFactorAuthenticationProvider::class);
+        $secret = $provider->engine->generateSecretKey();
+
+        $user = TwoFactorChallengeControllerTestUser::query()->create([
+            'name' => 'Test User',
+            'email' => 'test@example.com',
+            'password' => Hash::make('password'),
+            'two_factor_secret' => encrypt($secret),
+            'two_factor_confirmed_at' => now(),
+        ]);
+
+        $payload = [
+            'two_factor_token' => encrypt(json_encode([
+                'user_id' => $user->getKey(),
+                'expires_at' => now()->addMinutes(5)->timestamp,
+            ])),
+            'code' => $provider->engine->getCurrentOtp($secret),
+        ];
+
+        $this->postJson('/auth/two-factor-challenge', $payload)->assertOk();
+
+        $this->postJson('/auth/two-factor-challenge', $payload)
+            ->assertUnprocessable()
+            ->assertJsonValidationErrors(['code']);
+    }
+
     public function test_challenge_with_valid_recovery_code_returns_user_and_token(): void
     {
         $user = TwoFactorChallengeControllerTestUser::query()->create([

@@ -38,12 +38,23 @@
         "socialiteproviders/apple": "^6.1",
         "socialiteproviders/microsoft": "^4.9"
     },
+    "conflict": {
+        "filament/filament": ">=4.0.0 <4.13.3 || >=5.0.0 <5.8.3"
+    },
     "suggest": {
-        "geoip2/geoip2": "Optional: for IP geolocation in session management"
+        "filament/filament": "Optional (^4.13.3|^5.8.3): for building an admin panel",
+        "geoip2/geoip2": "Optional: for IP geolocation in session management",
+        "laravel/horizon": "Optional: for monitoring and managing queues",
+        "laravel/pulse": "Optional: for application performance metrics",
+        "laravel/telescope": "Optional: for debugging and error inspection"
     },
     "require-dev": {
+        "filament/filament": "^4.13.3|^5.8.3",
         "larastan/larastan": "^3.0",
+        "laravel/horizon": "^5.0",
         "laravel/pint": "^1.27",
+        "laravel/pulse": "^1.4",
+        "laravel/telescope": "^5.0",
         "orchestra/testbench": "^10.0",
         "phpunit/phpunit": "^11.0"
     },

@@ -6,7 +6,7 @@
 
 <p align="center">
   <strong>Pre-built Auth, Profile, Teams & Notifications API for Laravel.</strong><br/>
-  14 opt-in features - every action overridable.
+  15 opt-in features - every action overridable.
 </p>
 
 <p align="center">
@@ -34,7 +34,7 @@
 
 Stop rebuilding authentication, profile management, and team features from scratch in every Laravel project. The same controllers, the same validation, the same service bindings - over and over.
 
-**Magic Starter Laravel** gives you a production-ready JSON API for auth, profile, teams, and notifications out of the box. Everything is config-driven with 14 opt-in feature toggles. Every action is overridable via contract bindings - swap any business logic from your host app without touching the package.
+**Magic Starter Laravel** gives you a production-ready JSON API for auth, profile, teams, and notifications out of the box. Everything is config-driven with 15 opt-in feature toggles. Every action is overridable via contract bindings - swap any business logic from your host app without touching the package.
 
 > **Config-driven API starter kit.** Enable only what you need. Override any action. Ship faster.
 
@@ -58,6 +58,8 @@ Stop rebuilding authentication, profile management, and team features from scrat
 | :camera: | **Profile Photos** | Upload and delete for users and teams |
 | :desktop_computer: | **Sessions** | Active session listing and revocation |
 | :credit_card: | **Billing** | Entitlement columns on the subject you bill, a user or a team, plus one guarded write path so more than one payment rail can claim a tier without racing |
+| :scroll: | **Audit Trail** | Every model create, update and delete recorded after commit with the actor and request, secrets redacted, pruned on a schedule |
+| :control_knobs: | **Admin Panel** | Optional Filament plugin: users, teams, subscriptions, newsletter and audits, plus Horizon, Pulse and Telescope behind one gate. Every write goes through the action contracts |
 
 ---
 
@@ -165,7 +167,7 @@ You will also need to:
 
 ## Feature Toggles
 
-All 14 features are opt-in. Enable them by uncommenting in `config/magic-starter.php`:
+All 15 features are opt-in. Enable them by uncommenting in `config/magic-starter.php`:
 
 | Toggle Key | Description |
 |------------|-------------|
@@ -183,6 +185,17 @@ All 14 features are opt-in. Enable them by uncommenting in `config/magic-starter
 | `timezones` | Timezone listing API endpoint |
 | `onesignal` | OneSignal push channel for the notification features, plus, with `notifications` on, `POST devices/push-state` and `POST devices/push-state/release`, where a client reports and withdraws its own device's push reachability (`PushDevice::canReachByPush()`) |
 | `billing` | Entitlement columns on the declared billable subject (`billing.billable`, a user or a team) and the arbitration contract that writes them |
+| `audit` | Audit trail of model changes and admin panel actions in `magic_starter_audits` |
+
+---
+
+## Admin Panel and Audit
+
+Two optional layers sit beside the API. Neither is required at runtime.
+
+**Admin panel.** `php artisan magic-starter:filament:install` adds a Filament `^4|^5` panel with Users, Teams, Subscriptions, Newsletter and Audits resources and a dashboard. Add `implements FilamentUser` and `use AuthorizesAdminPanel` to the user model and list the staff in `MAGIC_STARTER_ADMIN_EMAILS`; nobody is admitted by default. `MagicStarterPlugin` can also put Horizon, Pulse and Telescope behind the same gate. Every write calls the action contract the API calls, and `magic-starter:filament:eject` copies a resource into the app to change it. See [Admin Panel](doc/basics/admin-panel.md).
+
+**Audit trail.** With `Features::audit()` on, every Eloquent create, update and delete is written to `magic_starter_audits` after commit, with the acting user and request. Passwords, hidden attributes and encrypted casts are redacted, `Auditor::record()` adds explicit events, and `magic-starter:audit:prune` runs daily against `audit.retention_days`. Query-builder bulk writes and pivot rows are not captured. See [Audit Trail](doc/basics/audit.md).
 
 ---
 
@@ -233,6 +246,8 @@ Request → Route (feature-gated, rate-limited)
 | [Profile](https://magic.fluttersdk.com/packages/starter-laravel/basics/profile) | Profile updates, photo upload, password change, account deletion |
 | [Two-Factor Auth](https://magic.fluttersdk.com/packages/starter-laravel/basics/two-factor-auth) | 2FA enable/disable, QR code, confirm, recovery codes |
 | [Notifications](https://magic.fluttersdk.com/packages/starter-laravel/basics/notifications) | Listing, unread count, mark read, preferences |
+| [Admin Panel](doc/basics/admin-panel.md) | Filament plugin, access gate, custom resources, eject, operations tools |
+| [Audit Trail](doc/basics/audit.md) | Recording, redaction, exclusion, pruning, what is not captured |
 | [Service Provider](https://magic.fluttersdk.com/packages/starter-laravel/architecture/service-provider) | Contract bindings, route registration, rate limiters |
 | [Action Contracts](https://magic.fluttersdk.com/packages/starter-laravel/architecture/action-contracts) | Overriding business logic via singleton binding |
 | [Models](https://magic.fluttersdk.com/packages/starter-laravel/architecture/models) | Dynamic resolution, UUID support, traits |

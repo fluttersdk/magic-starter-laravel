@@ -23,6 +23,8 @@ class UpdateTeamMemberRole implements UpdatesTeamMemberRoles
     {
         // TODO: Implement role update logic.
         // Example: Authorize, update pivot table role.
+        // Keep the owner and assignable-role guard the admin panel relies on:
+        // \FlutterSdk\MagicStarter\Actions\UpdateTeamMemberRole::ensureAssignable($team, $teamMember, $role);
         throw new \RuntimeException('UpdateTeamMemberRole action not implemented. Publish and implement this stub.');
     }
 }

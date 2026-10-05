@@ -2,7 +2,11 @@
 
 namespace FlutterSdk\MagicStarter;
 
+use Filament\Panel;
+use FlutterSdk\MagicStarter\Console\FilamentEjectCommand;
+use FlutterSdk\MagicStarter\Console\FilamentInstallCommand;
 use FlutterSdk\MagicStarter\Console\InstallCommand;
+use FlutterSdk\MagicStarter\Console\PruneAuditsCommand;
 use FlutterSdk\MagicStarter\Console\PurgeDeletedUsersCommand;
 use FlutterSdk\MagicStarter\Console\ReconcileBillingEntitlements;
 use FlutterSdk\MagicStarter\Support\FrontendUrl;
@@ -72,6 +76,11 @@ class MagicStarterServiceProvider extends ServiceProvider
         $this->app->bind(Contracts\RemovesTeamMembers::class, Actions\RemoveTeamMember::class);
         $this->app->bind(Contracts\InvitesTeamMembers::class, Actions\InviteTeamMember::class);
         $this->app->bind(Contracts\UpdatesTeamMemberRoles::class, Actions\UpdateTeamMemberRole::class);
+        $this->app->bind(Contracts\TransfersTeamOwnership::class, Actions\TransferTeamOwnership::class);
+        $this->app->bind(Contracts\CancelsTeamInvitations::class, Actions\CancelTeamInvitation::class);
+        $this->app->bind(Contracts\ResendsTeamInvitations::class, Actions\ResendTeamInvitation::class);
+        $this->app->bind(Contracts\CancelsUserDeletion::class, Actions\CancelUserDeletion::class);
+        $this->app->bind(Contracts\RevokesApiTokens::class, Actions\RevokeApiTokens::class);
         $this->app->bind(Contracts\CreatesGuestUsers::class, Actions\CreateGuestUser::class);
         $this->app->bind(Contracts\ClaimsGuestAccounts::class, Actions\ClaimGuestAccount::class);
         $this->app->bind(Contracts\SendsOtpCodes::class, Actions\LogOtpProvider::class);
@@ -238,6 +247,18 @@ class MagicStarterServiceProvider extends ServiceProvider
             // free forever, and a dropped purchase is a paying customer stuck on
             // the free tier with no self-serve way out.
             $this->scheduleEntitlementReconciler();
+
+            // 3.4d. Register the reconciler with the feature, so an application
+            // that does not bill has no `billing:reconcile` at all. Outside the
+            // console guard, because the admin panel's "Reconcile now" runs it
+            // through Artisan inside a web request; `commands()` only queues an
+            // Artisan starting callback, so a request that never calls Artisan
+            // pays nothing. The schedule runs it as a SEPARATE artisan process,
+            // which boots this provider again and reaches this same gate, so
+            // the two registrations cannot disagree.
+            $this->commands([
+                ReconcileBillingEntitlements::class,
+            ]);
         }
 
         // 3.5. Auto-gate notification channels when notification feature is enabled.
@@ -271,6 +292,26 @@ class MagicStarterServiceProvider extends ServiceProvider
                 'push' => 'onesignal',
                 'sms' => 'onesignal-sms',
             ]);
+        }
+
+        // 3.65. Record every model create, update and delete when the audit
+        //       feature is on. Off by default: the listener is then never
+        //       registered and model events cost nothing extra.
+        if (Features::hasAuditFeatures()) {
+            Event::listen(
+                [
+                    'eloquent.created: *',
+                    'eloquent.updated: *',
+                    'eloquent.deleted: *',
+                ],
+                Audit\ModelAuditListener::class,
+            );
+
+            // The panel's own writes arrive as one event and become one `admin.*` row.
+            Event::listen(Events\AdminActionPerformed::class, Audit\RecordAdminAction::class);
+
+            // Without this the trail only grows; see schedulePruneAudits().
+            $this->schedulePruneAudits();
         }
 
         // 3.7. Register package translations.
@@ -314,14 +355,20 @@ class MagicStarterServiceProvider extends ServiceProvider
                 PurgeDeletedUsersCommand::class,
             ]);
 
-            // The reconciler is registered with the feature it belongs to, so an
-            // application that does not bill has no `billing:reconcile` in its
-            // artisan list at all. The schedule above runs it as a SEPARATE
-            // artisan process, which boots this provider again and reaches this
-            // same gate, so the two registrations cannot disagree.
-            if (Features::hasBillingFeatures()) {
+            // Registered with the feature, like the reconciler (3.4d): the table
+            // the command prunes exists only once the audit migration does.
+            if (Features::hasAuditFeatures()) {
                 $this->commands([
-                    ReconcileBillingEntitlements::class,
+                    PruneAuditsCommand::class,
+                ]);
+            }
+
+            // Filament is an optional dependency: its commands exist only where it
+            // is installed, so the package boots without it.
+            if (class_exists(Panel::class)) {
+                $this->commands([
+                    FilamentInstallCommand::class,
+                    FilamentEjectCommand::class,
                 ]);
             }
 
@@ -537,6 +584,26 @@ class MagicStarterServiceProvider extends ServiceProvider
                     ->withoutOverlapping()
                     ->onOneServer(),
             );
+        });
+    }
+
+    /**
+     * Put `magic-starter:audit:prune` on the schedule, daily.
+     *
+     * Attached through `callAfterResolving()` for the reason
+     * {@see self::scheduleEntitlementReconciler()} gives: only the processes
+     * that consult the scheduler build it. `withoutOverlapping()` keeps a run
+     * that outlasts its tick, on a trail that has grown for years, from racing
+     * its successor over the same rows. The cadence is not configurable:
+     * retention is counted in days, so a faster sweep finds nothing new.
+     */
+    private function schedulePruneAudits(): void
+    {
+        $this->callAfterResolving(Schedule::class, function (Schedule $schedule): void {
+            $schedule->command(PruneAuditsCommand::NAME)
+                ->name(PruneAuditsCommand::NAME)
+                ->daily()
+                ->withoutOverlapping();
         });
     }
 
