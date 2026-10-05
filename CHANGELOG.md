@@ -13,6 +13,7 @@ All notable changes to this project will be documented in this file.
 ### Fixed
 
 - **Telescope masks the session headers.** `set-cookie` and `x-csrf-token` join `authorization`, `cookie` and `x-xsrf-token` in the masked list. Telescope masks response headers with the request list, so a recorded response kept the session cookie in clear text. (`src/Filament/Ops/TelescopeRedaction.php`)
+- **Changing an address clears its verification on the shipped user model.** `UpdateUserProfile` reset `email_verified_at` through `update()`, which mass assignment drops on any model that does not list the column as fillable, including `stubs/models/User.php`. The new address stayed marked verified, so anything gated on a verified address (the admin allowlist among them) trusted an address nobody had confirmed. The reset now uses `forceFill()`. (`src/Actions/UpdateUserProfile.php`)
 
 ## [0.0.16] - 2026-10-06
 

@@ -121,7 +121,9 @@ class UpdateUserProfile implements UpdatesUserProfiles
             && $validated['email'] !== $originalEmail
             && $user instanceof MustVerifyEmail
         ) {
-            $user->update(['email_verified_at' => null]);
+            // forceFill: the stub user does not mass-assign this column, and a
+            // dropped reset would leave a new address marked verified.
+            $user->forceFill(['email_verified_at' => null])->save();
             $user->sendEmailVerificationNotification();
         }
 
