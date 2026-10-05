@@ -231,8 +231,8 @@ class MagicStarterPlugin implements Plugin
     public function register(Panel $panel): void
     {
         // 1. Without FilamentUser, Filament's Authenticate middleware admits every
-        //    signed-in user outside the `local` environment and never consults
-        //    the allowlist. Refuse to mount rather than open the panel.
+        //    signed-in user when `app.env` is `local` and never consults the
+        //    allowlist. Refuse to mount rather than open the panel.
         $userModel = MagicStarter::userModel();
 
         if (! is_subclass_of($userModel, FilamentUser::class)) {

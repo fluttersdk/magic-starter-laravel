@@ -2,7 +2,10 @@
 
 namespace FlutterSdk\MagicStarter\Filament\Ops;
 
+use FlutterSdk\MagicStarter\Http\Controllers\TeamInvitationController;
+use FlutterSdk\MagicStarter\Http\Controllers\TwoFactorRecoveryCodeController;
 use Illuminate\Support\Collection;
+use Laravel\Telescope\EntryType;
 use Laravel\Telescope\IncomingEntry;
 use Laravel\Telescope\Telescope;
 
@@ -13,6 +16,11 @@ use Laravel\Telescope\Telescope;
  * the starter's API receives ID tokens, OAuth codes, PKCE verifiers, recovery
  * codes and challenge tokens, and answers with Sanctum tokens. Every one of
  * those would otherwise sit in clear text in `telescope_entries`.
+ *
+ * Telescope masks by DOT PATH (`Arr::get($content, $parameter)`), so a response
+ * mask names the path the secret actually sits at: the API wraps its payloads
+ * under `data`. A secret answered as a list element has no path to name, so the
+ * request entry for those endpoints is dropped instead of stored.
  *
  * Telescope keeps its rules in statics, so each call appends to the process.
  * Call once per boot.
@@ -25,6 +33,8 @@ class TelescopeRedaction
         'current_password',
         'token',
         'id_token',
+        'nonce',
+        'ticket',
         'code',
         'authorization_code',
         'code_verifier',
@@ -34,7 +44,25 @@ class TelescopeRedaction
     ];
 
     public const RESPONSE_PARAMETERS = [
-        'token',
+        'data.token',
+        'two_factor_token',
+        'data.confirmation_token',
+        'data.ticket',
+        'data.secret',
+        'data.qr_url',
+        'data.qr_svg',
+        'data.recovery_codes',
+    ];
+
+    /**
+     * Endpoints that answer secrets as list elements: the recovery codes as a
+     * bare list under `data`, and the invitation index as a page of
+     * invitations each carrying its acceptance `token`.
+     */
+    public const UNRECORDED_ACTIONS = [
+        TwoFactorRecoveryCodeController::class . '@index',
+        TwoFactorRecoveryCodeController::class . '@store',
+        TeamInvitationController::class . '@index',
     ];
 
     public const REQUEST_HEADERS = [
@@ -44,13 +72,19 @@ class TelescopeRedaction
     ];
 
     /**
-     * Mask the starter's secrets in every recorded request and response.
+     * Mask the starter's secrets in every recorded request and response, and
+     * keep no request entry for an endpoint whose secrets cannot be masked.
+     *
+     * The filter runs as each entry is recorded, before any batch filter, so a
+     * dropped entry never counts toward keeping its batch.
      */
     public static function hideSecrets(): void
     {
         Telescope::hideRequestParameters(self::REQUEST_PARAMETERS);
         Telescope::hideResponseParameters(self::RESPONSE_PARAMETERS);
         Telescope::hideRequestHeaders(self::REQUEST_HEADERS);
+        Telescope::filter(static fn (IncomingEntry $entry): bool => $entry->type !== EntryType::REQUEST
+            || ! in_array($entry->content['controller_action'] ?? null, self::UNRECORDED_ACTIONS, true));
     }
 
     /**

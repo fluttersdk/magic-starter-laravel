@@ -69,18 +69,32 @@ class AdminGateTest extends FilamentTestCase
 
     public function test_a_user_with_no_address_is_denied_even_against_an_empty_allowlist_entry(): void
     {
-        // `hasVerifiedEmail()` is true for any guest, so "verified" cannot be
-        // what keeps one out: the empty address refusal is.
+        // Verified and not a guest, so the empty-address refusal is the only
+        // check that can keep this user out.
         $this->allowlist(['']);
 
         $user = $this->adminUser([
             'email' => null,
+        ]);
+
+        $this->assertTrue($user->hasVerifiedEmail());
+        $this->assertFalse($user->isGuest());
+        $this->assertFalse($user->canAccessPanel($this->panel()));
+    }
+
+    public function test_a_guest_holding_an_allowlisted_address_is_denied(): void
+    {
+        // A guest can set any address through the profile endpoint, and a
+        // guest's address always reads as verified.
+        $this->allowlist([self::ADMIN_EMAIL]);
+
+        $guest = $this->adminUser([
             'email_verified_at' => null,
             'is_guest' => true,
         ]);
 
-        $this->assertTrue($user->hasVerifiedEmail(), 'The guest bypass this case exists for is gone.');
-        $this->assertFalse($user->canAccessPanel($this->panel()));
+        $this->assertTrue($guest->hasVerifiedEmail(), 'The guest bypass this case exists for is gone.');
+        $this->assertFalse($guest->canAccessPanel($this->panel()));
     }
 
     public function test_the_gate_answers_only_for_a_panel_that_carries_the_plugin(): void

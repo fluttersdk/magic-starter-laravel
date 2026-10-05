@@ -5,7 +5,9 @@ namespace FlutterSdk\MagicStarter\Audit;
 use FlutterSdk\MagicStarter\Features;
 use FlutterSdk\MagicStarter\MagicStarter;
 use Illuminate\Contracts\Auth\Authenticatable;
+use Illuminate\Database\Eloquent\Collection;
 use Illuminate\Database\Eloquent\Model;
+use Illuminate\Support\Arr;
 use Illuminate\Support\Facades\DB;
 
 /**
@@ -24,6 +26,21 @@ class Auditor
      * while its outer caller still expects silence.
      */
     private static int $suppressed = 0;
+
+    /**
+     * The request context keys that identify who acted, dropped by a purge.
+     *
+     * @var list<string>
+     */
+    private const ACTOR_CONTEXT = [
+        'ip',
+        'user_agent',
+    ];
+
+    /**
+     * Rows anonymised per query while a deleted user's trail is purged.
+     */
+    private const PURGE_CHUNK = 500;
 
     /**
      * Record an explicit event, such as an administrator's action.
@@ -123,9 +140,10 @@ class Auditor
      *
      * Rows about the user and rows related to them (their teams, their linked
      * accounts) are deleted, since their values are that person's data. Rows
-     * the user acted in survive with `actor_id` nulled and `actor_type` kept:
-     * what happened to somebody else's record stays, who did it does not.
-     * Query-builder writes, so no model event re-enters the listener.
+     * the user acted in survive with `actor_id` nulled, `actor_type` kept and
+     * the request's `ip` and `user_agent` dropped from `context`: what happened
+     * to somebody else's record stays, who did it does not. Query-builder
+     * writes, so no model event re-enters the listener.
      *
      * @param  int|string  $key  The deleted user's primary key.
      */
@@ -144,9 +162,29 @@ class Auditor
         Audit::query()
             ->where('actor_type', $userType)
             ->where('actor_id', $key)
-            ->update([
-                'actor_id' => null,
-            ]);
+            ->chunkById(self::PURGE_CHUNK, static function (Collection $rows): void {
+                foreach ($rows as $row) {
+                    self::anonymiseActedRow($row);
+                }
+            });
+    }
+
+    /**
+     * Strip the actor from a row a deleted user acted in.
+     *
+     * The context is rewritten in PHP rather than with a JSON update, whose
+     * syntax differs across sqlite, pgsql and mysql.
+     */
+    private static function anonymiseActedRow(Audit $row): void
+    {
+        $context = $row->context;
+
+        Audit::query()->whereKey($row->getKey())->update([
+            'actor_id' => null,
+            'context' => $context === null
+                ? null
+                : json_encode(Arr::except($context, self::ACTOR_CONTEXT), JSON_THROW_ON_ERROR),
+        ]);
     }
 
     /**

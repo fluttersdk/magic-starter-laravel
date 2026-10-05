@@ -80,7 +80,11 @@ class TeamMembersTest extends FilamentTestCase
         $this->assertSame('editor', $team->users()->find($user->getKey())->pivot->role);
         Event::assertDispatched(
             AdminActionPerformed::class,
-            static fn (AdminActionPerformed $event): bool => $event->action === 'team.member_added',
+            static fn (AdminActionPerformed $event): bool => $event->action === 'team.member_added'
+                && $event->context === [
+                    'member_id' => (string) $user->getKey(),
+                    'role' => 'editor',
+                ],
         );
     }
 

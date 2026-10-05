@@ -46,7 +46,7 @@ A wildcard listener on `eloquent.created`, `eloquent.updated` and `eloquent.dele
 ```
 
 - `audit.exclude` lists model classes, subclasses included, that are never recorded. The default holds Sanctum's `PersonalAccessToken`, which stamps `last_used_at` on every API call. Keep it when you add your own entries. The package also always skips `Audit` itself, every `Pivot` and the membership model.
-- A value is stored as `[redacted]` (the key stays) when the model lists it in `$hidden`, casts it `encrypted*` or `hashed`, names it in the model's own `$auditExclude`, or when it is `password`, `remember_token`, `two_factor_secret`, `two_factor_recovery_codes`, `token` or listed in `audit.redact`. `audit.redact` extends the built-in list and can never shorten it.
+- A value is stored as `[redacted]` (the key stays) when the model lists it in `$hidden`, casts it `encrypted*` or `hashed`, names it in the model's own `$auditExclude`, or when it is `password`, `remember_token`, `two_factor_secret`, `two_factor_recovery_codes`, `token`, `device_id` (a guest's sign-in credential for `POST auth/guest`) or listed in `audit.redact`. `audit.redact` extends the built-in list and can never shorten it.
 
 ```php
 class Invoice extends Model
@@ -77,7 +77,9 @@ Auditor::withoutAuditing(function () use ($team): void {
 
 ## Deleting a User (GDPR)
 
-Deleting the user model records no row about it. After the transaction commits, `Auditor::forgetUser()` deletes every row whose subject is that user or whose `related_user_id` is that user (their teams, linked accounts), and nulls `actor_id` on rows they acted in while keeping `actor_type`. What happened to someone else's record stays; who did it does not. The purge uses query-builder writes, so it does not re-enter the listener, and a rolled-back deletion erases nothing.
+Deleting the user model records no row about it. After the transaction commits, `Auditor::forgetUser()` deletes every row whose subject is that user or whose `related_user_id` is that user (their teams, linked accounts). On rows they acted in it nulls `actor_id`, keeps `actor_type`, and removes `ip` and `user_agent` from `context` (rewritten in PHP, chunk by chunk, so it runs the same on sqlite, pgsql and mysql). What happened to someone else's record stays; who did it does not. The purge uses query-builder writes, so it does not re-enter the listener, and a rolled-back deletion erases nothing.
+
+The purge matches user keys only. Rows keyed by an email address elsewhere are not covered: team invitations (their values hold the invited address, and they relate to the team) and newsletter subscribers keep their audit rows.
 
 ## What Is Not Captured
 

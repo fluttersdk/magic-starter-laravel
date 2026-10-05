@@ -5,7 +5,6 @@ namespace FlutterSdk\MagicStarter\Jobs;
 use FlutterSdk\MagicStarter\Actions\ScheduleUserDeletion;
 use FlutterSdk\MagicStarter\Console\PurgeDeletedUsersCommand;
 use FlutterSdk\MagicStarter\Contracts\DeletesUsers;
-use FlutterSdk\MagicStarter\Contracts\UpdatesTeamMemberRoles;
 use FlutterSdk\MagicStarter\MagicStarter;
 use Illuminate\Contracts\Queue\ShouldQueueAfterCommit;
 use Illuminate\Database\Eloquent\Model;
@@ -46,7 +45,6 @@ class PurgeUserNow implements ShouldQueueAfterCommit
     public function handle(
         PurgeDeletedUsersCommand $purge,
         DeletesUsers $deleter,
-        UpdatesTeamMemberRoles $roles,
     ): void {
         $userModel = MagicStarter::userModel();
 
@@ -59,6 +57,6 @@ class PurgeUserNow implements ShouldQueueAfterCommit
             return;
         }
 
-        $purge->purge($user, now(), $deleter, $roles);
+        $purge->purge($user, now(), $deleter);
     }
 }

@@ -79,7 +79,7 @@ A sensitive value is stored as `[redacted]`; the key stays, so a reader can see 
 - the model lists it in `$hidden`;
 - it is cast `encrypted`, `encrypted:array` (and the other encrypted casts) or `hashed`;
 - the model names it in its own `$auditExclude` property;
-- it is `password`, `remember_token`, `two_factor_secret`, `two_factor_recovery_codes` or `token`;
+- it is `password`, `remember_token`, `two_factor_secret`, `two_factor_recovery_codes`, `token` or `device_id` (a guest's `device_id` signs that guest in through `POST auth/guest`, so it is a credential);
 - it is listed in `audit.redact`.
 
 ```php
@@ -162,7 +162,15 @@ Deletes rows older than `magic-starter.audit.retention_days` (365 by default, an
 <a name="deleting-a-user"></a>
 ## Deleting a User
 
-A deleted account's trail is personal data and goes with it. Deleting the user model records no row of its own. Once the transaction commits, every row about that user, and every row related to them (their teams, linked accounts), is deleted. Rows where they were the actor stay, with `actor_id` set to null and `actor_type` kept: what happened to somebody else's record remains, who did it does not. A deletion that rolls back erases nothing.
+A deleted account's trail is personal data and goes with it. Deleting the user model records no row of its own. Once the transaction commits, `Auditor::forgetUser()` runs:
+
+- every row whose subject is that user is deleted;
+- every row whose `related_user_id` is that user (their teams, linked accounts) is deleted;
+- every row where they were the actor stays, with `actor_id` set to null, `actor_type` kept, and `ip` and `user_agent` removed from `context`: what happened to somebody else's record remains, who did it does not.
+
+A deletion that rolls back erases nothing.
+
+The purge finds rows by user key only. A row keyed by an email address elsewhere is not covered: a team invitation (its values hold the invited address and it relates to the team, not to a user) and a newsletter subscriber both keep their audit rows. Delete those yourself when your obligations require it.
 
 ---
 

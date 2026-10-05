@@ -5,6 +5,7 @@ namespace FlutterSdk\MagicStarter\Tests\Filament;
 use Filament\Facades\Filament;
 use Filament\Panel;
 use FlutterSdk\MagicStarter\Audit\Audit;
+use FlutterSdk\MagicStarter\Audit\Redactor;
 use FlutterSdk\MagicStarter\Console\ReconcileBillingEntitlements;
 use FlutterSdk\MagicStarter\Events\AdminActionPerformed;
 use FlutterSdk\MagicStarter\Features;
@@ -55,8 +56,20 @@ class MiscResourcesTest extends FilamentTestCase
         ]);
     }
 
+    /**
+     * The test that boots the application as a web request rather than the
+     * console process PHPUnit is.
+     */
+    private const WEB_REQUEST_TEST = 'test_reconcile_now_succeeds_in_a_web_request';
+
     protected function setUp(): void
     {
+        // `runningInConsole()` reads this once, before the provider boots, so it
+        // has to be in place before the application exists.
+        if ($this->name() === self::WEB_REQUEST_TEST) {
+            $_SERVER['APP_RUNNING_IN_CONSOLE'] = 'false';
+        }
+
         parent::setUp();
 
         // The provider wires Cashier while it REGISTERS, which is before the
@@ -67,6 +80,8 @@ class MiscResourcesTest extends FilamentTestCase
 
     protected function tearDown(): void
     {
+        unset($_SERVER['APP_RUNNING_IN_CONSOLE']);
+
         // Statics on Cashier outlive the application that set them.
         Cashier::useCustomerModel('App\\Models\\User');
         Cashier::useSubscriptionModel(CashierSubscription::class);
@@ -136,6 +151,27 @@ class MiscResourcesTest extends FilamentTestCase
             AdminActionPerformed::class,
             static fn (AdminActionPerformed $event): bool => $event->action === 'billing.reconciled'
                 && $event->actor->is($admin),
+        );
+    }
+
+    /**
+     * PHPUnit runs under the cli SAPI, so every other test boots the provider as
+     * a console process; an operator clicks inside an HTTP request.
+     */
+    public function test_reconcile_now_succeeds_in_a_web_request(): void
+    {
+        $this->assertFalse($this->app->runningInConsole());
+
+        Event::fake([AdminActionPerformed::class]);
+
+        Livewire::actingAs($this->admin())
+            ->test(ListSubscriptions::class)
+            ->callAction('reconcile')
+            ->assertNotified(__('magic-starter::admin_misc.subscriptions.reconcile.succeeded'));
+
+        Event::assertDispatched(
+            AdminActionPerformed::class,
+            static fn (AdminActionPerformed $event): bool => $event->action === 'billing.reconciled',
         );
     }
 
@@ -216,19 +252,30 @@ class MiscResourcesTest extends FilamentTestCase
 
     public function test_the_audit_view_shows_old_and_new_values_context_and_the_redaction_marker(): void
     {
+        // A change the model listener records itself, so the marker on screen is
+        // the redactor's and not a value this test wrote.
         $owner = $this->admin();
-        $audit = $this->audit($owner, 'user.updated', [
-            'old_values' => ['name' => 'Old Name', 'password' => '[redacted]'],
-            'new_values' => ['name' => 'New Name', 'password' => '[redacted]'],
-            'context' => ['ip' => '203.0.113.9'],
-        ]);
+        $owner->forceFill(['name' => 'Old Name'])->save();
+        $owner->forceFill([
+            'name' => 'New Name',
+            'password' => 'plain-new-password',
+        ])->save();
+
+        $audit = Audit::query()
+            ->where('event', 'updated')
+            ->where('auditable_id', (string) $owner->getKey())
+            ->latest('id')
+            ->firstOrFail();
+
+        $this->assertSame(Redactor::PLACEHOLDER, $audit->new_values['password']);
 
         Livewire::actingAs($owner)
             ->test(ViewAudit::class, ['record' => $audit->getKey()])
             ->assertSee('Old Name')
             ->assertSee('New Name')
-            ->assertSee('203.0.113.9')
-            ->assertSee('[redacted]');
+            ->assertSee((string) $audit->context['ip'])
+            ->assertSee(Redactor::PLACEHOLDER)
+            ->assertDontSee('plain-new-password');
     }
 
     public function test_the_audits_relation_manager_scopes_to_its_owner_without_a_relation_on_the_model(): void

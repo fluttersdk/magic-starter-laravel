@@ -16,7 +16,9 @@ use FlutterSdk\MagicStarter\Contracts\UpdatesTeamMemberRoles;
 use FlutterSdk\MagicStarter\Enums\Role;
 use FlutterSdk\MagicStarter\Filament\Resources\Teams\TeamResource;
 use FlutterSdk\MagicStarter\Filament\Support\ContractAction;
+use FlutterSdk\MagicStarter\MagicStarter;
 use Illuminate\Database\Eloquent\Model;
+use Illuminate\Support\Str;
 
 /**
  * A team's members, with the writes that change who they are and what they may do.
@@ -90,6 +92,13 @@ class MembersRelationManager extends RelationManager
             ->action(function (array $data, Action $action): void {
                 $team = $this->getOwnerRecord();
 
+                // The audit row names the member by key, as every other member
+                // action does, so a later account purge can find and drop it;
+                // an email in the context would outlive the person.
+                $member = MagicStarter::userModel()::query()
+                    ->where('email', Str::lower($data['email']))
+                    ->first();
+
                 ContractAction::run(
                     $action,
                     static fn () => app(AddsTeamMembers::class)->add(
@@ -100,7 +109,7 @@ class MembersRelationManager extends RelationManager
                     ),
                     'team.member_added',
                     $team,
-                    ['email' => $data['email'], 'role' => $data['role']],
+                    ['member_id' => (string) $member?->getKey(), 'role' => $data['role']],
                 );
             });
     }

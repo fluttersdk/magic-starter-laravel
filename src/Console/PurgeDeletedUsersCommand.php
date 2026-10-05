@@ -74,7 +74,7 @@ class PurgeDeletedUsersCommand extends Command
      * single bad row cannot keep every other account alive; the exit code says
      * a failure happened.
      */
-    public function handle(DeletesUsers $deleter, UpdatesTeamMemberRoles $roles): int
+    public function handle(DeletesUsers $deleter): int
     {
         $userModel = MagicStarter::userModel();
 
@@ -107,7 +107,7 @@ class PurgeDeletedUsersCommand extends Command
 
         foreach ($due as $user) {
             try {
-                $tally[$this->purge($user, $cutoff, $deleter, $roles)]++;
+                $tally[$this->purge($user, $cutoff, $deleter)]++;
             } catch (Throwable $failure) {
                 report($failure);
                 $this->components->error(sprintf(
@@ -154,7 +154,6 @@ class PurgeDeletedUsersCommand extends Command
         Model $loaded,
         CarbonInterface $cutoff,
         DeletesUsers $deleter,
-        UpdatesTeamMemberRoles $roles,
     ): string {
         if (! $loaded instanceof Authenticatable) {
             throw new RuntimeException(sprintf(

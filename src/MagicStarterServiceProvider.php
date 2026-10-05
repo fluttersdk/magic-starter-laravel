@@ -247,6 +247,18 @@ class MagicStarterServiceProvider extends ServiceProvider
             // free forever, and a dropped purchase is a paying customer stuck on
             // the free tier with no self-serve way out.
             $this->scheduleEntitlementReconciler();
+
+            // 3.4d. Register the reconciler with the feature, so an application
+            // that does not bill has no `billing:reconcile` at all. Outside the
+            // console guard, because the admin panel's "Reconcile now" runs it
+            // through Artisan inside a web request; `commands()` only queues an
+            // Artisan starting callback, so a request that never calls Artisan
+            // pays nothing. The schedule runs it as a SEPARATE artisan process,
+            // which boots this provider again and reaches this same gate, so
+            // the two registrations cannot disagree.
+            $this->commands([
+                ReconcileBillingEntitlements::class,
+            ]);
         }
 
         // 3.5. Auto-gate notification channels when notification feature is enabled.
@@ -343,18 +355,7 @@ class MagicStarterServiceProvider extends ServiceProvider
                 PurgeDeletedUsersCommand::class,
             ]);
 
-            // The reconciler is registered with the feature it belongs to, so an
-            // application that does not bill has no `billing:reconcile` in its
-            // artisan list at all. The schedule above runs it as a SEPARATE
-            // artisan process, which boots this provider again and reaches this
-            // same gate, so the two registrations cannot disagree.
-            if (Features::hasBillingFeatures()) {
-                $this->commands([
-                    ReconcileBillingEntitlements::class,
-                ]);
-            }
-
-            // Registered with the feature, like the reconciler above: the table
+            // Registered with the feature, like the reconciler (3.4d): the table
             // the command prunes exists only once the audit migration does.
             if (Features::hasAuditFeatures()) {
                 $this->commands([

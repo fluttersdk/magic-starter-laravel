@@ -24,6 +24,8 @@ class Redactor
     /**
      * Credential columns redacted on every model, whatever it declares.
      *
+     * `device_id` is one: `POST auth/guest` with it signs that guest in.
+     *
      * @var list<string>
      */
     private const ALWAYS = [
@@ -32,6 +34,7 @@ class Redactor
         'two_factor_secret',
         'two_factor_recovery_codes',
         'token',
+        'device_id',
     ];
 
     /**

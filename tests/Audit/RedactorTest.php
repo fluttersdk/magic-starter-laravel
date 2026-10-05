@@ -50,6 +50,7 @@ final class RedactorTest extends TestCase
             $table->string('two_factor_secret')->nullable();
             $table->string('two_factor_recovery_codes')->nullable();
             $table->string('token')->nullable();
+            $table->string('device_id')->nullable();
             $table->string('nickname')->nullable();
             $table->string('internal')->nullable();
             $table->timestamps();
@@ -99,6 +100,7 @@ final class RedactorTest extends TestCase
             'two_factor_secret' => 'old-totp',
             'two_factor_recovery_codes' => 'old-codes',
             'token' => 'old-token',
+            'device_id' => 'old-device',
             'nickname' => 'old-nick',
             'internal' => 'old-internal',
         ]);
@@ -115,6 +117,7 @@ final class RedactorTest extends TestCase
             'two_factor_secret',
             'two_factor_recovery_codes',
             'token',
+            'device_id',
             'nickname',
             'internal',
         ] as $key) {

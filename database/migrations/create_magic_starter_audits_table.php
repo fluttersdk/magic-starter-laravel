@@ -20,7 +20,7 @@ return new class extends Migration
 
         Schema::create('magic_starter_audits', function (Blueprint $table) {
             MigrationHelper::primaryKey($table);
-            $table->string('event');
+            $table->string('event')->index();
             $table->string('auditable_type')->nullable();
             $table->string('auditable_id')->nullable();
             $table->string('actor_type')->nullable();

@@ -14,8 +14,8 @@ use RuntimeException;
 
 /**
  * Deleting the user model erases the trail about that person: rows about the
- * user or related to them go, and rows they acted in lose the actor key while
- * keeping what happened.
+ * user or related to them go, and rows they acted in lose the actor key and the
+ * request's ip and user agent while keeping what happened.
  */
 final class UserPurgeAuditTest extends TestCase
 {
@@ -64,6 +64,11 @@ final class UserPurgeAuditTest extends TestCase
             'personal_team' => false,
         ]);
 
+        $this->assertArrayHasKey('ip', Audit::query()->where('auditable_id', (string) $othersTeam->getKey())
+            ->where('auditable_type', $othersTeam->getMorphClass())
+            ->sole()
+            ->context, 'The acted row must hold the request context before the purge.');
+
         // 3. The purge, inside a transaction the way DeleteUser runs it.
         DB::transaction(function () use ($user, $ownTeam): void {
             $ownTeam->delete();
@@ -89,6 +94,9 @@ final class UserPurgeAuditTest extends TestCase
         $this->assertNull($acted->actor_id);
         $this->assertSame($user->getMorphClass(), $acted->actor_type);
         $this->assertSame('Staying Team', $acted->new_values['name']);
+        $this->assertArrayNotHasKey('ip', $acted->context);
+        $this->assertArrayNotHasKey('user_agent', $acted->context);
+        $this->assertArrayHasKey('url', $acted->context, 'The rest of the context survives.');
 
         $this->assertSame(1, Audit::query()
             ->where('auditable_type', $other->getMorphClass())

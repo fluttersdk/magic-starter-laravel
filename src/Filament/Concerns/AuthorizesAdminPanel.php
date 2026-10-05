@@ -9,12 +9,15 @@ use FlutterSdk\MagicStarter\Filament\MagicStarterPlugin;
  * Panel access for the user model: the gate in front of every admin write.
  *
  * The consuming user model implements `Filament\Models\Contracts\FilamentUser`
- * and uses this trait. Access fails closed: a panel without the plugin, an
- * empty or absent allowlist, an empty address and an unverified address all
- * deny. A plugin `authorizeUsing()` callback replaces the allowlist check whole.
+ * and uses this trait. Access fails closed: a panel without the plugin, a
+ * guest, an empty or absent allowlist, an empty address and an unverified
+ * address all deny. A plugin `authorizeUsing()` callback replaces every check
+ * after it, the guest refusal included.
  *
- * `hasVerifiedEmail()` is true for any guest (the starter's MustVerifyEmail
- * trait), so it cannot be what keeps a guest out: the empty-address refusal is.
+ * A guest is refused by name, because neither of the other checks keeps one
+ * out: `hasVerifiedEmail()` is true for any guest (the starter's
+ * MustVerifyEmail trait), and a guest can set any address, an allowlisted one
+ * included, through the profile endpoint.
  *
  * @property ?string $email
  */
@@ -36,7 +39,12 @@ trait AuthorizesAdminPanel
             return $callback($this, $panel) === true;
         }
 
-        // 3. The candidate address, normalised on this side. An empty one is
+        // 3. A guest, whatever address it holds.
+        if (method_exists($this, 'isGuest') && $this->isGuest()) {
+            return false;
+        }
+
+        // 4. The candidate address, normalised on this side. An empty one is
         //    refused so it can never meet an empty allowlist entry.
         $email = mb_strtolower(trim((string) $this->email));
 
@@ -44,7 +52,7 @@ trait AuthorizesAdminPanel
             return false;
         }
 
-        // 4. Allowlist membership, both sides normalised: the config value may
+        // 5. Allowlist membership, both sides normalised: the config value may
         //    arrive raw from a hand edit. An empty list admits nobody.
         $allowlist = array_map(
             static fn (mixed $entry): string => mb_strtolower(trim((string) $entry)),
@@ -55,7 +63,7 @@ trait AuthorizesAdminPanel
             return false;
         }
 
-        // 5. A verified address.
+        // 6. A verified address.
         return $this->hasVerifiedEmail();
     }
 }
