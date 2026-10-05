@@ -15,6 +15,7 @@ use FlutterSdk\MagicStarter\Tests\TestCase;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Schema\Blueprint;
 use Illuminate\Foundation\Testing\RefreshDatabase;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Event;
 use Illuminate\Support\Facades\Hash;
 use Illuminate\Support\Facades\Queue;
@@ -22,6 +23,7 @@ use Illuminate\Support\Facades\Route;
 use Illuminate\Support\Facades\Schema;
 use Illuminate\Validation\ValidationException;
 use Laravel\Sanctum\HasApiTokens;
+use RuntimeException;
 
 /**
  * The deletion lifecycle events a host listens to so it can pause its own
@@ -228,6 +230,69 @@ class UserDeletionEventsTest extends TestCase
             UserDeletionCancelled::class,
             fn (UserDeletionCancelled $event): bool => $event->user->getAuthIdentifier() === $user->getKey(),
         );
+    }
+
+    /**
+     * The Apple notification and the purge dispatch from inside their own
+     * transaction: a listener must not hear of a change that rolls back.
+     */
+    public function test_both_events_wait_for_the_enclosing_transaction_to_commit(): void
+    {
+        $this->useTheRealDispatcher();
+        $user = $this->createUser('inside@example.test');
+        $heard = [];
+
+        Event::listen(UserDeletionScheduled::class, function () use (&$heard): void {
+            $heard[] = 'scheduled';
+        });
+        Event::listen(UserDeletionCancelled::class, function () use (&$heard): void {
+            $heard[] = 'cancelled';
+        });
+
+        DB::transaction(function () use ($user, &$heard): void {
+            Event::dispatch(new UserDeletionScheduled($user, false));
+            Event::dispatch(new UserDeletionCancelled($user));
+
+            $this->assertSame([], $heard);
+        });
+
+        $this->assertSame(['scheduled', 'cancelled'], $heard);
+    }
+
+    public function test_a_rolled_back_transaction_never_reaches_the_listeners(): void
+    {
+        $this->useTheRealDispatcher();
+        $user = $this->createUser('rolledback@example.test');
+        $heard = [];
+
+        Event::listen(UserDeletionScheduled::class, function () use (&$heard): void {
+            $heard[] = 'scheduled';
+        });
+        Event::listen(UserDeletionCancelled::class, function () use (&$heard): void {
+            $heard[] = 'cancelled';
+        });
+
+        try {
+            DB::transaction(function () use ($user): void {
+                Event::dispatch(new UserDeletionScheduled($user, false));
+                Event::dispatch(new UserDeletionCancelled($user));
+
+                throw new RuntimeException('rolled back');
+            });
+        } catch (RuntimeException) {
+        }
+
+        $this->assertSame([], $heard);
+    }
+
+    /**
+     * `setUp` fakes both events, and a fake dispatches at once, so the commit
+     * deferral is only observable on the application's own dispatcher.
+     */
+    private function useTheRealDispatcher(): void
+    {
+        Event::clearResolvedInstances();
+        $this->app->forgetInstance('events');
     }
 
     private function createUser(string $email): UserDeletionEventsTestUser
