@@ -51,6 +51,7 @@ All flags are string constants on `Features::class` — add to `config('magic-st
 | `Features::emailVerification()` | `'email-verification'` | `Features::hasEmailVerificationFeatures()` |
 | `Features::newsletterSubscription()` | `'newsletter-subscription'` | `Features::hasNewsletterSubscriptionFeatures()` |
 | `Features::timezones()` | `'timezones'` | `Features::hasTimezoneFeatures()` |
+| `Features::audit()` | `'audit'` | `Features::hasAuditFeatures()` |
 
 ### Contract Bindings (default, all overridable)
 
@@ -63,9 +64,28 @@ Bound in `MagicStarterServiceProvider::register()` via `$this->app->bind()`:
 - `CreatesTeams` → `CreateTeam` / `UpdatesTeams` → `UpdateTeam` / `DeletesTeams` → `DeleteTeam`
 - `AddsTeamMembers` → `AddTeamMember` / `RemovesTeamMembers` → `RemoveTeamMember`
 - `InvitesTeamMembers` → `InviteTeamMember` / `UpdatesTeamMemberRoles` → `UpdateTeamMemberRole`
+- `TransfersTeamOwnership` → `TransferTeamOwnership` / `CancelsTeamInvitations` → `CancelTeamInvitation` / `ResendsTeamInvitations` → `ResendTeamInvitation`
+- `CancelsUserDeletion` → `CancelUserDeletion` / `RevokesApiTokens` → `RevokeApiTokens`
 - `CreatesGuestUsers` → `CreateGuestUser`
 - `SendsOtpCodes` → `LogOtpProvider` / `VerifiesOtpCodes` → `CacheOtpVerifier`
 - `EnablesTwoFactorAuthentication`, `ConfirmsTwoFactorAuthentication`, `DisablesTwoFactorAuthentication`, `GeneratesNewRecoveryCodes`
+
+### Admin Panel and Audit
+
+Both are optional. Read `references/admin-panel.md` and `references/audit.md` of the `magic-starter-development` skill before touching either.
+
+| Rule | Constraint |
+|------|-----------|
+| Install | `php artisan magic-starter:filament:install`, then add `implements FilamentUser` and `use AuthorizesAdminPanel` to the user model and set `MAGIC_STARTER_ADMIN_EMAILS`. The user model must also have `MustVerifyEmail`. |
+| Plugin options | Set `userResource()`, `teamResource()`, `resource()`, `withoutResources()`, `authorizeUsing()`, `horizon()`, `pulse()`, `telescope()` BEFORE `->plugin()`; `register()` runs immediately. |
+| Admin writes | ALWAYS through a package contract: `ContractAction::run()` for actions, `WritesThroughContracts` plus `updateRecordUsing()` / `createRecordUsing()` for pages. NEVER a stock `DeleteAction`, `EditAction` or `CreateAction` without `->using()`, never `$record->update()`. |
+| New app resource | Extend `MagicStarterResource`, register with `->resource('key', Class::class)`. Cover the app's `app/Filament` with `AssertsAdminWritesUseContracts::assertAdminWritesUseContracts()`. |
+| Customizing a package resource | `php artisan magic-starter:filament:eject <Name>`; NEVER edit it under `vendor/`. |
+| Out of bounds | No tenancy, no bulk delete on Users or Teams. |
+| Ops tools | Mount Horizon, Pulse and Telescope on the admin host with their `*_DOMAIN` and `*_PATH` env keys; NEVER a path of `''`. |
+| Audit | `Features::audit()` records every Eloquent create, update and delete after commit. Extend `audit.exclude` and `audit.redact`, never replace the defaults. Use `Auditor::record()` for an explicit event and `Auditor::withoutAuditing()` to silence the listener. |
+| Audit gaps | Query-builder bulk writes and pivot rows are NOT captured. Deleting a user purges the rows about them and nulls `actor_id` on the rest. |
+| Team owner guards | `RemoveTeamMember` and `UpdateTeamMemberRole` refuse the owner. A replacement binding must keep the guard. |
 
 ### Common Gotchas
 
@@ -108,3 +128,8 @@ public function register(): void
 | `magic-starter.route_prefix` | `'api/v1'` | Route prefix for all package endpoints |
 | `magic-starter.token_expiration_minutes` | `null` | Sanctum token TTL (null = never expires) |
 | `magic-starter.two_factor.challenge_token_ttl` | `5` | 2FA challenge window in minutes |
+| `magic-starter.admin.emails` | `[]` | Emails admitted to the admin panel (`MAGIC_STARTER_ADMIN_EMAILS`); empty admits nobody |
+| `magic-starter.admin.host` | `null` | Host the generated admin panel answers on (`MAGIC_STARTER_ADMIN_HOST`) |
+| `magic-starter.audit.exclude` | `[PersonalAccessToken::class]` | Model classes never audited |
+| `magic-starter.audit.redact` | `[]` | Attribute names stored as `[redacted]`, added to the built-in list |
+| `magic-starter.audit.retention_days` | `365` | Age in days past which `magic-starter:audit:prune` deletes a row |
