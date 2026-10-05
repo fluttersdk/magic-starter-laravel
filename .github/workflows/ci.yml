@@ -59,6 +59,81 @@ jobs:
           files: coverage.xml
           fail_ci_if_error: false
 
+  filament:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: true
+      matrix:
+        filament: ['^4.0', '^5.0']
+
+    name: Filament ${{ matrix.filament }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Setup PHP
+        uses: shivammathur/setup-php@v2
+        with:
+          php-version: '8.3'
+          extensions: dom, curl, libxml, mbstring, zip, pcntl, pdo, sqlite, pdo_sqlite
+          coverage: none
+
+      - name: Install dependencies
+        run: |
+          composer require --dev "filament/filament:${{ matrix.filament }}" --no-interaction --no-update
+          composer require \
+            "illuminate/auth:12.*" \
+            "illuminate/bus:12.*" \
+            "illuminate/console:12.*" \
+            "illuminate/database:12.*" \
+            "illuminate/http:12.*" \
+            "illuminate/queue:12.*" \
+            "illuminate/routing:12.*" \
+            "illuminate/support:12.*" \
+            "illuminate/validation:12.*" \
+            "orchestra/testbench:10.*" \
+            --no-interaction --no-update
+          composer update --prefer-dist --no-interaction --no-progress
+
+      - name: Run tests
+        run: vendor/bin/phpunit
+
+  no-optional:
+    runs-on: ubuntu-latest
+    name: Without Filament, Horizon, Pulse and Telescope
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Setup PHP
+        uses: shivammathur/setup-php@v2
+        with:
+          php-version: '8.3'
+          extensions: dom, curl, libxml, mbstring, zip, pcntl, pdo, sqlite, pdo_sqlite
+          coverage: none
+
+      - name: Install dependencies
+        run: |
+          composer remove --dev filament/filament laravel/horizon laravel/pulse laravel/telescope --no-interaction --no-update
+          composer require \
+            "illuminate/auth:12.*" \
+            "illuminate/bus:12.*" \
+            "illuminate/console:12.*" \
+            "illuminate/database:12.*" \
+            "illuminate/http:12.*" \
+            "illuminate/queue:12.*" \
+            "illuminate/routing:12.*" \
+            "illuminate/support:12.*" \
+            "illuminate/validation:12.*" \
+            "orchestra/testbench:10.*" \
+            --no-interaction --no-update
+          composer update --prefer-dist --no-interaction --no-progress
+
+      - name: Run tests
+        run: vendor/bin/phpunit
+
   lint:
     runs-on: ubuntu-latest
     name: Pint

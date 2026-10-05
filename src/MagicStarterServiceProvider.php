@@ -72,6 +72,11 @@ class MagicStarterServiceProvider extends ServiceProvider
         $this->app->bind(Contracts\RemovesTeamMembers::class, Actions\RemoveTeamMember::class);
         $this->app->bind(Contracts\InvitesTeamMembers::class, Actions\InviteTeamMember::class);
         $this->app->bind(Contracts\UpdatesTeamMemberRoles::class, Actions\UpdateTeamMemberRole::class);
+        $this->app->bind(Contracts\TransfersTeamOwnership::class, Actions\TransferTeamOwnership::class);
+        $this->app->bind(Contracts\CancelsTeamInvitations::class, Actions\CancelTeamInvitation::class);
+        $this->app->bind(Contracts\ResendsTeamInvitations::class, Actions\ResendTeamInvitation::class);
+        $this->app->bind(Contracts\CancelsUserDeletion::class, Actions\CancelUserDeletion::class);
+        $this->app->bind(Contracts\RevokesApiTokens::class, Actions\RevokeApiTokens::class);
         $this->app->bind(Contracts\CreatesGuestUsers::class, Actions\CreateGuestUser::class);
         $this->app->bind(Contracts\ClaimsGuestAccounts::class, Actions\ClaimGuestAccount::class);
         $this->app->bind(Contracts\SendsOtpCodes::class, Actions\LogOtpProvider::class);

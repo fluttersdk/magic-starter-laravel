@@ -33,6 +33,8 @@ return [
         'owner_role_locked' => 'Takım sahibinin rolü değiştirilemez.',
         'owner_not_removable' => 'Takım sahibi takımdan çıkarılamaz.',
         'owner_cannot_leave' => 'Takım sahibi takımdan ayrılamaz. Önce sahipliği devredin ya da takımı silin.',
+        'role_not_assignable' => 'Sahip rolü rol değiştirilerek değil, sahiplik devredilerek verilir.',
+        'new_owner_not_a_member' => 'Sahiplik yalnızca takımın bir üyesine devredilebilir.',
         'user_not_found' => 'Seçilen kullanıcı bulunamadı.',
         'already_a_member' => 'Bu kullanıcı zaten takımın üyesi.',
     ],

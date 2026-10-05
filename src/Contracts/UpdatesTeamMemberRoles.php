@@ -17,6 +17,11 @@ interface UpdatesTeamMemberRoles
      * @param  Model  $team  The team the member belongs to.
      * @param  Model  $teamMember  The member whose role is being updated.
      * @param  string  $role  The new role to assign.
+     *
+     * @throws \Illuminate\Validation\ValidationException When the member owns the team
+     *                                                    (`owner_role_locked`) or the role is not
+     *                                                    assignable (`role_not_assignable`);
+     *                                                    ownership moves through TransfersTeamOwnership.
      */
     public function update(Authenticatable $user, Model $team, Model $teamMember, string $role): void;
 }
