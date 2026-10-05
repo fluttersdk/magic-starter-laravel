@@ -48,10 +48,28 @@ class ModelAuditListener
      * Raw (`getRawOriginal()`) rather than cast (`getOriginal()`), so the old
      * side has the same shape as `getChanges()`: an encrypted cast would
      * otherwise hand over plaintext, and a date cast a Carbon instance.
+     *
+     * Attributes the model ignores (see {@see Redactor::ignoredKeys()}) are
+     * dropped from the row, and an update left with nothing but them and the
+     * `updated_at` they dragged along writes no row at all. A model with no
+     * ignore list is untouched, so a bare `touch()` on it is still recorded.
      */
     private function recordUpdate(Model $model): void
     {
         $changes = $model->getChanges();
+        $ignored = Redactor::ignoredKeys($model);
+
+        if ($ignored !== []) {
+            $kept = array_diff_key($changes, array_flip($ignored));
+
+            // Skip only when an ignored key actually moved: a bare touch on
+            // the same model is a change of its own and stays recorded.
+            if (count($kept) < count($changes) && $this->onlyTimestampLeft($model, $kept)) {
+                return;
+            }
+
+            $changes = $kept;
+        }
 
         Auditor::write(
             'updated',
@@ -59,6 +77,20 @@ class ModelAuditListener
             array_intersect_key($model->getRawOriginal(), $changes),
             $changes,
         );
+    }
+
+    /**
+     * @param  array<string, mixed>  $changes
+     */
+    private function onlyTimestampLeft(Model $model, array $changes): bool
+    {
+        $updatedAt = $model->usesTimestamps() ? $model->getUpdatedAtColumn() : null;
+
+        if ($updatedAt !== null) {
+            unset($changes[$updatedAt]);
+        }
+
+        return $changes === [];
     }
 
     /**

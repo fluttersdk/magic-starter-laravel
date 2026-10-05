@@ -138,6 +138,126 @@ final class ModelAuditListenerTest extends TestCase
         $this->assertSame(3, Audit::query()->count(), 'Only the two users and the team are audited.');
     }
 
+    public function test_an_update_that_only_ticks_ignored_attributes_writes_no_row(): void
+    {
+        $this->migrate(true);
+
+        $user = $this->createIgnoringUser();
+        $this->travel(1)->minute();
+
+        $user->update(['name' => 'Ticked']);
+
+        $this->assertTrue($user->wasChanged('updated_at'), 'The tick also moved the timestamp.');
+        $this->assertSame(0, $this->updateAudits($user)->count());
+        $this->assertSame(1, Audit::query()->count(), 'Only the creation is recorded.');
+    }
+
+    public function test_a_mixed_update_is_recorded_without_its_ignored_keys(): void
+    {
+        $this->migrate(true);
+
+        $user = $this->createIgnoringUser();
+        $this->travel(1)->minute();
+
+        $user->update([
+            'name' => 'Ticked',
+            'email' => 'changed@example.com',
+        ]);
+
+        $audit = $this->updateAudits($user)->sole();
+
+        $this->assertArrayNotHasKey('name', $audit->old_values);
+        $this->assertArrayNotHasKey('name', $audit->new_values);
+        $this->assertSame('changed@example.com', $audit->new_values['email']);
+        $this->assertSame('ignored@example.com', $audit->old_values['email']);
+    }
+
+    public function test_a_config_entry_ignores_attributes_like_the_property(): void
+    {
+        config()->set('magic-starter.audit.ignore', [
+            ConcreteUser::class => ['name'],
+        ]);
+        $this->migrate(true);
+
+        $user = $this->createUser('ada@example.com');
+        $this->travel(1)->minute();
+
+        $user->update(['name' => 'Ticked']);
+
+        $this->assertSame(0, $this->updateAudits($user)->count());
+
+        $user->update(['email' => 'changed@example.com']);
+
+        $this->assertSame(1, $this->updateAudits($user)->count());
+    }
+
+    public function test_a_touch_on_a_model_without_an_ignore_list_is_still_recorded(): void
+    {
+        $this->migrate(true);
+
+        $user = $this->createUser('ada@example.com');
+        $this->travel(1)->minute();
+
+        $user->touch();
+
+        $audit = $this->updateAudits($user)->sole();
+
+        $this->assertSame(['updated_at'], array_keys($audit->new_values));
+    }
+
+    public function test_a_touch_on_a_model_with_an_ignore_list_is_still_recorded(): void
+    {
+        // Nothing ignored changed, so the timestamp was not dragged along by a
+        // tick: the touch is a change of its own.
+        $this->migrate(true);
+
+        $user = $this->createIgnoringUser();
+        $this->travel(1)->minute();
+
+        $user->touch();
+
+        $audit = $this->updateAudits($user)->sole();
+
+        $this->assertSame(['updated_at'], array_keys($audit->new_values));
+    }
+
+    public function test_a_credential_column_is_recorded_even_when_configured_as_ignored(): void
+    {
+        config()->set('magic-starter.audit.ignore', [
+            ConcreteUser::class => ['name', 'password'],
+        ]);
+        $this->migrate(true);
+
+        $user = $this->createUser('ada@example.com');
+        $this->travel(1)->minute();
+
+        $user->update(['password' => 'another-password']);
+
+        $audit = $this->updateAudits($user)->sole();
+
+        $this->assertSame('[redacted]', $audit->new_values['password']);
+    }
+
+    public function test_a_model_without_timestamps_ignores_attributes_too(): void
+    {
+        $this->migrate(true);
+
+        $owner = $this->createUser('owner@example.com');
+        $team = ModelAuditListenerTestUntimedTeam::query()->create([
+            'name' => 'Acme',
+            'user_id' => $owner->getKey(),
+            'personal_team' => false,
+        ]);
+
+        $team->update(['name' => 'Ticked']);
+
+        $this->assertSame(0, Audit::query()->where('event', 'updated')->count());
+
+        $team->update(['personal_team' => true]);
+
+        $this->assertSame(1, Audit::query()->where('event', 'updated')->count());
+    }
+
     public function test_the_audit_model_never_audits_itself(): void
     {
         $this->migrate(true);
@@ -321,6 +441,23 @@ final class ModelAuditListenerTest extends TestCase
         ]);
     }
 
+    private function createIgnoringUser(): ModelAuditListenerTestIgnoringUser
+    {
+        return ModelAuditListenerTestIgnoringUser::query()->create([
+            'name' => 'User',
+            'email' => 'ignored@example.com',
+            'password' => 'secret-password',
+        ]);
+    }
+
+    /**
+     * @return Builder<Audit>
+     */
+    private function updateAudits(ConcreteUser $user): Builder
+    {
+        return $this->auditsFor($user)->where('event', 'updated');
+    }
+
     /**
      * @return Builder<Audit>
      */
@@ -330,4 +467,19 @@ final class ModelAuditListenerTest extends TestCase
             ->where('auditable_type', $model->getMorphClass())
             ->where('auditable_id', (string) $model->getKey());
     }
+}
+
+/**
+ * A user whose `name` stands in for a per-tick column that must not be audited.
+ */
+class ModelAuditListenerTestIgnoringUser extends ConcreteUser
+{
+    protected array $auditIgnore = ['name'];
+}
+
+class ModelAuditListenerTestUntimedTeam extends ConcreteTeam
+{
+    public $timestamps = false;
+
+    protected array $auditIgnore = ['name'];
 }

@@ -109,6 +109,11 @@ class TelescopeRedactionTest extends TestCase
             'user' => 'ops',
         ]));
 
+        Route::get('/session-probe', static fn () => response()
+            ->json(['user' => 'ops'])
+            ->header('X-CSRF-TOKEN', 'csrf-value')
+            ->cookie('session', 'session-value'));
+
         Route::get('/explode', static function (): never {
             throw new RuntimeException('Probe failure.');
         });
@@ -285,6 +290,19 @@ class TelescopeRedactionTest extends TestCase
         $this->assertSame('ops', $content['response']['user']);
         $this->assertSame('********', $content['headers']['authorization']);
         $this->assertSame('********', $content['headers']['x-xsrf-token']);
+    }
+
+    public function test_the_session_headers_a_response_sets_are_masked(): void
+    {
+        TelescopeRedaction::hideSecrets();
+
+        $this->getJson('/session-probe')->assertOk();
+
+        $headers = $this->recordedRequest()['response_headers'];
+
+        $this->assertSame('********', $headers['set-cookie']);
+        $this->assertSame('********', $headers['x-csrf-token']);
+        $this->assertSame('application/json', $headers['content-type']);
     }
 
     public function test_outside_local_an_unremarkable_batch_is_dropped(): void

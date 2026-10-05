@@ -4,6 +4,17 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [0.0.17] - 2026-10-06
+
+### Added
+
+- **Attribute-level audit ignore.** `audit.ignore` maps a model class (subclasses included) to attributes, and a model's own `protected array $auditIgnore` adds to them. An update whose changes are all ignored, apart from `updated_at`, writes no row, and a mixed update is recorded without the ignored keys. A model with no ignore list is audited in full, including a bare `touch()`, and the skip needs an ignored key to have moved, so a bare `touch()` on an ignoring model is recorded too. Credential columns cannot be ignored. Meant for columns that move on every tick. (`src/Audit/ModelAuditListener.php`, `src/Audit/Redactor.php`, `config/magic-starter.php`)
+
+### Fixed
+
+- **Telescope masks the session headers.** `set-cookie` and `x-csrf-token` join `authorization`, `cookie` and `x-xsrf-token` in the masked list. Telescope masks response headers with the request list, so a recorded response kept the session cookie in clear text. (`src/Filament/Ops/TelescopeRedaction.php`)
+- **Changing an address clears its verification on the shipped user model.** `UpdateUserProfile` reset `email_verified_at` through `update()`, which mass assignment drops on any model that does not list the column as fillable, including `stubs/models/User.php`. The new address stayed marked verified, so anything gated on a verified address (the admin allowlist among them) trusted an address nobody had confirmed. The reset now uses `forceFill()`. (`src/Actions/UpdateUserProfile.php`)
+
 ## [0.0.16] - 2026-10-06
 
 ### Added

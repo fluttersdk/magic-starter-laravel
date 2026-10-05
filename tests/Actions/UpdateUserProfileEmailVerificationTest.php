@@ -83,6 +83,34 @@ final class UpdateUserProfileEmailVerificationTest extends TestCase
     }
 
     /**
+     * The shipped user stub mass-assigns only profile fields, so the reset
+     * must not depend on `email_verified_at` being fillable: an address that
+     * changed and stayed "verified" is a takeover path for anything gated on
+     * a verified address.
+     */
+    public function test_email_change_nullifies_verified_at_on_a_model_with_the_stub_fillable(): void
+    {
+        Notification::fake();
+
+        config(['magic-starter.features' => [Features::emailVerification()]]);
+        MagicStarter::useUserModel(UpdateUserProfileVerificationFillableUser::class);
+
+        $user = new UpdateUserProfileVerificationFillableUser;
+        $user->forceFill([
+            'name' => 'Ivy',
+            'email' => 'ivy@example.com',
+            'email_verified_at' => now(),
+        ])->save();
+
+        (new UpdateUserProfile)->update($user, ['name' => 'Ivy', 'email' => 'ivy-new@example.com']);
+
+        $user->refresh();
+
+        $this->assertSame('ivy-new@example.com', $user->email);
+        $this->assertNull($user->email_verified_at);
+    }
+
+    /**
      * When the user changes their email and the feature is enabled,
      * a new VerifyEmailNotification must be dispatched.
      */
@@ -179,6 +207,32 @@ final class UpdateUserProfileVerificationTestUser extends Authenticatable implem
     protected $keyType = 'string';
 
     protected $guarded = [];
+
+    protected $casts = [
+        'email_verified_at' => 'datetime',
+    ];
+}
+
+/**
+ * The same user with the mass-assignment list of `stubs/models/User.php`.
+ */
+final class UpdateUserProfileVerificationFillableUser extends Authenticatable implements AuthenticatableContract, MustVerifyEmailContract
+{
+    use HasUuids;
+    use MustVerifyEmail;
+    use Notifiable;
+
+    protected $table = 'users';
+
+    public $incrementing = false;
+
+    protected $keyType = 'string';
+
+    protected $fillable = [
+        'name',
+        'email',
+        'password',
+    ];
 
     protected $casts = [
         'email_verified_at' => 'datetime',

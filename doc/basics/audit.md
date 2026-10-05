@@ -6,6 +6,7 @@
 - [Enabling](#enabling)
 - [What Is Recorded](#what-is-recorded)
 - [Excluding Models](#excluding-models)
+- [Ignoring Attributes](#ignoring-attributes)
 - [Redaction](#redaction)
 - [Recording an Event](#recording-an-event)
 - [Silencing the Listener](#silencing-the-listener)
@@ -68,6 +69,31 @@ Key columns are strings, so one column holds integer and UUID keys alike. A row 
 ```
 
 `exclude` lists model classes, subclasses included. The default holds Sanctum's `PersonalAccessToken`, which stamps `last_used_at` on every authenticated request and would otherwise write a row per API call; keep it when you add your own. The package always skips its own `Audit` model, every pivot and the team membership model.
+
+---
+
+<a name="ignoring-attributes"></a>
+## Ignoring Attributes
+
+A column that moves on every tick, such as `last_checked_at`, would write a row per tick. Name it as ignored and an update that changes nothing else is not recorded:
+
+```php
+// config/magic-starter.php
+'audit' => [
+    'ignore' => [
+        \App\Models\Monitor::class => ['last_checked_at', 'last_status'],
+    ],
+],
+```
+
+```php
+class Monitor extends Model
+{
+    protected array $auditIgnore = ['last_checked_at', 'last_status'];
+}
+```
+
+`ignore` maps a model class (subclasses included) to its attributes, and the model's own `$auditIgnore` adds to that list. An update whose changes are all ignored, apart from `updated_at`, writes no row. A mixed update is recorded without the ignored keys. A model with no ignore list is audited in full, so even a bare `touch()` on it writes a row; on a model with one, a `touch()` that moved no ignored attribute is recorded too. Credential columns (`password`, `remember_token`, `two_factor_secret`, `two_factor_recovery_codes`, `token`, `device_id`) cannot be ignored: a change to one is always recorded, redacted.
 
 ---
 
