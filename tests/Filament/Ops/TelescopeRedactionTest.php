@@ -116,6 +116,13 @@ class TelescopeRedactionTest extends TestCase
 
     protected function tearDown(): void
     {
+        // setUp skipped the test before booting anything.
+        if (! class_exists(Telescope::class)) {
+            parent::tearDown();
+
+            return;
+        }
+
         Telescope::stopRecording();
         Telescope::flushEntries();
         MagicStarter::reset();

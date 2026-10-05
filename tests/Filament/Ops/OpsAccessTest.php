@@ -68,6 +68,13 @@ class OpsAccessTest extends FilamentTestCase
 
     protected function tearDown(): void
     {
+        // setUp skipped the test before the tools were touched.
+        if ($this->statics === []) {
+            parent::tearDown();
+
+            return;
+        }
+
         Telescope::stopRecording();
         Telescope::flushEntries();
 

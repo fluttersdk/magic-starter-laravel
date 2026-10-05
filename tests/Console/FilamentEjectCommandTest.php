@@ -28,7 +28,10 @@ final class FilamentEjectCommandTest extends FilamentTestCase
 
     protected function tearDown(): void
     {
-        File::deleteDirectory($this->scratch);
+        // Unset when setUp skipped the test because Filament is absent.
+        if (isset($this->scratch)) {
+            File::deleteDirectory($this->scratch);
+        }
 
         parent::tearDown();
     }
