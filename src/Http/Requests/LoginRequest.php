@@ -3,6 +3,7 @@
 namespace FlutterSdk\MagicStarter\Http\Requests;
 
 use FlutterSdk\MagicStarter\Features;
+use FlutterSdk\MagicStarter\Http\Requests\Concerns\NormalizesEmailInput;
 use FlutterSdk\MagicStarter\Rules\E164Phone;
 use Illuminate\Foundation\Http\FormRequest;
 
@@ -15,6 +16,8 @@ use Illuminate\Foundation\Http\FormRequest;
  */
 class LoginRequest extends FormRequest
 {
+    use NormalizesEmailInput;
+
     /**
      * Determine if the user is authorized to make this request.
      */

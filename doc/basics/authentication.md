@@ -264,54 +264,7 @@ Returns the currently authenticated user.
 <a name="social-login"></a>
 ## Social Login
 
-Authenticates a user via a third-party OAuth provider using Laravel Socialite. If no user exists with the provider's email, a new account is created automatically with a random password and the email marked as verified.
-
-**Endpoint:** `POST {prefix}/auth/social/{provider}`
-
-**Feature:** `Features::socialLogin()`. The route is not registered while the feature is off.
-
-**Middleware:** `throttle:magic-starter-auth-social`
-
-**Rate Limit:** 10 requests per minute, keyed by IP + provider.
-
-The `{provider}` parameter is the Socialite driver name (e.g., `google`, `apple`, `github`). The provider must be configured in your application's `config/services.php`.
-
-### Request Body
-
-```json
-{
-  "authorization_code": "c1a2b3..."
-}
-```
-
-| Field                | Type   | Rules     |
-|----------------------|--------|-----------|
-| `authorization_code` | string | Required. |
-
-The server redeems the code with its own client secret, so a code issued to another client cannot sign anyone in.
-
-> [!WARNING]
-> Social login is closed until its redesign ships. On the package's session-less API routes the code exchange fails Socialite's `state` check and answers 401, so keep `Features::socialLogin()` off.
-
-> [!WARNING]
-> A provider access token is not accepted. Asking the provider who owns an access token says nothing about which client it was issued to, so any app the user ever signed in to could replay it here and take over the account.
-
-### Success Response (200)
-
-Same shape as the [Login](#login) success response.
-
-### Error Response (401)
-
-Returned when the provider rejects the code, or answers without an email address.
-
-```json
-{
-  "message": "Invalid token or provider"
-}
-```
-
-> [!NOTE]
-> In debug mode (`APP_DEBUG=true`), the response includes an `error` field with the underlying exception message.
+Google, Apple, GitHub and Microsoft sign-in, plus connecting and disconnecting providers from the profile, is documented in [Social Login](social-login.md). It is available when `Features::socialLogin()` is on, and it needs `HasSocialAccounts` and `NormalizesEmail` on the user model.
 
 ---
 

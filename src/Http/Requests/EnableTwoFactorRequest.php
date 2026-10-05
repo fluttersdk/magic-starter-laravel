@@ -2,15 +2,20 @@
 
 namespace FlutterSdk\MagicStarter\Http\Requests;
 
+use FlutterSdk\MagicStarter\Http\Requests\Concerns\ConfirmsIdentity;
 use Illuminate\Foundation\Http\FormRequest;
-use Illuminate\Support\Facades\Hash;
 use Illuminate\Validation\Validator;
 
 /**
- * Validates password confirmation before enabling two-factor authentication.
+ * Confirms the caller's identity before enabling two-factor authentication.
+ *
+ * A password-less account without 2FA proves itself with a confirmation token
+ * from the social confirm flow, so it can still enrol.
  */
 class EnableTwoFactorRequest extends FormRequest
 {
+    use ConfirmsIdentity;
+
     /**
      * Determine if the user is authorized to make this request.
      */
@@ -26,12 +31,7 @@ class EnableTwoFactorRequest extends FormRequest
      */
     public function rules(): array
     {
-        return [
-            'password' => [
-                'required',
-                'string',
-            ],
-        ];
+        return $this->identityRules();
     }
 
     /**
@@ -39,10 +39,8 @@ class EnableTwoFactorRequest extends FormRequest
      */
     public function withValidator(Validator $validator): void
     {
-        $validator->after(function ($validator) {
-            if (! Hash::check((string) $this->input('password'), (string) $this->user()?->getAuthPassword())) {
-                $validator->errors()->add('password', __('magic-starter::auth.password.confirmation_mismatch'));
-            }
+        $validator->after(function (Validator $validator): void {
+            $this->confirmIdentity($validator, __('magic-starter::auth.password.confirmation_mismatch'));
         });
     }
 }

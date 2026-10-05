@@ -35,6 +35,10 @@ class UserResource extends JsonResource
      */
     private function packageFields(): array
     {
+        // The three sign-in fields ride on `HasSocialAccounts`: a user model
+        // without it keeps serialising, minus them.
+        $hasSocialAccounts = method_exists($this->resource, 'socialAccounts');
+
         return [
             'id' => $this->id,
             'name' => $this->name,
@@ -47,6 +51,23 @@ class UserResource extends JsonResource
             'profile_photo_url' => $this->profile_photo_url,
             'two_factor_enabled' => method_exists($this->resource, 'hasEnabledTwoFactorAuthentication') &&
                 $this->resource->hasEnabledTwoFactorAuthentication(),
+            'has_password' => $this->when(
+                $hasSocialAccounts,
+                fn () => $this->hasPassword(),
+            ),
+            'social_accounts' => $this->when(
+                Features::hasSocialLoginFeatures() && $hasSocialAccounts,
+                fn () => $this->socialAccounts->map(fn ($account): array => [
+                    'provider' => $account->provider,
+                    'email_at_link' => $account->email_at_link,
+                    'created_at' => $account->created_at,
+                    'revoked_at' => $account->revoked_at,
+                ])->all(),
+            ),
+            'deletion_scheduled_at' => $this->when(
+                $hasSocialAccounts,
+                fn () => $this->deletion_scheduled_at,
+            ),
             'current_team' => $this->when(
                 Features::hasTeamFeatures()
                     && method_exists($this->resource, 'getCurrentTeamOrPersonal')

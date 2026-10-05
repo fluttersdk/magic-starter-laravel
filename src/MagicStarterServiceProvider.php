@@ -3,6 +3,7 @@
 namespace FlutterSdk\MagicStarter;
 
 use FlutterSdk\MagicStarter\Console\InstallCommand;
+use FlutterSdk\MagicStarter\Console\PurgeDeletedUsersCommand;
 use FlutterSdk\MagicStarter\Console\ReconcileBillingEntitlements;
 use FlutterSdk\MagicStarter\Support\FrontendUrl;
 use Illuminate\Auth\Events\Registered;
@@ -22,6 +23,8 @@ use Illuminate\Support\ServiceProvider;
 use Laravel\Cashier\Cashier;
 use Laravel\Sanctum\Sanctum;
 use RuntimeException;
+use SocialiteProviders\Manager\SocialiteWasCalled;
+use SocialiteProviders\Microsoft\MicrosoftExtendSocialite;
 
 /**
  * Service provider for the Magic Starter package.
@@ -53,16 +56,18 @@ class MagicStarterServiceProvider extends ServiceProvider
         $this->app->bind(Contracts\UpdatesUserProfiles::class, Actions\UpdateUserProfile::class);
         $this->app->bind(Contracts\UpdatesUserPasswords::class, Actions\UpdateUserPassword::class);
         $this->app->bind(Contracts\DeletesUsers::class, Actions\DeleteUser::class);
+        $this->app->bind(Contracts\SchedulesUserDeletion::class, Actions\ScheduleUserDeletion::class);
         $this->app->bind(Contracts\CreatesTeams::class, Actions\CreateTeam::class);
         $this->app->bind(Contracts\UpdatesTeams::class, Actions\UpdateTeam::class);
-        // Bound to the store-guarded action rather than the plain one. The
-        // guard is unconditional like every binding above it: it reads
-        // `plan_provider`/`plan_status` through Eloquent's own attribute
-        // access, which answers null on a table that never got the
-        // provenance columns (billing feature off, or `billing.billable`
-        // pointed elsewhere), so the extra check is a safe no-op there and
-        // a real one only where the schema and the config both say it should be.
-        $this->app->bind(Contracts\DeletesTeams::class, Actions\StoreSubscriptionGuardedDeleteTeam::class);
+        // Bound to the subscription-guarded action rather than the plain one.
+        // The guard is unconditional like every binding above it: the store
+        // half reads `plan_provider`/`plan_status` through Eloquent's own
+        // attribute access, which answers null on a table that never got the
+        // provenance columns, and the card half answers false for a model
+        // without Cashier's trait (billing feature off, or `billing.billable`
+        // pointed elsewhere), so the extra checks are a safe no-op there and
+        // real ones only where the schema and the config both say they should be.
+        $this->app->bind(Contracts\DeletesTeams::class, Actions\SubscriptionGuardedDeleteTeam::class);
         $this->app->bind(Contracts\AddsTeamMembers::class, Actions\AddTeamMember::class);
         $this->app->bind(Contracts\RemovesTeamMembers::class, Actions\RemoveTeamMember::class);
         $this->app->bind(Contracts\InvitesTeamMembers::class, Actions\InviteTeamMember::class);
@@ -72,6 +77,14 @@ class MagicStarterServiceProvider extends ServiceProvider
         $this->app->bind(Contracts\SendsOtpCodes::class, Actions\LogOtpProvider::class);
         $this->app->bind(Contracts\VerifiesOtpCodes::class, Actions\CacheOtpVerifier::class);
         $this->app->singleton(Support\TwoFactorAuthenticationProvider::class);
+        // A singleton (not the `#[Singleton]` attribute, which needs Laravel 12.21
+        // while the package floors at 12.0) so tests hand every Apple provider one client.
+        $this->app->singleton(Social\AppleProviderFactory::class);
+        $this->app->bind(Contracts\ResolvesSocialUsers::class, Actions\ResolveSocialUser::class);
+        $this->app->bind(Contracts\CreatesUsersFromProvider::class, Actions\CreateUserFromProvider::class);
+        $this->app->bind(Contracts\ConnectsSocialAccounts::class, Actions\ConnectSocialAccount::class);
+        $this->app->bind(Contracts\DisconnectsSocialAccounts::class, Actions\DisconnectSocialAccount::class);
+        $this->app->bind(Contracts\SetsUserPasswords::class, Actions\SetUserPassword::class);
         $this->app->bind(Contracts\EnablesTwoFactorAuthentication::class, Actions\EnableTwoFactorAuthentication::class);
         $this->app->bind(Contracts\ConfirmsTwoFactorAuthentication::class, Actions\ConfirmTwoFactorAuthentication::class);
         $this->app->bind(Contracts\DisablesTwoFactorAuthentication::class, Actions\DisableTwoFactorAuthentication::class);
@@ -276,12 +289,29 @@ class MagicStarterServiceProvider extends ServiceProvider
             if (Features::hasBillingFeatures()) {
                 $this->loadRoutesFrom(__DIR__ . '/routes/webhooks.php');
             }
+
+            // 4c. The social callback, from its own file for the same reason:
+            // its url is registered in every provider's console.
+            if (Features::hasSocialLoginFeatures()) {
+                $this->loadRoutesFrom(__DIR__ . '/routes/social.php');
+            }
+        }
+
+        // 4d. Socialite has no core Microsoft driver; socialiteproviders adds it
+        // only for a SocialiteWasCalled listener, so the package wires the one
+        // driver it signs users in with rather than leaving every adopter to.
+        if (Features::hasSocialLoginFeatures()) {
+            Event::listen(SocialiteWasCalled::class, [MicrosoftExtendSocialite::class, 'handle']);
+
+            // 4e. Say once that the Android target can be claimed by another app.
+            $this->warnAboutInterceptableAndroidTarget();
         }
 
         // 5. Console-only: publish config, migrations, and stubs.
         if ($this->app->runningInConsole()) {
             $this->commands([
                 InstallCommand::class,
+                PurgeDeletedUsersCommand::class,
             ]);
 
             // The reconciler is registered with the feature it belongs to, so an
@@ -442,6 +472,34 @@ class MagicStarterServiceProvider extends ServiceProvider
             [
                 'reason' => 'store_rail_without_webhook_secret',
                 'path' => config('magic-starter.billing.revenuecat.path', 'webhooks/revenuecat'),
+            ],
+        );
+    }
+
+    /**
+     * Log, once per boot, that the Android social redirect target is not an https App Link.
+     *
+     * Any Android app can register the same custom scheme, and the system may
+     * hand it the browser's return, one-time code included; a verified App
+     * Link can only open the app that owns the domain. The code stays bound to
+     * the starting app's PKCE verifier, so an interceptor cannot redeem it, but
+     * it can still swallow the sign-in. A warning rather than a refusal: the
+     * target works, it is only weaker than it should be.
+     */
+    private function warnAboutInterceptableAndroidTarget(): void
+    {
+        $target = config('magic-starter.social.redirects.android');
+
+        if (! is_string($target) || $target === '' || str_starts_with(strtolower($target), 'https://')) {
+            return;
+        }
+
+        Log::warning(
+            '[magic-starter.social.redirects.android] is not an https App Link, so another app registering '
+            . 'the same scheme can catch the sign-in. Point MAGIC_STARTER_SOCIAL_ANDROID_REDIRECT at a verified '
+            . 'https App Link.',
+            [
+                'target' => $target,
             ],
         );
     }

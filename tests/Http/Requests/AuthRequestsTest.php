@@ -5,6 +5,8 @@ namespace FlutterSdk\MagicStarter\Tests\Http\Requests;
 use FlutterSdk\MagicStarter\Contracts\CreatesUsers;
 use FlutterSdk\MagicStarter\Http\Controllers\AuthController;
 use FlutterSdk\MagicStarter\Http\Controllers\PasswordResetController;
+use FlutterSdk\MagicStarter\Http\Controllers\SocialExchangeController;
+use FlutterSdk\MagicStarter\Http\Controllers\SocialRedirectController;
 use FlutterSdk\MagicStarter\MagicStarter;
 use FlutterSdk\MagicStarter\Tests\TestCase;
 use Illuminate\Auth\Authenticatable as AuthenticatableTrait;
@@ -121,7 +123,8 @@ final class AuthRequestsTest extends TestCase
 
         \call_user_func('app', 'router')->post('/auth/register', [AuthController::class, 'register']);
         \call_user_func('app', 'router')->post('/auth/login', [AuthController::class, 'login']);
-        \call_user_func('app', 'router')->post('/auth/social/{provider}', [AuthController::class, 'socialLogin']);
+        \call_user_func('app', 'router')->get('/auth/social/{provider}/redirect', SocialRedirectController::class);
+        \call_user_func('app', 'router')->post('/auth/social/exchange', SocialExchangeController::class);
         \call_user_func('app', 'router')->post('/auth/forgot-password', [PasswordResetController::class, 'sendResetLinkEmail']);
         \call_user_func('app', 'router')->post('/auth/reset-password', [PasswordResetController::class, 'reset']);
 
@@ -262,18 +265,40 @@ final class AuthRequestsTest extends TestCase
             ->assertJsonValidationErrors(['email']);
     }
 
-    public function test_social_login_without_an_authorization_code_returns_422(): void
+    public function test_social_exchange_without_a_code_verifier_returns_422(): void
     {
-        $this->postJson('/auth/social/github', [])
+        $this->postJson('/auth/social/exchange', ['code' => 'some-code'])
             ->assertUnprocessable()
-            ->assertJsonValidationErrors(['authorization_code']);
+            ->assertJsonValidationErrors(['code_verifier']);
     }
 
-    public function test_social_login_with_only_an_access_token_returns_422(): void
+    public function test_social_exchange_with_a_verifier_outside_rfc_7636_returns_422(): void
     {
-        $this->postJson('/auth/social/google', ['access_token' => 'token-minted-for-another-app'])
+        $this->postJson('/auth/social/exchange', [
+            'code' => 'some-code',
+            'code_verifier' => str_repeat('a', 42),
+        ])
             ->assertUnprocessable()
-            ->assertJsonValidationErrors(['authorization_code']);
+            ->assertJsonValidationErrors(['code_verifier']);
+    }
+
+    public function test_social_redirect_with_an_unknown_platform_returns_422(): void
+    {
+        $this->getJson('/auth/social/github/redirect?platform=desktop&challenge=' . str_repeat('a', 43))
+            ->assertUnprocessable()
+            ->assertJsonValidationErrors(['platform']);
+    }
+
+    public function test_social_redirect_with_both_a_ticket_and_the_confirm_intent_returns_422(): void
+    {
+        $this->getJson('/auth/social/github/redirect?' . http_build_query([
+            'platform' => 'ios',
+            'intent' => 'confirm',
+            'ticket' => 't',
+            'challenge' => str_repeat('a', 43),
+        ]))
+            ->assertUnprocessable()
+            ->assertJsonValidationErrors(['intent']);
     }
 
     public function test_forgot_password_missing_email_returns_422(): void

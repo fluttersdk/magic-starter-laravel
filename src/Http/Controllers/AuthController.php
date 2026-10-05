@@ -3,84 +3,23 @@
 namespace FlutterSdk\MagicStarter\Http\Controllers;
 
 use FlutterSdk\MagicStarter\Contracts\CreatesUsers;
-use FlutterSdk\MagicStarter\Features;
 use FlutterSdk\MagicStarter\Http\Controllers\Concerns\AuthenticatesUsers;
 use FlutterSdk\MagicStarter\Http\Requests\LoginRequest;
 use FlutterSdk\MagicStarter\Http\Requests\RegisterRequest;
-use FlutterSdk\MagicStarter\Http\Requests\SocialLoginRequest;
 use FlutterSdk\MagicStarter\Http\Requests\SwitchTeamRequest;
 use FlutterSdk\MagicStarter\Http\Resources\UserResource;
 use FlutterSdk\MagicStarter\MagicStarter;
-use FlutterSdk\MagicStarter\Support\RequestLocaleDetector;
 use Illuminate\Auth\Events\Registered;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Hash;
-use Illuminate\Support\Str;
-use Laravel\Socialite\Facades\Socialite;
-use Throwable;
 
 /**
- * Handles authentication, registration, social login, and team switching.
+ * Handles password authentication, registration, and team switching.
  */
 class AuthController
 {
     use AuthenticatesUsers;
-
-    /**
-     * Handle a social login request.
-     *
-     * The authorization code is redeemed with this server's client secret, so
-     * a code minted for another client cannot sign anyone in. A provider user
-     * without an email is refused: matching a null email would resolve to the
-     * first account that has none.
-     */
-    public function socialLogin(SocialLoginRequest $request, string $provider): JsonResponse
-    {
-        try {
-            $driver = Socialite::driver($provider);
-
-            $originalCode = $request->input('code');
-            $request->merge(['code' => $request->input('authorization_code')]);
-            $socialUser = $driver->user();
-
-            if ($originalCode === null) {
-                $request->request->remove('code');
-            } else {
-                $request->merge(['code' => $originalCode]);
-            }
-        } catch (Throwable $exception) {
-            report($exception);
-
-            return $this->socialLoginRefused($exception->getMessage());
-        }
-
-        if (blank($socialUser->getEmail())) {
-            return $this->socialLoginRefused('The provider returned no email address.');
-        }
-
-        $userModel = MagicStarter::userModel();
-        $user = $userModel::query()->where('email', $socialUser->getEmail())->first();
-
-        if (! $user) {
-            $password = Str::random(32);
-            $user = app(CreatesUsers::class)->create([
-                'name' => $socialUser->getName() ?? $socialUser->getNickname() ?? 'User',
-                'email' => $socialUser->getEmail(),
-                'password' => $password,
-                'password_confirmation' => $password,
-                'locale' => RequestLocaleDetector::detectLocale($request)
-                    ?? config('magic-starter.defaults.locale', 'en'),
-                'timezone' => RequestLocaleDetector::detectTimezone($request)
-                    ?? config('magic-starter.defaults.timezone', 'UTC'),
-                'email_verified_at' => now(),
-            ]);
-
-            event(new Registered($user));
-        }
-
-        return $this->authenticatedResponse($user, $request, $this->createAuthToken($user, $request, storeDeviceInfo: true));
-    }
 
     /**
      * Handle a registration request.
@@ -131,33 +70,10 @@ class AuthController
             ], 401);
         }
 
-        // 3. Issue a 2FA challenge when the user has it enabled.
-        /** @var \Illuminate\Database\Eloquent\Model $user */
-        if (
-            Features::hasTwoFactorAuthenticationFeatures() &&
-            method_exists($user, 'hasEnabledTwoFactorAuthentication') &&
-            $user->hasEnabledTwoFactorAuthentication()
-        ) {
-            $challengeToken = encrypt(json_encode([
-                'user_id' => $user->getKey(),
-                'expires_at' => now()->addMinutes(
-                    (int) config('magic-starter.two_factor.challenge_token_ttl', 5),
-                )->timestamp,
-            ]));
-
-            return response()->json([
-                'two_factor' => true,
-                'two_factor_token' => $challengeToken,
-            ]);
-        }
-
-        // 4. Issue a full auth token and return the authenticated response.
-        $token = $this->createAuthToken($user, $request, true);
-
-        return $this->authenticatedResponse(
+        // 3. Challenge a confirmed second factor, else issue a full auth token.
+        return $this->signInResponse(
             $user,
             $request,
-            $token,
             (string) __('magic-starter::auth.login_successful'),
         );
     }
@@ -209,21 +125,5 @@ class AuthController
             'data' => new UserResource($request->user()->fresh()),
             'message' => __('magic-starter::teams.switched'),
         ]);
-    }
-
-    /**
-     * Refuse a social login with the one sentence every cause shares.
-     *
-     * @param  string  $detail  The untranslated cause, attached only under app.debug.
-     */
-    private function socialLoginRefused(string $detail): JsonResponse
-    {
-        $payload = ['message' => __('magic-starter::auth.invalid_social_token')];
-
-        if (config('app.debug')) {
-            $payload['error'] = $detail;
-        }
-
-        return response()->json($payload, 401);
     }
 }

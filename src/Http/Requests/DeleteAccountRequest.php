@@ -2,12 +2,18 @@
 
 namespace FlutterSdk\MagicStarter\Http\Requests;
 
+use FlutterSdk\MagicStarter\Http\Requests\Concerns\ConfirmsIdentity;
 use Illuminate\Foundation\Http\FormRequest;
-use Illuminate\Support\Facades\Hash;
 use Illuminate\Validation\Validator;
 
+/**
+ * Confirms the caller's identity before their account is scheduled for deletion,
+ * and reads the optional `immediately` flag that queues the purge at once.
+ */
 class DeleteAccountRequest extends FormRequest
 {
+    use ConfirmsIdentity;
+
     /**
      * Determine if the user is authorized to make this request.
      */
@@ -24,7 +30,11 @@ class DeleteAccountRequest extends FormRequest
     public function rules(): array
     {
         return [
-            'password' => $this->isGuestWithoutPassword() ? ['sometimes', 'string'] : ['required', 'string'],
+            ...$this->identityRules(),
+            'immediately' => [
+                'sometimes',
+                'boolean',
+            ],
         ];
     }
 
@@ -33,26 +43,8 @@ class DeleteAccountRequest extends FormRequest
      */
     public function withValidator(Validator $validator): void
     {
-        $validator->after(function (Validator $validator) {
-            if ($this->isGuestWithoutPassword()) {
-                return;
-            }
-
-            if (! Hash::check((string) $this->input('password'), (string) $this->user()?->getAuthPassword())) {
-                $validator->errors()->add('password', __('magic-starter::auth.password.incorrect'));
-            }
+        $validator->after(function (Validator $validator): void {
+            $this->confirmIdentity($validator, __('magic-starter::auth.password.incorrect'));
         });
-    }
-
-    /**
-     * Determine if the authenticated user is a guest without a password.
-     */
-    private function isGuestWithoutPassword(): bool
-    {
-        $user = $this->user();
-
-        return $user
-            && (bool) ($user->is_guest ?? false)
-            && empty($user->getAuthPassword());
     }
 }

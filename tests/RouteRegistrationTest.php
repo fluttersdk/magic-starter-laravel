@@ -35,7 +35,8 @@ final class RouteRegistrationTest extends TestCase
 
         $this->assertRouteExists('POST', '/auth/register');
         $this->assertRouteExists('POST', '/auth/login');
-        $this->assertRouteExists('POST', '/auth/social/google');
+        $this->assertRouteExists('GET', '/auth/social/google/redirect');
+        $this->assertRouteExists('POST', '/auth/social/exchange');
         $this->assertRouteExists('POST', '/auth/forgot-password');
         $this->assertRouteExists('POST', '/auth/reset-password');
 
@@ -158,17 +159,46 @@ final class RouteRegistrationTest extends TestCase
         $this->assertRouteMissing('POST', '/auth/guest');
     }
 
-    public function test_social_login_route_registered_conditionally(): void
+    public function test_social_routes_registered_only_with_the_social_feature(): void
     {
         $this->bootRoutesWithConfig([
             Features::socialLogin(),
         ]);
 
-        $this->assertRouteExists('POST', '/auth/social/google');
+        $this->assertRouteExists('GET', '/auth/social/google/redirect');
+        $this->assertRouteExists('POST', '/auth/social/exchange');
+        $this->assertRouteExists('GET', '/magic-starter/social/google/callback');
+        $this->assertRouteExists('POST', '/magic-starter/social/apple/callback');
+        $this->assertRouteMissing('POST', '/auth/social/google');
 
         $this->bootRoutesWithConfig([]);
 
-        $this->assertRouteMissing('POST', '/auth/social/google');
+        $this->assertRouteMissing('GET', '/auth/social/google/redirect');
+        $this->assertRouteMissing('POST', '/auth/social/exchange');
+        $this->assertRouteMissing('GET', '/magic-starter/social/google/callback');
+    }
+
+    /**
+     * The callback url is registered in each provider's console, so it cannot
+     * move with the adopter's route prefix, and the provider's form_post
+     * carries no CSRF token, so it joins no middleware group either.
+     */
+    public function test_social_callback_ignores_the_route_prefix_and_the_host_middleware(): void
+    {
+        config(['magic-starter.route_middleware' => ['api']]);
+
+        $this->bootRoutesWithConfig([
+            Features::socialLogin(),
+        ], 'v2/api');
+
+        $this->assertRouteExists('GET', '/v2/api/auth/social/apple/redirect');
+        $this->assertRouteExists('POST', '/v2/api/auth/social/exchange');
+        $this->assertRouteExists('POST', '/magic-starter/social/apple/callback');
+        $this->assertRouteMissing('POST', '/v2/api/magic-starter/social/apple/callback');
+        $this->assertRouteMissing('GET', '/auth/social/apple/redirect');
+
+        $callback = $this->matchRoute('POST', '/magic-starter/social/apple/callback');
+        $this->assertSame(['throttle:magic-starter-auth-social'], $callback->gatherMiddleware());
     }
 
     public function test_phone_otp_routes_registered_conditionally(): void

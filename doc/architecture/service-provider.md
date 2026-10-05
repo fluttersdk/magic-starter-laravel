@@ -21,7 +21,7 @@
 The provider is responsible for merging configuration, binding every action contract to its default implementation, suppressing Sanctum's own migrations, registering rate limiters, loading routes, wiring event listeners, and publishing all publishable assets.
 
 > [!NOTE]
-> All bindings use `bind()` (transient), not `singleton()`, so a fresh action instance is resolved per request. The single exception is `TwoFactorAuthenticationProvider`, which is registered as a `singleton()` because it wraps a stateless TOTP library that is safe to share.
+> All bindings use `bind()` (transient), not `singleton()`, so a fresh action instance is resolved per request. The exceptions are `TwoFactorAuthenticationProvider`, which wraps a stateless TOTP library that is safe to share, and `Social\AppleProviderFactory`, which hands every Apple provider one HTTP client.
 
 <a name="bootstrap-lifecycle"></a>
 ## Bootstrap Lifecycle
@@ -46,8 +46,9 @@ Runs after all providers have registered. All side-effectful setup happens here,
 4. Team policy and `Registered` event listener registration (when `Features::hasTeamFeatures()`).
 5. Notification channel gating listener registration (when `Features::hasNotificationFeatures()`).
 6. Translation loading via `loadTranslationsFrom()`.
-7. Route loading via `loadRoutesFrom()` (unless `MagicStarter::shouldIgnoreRoutes()`).
-8. Console-only: command registration and `publishes()` / `publishesMigrations()` calls.
+7. Route loading via `loadRoutesFrom()` (unless `MagicStarter::shouldIgnoreRoutes()`). With `social-login` on, `routes/social.php` loads as well: the provider callback and Apple notification routes, outside the route prefix.
+8. With `social-login` on: wires the Microsoft Socialite driver, and logs a warning when `social.redirects.android` is set and is not an https App Link.
+9. Console-only: command registration and `publishes()` / `publishesMigrations()` calls.
 
 <a name="contract-bindings"></a>
 ## Contract Bindings
@@ -60,9 +61,10 @@ All bindings are registered in `register()`. Each entry maps an interface from `
 | `Contracts\UpdatesUserProfiles` | `Actions\UpdateUserProfile` | Auth / Profile |
 | `Contracts\UpdatesUserPasswords` | `Actions\UpdateUserPassword` | Auth |
 | `Contracts\DeletesUsers` | `Actions\DeleteUser` | Auth |
+| `Contracts\SchedulesUserDeletion` | `Actions\ScheduleUserDeletion` | Account deletion |
 | `Contracts\CreatesTeams` | `Actions\CreateTeam` | Teams |
 | `Contracts\UpdatesTeams` | `Actions\UpdateTeam` | Teams |
-| `Contracts\DeletesTeams` | `Actions\DeleteTeam` | Teams |
+| `Contracts\DeletesTeams` | `Actions\SubscriptionGuardedDeleteTeam` | Teams |
 | `Contracts\AddsTeamMembers` | `Actions\AddTeamMember` | Teams |
 | `Contracts\RemovesTeamMembers` | `Actions\RemoveTeamMember` | Teams |
 | `Contracts\InvitesTeamMembers` | `Actions\InviteTeamMember` | Teams |
@@ -74,11 +76,17 @@ All bindings are registered in `register()`. Each entry maps an interface from `
 | `Contracts\ConfirmsTwoFactorAuthentication` | `Actions\ConfirmTwoFactorAuthentication` | 2FA |
 | `Contracts\DisablesTwoFactorAuthentication` | `Actions\DisableTwoFactorAuthentication` | 2FA |
 | `Contracts\GeneratesNewRecoveryCodes` | `Actions\GenerateNewRecoveryCodes` | 2FA |
+| `Contracts\ResolvesSocialUsers` | `Actions\ResolveSocialUser` | Social login |
+| `Contracts\CreatesUsersFromProvider` | `Actions\CreateUserFromProvider` | Social login |
+| `Contracts\ConnectsSocialAccounts` | `Actions\ConnectSocialAccount` | Social login |
+| `Contracts\DisconnectsSocialAccounts` | `Actions\DisconnectSocialAccount` | Social login |
+| `Contracts\SetsUserPasswords` | `Actions\SetUserPassword` | Social login |
 
-In addition to the interface bindings, `Support\TwoFactorAuthenticationProvider` is registered as a **singleton**:
+In addition to the interface bindings, `Support\TwoFactorAuthenticationProvider` and `Social\AppleProviderFactory` are registered as **singletons**:
 
 ```php
 $this->app->singleton(Support\TwoFactorAuthenticationProvider::class);
+$this->app->singleton(Social\AppleProviderFactory::class);
 ```
 
 > [!NOTE]
@@ -130,6 +138,8 @@ The route prefix is read from `config('magic-starter.route_prefix')` (default: `
 | `magic-starter-email-verification` | 1 / minute | `user.id` or `ip` |
 
 The `magic-starter-otp` limiter is a single named limiter that branches internally on whether the request path contains `otp/send`.
+
+The `magic-starter-auth-social` limiter covers every social route: the redirect, the exchange, the native token endpoint, the provider callback, and the authenticated link ticket, disconnect and set-password routes. The `provider` half of the key is the `{provider}` route segment, so it is empty on the routes that carry none, and those share one bucket per IP. See [Social Login](../basics/social-login.md).
 
 <a name="sanctum-customization"></a>
 ## Sanctum Customization

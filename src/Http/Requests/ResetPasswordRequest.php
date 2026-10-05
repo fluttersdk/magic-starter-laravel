@@ -2,11 +2,14 @@
 
 namespace FlutterSdk\MagicStarter\Http\Requests;
 
+use FlutterSdk\MagicStarter\Http\Requests\Concerns\NormalizesEmailInput;
 use Illuminate\Foundation\Http\FormRequest;
 use Illuminate\Validation\Rules\Password;
 
 class ResetPasswordRequest extends FormRequest
 {
+    use NormalizesEmailInput;
+
     /**
      * Determine if the user is authorized to make this request.
      */

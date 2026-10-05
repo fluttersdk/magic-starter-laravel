@@ -9,6 +9,7 @@
   - [Consumer Override](#consumer-override)
 - [All Contracts](#all-contracts)
   - [User Management](#user-management)
+  - [Social Login](#social-login)
   - [Team Management](#team-management)
   - [Two-Factor Authentication](#two-factor-authentication)
   - [OTP / Phone Verification](#otp--phone-verification)
@@ -61,9 +62,10 @@ $this->app->bind(Contracts\CreatesUsers::class,           Actions\CreateUser::cl
 $this->app->bind(Contracts\UpdatesUserProfiles::class,    Actions\UpdateUserProfile::class);
 $this->app->bind(Contracts\UpdatesUserPasswords::class,   Actions\UpdateUserPassword::class);
 $this->app->bind(Contracts\DeletesUsers::class,           Actions\DeleteUser::class);
+$this->app->bind(Contracts\SchedulesUserDeletion::class,  Actions\ScheduleUserDeletion::class);
 $this->app->bind(Contracts\CreatesTeams::class,           Actions\CreateTeam::class);
 $this->app->bind(Contracts\UpdatesTeams::class,           Actions\UpdateTeam::class);
-$this->app->bind(Contracts\DeletesTeams::class,           Actions\DeleteTeam::class);
+$this->app->bind(Contracts\DeletesTeams::class,           Actions\SubscriptionGuardedDeleteTeam::class);
 $this->app->bind(Contracts\AddsTeamMembers::class,        Actions\AddTeamMember::class);
 $this->app->bind(Contracts\RemovesTeamMembers::class,     Actions\RemoveTeamMember::class);
 $this->app->bind(Contracts\InvitesTeamMembers::class,     Actions\InviteTeamMember::class);
@@ -75,10 +77,16 @@ $this->app->bind(Contracts\EnablesTwoFactorAuthentication::class,  Actions\Enabl
 $this->app->bind(Contracts\ConfirmsTwoFactorAuthentication::class, Actions\ConfirmTwoFactorAuthentication::class);
 $this->app->bind(Contracts\DisablesTwoFactorAuthentication::class, Actions\DisableTwoFactorAuthentication::class);
 $this->app->bind(Contracts\GeneratesNewRecoveryCodes::class,       Actions\GenerateNewRecoveryCodes::class);
+$this->app->bind(Contracts\ResolvesSocialUsers::class,            Actions\ResolveSocialUser::class);
+$this->app->bind(Contracts\CreatesUsersFromProvider::class,       Actions\CreateUserFromProvider::class);
+$this->app->bind(Contracts\ConnectsSocialAccounts::class,         Actions\ConnectSocialAccount::class);
+$this->app->bind(Contracts\DisconnectsSocialAccounts::class,      Actions\DisconnectSocialAccount::class);
+$this->app->bind(Contracts\SetsUserPasswords::class,              Actions\SetUserPassword::class);
 ```
 
 All bindings use `bind()` (not `singleton()`), so a fresh instance is created per resolution.
-`TwoFactorAuthenticationProvider` is the only singleton in the package.
+`TwoFactorAuthenticationProvider` and `Social\AppleProviderFactory` are the only singletons in the
+package.
 
 ### <a name="consumer-override"></a>Consumer Override
 
@@ -176,8 +184,52 @@ Default action: `Actions\DeleteUser`
 public function delete(Authenticatable $user): void;
 ```
 
-Permanently deletes the user and all associated data. Foreign key `cascadeOnDelete()` constraints
-handle relational cleanup; any additional teardown (revoke tokens, delete files) belongs here.
+Permanently deletes the user and all associated data. It is the irreversible end of the scheduled
+deletion pipeline, so it runs from `magic-starter:purge-deleted-users` once the grace period is over,
+not from `DELETE user`. The default action deletes the user's owned teams through `DeletesTeams`
+(so its billing guard runs on each), detaches memberships, removes the linked social identities and
+tokens, and, after the outermost transaction commits, revokes the Apple grants and deletes the
+profile photo. It refuses a user who owns a shared team or whom a subscription bills. Any
+additional teardown belongs here.
+
+---
+
+#### `SchedulesUserDeletion`
+
+Namespace: `FlutterSdk\MagicStarter\Contracts\SchedulesUserDeletion`
+Default action: `Actions\ScheduleUserDeletion`
+
+```php
+public function schedule(Authenticatable $user, bool $orphan = false, bool $immediately = false): void;
+```
+
+The one entry point to the deletion pipeline, for a user's own request and for an identity provider
+reporting the account deleted (`$orphan = true`). It refuses a user who owns a shared team or a
+billing team, or whom a subscription bills directly (422 `owns_shared_teams`,
+`team_has_active_subscription` or `subscription_active`), then revokes every token, drops the push
+devices, stamps `deletion_scheduled_at` and dispatches `UserDeletionScheduled`. Nothing is deleted
+in the request: with `$immediately` a queued `PurgeUserNow` purges the account right away instead
+of after the grace period. See [Account Deletion](../basics/account-deletion.md).
+
+---
+
+### <a name="social-login"></a>Social Login
+
+These contracts are bound whatever the `social-login` feature says, and only exercised while it is on.
+A refusal is a `SocialSignInRefused` carrying a stable `code`.
+
+| Contract | Default action | Role |
+|---|---|---|
+| `ResolvesSocialUsers` | `Actions\ResolveSocialUser` | `resolve(VerifiedIdentity, Request): Authenticatable`. Maps an identity to its linked user, or creates one. Never links by email. |
+| `CreatesUsersFromProvider` | `Actions\CreateUserFromProvider` | `create(VerifiedIdentity, Request): Authenticatable`. Writes a new password-less user and its link atomically. |
+| `ConnectsSocialAccounts` | `Actions\ConnectSocialAccount` | `connect(Authenticatable, VerifiedIdentity, ?string $refreshToken, ?string $clientId, ?bool $ownerConfirmed): Model`. Refuses rather than moves a link. |
+| `DisconnectsSocialAccounts` | `Actions\DisconnectSocialAccount` | `disconnect(Authenticatable, string $provider): void`. Refuses the last sign-in method of a password-less user. |
+| `SetsUserPasswords` | `Actions\SetUserPassword` | `set(Authenticatable, array $input): void`. Writes a first password only. |
+
+A replacement `ConnectsSocialAccounts` has to honour `$ownerConfirmed`: a link is provisional
+(`owner_confirmed = false`) when it came with an unverified provider email, and a proof of mailbox
+control (a password reset, an email verification) deletes it. See
+[Social Login](../basics/social-login.md#provisional-links).
 
 ---
 
@@ -216,13 +268,16 @@ authorization checks.
 #### `DeletesTeams`
 
 Namespace: `FlutterSdk\MagicStarter\Contracts\DeletesTeams`
-Default action: `Actions\DeleteTeam`
+Default action: `Actions\SubscriptionGuardedDeleteTeam`
 
 ```php
 public function delete(Model $team): void;
 ```
 
-Permanently deletes the team. Cascade constraints handle membership and invitation records.
+Permanently deletes the team. Cascade constraints handle membership and invitation records. The
+default is `Actions\SubscriptionGuardedDeleteTeam`, which refuses while a store subscription or a
+valid Stripe subscription is billing the team, for `DELETE teams/{team}` and the account purge alike.
+A host that bound or extended the earlier `StoreSubscriptionGuardedDeleteTeam` has to switch to it.
 
 ---
 

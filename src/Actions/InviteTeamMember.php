@@ -25,6 +25,8 @@ class InviteTeamMember implements InvitesTeamMembers
      */
     public function invite(Authenticatable $user, Model $team, string $email, string $role): Model
     {
+        // Stored lower-case so the accept check and the already-sent check compare like with like.
+        $email = Str::lower($email);
 
         $invitation = $team->invitations()->create([
             'email' => $email,

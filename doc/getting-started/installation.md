@@ -27,6 +27,9 @@ The package ships feature-gated routes, migrations, and resources — you enable
 | Laravel | ^11.0 \| ^12.0 \| ^13.0 |
 | Laravel Sanctum | ^4.0 |
 | Laravel Socialite | ^5.0 (bundled) |
+| socialiteproviders/apple | ^6.1 (bundled) |
+| socialiteproviders/microsoft | ^4.9 (bundled) |
+| firebase/php-jwt | ^7.0 (bundled) |
 | pragmarx/google2fa | ^8.0 \| ^9.0 |
 | bacon/bacon-qr-code | ^3.0 |
 
@@ -183,6 +186,8 @@ Add the relevant traits to your `User` model. `HasApiTokens` (from Sanctum) is r
 ```php
 use FlutterSdk\MagicStarter\Traits\HasTeams;
 use FlutterSdk\MagicStarter\Traits\HasProfilePhoto;
+use FlutterSdk\MagicStarter\Traits\HasSocialAccounts;
+use FlutterSdk\MagicStarter\Traits\NormalizesEmail;
 use FlutterSdk\MagicStarter\Traits\HasNotifications;
 use FlutterSdk\MagicStarter\Traits\TwoFactorAuthenticatable;
 use FlutterSdk\MagicStarter\Traits\HasGuestSupport;
@@ -195,6 +200,8 @@ class User extends Authenticatable
     use HasUuids;
     use HasTeams;
     use HasProfilePhoto;
+    use HasSocialAccounts;
+    use NormalizesEmail;
     use HasNotifications;          // when notifications feature is enabled
     use TwoFactorAuthenticatable;  // when two-factor-authentication feature is enabled
     use HasGuestSupport;           // when guest-auth feature is enabled
@@ -213,6 +220,8 @@ class User extends Authenticatable
 | `HasUuids` | `illuminate/database` | UUID primary keys (only when `use_uuids` is `true`) |
 | `HasTeams` | `FlutterSdk\MagicStarter\Traits` | Team membership, current team, personal team |
 | `HasProfilePhoto` | `FlutterSdk\MagicStarter\Traits` | Profile photo URL, `null` when none is stored |
+| `HasSocialAccounts` | `FlutterSdk\MagicStarter\Traits` | The `socialAccounts()` relation and `hasPassword()`, for social login and account deletion |
+| `NormalizesEmail` | `FlutterSdk\MagicStarter\Traits` | Lower-cases an email on assignment, so `Bob@x.io` and `bob@x.io` cannot become two accounts |
 
 ### Optional Traits
 

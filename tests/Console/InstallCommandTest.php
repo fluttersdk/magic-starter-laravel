@@ -3,7 +3,9 @@
 namespace FlutterSdk\MagicStarter\Tests\Console;
 
 use FlutterSdk\MagicStarter\Tests\TestCase;
+use Illuminate\Database\Schema\Blueprint;
 use Illuminate\Support\Facades\File;
+use Illuminate\Support\Facades\Schema;
 
 final class InstallCommandTest extends TestCase
 {
@@ -345,9 +347,114 @@ final class InstallCommandTest extends TestCase
             glob(database_path('migrations/*_create_personal_access_tokens_table.php')) ?: [],
         );
 
-        // Feature-specific migrations should NOT be published (social-login has none).
+        // Feature-specific migrations of OTHER features should NOT be published.
         $this->assertEmpty(
             glob(database_path('migrations/*_create_teams_table.php')) ?: [],
+        );
+    }
+
+    public function test_social_login_feature_publishes_the_social_accounts_migration(): void
+    {
+        $this->artisan('magic-starter:install', [
+            '--features' => ['social-login'],
+        ])->assertExitCode(0);
+
+        $socialAccounts = glob(database_path('migrations/*_create_social_accounts_table.php')) ?: [];
+        $users = glob(database_path('migrations/*_create_users_table.php')) ?: [];
+
+        $this->assertCount(1, $socialAccounts);
+        $this->assertCount(1, $users);
+        $this->assertTrue(
+            basename($socialAccounts[0]) > basename($users[0]),
+            'The social accounts migration references users, so it must sort after the users table.',
+        );
+    }
+
+    /**
+     * A provider-created account has no password, and the core users table
+     * declares the column NOT NULL; only guest-auth and phone-otp relaxed it
+     * before, so a social-login-only install could not create a single user.
+     */
+    public function test_social_login_feature_publishes_the_nullable_password_migration(): void
+    {
+        $this->artisan('magic-starter:install', [
+            '--features' => ['social-login'],
+        ])->assertExitCode(0);
+
+        $nullablePassword = glob(database_path('migrations/*_make_password_nullable_on_users_table.php')) ?: [];
+        $users = glob(database_path('migrations/*_create_users_table.php')) ?: [];
+
+        $this->assertCount(1, $nullablePassword);
+        $this->assertTrue(basename($nullablePassword[0]) > basename($users[0]));
+    }
+
+    public function test_the_nullable_password_migration_relaxes_a_not_null_password_column(): void
+    {
+        Schema::dropIfExists('users');
+        Schema::create('users', function (Blueprint $table): void {
+            $table->id();
+            $table->string('email');
+            $table->string('password');
+        });
+
+        $migration = require __DIR__ . '/../../database/migrations/make_password_nullable_on_users_table.php';
+        $migration->up();
+        $migration->up();
+
+        $password = collect(Schema::getColumns('users'))->firstWhere('name', 'password');
+
+        $this->assertTrue($password['nullable']);
+    }
+
+    public function test_without_social_login_the_social_accounts_migration_is_skipped(): void
+    {
+        $this->artisan('magic-starter:install', [
+            '--features' => ['sessions'],
+        ])->assertExitCode(0);
+
+        $this->assertEmpty(
+            glob(database_path('migrations/*_create_social_accounts_table.php')) ?: [],
+        );
+    }
+
+    /**
+     * The deletion columns belong to the users table itself, so they ship
+     * whatever features were selected.
+     */
+    public function test_the_deletion_columns_migration_is_published_without_any_feature(): void
+    {
+        $this->artisan('magic-starter:install', [
+            '--features' => ['sessions'],
+        ])->assertExitCode(0);
+
+        $deletion = glob(database_path('migrations/*_add_deletion_columns_to_users_table.php')) ?: [];
+        $users = glob(database_path('migrations/*_create_users_table.php')) ?: [];
+
+        $this->assertCount(1, $deletion);
+        $this->assertCount(1, $users);
+        $this->assertTrue(
+            basename($deletion[0]) > basename($users[0]),
+            'The deletion columns alter users, so they must sort after the table is created.',
+        );
+    }
+
+    /**
+     * Every request lower-cases the email it looks up, so the rows written
+     * before that have to be lower-cased on every install, whatever its features.
+     */
+    public function test_the_email_lower_casing_migration_is_published_without_any_feature(): void
+    {
+        $this->artisan('magic-starter:install', [
+            '--features' => ['sessions'],
+        ])->assertExitCode(0);
+
+        $lowercase = glob(database_path('migrations/*_lowercase_user_emails.php')) ?: [];
+        $users = glob(database_path('migrations/*_create_users_table.php')) ?: [];
+
+        $this->assertCount(1, $lowercase);
+        $this->assertTrue(
+            basename($lowercase[0]) > basename($users[0]),
+            'The lower-casing reads users, so it must sort after the table is created.',
         );
     }
 

@@ -2,7 +2,7 @@
 
 namespace FlutterSdk\MagicStarter\Tests\Http\Controllers;
 
-use FlutterSdk\MagicStarter\Actions\StoreSubscriptionGuardedDeleteTeam;
+use FlutterSdk\MagicStarter\Actions\SubscriptionGuardedDeleteTeam;
 use FlutterSdk\MagicStarter\Contracts\ReportsUsage;
 use FlutterSdk\MagicStarter\Features;
 use FlutterSdk\MagicStarter\Http\Controllers\BillingController;
@@ -841,14 +841,14 @@ class BillingControllerTest extends TestCase
         ]);
 
         $this->assertFalse(
-            StoreSubscriptionGuardedDeleteTeam::storeIsBilling($team),
+            SubscriptionGuardedDeleteTeam::storeIsBilling($team),
             'The catalogue\'s first entry is the floor when no explicit ranking is published.',
         );
 
         $team->forceFill(['plan' => 'scale'])->save();
 
         $this->assertTrue(
-            StoreSubscriptionGuardedDeleteTeam::storeIsBilling($team),
+            SubscriptionGuardedDeleteTeam::storeIsBilling($team),
             'The control: a tier above that floor still reads as paid, so the assertion '
             . 'above is not passing because nothing was recognised at all.',
         );
@@ -881,7 +881,7 @@ class BillingControllerTest extends TestCase
         ]);
 
         $this->assertFalse(
-            StoreSubscriptionGuardedDeleteTeam::storeIsBilling($team),
+            SubscriptionGuardedDeleteTeam::storeIsBilling($team),
             'The explicit ranking puts `scale` on the floor, so it is the explicit list '
             . 'being read and not the catalogue, which orders the two the other way.',
         );

@@ -84,6 +84,8 @@ class InstallCommand extends Command
         'create_users_table.php',
         'create_personal_access_tokens_table.php',
         'add_two_factor_columns_to_users_table.php',
+        'add_deletion_columns_to_users_table.php',
+        'lowercase_user_emails.php',
     ];
 
     /** @var array<string, list<string>> Feature key → associated migration files. */
@@ -133,6 +135,10 @@ class InstallCommand extends Command
             // installable feature of its own: OneSignal push rides on
             // notifications, so the table ships with them.
             'create_push_devices_table.php',
+        ],
+        'social-login' => [
+            'make_password_nullable_on_users_table.php',
+            'create_social_accounts_table.php',
         ],
         'newsletter-subscription' => [
             'create_newsletter_subscribers_table.php',

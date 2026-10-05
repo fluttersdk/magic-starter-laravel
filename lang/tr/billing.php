@@ -55,6 +55,7 @@ return [
      */
     'refusals' => [
         'store_subscription_active' => 'Bu takımı hâlâ bir mağaza aboneliği faturalandırıyor. Önce satın aldığınız mağaza hesabından aboneliği iptal edin: takımı şimdi silmek planı kaldırır, mağaza ise sizi ücretlendirmeye devam eder ve bu uygulama bunu sizin yerinize iptal edemez.',
+        'stripe_subscription_active' => 'Bu takımda hâlâ etkin bir kart aboneliği var. Takımı silmeden önce aboneliği faturalandırma bölümünden iptal edin ve ödenmiş dönemin bitmesini bekleyin.',
 
         /*
          * The two 409 sentences the billing endpoints raise, and they are

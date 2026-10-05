@@ -3,10 +3,13 @@
 namespace FlutterSdk\MagicStarter\Http\Requests;
 
 use FlutterSdk\MagicStarter\Enums\Role;
+use FlutterSdk\MagicStarter\Http\Requests\Concerns\NormalizesEmailInput;
 use Illuminate\Foundation\Http\FormRequest;
 
 class StoreTeamInvitationRequest extends FormRequest
 {
+    use NormalizesEmailInput;
+
     /**
      * Determine if the user is authorized to make this request.
      */

@@ -3,7 +3,7 @@
 namespace FlutterSdk\MagicStarter\Http\Controllers;
 
 use Carbon\CarbonInterface;
-use FlutterSdk\MagicStarter\Actions\StoreSubscriptionGuardedDeleteTeam;
+use FlutterSdk\MagicStarter\Actions\SubscriptionGuardedDeleteTeam;
 use FlutterSdk\MagicStarter\Contracts\ReportsUsage;
 use FlutterSdk\MagicStarter\Enums\BillingProvider;
 use FlutterSdk\MagicStarter\Http\Resources\SubscriptionResource;
@@ -924,7 +924,7 @@ class BillingController
      * The other subject this caller owns that a store is billing right now, or
      * null.
      *
-     * The predicate is {@see StoreSubscriptionGuardedDeleteTeam::storeIsBilling()}
+     * The predicate is {@see SubscriptionGuardedDeleteTeam::storeIsBilling()}
      * and not a local copy, deliberately: one of them refuses a deletion and this
      * one hides a purchase button, and two definitions of "a store is billing
      * this subject" would be free to disagree with each other while both sides'
@@ -953,7 +953,7 @@ class BillingController
         // subject.
         return $owned->first(
             fn (Model $other): bool => ! $other->is($billable)
-                && StoreSubscriptionGuardedDeleteTeam::storeIsBilling($other),
+                && SubscriptionGuardedDeleteTeam::storeIsBilling($other),
         );
     }
 

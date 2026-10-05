@@ -627,6 +627,85 @@ return [
 
     /*
     |--------------------------------------------------------------------------
+    | Social Authentication
+    |--------------------------------------------------------------------------
+    |
+    | Configure OAuth providers, redirect targets, and credential keys for
+    | social sign-in flows. The `providers` array names which drivers are
+    | enabled; others are refused when a client requests them. Absent from
+    | the array means the provider is not supported. The `redirects` object
+    | carries the post-auth URL for each platform a flow may name (`ios`,
+    | `android`, `web`), any of which may be null (the refusal is by design,
+    | not a silent fallback: the client sees it as "this platform is not
+    | configured"). Point `android` at a verified https App Link: any app can
+    | register a custom scheme and catch the sign-in, and the package logs a
+    | warning at boot when it is anything else. `ios` may stay a custom
+    | scheme, since ASWebAuthenticationSession returns only to the app that
+    | started it.
+    |
+    | `audiences` lists are comma-separated, trimmed env values naming the
+    | client ids an ID token may be issued to. For `google` those are the
+    | OAuth client ids (web, iOS, Android); for `apple` list the bundle id
+    | AND the Services ID, because a native token is issued to the first and
+    | a web one to the second. An empty list refuses every token for that
+    | provider.
+    |
+    | `apple` carries five keys: `team_id` (your Developer Team ID from Apple
+    | Developer), `key_id` (the key's own ID from the Signing Keys section),
+    | `private_key` (the PEM path or inlined PEM text), `bundle_id` (your
+    | app's main bundle), and `services_id` (the service identifier from your
+    | domain associations). The first three sign the client secret a code
+    | exchange or a revocation needs; verifying an identity token needs none.
+    |
+    | `cache_store` names the Laravel cache driver used for state and code
+    | token storage; absence defaults to the app default. `state_ttl` (seconds,
+    | default 600) and `code_ttl` (default 60) control token lifetimes.
+    | `link_ticket_ttl` (default 300) gates login-link tickets, and
+    | `confirmation_ttl` (default 600) gates post-auth confirmation tokens.
+    |
+    */
+
+    'social' => [
+        'providers' => array_values(array_filter(array_map(
+            'trim',
+            explode(',', (string) env('MAGIC_STARTER_SOCIAL_PROVIDERS', 'google,apple,github,microsoft')),
+        ))),
+
+        'redirects' => [
+            'ios' => env('MAGIC_STARTER_SOCIAL_IOS_REDIRECT'),
+            'android' => env('MAGIC_STARTER_SOCIAL_ANDROID_REDIRECT'),
+            'web' => env('MAGIC_STARTER_SOCIAL_WEB_REDIRECT'),
+        ],
+
+        'audiences' => [
+            'google' => array_values(array_filter(array_map(
+                'trim',
+                explode(',', (string) env('MAGIC_STARTER_SOCIAL_GOOGLE_AUDIENCES', '')),
+            ))),
+            'apple' => array_values(array_filter(array_map(
+                'trim',
+                explode(',', (string) env('MAGIC_STARTER_SOCIAL_APPLE_AUDIENCES', '')),
+            ))),
+        ],
+
+        'apple' => [
+            'team_id' => env('MAGIC_STARTER_APPLE_TEAM_ID'),
+            'key_id' => env('MAGIC_STARTER_APPLE_KEY_ID'),
+            'private_key' => env('MAGIC_STARTER_APPLE_PRIVATE_KEY'),
+            'bundle_id' => env('MAGIC_STARTER_APPLE_BUNDLE_ID'),
+            'services_id' => env('MAGIC_STARTER_APPLE_SERVICES_ID'),
+        ],
+
+        'cache_store' => env('MAGIC_STARTER_SOCIAL_CACHE_STORE'),
+
+        'state_ttl' => (int) env('MAGIC_STARTER_SOCIAL_STATE_TTL', 600),
+        'code_ttl' => (int) env('MAGIC_STARTER_SOCIAL_CODE_TTL', 60),
+        'link_ticket_ttl' => (int) env('MAGIC_STARTER_SOCIAL_LINK_TICKET_TTL', 300),
+        'confirmation_ttl' => (int) env('MAGIC_STARTER_SOCIAL_CONFIRMATION_TTL', 600),
+    ],
+
+    /*
+    |--------------------------------------------------------------------------
     | OneSignal Push Notifications
     |--------------------------------------------------------------------------
     |
@@ -774,5 +853,28 @@ return [
         */
 
         'self_test_enabled' => (bool) env('MAGIC_STARTER_PUSH_SELF_TEST_ENABLED', false),
+    ],
+
+    /*
+    |--------------------------------------------------------------------------
+    | Account Deletion
+    |--------------------------------------------------------------------------
+    |
+    | Configure the grace period for account deletion. Asking for a deletion
+    | schedules it and locks the account at once: every token is revoked and
+    | every push device dropped, while the data stays until the purge. There
+    | is no cancel endpoint; signing in again during the grace period is what
+    | cancels a deletion the user asked for. One an identity provider reported
+    | (an orphan) is not cancelled by a sign-in. The purge command deletes
+    | the account once the grace period has passed.
+    |
+    | `grace_days` is the number of days between the request and the purge.
+    | 0 means the account is purged at the next purge run, not at the moment
+    | of the request.
+    |
+    */
+
+    'account_deletion' => [
+        'grace_days' => (int) env('MAGIC_STARTER_ACCOUNT_DELETION_GRACE_DAYS', 30),
     ],
 ];

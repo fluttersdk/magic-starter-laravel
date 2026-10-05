@@ -2,6 +2,7 @@
 
 namespace FlutterSdk\MagicStarter;
 
+use FlutterSdk\MagicStarter\Models\SocialAccount;
 use FlutterSdk\MagicStarter\Models\Team;
 use FlutterSdk\MagicStarter\Models\TeamInvitation;
 use FlutterSdk\MagicStarter\Models\TeamUser;
@@ -143,6 +144,27 @@ class MagicStarter
             throw new RuntimeException(
                 'TeamInvitation model not configured. Set magic-starter.models.team_invitation.',
             );
+        }
+
+        return static::resolveConcreteModel($model);
+    }
+
+    /**
+     * Resolve the configured social account model class name.
+     *
+     * The literal default is load-bearing: `mergeConfigFrom` is a shallow
+     * `array_merge`, so a consumer that published its config before this key
+     * existed replaces the whole `models` array and `config()` finds no such
+     * path. The default answers for it instead of a null reaching the caller.
+     *
+     * @return class-string
+     */
+    public static function socialAccountModel(): string
+    {
+        $model = config('magic-starter.models.social_account', SocialAccount::class);
+
+        if (! is_string($model) || $model === '') {
+            return SocialAccount::class;
         }
 
         return static::resolveConcreteModel($model);
