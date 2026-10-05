@@ -4,6 +4,8 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [0.0.15] - 2026-10-05
+
 ### Added
 
 - **Social login redesigned as a backend-hosted flow, with Google, Apple, GitHub and Microsoft.** `GET auth/social/{provider}/redirect` records the flow and sends the browser to the provider, the provider returns to the fixed callback, and the app trades the one-time code it lands with for a session at `POST auth/social/exchange {code, code_verifier}`. The code is bound to the S256 challenge the app started with, so a code intercepted on its way back is worthless without the verifier. The exchange answers like a password sign-in: a token, or the 2FA challenge when the account confirmed one. The `platform` query is `ios`, `android` or `web`, and each has its own target in `magic-starter.social.redirects.{ios,android,web}` (`MAGIC_STARTER_SOCIAL_IOS_REDIRECT`, `MAGIC_STARTER_SOCIAL_ANDROID_REDIRECT`, `MAGIC_STARTER_SOCIAL_WEB_REDIRECT`). Point Android at an https App Link, because another app can register the same custom scheme and catch the code; iOS may use a custom scheme, since `ASWebAuthenticationSession` returns only to the app that started it. The package logs a warning at boot when the Android target is set and is not https. Flow state, codes and tickets live in the cache store named by `magic-starter.social.cache_store`. (`src/Http/Controllers/SocialRedirectController.php`, `src/Http/Controllers/SocialCallbackController.php`, `src/Http/Controllers/SocialExchangeController.php`, `src/Social/SocialFlowStore.php`, `src/Social/ProviderIdentity.php`, `src/MagicStarterServiceProvider.php`, `config/magic-starter.php`)
