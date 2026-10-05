@@ -65,10 +65,16 @@ class TelescopeRedaction
         TeamInvitationController::class . '@index',
     ];
 
+    /**
+     * Telescope masks response headers with this same list, which is why the
+     * response-only `set-cookie` (the session) is named here.
+     */
     public const REQUEST_HEADERS = [
         'authorization',
         'cookie',
         'x-xsrf-token',
+        'set-cookie',
+        'x-csrf-token',
     ];
 
     /**

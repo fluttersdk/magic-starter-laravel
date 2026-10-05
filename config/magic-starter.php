@@ -66,6 +66,13 @@ return [
     | `exclude` lists model classes (subclasses included) never recorded. The
     | package already skips its own audit rows and every pivot.
     |
+    | `ignore` (not set by default) maps a model class (subclasses included)
+    | to attributes whose change alone is not recorded, for a column that
+    | moves on every tick. An update touching only those (and `updated_at`)
+    | writes no row; a mixed update is recorded without them. A model's own
+    | `$auditIgnore` property adds to the list, and a model with no list is
+    | audited in full.
+    |
     | `redact` lists attribute names stored as `[redacted]`. It EXTENDS the
     | built-in list (password, remember_token, two_factor_secret,
     | two_factor_recovery_codes, token) and never replaces it; a model's

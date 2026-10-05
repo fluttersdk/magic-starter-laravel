@@ -117,6 +117,37 @@ class Redactor
     }
 
     /**
+     * Attributes whose change alone is not worth an `updated` row.
+     *
+     * The model's `$auditIgnore` property plus every `audit.ignore` entry whose
+     * class the model is an instance of, matched like `audit.exclude`. It lives
+     * here because it is read by reflection exactly like `$auditExclude`.
+     *
+     * @return list<string>
+     */
+    public static function ignoredKeys(Model $model): array
+    {
+        $ignored = [];
+
+        if (property_exists($model, 'auditIgnore')) {
+            $declared = (new ReflectionProperty($model, 'auditIgnore'))->getValue($model);
+
+            $ignored = is_array($declared) ? array_map('strval', $declared) : [];
+        }
+
+        /** @var array<class-string, list<string>> $configured */
+        $configured = config('magic-starter.audit.ignore', []);
+
+        foreach ($configured as $class => $keys) {
+            if ($model instanceof $class) {
+                $ignored = [...$ignored, ...$keys];
+            }
+        }
+
+        return array_values(array_unique($ignored));
+    }
+
+    /**
      * The model's own `$auditExclude` list, when it declares one.
      *
      * Read by reflection because the property is usually protected, like

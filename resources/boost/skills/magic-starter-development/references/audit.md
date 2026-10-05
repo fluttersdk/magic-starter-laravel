@@ -55,6 +55,27 @@ class Invoice extends Model
 }
 ```
 
+## Ignore Attributes
+
+```php
+'audit' => [
+    'ignore' => [
+        \App\Models\Monitor::class => ['last_checked_at'],
+    ],
+],
+```
+
+```php
+class Monitor extends Model
+{
+    protected array $auditIgnore = ['last_checked_at'];
+}
+```
+
+- `audit.ignore` maps a model class (subclasses included, matched like `exclude`) to attributes; the model's `$auditIgnore` property adds to it (`Redactor::ignoredKeys()`).
+- An update whose changes are all ignored, apart from `updated_at`, writes no row. A mixed update is recorded without the ignored keys.
+- A model with no ignore list is audited in full, including a bare `touch()`.
+
 ## Recording and Suppressing
 
 ```php
