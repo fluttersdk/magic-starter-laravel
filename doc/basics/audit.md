@@ -93,7 +93,7 @@ class Monitor extends Model
 }
 ```
 
-`ignore` maps a model class (subclasses included) to its attributes, and the model's own `$auditIgnore` adds to that list. An update whose changes are all ignored, apart from `updated_at`, writes no row. A mixed update is recorded without the ignored keys. A model with no ignore list is audited in full, so even a bare `touch()` on it writes a row.
+`ignore` maps a model class (subclasses included) to its attributes, and the model's own `$auditIgnore` adds to that list. An update whose changes are all ignored, apart from `updated_at`, writes no row. A mixed update is recorded without the ignored keys. A model with no ignore list is audited in full, so even a bare `touch()` on it writes a row; on a model with one, a `touch()` that moved no ignored attribute is recorded too. Credential columns (`password`, `remember_token`, `two_factor_secret`, `two_factor_recovery_codes`, `token`, `device_id`) cannot be ignored: a change to one is always recorded, redacted.
 
 ---
 

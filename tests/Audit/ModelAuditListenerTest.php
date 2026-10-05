@@ -205,6 +205,39 @@ final class ModelAuditListenerTest extends TestCase
         $this->assertSame(['updated_at'], array_keys($audit->new_values));
     }
 
+    public function test_a_touch_on_a_model_with_an_ignore_list_is_still_recorded(): void
+    {
+        // Nothing ignored changed, so the timestamp was not dragged along by a
+        // tick: the touch is a change of its own.
+        $this->migrate(true);
+
+        $user = $this->createIgnoringUser();
+        $this->travel(1)->minute();
+
+        $user->touch();
+
+        $audit = $this->updateAudits($user)->sole();
+
+        $this->assertSame(['updated_at'], array_keys($audit->new_values));
+    }
+
+    public function test_a_credential_column_is_recorded_even_when_configured_as_ignored(): void
+    {
+        config()->set('magic-starter.audit.ignore', [
+            ConcreteUser::class => ['name', 'password'],
+        ]);
+        $this->migrate(true);
+
+        $user = $this->createUser('ada@example.com');
+        $this->travel(1)->minute();
+
+        $user->update(['password' => 'another-password']);
+
+        $audit = $this->updateAudits($user)->sole();
+
+        $this->assertSame('[redacted]', $audit->new_values['password']);
+    }
+
     public function test_a_model_without_timestamps_ignores_attributes_too(): void
     {
         $this->migrate(true);

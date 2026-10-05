@@ -74,7 +74,8 @@ class Monitor extends Model
 
 - `audit.ignore` maps a model class (subclasses included, matched like `exclude`) to attributes; the model's `$auditIgnore` property adds to it (`Redactor::ignoredKeys()`).
 - An update whose changes are all ignored, apart from `updated_at`, writes no row. A mixed update is recorded without the ignored keys.
-- A model with no ignore list is audited in full, including a bare `touch()`.
+- A model with no ignore list is audited in full, including a bare `touch()`. On a model with one, the skip needs an ignored key to have moved, so its bare `touch()` is recorded too.
+- Credential columns (`Redactor::ALWAYS`) are dropped from any ignore list: their change is always recorded, redacted.
 
 ## Recording and Suppressing
 

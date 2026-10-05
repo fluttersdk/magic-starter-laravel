@@ -8,7 +8,7 @@ All notable changes to this project will be documented in this file.
 
 ### Added
 
-- **Attribute-level audit ignore.** `audit.ignore` maps a model class (subclasses included) to attributes, and a model's own `protected array $auditIgnore` adds to them. An update whose changes are all ignored, apart from `updated_at`, writes no row, and a mixed update is recorded without the ignored keys. A model with no ignore list is audited in full, including a bare `touch()`. Meant for columns that move on every tick. (`src/Audit/ModelAuditListener.php`, `src/Audit/Redactor.php`, `config/magic-starter.php`)
+- **Attribute-level audit ignore.** `audit.ignore` maps a model class (subclasses included) to attributes, and a model's own `protected array $auditIgnore` adds to them. An update whose changes are all ignored, apart from `updated_at`, writes no row, and a mixed update is recorded without the ignored keys. A model with no ignore list is audited in full, including a bare `touch()`, and the skip needs an ignored key to have moved, so a bare `touch()` on an ignoring model is recorded too. Credential columns cannot be ignored. Meant for columns that move on every tick. (`src/Audit/ModelAuditListener.php`, `src/Audit/Redactor.php`, `config/magic-starter.php`)
 
 ### Fixed
 

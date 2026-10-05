@@ -144,7 +144,9 @@ class Redactor
             }
         }
 
-        return array_values(array_unique($ignored));
+        // A credential change is always worth a row, like the redaction list
+        // config can never shorten.
+        return array_values(array_diff(array_unique($ignored), self::ALWAYS));
     }
 
     /**

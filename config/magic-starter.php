@@ -71,7 +71,7 @@ return [
     | moves on every tick. An update touching only those (and `updated_at`)
     | writes no row; a mixed update is recorded without them. A model's own
     | `$auditIgnore` property adds to the list, and a model with no list is
-    | audited in full.
+    | audited in full. Credential columns are never ignored.
     |
     | `redact` lists attribute names stored as `[redacted]`. It EXTENDS the
     | built-in list (password, remember_token, two_factor_secret,

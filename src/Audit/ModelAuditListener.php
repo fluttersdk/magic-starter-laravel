@@ -60,11 +60,15 @@ class ModelAuditListener
         $ignored = Redactor::ignoredKeys($model);
 
         if ($ignored !== []) {
-            $changes = array_diff_key($changes, array_flip($ignored));
+            $kept = array_diff_key($changes, array_flip($ignored));
 
-            if ($this->onlyTimestampLeft($model, $changes)) {
+            // Skip only when an ignored key actually moved: a bare touch on
+            // the same model is a change of its own and stays recorded.
+            if (count($kept) < count($changes) && $this->onlyTimestampLeft($model, $kept)) {
                 return;
             }
+
+            $changes = $kept;
         }
 
         Auditor::write(
