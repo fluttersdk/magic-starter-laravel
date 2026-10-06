@@ -7,6 +7,7 @@ return [
      * written by the billing rails and the reconciler, never from here.
      */
     'subscriptions' => [
+        'navigation_label' => 'Subscriptions',
         'model_label' => 'subscription',
         'plural_model_label' => 'subscriptions',
         'columns' => [
@@ -24,6 +25,7 @@ return [
     ],
 
     'newsletter' => [
+        'navigation_label' => 'Newsletter subscribers',
         'model_label' => 'newsletter subscriber',
         'plural_model_label' => 'newsletter subscribers',
         'columns' => [
@@ -42,6 +44,7 @@ return [
     ],
 
     'audits' => [
+        'navigation_label' => 'Audit trail',
         'model_label' => 'audit entry',
         'plural_model_label' => 'audit trail',
         'columns' => [

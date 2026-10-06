@@ -110,6 +110,36 @@ class MiscResourcesTest extends FilamentTestCase
         }
     }
 
+    /**
+     * A model label is lower case because Filament embeds it mid-sentence
+     * ("Create subscription"); the menu shows the navigation label on its own,
+     * beside "Users" and "Teams", so it is a title of its own.
+     */
+    public function test_the_navigation_labels_are_titles_in_every_shipped_locale(): void
+    {
+        $expected = [
+            'en' => [
+                SubscriptionResource::class => 'Subscriptions',
+                NewsletterSubscriberResource::class => 'Newsletter subscribers',
+                AuditResource::class => 'Audit trail',
+            ],
+            'tr' => [
+                SubscriptionResource::class => 'Abonelikler',
+                NewsletterSubscriberResource::class => 'Bülten aboneleri',
+                AuditResource::class => 'Denetim kayıtları',
+            ],
+        ];
+
+        foreach ($expected as $locale => $labels) {
+            app()->setLocale($locale);
+
+            foreach ($labels as $resource => $label) {
+                $this->assertSame($label, $resource::getNavigationLabel(), "[{$locale}] {$resource}");
+                $this->assertSame(mb_strtolower($resource::getPluralModelLabel()), $resource::getPluralModelLabel());
+            }
+        }
+    }
+
     public function test_the_plugin_mounts_the_dashboard_and_its_widget(): void
     {
         $panel = Filament::getPanel('admin');

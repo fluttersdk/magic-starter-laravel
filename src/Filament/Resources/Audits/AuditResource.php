@@ -39,7 +39,7 @@ class AuditResource extends MagicStarterResource
 
     public static function getNavigationLabel(): string
     {
-        return (string) __('magic-starter::admin_misc.audits.plural_model_label');
+        return (string) __('magic-starter::admin_misc.audits.navigation_label');
     }
 
     public static function getModelLabel(): string
