@@ -7,6 +7,7 @@ return [
      * written by the billing rails and the reconciler, never from here.
      */
     'subscriptions' => [
+        'navigation_label' => 'Abonelikler',
         'model_label' => 'abonelik',
         'plural_model_label' => 'abonelikler',
         'columns' => [
@@ -24,6 +25,7 @@ return [
     ],
 
     'newsletter' => [
+        'navigation_label' => 'Bülten aboneleri',
         'model_label' => 'bülten abonesi',
         'plural_model_label' => 'bülten aboneleri',
         'columns' => [
@@ -42,6 +44,7 @@ return [
     ],
 
     'audits' => [
+        'navigation_label' => 'Denetim kayıtları',
         'model_label' => 'denetim kaydı',
         'plural_model_label' => 'denetim kayıtları',
         'columns' => [

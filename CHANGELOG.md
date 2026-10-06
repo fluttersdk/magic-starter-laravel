@@ -4,6 +4,12 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [0.0.18] - 2026-10-06
+
+### Fixed
+
+- **The admin menu labels the Subscriptions, Newsletter subscribers and Audit trail resources as titles.** Their navigation label reused the plural model label, which is lower case because Filament embeds it mid-sentence ("Create subscription"), so the menu read "newsletter subscribers" beside "Users" and "Teams". Each now has its own `navigation_label` in `lang/{en,tr}/admin_misc.php`. (`src/Filament/Resources/{Subscriptions,NewsletterSubscribers,Audits}/*Resource.php`)
+
 ## [0.0.17] - 2026-10-06
 
 ### Added

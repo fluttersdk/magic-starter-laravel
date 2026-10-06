@@ -29,7 +29,7 @@ class SubscriptionResource extends MagicStarterResource
 
     public static function getNavigationLabel(): string
     {
-        return (string) __('magic-starter::admin_misc.subscriptions.plural_model_label');
+        return (string) __('magic-starter::admin_misc.subscriptions.navigation_label');
     }
 
     public static function getModelLabel(): string
