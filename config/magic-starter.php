@@ -384,10 +384,11 @@ return [
     | UNTOUCHED (what a tier caps, what it unlocks, copy for a capability only
     | your product has). GET billing/plans serves one entry per ranked tier, in
     | ranking order, with its 'id' added; the map's own order never ranks. A
-    | ranked tier with no definition is served as its bare id. 'cycles' is
-    | RESERVED and derived from the products below, so do not write one. A
-    | bullet in 'features' is a promise made to somebody holding a credit card,
-    | so it may only name something that works today.
+    | ranked tier with no definition is served as its bare id. 'cycles' and
+    | 'products' are RESERVED: both are derived from the products below and
+    | written onto every tier row, so do not write either. A bullet in
+    | 'features' is a promise made to somebody holding a credit card, so it may
+    | only name something that works today.
     |
     | 'products' is what you SELL, keyed by a name of your choosing:
     |
@@ -395,22 +396,24 @@ return [
     |   'tier'    a 'tier_order' id; required for a subscription
     |   'cycle'   monthly | annual; required for a subscription. A tier is not
     |             a price: sold both ways it is two products, and a checkout
-    |             names a (tier, cycle) pair so the customer is charged the
-    |             figure the screen showed them.
+    |             names the product KEY so the customer is charged the figure
+    |             the screen showed them.
     |   'credits' optional integer a one-off purchase grants
     |   'prices'  channel (web | app_store | play) => currency => amount in
     |             MINOR units (cents, kurus; 3400 yen is 3400, 1.500 KWD is
     |             1500). Display figures, never a charge: each rail charges what
     |             its own dashboard says.
-    |   'refs'    each rail's id for this product: 'stripe_price' (normally
-    |             env-backed), 'app_store', and 'play' as '<subscription_id>:
-    |             <base_plan_id>', the WHOLE id Google sends. A map keyed on the
-    |             bare subscription id misses on every Android renewal.
+    |   'refs'    each rail's id for this product: 'stripe_price' (env-backed,
+    |             from CASHIER_PRICE_<KEY>: the product key uppercased, so
+    |             'pro_monthly' reads CASHIER_PRICE_PRO_MONTHLY), 'app_store',
+    |             and 'play' as '<subscription_id>:<base_plan_id>', the WHOLE id
+    |             Google sends. A map keyed on the bare subscription id misses on
+    |             every Android renewal.
     |
-    | Write ONE product per (tier, cycle) and put every rail's ref on it. The
-    | first product matching a pair is the one a checkout sells, so keep a
-    | grandfathered Stripe price (still mapped so its webhooks grant the tier)
-    | on a product listed below the one you want SOLD.
+    | Write ONE product per (tier, cycle) and put every rail's ref on it. A
+    | checkout sells the product key it names; a reverse lookup (a Stripe
+    | price or a store id back to its product) answers the FIRST product
+    | carrying that ref, in config order.
     |
     | A store id belongs to one product, and ONE PLAY SUBSCRIPTION SELLS ONE
     | TIER: Play moves a customer between base plans of a subscription as a
@@ -584,6 +587,21 @@ return [
     | 'operation_budget_seconds' bounds the WHOLE retried read, not one call: a
     | per-call timeout sized against a wall breaks the moment anything retries.
     |
+    | 'api_v2_key' and 'project_id' are read by `billing:doctor --remote` only,
+    | through RevenueCat's v2 API. The v2 key is a SEPARATE secret key scoped
+    | to project_configuration:{apps,products,entitlements,offerings,packages,
+    | integrations}:read; the v1 key above reads subscribers and is not widened
+    | to cover configuration. Neither is needed to sell.
+    |
+    | THE AGENT PAIR. `billing:manifest` prints every store and rail object this
+    | catalogue needs (App Store group and levels, Play subscriptions and base
+    | plans, RevenueCat products, entitlements, offering and webhook, Stripe
+    | prices whose lookup key is the product key) for an agent to apply with
+    | asc, gplay, rc and stripe; `billing:doctor` checks the configuration and,
+    | with --remote, diffs Stripe and RevenueCat against it. Both only READ: the
+    | package never writes to a vendor, and neither prints a secret, only
+    | whether it is set.
+    |
     | 'accept_sandbox' is whether this deployment may act on sandbox purchases
     | at all. FALSE in production, always: a sandbox purchase granting a real
     | paid tier is money out of the door, and a store's sandbox is trivially
@@ -685,6 +703,8 @@ return [
             'base_url' => env('REVENUECAT_BASE_URL', RevenueCatClient::DEFAULT_BASE_URL),
             'operation_budget_seconds' => env('REVENUECAT_OPERATION_BUDGET_SECONDS', 10),
             'accept_sandbox' => (bool) env('REVENUECAT_ACCEPT_SANDBOX', false),
+            'api_v2_key' => env('REVENUECAT_API_V2_KEY'),
+            'project_id' => env('REVENUECAT_PROJECT_ID'),
         ],
     ],
 

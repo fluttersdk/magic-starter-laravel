@@ -3,6 +3,8 @@
 namespace FlutterSdk\MagicStarter;
 
 use Filament\Panel;
+use FlutterSdk\MagicStarter\Console\BillingDoctorCommand;
+use FlutterSdk\MagicStarter\Console\BillingManifestCommand;
 use FlutterSdk\MagicStarter\Console\FilamentEjectCommand;
 use FlutterSdk\MagicStarter\Console\FilamentInstallCommand;
 use FlutterSdk\MagicStarter\Console\InstallCommand;
@@ -269,6 +271,16 @@ class MagicStarterServiceProvider extends ServiceProvider
             $this->commands([
                 ReconcileBillingEntitlements::class,
             ]);
+
+            // 3.4e. The agent-facing pair: describe what the vendors must hold,
+            // and check that they hold it. Console-only, unlike the reconciler,
+            // because nothing in a web request runs either.
+            if ($this->app->runningInConsole()) {
+                $this->commands([
+                    BillingManifestCommand::class,
+                    BillingDoctorCommand::class,
+                ]);
+            }
         }
 
         // 3.5. Auto-gate notification channels when notification feature is enabled.

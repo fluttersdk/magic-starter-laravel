@@ -37,16 +37,6 @@ return [
     ],
 
     /*
-     * Human names for the two billing cycles, keyed by the wire word. See the
-     * English file for why they exist: `unmapped_price` names the cycle, and the
-     * wire word is English.
-     */
-    'cycles' => [
-        'monthly' => 'aylık',
-        'annual' => 'yıllık',
-    ],
-
-    /*
      * Refusal sentences the billing actions and endpoints raise, keyed by a
      * short reason. Shipped here rather than inlined so every reader gets the
      * same wording in their own locale, and so a test can assert the two
@@ -83,7 +73,6 @@ return [
          */
         'no_published_catalogue' => 'Yayımlanmış bir plan yok, dolayısıyla henüz satın alınabilecek bir şey de yok. Katmanlarınızı en ucuzdan başlayarak magic-starter.billing.tier_order altında sıralayın, magic-starter.billing.tiers altında tanımlayın ve magic-starter.billing.products altında satışa sunun.',
         'product_not_sellable' => ':product ürünü burada satın alınamaz: bu kanalda yalnızca Stripe fiyatı olan ücretli bir abonelik satılır. Başka bir plan seçin veya magic-starter.billing.products altında bu ürüne refs.stripe_price tanımlayın.',
-        'unmapped_price' => 'Bu planı :cycle döngüsünde satan bir Stripe fiyatı yok. magic-starter.billing.prices altında bir fiyat tanımlayın veya diğer döngüyü sunun.',
         'no_subscription' => 'Değiştirilecek etkin bir abonelik yok.',
     ],
 

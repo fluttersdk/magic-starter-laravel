@@ -279,9 +279,8 @@ class SharedBillingRulesTest extends TestCase
      * is all it takes to write `'stripe_price' => ''`. The lookup's own guard
      * already refuses an empty price id, which is exactly why the second half of
      * this test exists: asserting only `planForPrice('')` passes whether or not
-     * the ref is normalised, and the entry survives to be found by the REVERSE
-     * lookup a checkout makes, where the empty string would come back as the
-     * price that sells a paid tier.
+     * the ref is normalised, and the entry survives into the price map, where
+     * the empty string would appear as a price that sells a paid tier.
      */
     public function test_an_empty_price_id_cannot_sell_a_paid_tier(): void
     {
@@ -296,61 +295,15 @@ class SharedBillingRulesTest extends TestCase
         // The half that distinguishes a normalised ref from a raw one.
         $this->assertSame(['price_business' => 'business'], StripeSubscriptionState::prices());
         $this->assertFalse(array_search('pro', StripeSubscriptionState::prices(), true));
-        $this->assertNull(StripeSubscriptionState::priceFor('pro', 'monthly'));
     }
 
-    public function test_a_price_answers_the_cycle_its_product_declares(): void
+    public function test_the_catalogue_maps_each_stripe_price_to_its_tier_and_cycle(): void
     {
-        /*
-         * A subscription product declares its cycle (boot refuses one that does not), so the
-         * cycle is read off the product the price belongs to rather than guessed.
-         */
-        $this->publishSubscriptions([
-            'pro_monthly' => ['pro', 'monthly', 'price_pro_monthly'],
-            'pro_annual' => ['pro', 'annual', 'price_pro_annual'],
-        ]);
-
-        $this->assertSame('monthly', StripeSubscriptionState::cycleForPrice('price_pro_monthly'));
-        $this->assertSame('annual', StripeSubscriptionState::cycleForPrice('price_pro_annual'));
-
-        // A price nobody mapped, which is the store rail's case: `plan_product_id`
-        // there is a store product id, and this Stripe lookup cannot name its
-        // cycle. Null rather than a guess, so no screen claims one.
-        $this->assertNull(StripeSubscriptionState::cycleForPrice('com.example.pro.monthly'));
-        $this->assertNull(StripeSubscriptionState::cycleForPrice(null));
-        $this->assertNull(StripeSubscriptionState::cycleForPrice(''));
-
-        // The reverse direction still answers the tier alone, so the webhook and
-        // the reconciler are untouched by the cycle arriving.
-        $this->assertSame('pro', StripeSubscriptionState::planForPrice('price_pro_annual'));
-    }
-
-    public function test_a_price_is_found_by_its_exact_tier_and_cycle_pair(): void
-    {
-        /*
-         * Exact, never nearest. A checkout asks for the price behind the figure it has just
-         * shown the customer, so answering with the tier's OTHER price would charge an amount
-         * the screen never displayed, which is the mismatch this lookup exists to prevent.
-         *
-         * The refusing limb is the test. Returning the annual price for a monthly request
-         * would satisfy every "a published tier is sellable" assertion in this suite, and the
-         * customer would find out on their statement.
-         */
         $this->publishSubscriptions([
             'pro_monthly' => ['pro', 'monthly', 'price_pro_monthly'],
             'pro_annual' => ['pro', 'annual', 'price_pro_annual'],
             'business_annual' => ['business', 'annual', 'price_business_annual'],
         ]);
-
-        $this->assertSame('price_pro_monthly', StripeSubscriptionState::priceFor('pro', 'monthly'));
-        $this->assertSame('price_pro_annual', StripeSubscriptionState::priceFor('pro', 'annual'));
-        $this->assertSame('price_business_annual', StripeSubscriptionState::priceFor('business', 'annual'));
-
-        // `business` is sold annually only, so the monthly request has no price
-        // and gets none. The caller turns that into a 422 rather than billing the
-        // annual figure.
-        $this->assertNull(StripeSubscriptionState::priceFor('business', 'monthly'));
-        $this->assertNull(StripeSubscriptionState::priceFor('enterprise', 'annual'));
 
         // The catalogue the plans endpoint derives `cycles` from, keyed by price.
         $this->assertSame(

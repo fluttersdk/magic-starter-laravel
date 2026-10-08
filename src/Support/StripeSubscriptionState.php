@@ -153,48 +153,6 @@ final class StripeSubscriptionState
     }
 
     /**
-     * The billing cycle a Stripe price is charged on, or null when the
-     * catalogue does not map the price.
-     *
-     * Null is reported rather than guessed, and it reaches the client as an
-     * absent `cycle` that decodes to null there too. A tier is not a price: the
-     * same tier sold monthly and annually is two prices, and a screen that
-     * assumed one would tell a customer what they are paying on no evidence.
-     * That is the defect this pair of methods was added to close, where a
-     * billing screen rendered "billed annually" over a monthly charge.
-     */
-    public static function cycleForPrice(?string $priceId): ?string
-    {
-        if ($priceId === null || $priceId === '') {
-            return null;
-        }
-
-        return BillingCatalogue::productForStripePrice($priceId)['cycle'] ?? null;
-    }
-
-    /**
-     * The Stripe price that sells [$tier] on [$cycle], or null when none does.
-     *
-     * An exact pair match, never a nearest one. A checkout asks for the price
-     * behind the figure it just showed the customer, so answering with the
-     * tier's other price would charge an amount the screen did not display,
-     * which is precisely the mismatch this lookup exists to prevent. An adopter
-     * who sells a tier one way only therefore refuses the other way with a 422
-     * rather than quietly billing the wrong figure.
-     *
-     * The pair names ONE product, the first in config order, and its Stripe ref
-     * is the answer. A product for the pair with no Stripe ref sells it on the
-     * stores only, so the card rail refuses it rather than reaching past it for
-     * another product: write one product per (tier, cycle) carrying every
-     * rail's ref, and keep a grandfathered price (still mapped so its webhooks
-     * grant) on a product listed below the one you want SOLD.
-     */
-    public static function priceFor(string $tier, string $cycle): ?string
-    {
-        return BillingCatalogue::productForTierAndCycle($tier, $cycle)['refs']['stripe_price'] ?? null;
-    }
-
-    /**
      * Every Stripe price a subscription product carries, with the tier and
      * cycle it sells.
      *
