@@ -2,10 +2,14 @@
 
 namespace FlutterSdk\MagicStarter\Filament\Resources\Teams\Tables;
 
+use Filament\Actions\Action;
+use Filament\Resources\Pages\ListRecords;
+use Filament\Support\Icons\Heroicon;
 use Filament\Tables\Columns\IconColumn;
 use Filament\Tables\Columns\TextColumn;
 use Filament\Tables\Table;
 use FlutterSdk\MagicStarter\Features;
+use Illuminate\Database\Eloquent\Model;
 
 /**
  * Lists every team with its owner, size and, under the billing feature, its plan.
@@ -43,6 +47,18 @@ class TeamsTable
                     ->dateTime()
                     ->sortable()
                     ->toggleable(isToggledHiddenByDefault: true),
+            ])
+            // A link and not `EditAction`, which would save from a modal without
+            // the contract. The URL comes from the page's own resource, so an
+            // application's `teamResource()` override links to its own routes.
+            ->recordActions([
+                Action::make('edit')
+                    ->label(__('magic-starter::admin_teams.actions.edit'))
+                    ->icon(Heroicon::OutlinedPencilSquare)
+                    ->url(static fn (Model $record, ListRecords $livewire): string => $livewire::getResource()::getUrl(
+                        'edit',
+                        ['record' => $record],
+                    )),
             ])
             ->defaultSort('created_at', 'desc');
     }

@@ -308,6 +308,94 @@ class MiscResourcesTest extends FilamentTestCase
             ->assertDontSee('plain-new-password');
     }
 
+    public function test_the_audit_title_names_the_subject_of_a_model_event_and_leaves_a_dotted_event_alone(): void
+    {
+        $owner = $this->admin();
+
+        $this->assertSame(
+            'ConcreteAdminUser updated',
+            AuditResource::getRecordTitle($this->audit($owner, 'updated')),
+        );
+        $this->assertSame(
+            'admin.user_impersonated',
+            AuditResource::getRecordTitle($this->audit($owner, 'admin.user_impersonated')),
+        );
+
+        Livewire::actingAs($owner)
+            ->test(ViewAudit::class, ['record' => $this->audit($owner, 'created')->getKey()])
+            ->assertSee('ConcreteAdminUser created')
+            ->assertDontSee('View created');
+    }
+
+    public function test_the_audit_names_its_actor_the_system_or_a_deleted_user(): void
+    {
+        $owner = $this->admin();
+        $byUser = $this->audit($owner, 'user.updated');
+        $bySystem = $this->audit($owner, 'updated', [
+            'actor_type' => null,
+            'actor_id' => null,
+        ]);
+        $byDeletedUser = $this->audit($owner, 'deleted', ['actor_id' => null]);
+        // Same key as the user, another actor type: it must not borrow the name.
+        $byRobot = $this->audit($owner, 'synced', ['actor_type' => 'App\\Models\\Robot']);
+
+        Livewire::actingAs($owner)
+            ->test(ListAudits::class)
+            ->assertTableColumnStateSet('actor', 'Ops (' . self::ADMIN_EMAIL . ')', $byUser)
+            ->assertTableColumnStateSet('actor', 'System', $bySystem)
+            ->assertTableColumnStateSet('actor', 'Deleted user', $byDeletedUser)
+            ->assertTableColumnStateSet('actor', 'Robot ' . $owner->getKey(), $byRobot)
+            ->assertTableColumnFormattedStateSet('auditable_type', 'ConcreteAdminUser', $byUser);
+    }
+
+    public function test_the_audit_list_finds_rows_by_the_acting_users_name(): void
+    {
+        $owner = $this->admin();
+        $other = $this->admin('other@example.com');
+        $other->forceFill(['name' => 'Quinn'])->save();
+
+        $mine = $this->audit($owner, 'user.updated');
+        $theirs = $this->audit($other, 'user.updated');
+
+        Livewire::actingAs($owner)
+            ->test(ListAudits::class)
+            ->searchTable('quinn')
+            ->assertCanSeeTableRecords([$theirs])
+            ->assertCanNotSeeTableRecords([$mine]);
+    }
+
+    public function test_the_audit_changes_table_shows_only_the_sides_the_row_recorded(): void
+    {
+        $owner = $this->admin();
+        $created = $this->audit($owner, 'created', [
+            'new_values' => [
+                'name' => 'Ops',
+                'flags' => ['beta' => true],
+            ],
+        ]);
+        $updated = $this->audit($owner, 'updated', [
+            'old_values' => [
+                'name' => 'Old Name',
+                'phone' => '',
+            ],
+            'new_values' => [
+                'name' => 'New Name',
+                'phone' => '+905551112233',
+                'locale' => 'tr',
+            ],
+        ]);
+
+        Livewire::actingAs($owner)
+            ->test(ViewAudit::class, ['record' => $created->getKey()])
+            ->assertSee('After')
+            ->assertDontSee('Before')
+            ->assertSee('{"beta":true}');
+
+        Livewire::actingAs($owner)
+            ->test(ViewAudit::class, ['record' => $updated->getKey()])
+            ->assertSeeInOrder(['Before', 'After', 'name', 'Old Name', 'New Name', 'phone', '""', '+905551112233', 'locale', '-', 'tr']);
+    }
+
     public function test_the_audits_relation_manager_scopes_to_its_owner_without_a_relation_on_the_model(): void
     {
         $owner = $this->admin();

@@ -4,6 +4,13 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Changed
+
+- **The audit entry page reads as a record of what happened.** Its sections span the page instead of squeezing Before and After into two narrow columns beside the summary, and the changes are one Field, Before, After table that shows only the sides the row recorded (no empty Before on a creation); it stacks into labelled cards on a phone. The title names the subject and event (`Team updated`) instead of "View updated", a dotted event such as `admin.team.updated` stands alone, the subject type is the class name without its namespace (the full name is the tooltip), and the subject id is monospaced and copyable. The actor is the user's name and address, linked to the user, or "System" for a row with no actor, or "Deleted user"; the related user is named and linked the same way. A stored empty string reads `""`, so `-` keeps meaning "not recorded". Context is collapsible. (`src/Filament/Resources/Audits/AuditResource.php`, `src/Filament/Resources/Audits/Pages/ViewAudit.php`)
+- **The audit list names its rows.** One Subject column carries the short class name over the id, the Actor column shows the acting user's name and is searchable by name or address, and the event badge is coloured by its verb (created, updated, deleted, `admin.*`). Only user-acted rows load their user, so a row from another actor type never runs a user key query that its key cannot satisfy. (`src/Filament/Resources/Audits/AuditResource.php`, `src/Audit/Audit.php`)
+- **Teams have an edit link and a title.** Each row of the team list carries an Edit action like the user list, and the edit page and breadcrumb name the team. Setting the record title also lists teams in the panel's global search. (`src/Filament/Resources/Teams/Tables/TeamsTable.php`, `src/Filament/Resources/Teams/TeamResource.php`)
+- `lang/{en,tr}/admin_misc.php`: `audits.columns.subject_type` and `audits.columns.subject_id` became `audits.columns.subject`; `audits.view.actor_type` and `audits.view.actor_id` became `audits.view.actor`; `audits.view.system`, `deleted_user` and `changes` are new. An application that published these files keeps its old keys until it republishes.
+
 ## [0.0.18] - 2026-10-06
 
 ### Fixed

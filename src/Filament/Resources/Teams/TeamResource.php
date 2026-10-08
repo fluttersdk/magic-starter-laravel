@@ -36,6 +36,8 @@ class TeamResource extends MagicStarterResource
 {
     protected static string|BackedEnum|null $navigationIcon = Heroicon::OutlinedUserGroup;
 
+    protected static ?string $recordTitleAttribute = 'name';
+
     protected static function resolveModel(): string
     {
         return MagicStarter::teamModel();
