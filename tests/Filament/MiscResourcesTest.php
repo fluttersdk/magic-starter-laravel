@@ -359,7 +359,7 @@ class MiscResourcesTest extends FilamentTestCase
 
         Livewire::actingAs($owner)
             ->test(ListAudits::class)
-            ->searchTable('Quinn')
+            ->searchTable('quinn')
             ->assertCanSeeTableRecords([$theirs])
             ->assertCanNotSeeTableRecords([$mine]);
     }

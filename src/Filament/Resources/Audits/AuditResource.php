@@ -46,6 +46,11 @@ class AuditResource extends MagicStarterResource
      */
     protected const WRAP_ANYWHERE = ['style' => 'overflow-wrap: anywhere;'];
 
+    /**
+     * How many matching users an actor search considers.
+     */
+    protected const ACTOR_SEARCH_LIMIT = 100;
+
     protected static string|BackedEnum|null $navigationIcon = Heroicon::OutlinedClipboardDocumentList;
 
     protected static ?string $recordTitleAttribute = 'event';
@@ -316,7 +321,10 @@ class AuditResource extends MagicStarterResource
      *
      * The user keys are fetched first and compared as strings, which is how
      * `actor_id` is stored: a subquery would compare varchar against the user
-     * key's own type, which PostgreSQL refuses.
+     * key's own type, which PostgreSQL refuses. The lookup is capped at
+     * {@see ACTOR_SEARCH_LIMIT} users, so a one-letter search on a large user
+     * table binds a bounded key list rather than one parameter per user.
+     * Matching is case-insensitive on every driver, like Filament's own search.
      *
      * @param  Builder<Audit>  $query
      * @return Builder<Audit>
@@ -329,14 +337,15 @@ class AuditResource extends MagicStarterResource
 
         $keys = $userModel::query()
             ->where(static fn (Builder $users): Builder => $users
-                ->where('name', 'like', $like)
-                ->orWhere('email', 'like', $like))
+                ->whereLike('name', $like)
+                ->orWhereLike('email', $like))
+            ->limit(static::ACTOR_SEARCH_LIMIT)
             ->pluck($user->getKeyName())
             ->map(static fn (mixed $key): string => (string) $key)
             ->all();
 
         return $query->where(static fn (Builder $audits): Builder => $audits
-            ->where('actor_id', 'like', $like)
+            ->whereLike('actor_id', $like)
             ->orWhere(static fn (Builder $byUser): Builder => $byUser
                 ->where('actor_type', $user->getMorphClass())
                 ->whereIn('actor_id', $keys)));
