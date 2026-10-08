@@ -486,6 +486,149 @@ class SyncRevenueCatEntitlementTest extends TestCase
     }
 
     /**
+     * The v1 API keys a Play subscription by its BARE subscription id and names
+     * the base plan in `product_plan_identifier`, so the product id the catalogue
+     * knows (`<sub>:<plan>`) has to be composed from the two.
+     */
+    public function test_a_play_subscription_with_a_base_plan_stores_the_composed_product_id(): void
+    {
+        $this->recordEntitlementWrites();
+
+        $billable = $this->makeBillable([]);
+
+        $this->fakeAuthoritativeReads([
+            (string) $billable->getKey() => $this->subscriber([
+                'starter_pro' => $this->subscription([
+                    'store' => 'play_store',
+                    'product_plan_identifier' => 'monthly',
+                ]),
+            ]),
+        ]);
+
+        $this->sync($this->event('INITIAL_PURCHASE', $billable, ['store' => 'PLAY_STORE']));
+
+        $this->assertCount(1, RecordingEntitlementWriter::$claims);
+        $this->assertSame('pro', RecordingEntitlementWriter::$claims[0]->plan);
+        $this->assertSame(self::PLAY_PRO, RecordingEntitlementWriter::$claims[0]->productId);
+
+        $billable->refresh();
+        $this->assertSame('pro', $billable->getAttribute('plan'));
+        $this->assertSame(self::PLAY_PRO, $billable->getAttribute('plan_product_id'));
+    }
+
+    /**
+     * A bare Play subscription id names the tier (the catalogue keeps one tier
+     * per Play subscription) and nothing finer: a product or a cycle read off it
+     * would be a guess.
+     */
+    public function test_a_bare_play_subscription_id_grants_the_tier_with_no_product(): void
+    {
+        $this->recordEntitlementWrites();
+
+        $billable = $this->makeBillable([]);
+
+        $this->fakeAuthoritativeReads([
+            (string) $billable->getKey() => $this->subscriber([
+                'starter_pro' => $this->subscription(['store' => 'play_store']),
+            ]),
+        ]);
+
+        $this->sync($this->event('INITIAL_PURCHASE', $billable, ['store' => 'PLAY_STORE']));
+
+        $this->assertCount(1, RecordingEntitlementWriter::$claims);
+        $this->assertSame('pro', RecordingEntitlementWriter::$claims[0]->plan);
+        $this->assertNull(RecordingEntitlementWriter::$claims[0]->productId);
+
+        $billable->refresh();
+        $this->assertSame('pro', $billable->getAttribute('plan'));
+        $this->assertNull($billable->getAttribute('plan_product_id'));
+    }
+
+    /**
+     * A base plan the catalogue does not list falls back to the subscription's
+     * tier and records no product, rather than storing an id nothing maps.
+     */
+    public function test_a_play_base_plan_missing_from_the_catalogue_grants_the_tier_with_no_product(): void
+    {
+        $this->recordEntitlementWrites();
+
+        $billable = $this->makeBillable([]);
+
+        $this->fakeAuthoritativeReads([
+            (string) $billable->getKey() => $this->subscriber([
+                'starter_pro' => $this->subscription([
+                    'store' => 'play_store',
+                    'product_plan_identifier' => 'annual',
+                ]),
+            ]),
+        ]);
+
+        $this->sync($this->event('INITIAL_PURCHASE', $billable, ['store' => 'PLAY_STORE']));
+
+        $this->assertCount(1, RecordingEntitlementWriter::$claims);
+        $this->assertSame('pro', RecordingEntitlementWriter::$claims[0]->plan);
+        $this->assertNull(RecordingEntitlementWriter::$claims[0]->productId);
+    }
+
+    /**
+     * An App Store id has no base plan and still matches exactly, and it is the
+     * id that is stored.
+     */
+    public function test_an_app_store_product_id_still_matches_exactly(): void
+    {
+        $this->recordEntitlementWrites();
+
+        $billable = $this->makeBillable([]);
+
+        $this->fakeAuthoritativeReads([
+            (string) $billable->getKey() => $this->subscriber([
+                self::APP_STORE_BUSINESS => $this->subscription(),
+            ]),
+        ]);
+
+        $this->sync($this->event('INITIAL_PURCHASE', $billable));
+
+        $this->assertCount(1, RecordingEntitlementWriter::$claims);
+        $this->assertSame('business', RecordingEntitlementWriter::$claims[0]->plan);
+        $this->assertSame(self::APP_STORE_BUSINESS, RecordingEntitlementWriter::$claims[0]->productId);
+    }
+
+    /**
+     * A Play subscription no catalogue product sells stays unmapped, whatever
+     * base plan it names, and the warning carries the composed id.
+     */
+    public function test_an_unmapped_play_subscription_warns_and_writes_nothing(): void
+    {
+        Log::spy();
+
+        $billable = $this->makeBillable([
+            'plan' => 'business',
+            'plan_status' => PlanStatus::ACTIVE->value,
+            'plan_provider' => BillingProvider::PLAY_STORE->value,
+        ]);
+
+        $this->fakeAuthoritativeReads([
+            (string) $billable->getKey() => $this->subscriber([
+                'unknown_sub' => $this->subscription([
+                    'store' => 'play_store',
+                    'product_plan_identifier' => 'annual',
+                ]),
+            ]),
+        ]);
+
+        $this->sync($this->event('RENEWAL', $billable, ['store' => 'PLAY_STORE']));
+
+        $billable->refresh();
+        $this->assertSame('business', $billable->getAttribute('plan'));
+
+        $this->assertWarned([
+            'reason' => 'unmapped_product',
+            'billable_id' => $billable->getKey(),
+            'product_id' => 'unknown_sub:annual',
+        ]);
+    }
+
+    /**
      * A `TRANSFER` re-reads BOTH sides: the source loses the subscription and
      * the destination gains it.
      *

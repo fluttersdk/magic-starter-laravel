@@ -721,15 +721,17 @@ class BillingControllerTest extends TestCase
 
         $user = $this->createUser('plans@example.test');
 
-        // Every key the adopter wrote travels untouched; `cycles` is the one
-        // field the endpoint DERIVES, and it says which of a tier's display
-        // figures can actually be bought. Without it a catalogue that prices a
-        // tier annually while the price map does not renders an annual button
-        // and answers 422 after the customer commits.
+        // Every key the adopter wrote travels untouched; `cycles` and
+        // `products` are the two fields the endpoint DERIVES from the products
+        // that sell the tier. This catalogue sells nothing, so both are empty
+        // LISTS rather than absent.
         $expected = [];
 
         foreach (config('magic-starter.billing.tiers') as $id => $definition) {
-            $expected[] = ['id' => $id] + $definition + ['cycles' => []];
+            $expected[] = ['id' => $id] + $definition + [
+                'cycles' => [],
+                'products' => [],
+            ];
         }
 
         $this->ask($user, '/billing/plans')
@@ -766,9 +768,149 @@ class BillingControllerTest extends TestCase
         $this->ask($this->createUser('shape@example.test'), '/billing/plans')
             ->assertOk()
             ->assertExactJson(['data' => [
-                ['id' => 'pro', 'name' => 'Pro', 'cycles' => []],
-                ['id' => 'business', 'cycles' => []],
+                ['id' => 'pro', 'name' => 'Pro', 'cycles' => [], 'products' => []],
+                ['id' => 'business', 'cycles' => [], 'products' => []],
             ]]);
+    }
+
+    /**
+     * Each tier row lists the catalogue products that sell it, with web prices
+     * the client can show without doing amount math.
+     *
+     * `data` stays a LIST of tier rows, floor first, because the client decoder
+     * refuses anything else; the products ride INSIDE the row they sell rather
+     * than beside it. A one-off product names no tier, so it belongs to no row.
+     *
+     * The display string is checked per currency because the exponent differs:
+     * a hardcoded `/ 100` would show the yen price a hundred times too small.
+     */
+    public function test_each_tier_row_lists_the_products_that_sell_it_with_web_prices(): void
+    {
+        $this->bootBillingRoutes('user');
+
+        config([
+            'magic-starter.billing.products' => [
+                'pro_monthly' => [
+                    'type' => 'subscription',
+                    'tier' => 'pro',
+                    'cycle' => 'monthly',
+                    'prices' => [
+                        'web' => [
+                            'USD' => 1900,
+                            'JPY' => 2900,
+                        ],
+                        'app_store' => ['USD' => 2299],
+                    ],
+                    'refs' => [
+                        'stripe_price' => 'price_pro_monthly',
+                        'app_store' => 'com.example.pro.monthly',
+                    ],
+                ],
+                'pro_annual' => [
+                    'type' => 'subscription',
+                    'tier' => 'pro',
+                    'cycle' => 'annual',
+                    'refs' => ['play' => 'pro:annual'],
+                ],
+                'credits_100' => [
+                    'type' => 'consumable',
+                    'credits' => 100,
+                    'prices' => ['web' => ['USD' => 500]],
+                ],
+            ],
+        ]);
+
+        $response = $this->ask($this->createUser('products@example.test'), '/billing/plans')->assertOk();
+        $data = $response->json('data');
+
+        $this->assertTrue(array_is_list($data));
+        $this->assertSame(['free', 'pro', 'business'], array_column($data, 'id'));
+        $this->assertSame([], $data[0]['products']);
+        $this->assertSame([], $data[2]['products']);
+
+        $this->assertSame([
+            [
+                'key' => 'pro_monthly',
+                'type' => 'subscription',
+                'tier' => 'pro',
+                'cycle' => 'monthly',
+                'prices' => [
+                    'web' => [
+                        'USD' => [
+                            'amount_minor' => 1900,
+                            'display' => '19.00 USD',
+                        ],
+                        'JPY' => [
+                            'amount_minor' => 2900,
+                            'display' => '2900 JPY',
+                        ],
+                    ],
+                ],
+            ],
+            [
+                'key' => 'pro_annual',
+                'type' => 'subscription',
+                'tier' => 'pro',
+                'cycle' => 'annual',
+                'prices' => ['web' => []],
+            ],
+        ], $data[1]['products']);
+
+        // A product with no web price still carries a `web` OBJECT, because a
+        // client decoding a currency map cannot read `[]` as one.
+        $this->assertStringContainsString('"prices":{"web":{}}', (string) $response->getContent());
+
+        // Only a product with a Stripe price makes a cycle sellable on this rail.
+        $this->assertSame(['monthly'], $data[1]['cycles']);
+    }
+
+    /**
+     * The entitlement names the catalogue product it sits on and the consumer's
+     * allowances, in the shapes the client decoder reads.
+     *
+     * `owned` is a LIST and `balances` and `allowances` are OBJECTS even when
+     * empty: PHP encodes an empty array as `[]`, which a client decoding a map
+     * refuses, so the empty object is asserted on the raw body.
+     */
+    public function test_the_entitlement_names_its_catalogue_product_and_the_bound_allowances(): void
+    {
+        config([
+            'magic-starter.billing.products' => [
+                'pro_monthly' => [
+                    'type' => 'subscription',
+                    'tier' => 'pro',
+                    'cycle' => 'monthly',
+                    'refs' => ['stripe_price' => 'price_pro_monthly'],
+                ],
+                'pro_annual' => [
+                    'type' => 'subscription',
+                    'tier' => 'pro',
+                    'cycle' => 'annual',
+                    'refs' => ['stripe_price' => 'price_pro_annual'],
+                ],
+            ],
+        ]);
+
+        $this->bindUsageReporter();
+        $this->bootBillingRoutes('team');
+
+        $owner = $this->createUser('product-read@example.test');
+        $team = $this->createTeam($owner, [
+            'plan' => 'pro',
+            'plan_status' => 'active',
+            'plan_provider' => 'stripe',
+            'plan_product_id' => 'price_pro_annual',
+        ]);
+        $this->setCurrentTeam($owner, $team);
+
+        $response = $this->ask($owner, '/billing')->assertOk();
+
+        $this->assertSame('pro_annual', $response->json('data.product'));
+        $this->assertSame('annual', $response->json('data.cycle'));
+        $this->assertSame([], $response->json('data.owned'));
+        $this->assertSame(['seats' => ['used' => 3, 'limit' => 10]], $response->json('data.allowances'));
+        $this->assertStringContainsString('"owned":[]', (string) $response->getContent());
+        $this->assertStringContainsString('"balances":{}', (string) $response->getContent());
     }
 
     /**

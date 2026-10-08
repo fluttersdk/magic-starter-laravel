@@ -9,6 +9,9 @@ use FlutterSdk\MagicStarter\Enums\BillingProvider;
 use FlutterSdk\MagicStarter\Http\Resources\SubscriptionResource;
 use FlutterSdk\MagicStarter\MagicStarter;
 use FlutterSdk\MagicStarter\Policies\BillingPolicy;
+use FlutterSdk\MagicStarter\Support\BillingCatalogue;
+use FlutterSdk\MagicStarter\Support\Currency;
+use FlutterSdk\MagicStarter\Support\PriceTable;
 use FlutterSdk\MagicStarter\Support\ReadsBillableAttributes;
 use FlutterSdk\MagicStarter\Support\StripeSubscriptionState;
 use Illuminate\Contracts\Auth\Authenticatable;
@@ -18,10 +21,10 @@ use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Gate;
 use Illuminate\Support\Facades\Log;
-use Illuminate\Validation\Rule;
 use Illuminate\Validation\ValidationException;
 use Laravel\Cashier\Invoice;
 use Laravel\Cashier\PaymentMethod;
+use stdClass;
 use Stripe\Exception\ApiErrorException;
 use Stripe\StripeObject;
 use Symfony\Component\HttpFoundation\Response as HttpResponse;
@@ -59,11 +62,12 @@ use Symfony\Component\HttpFoundation\Response as HttpResponse;
  * - 404 from a write, there is no card-rail subscription to change. Reached only
  *   AFTER the store guard, so it can never claim there is nothing to cancel
  *   while a store is still charging the customer every month.
- * - 422, the request named a tier the adopter does not sell, or named one they
- *   sell and have mapped no Stripe price to, or the adopter has published no
- *   tiers at all. Three faults in one channel because they share one remedy
- *   shape (fix the config, or ask for a tier that exists) and each carries its
- *   own sentence naming which of the three it is.
+ * - 422 with {@see self::REFUSAL_PRODUCT_NOT_SELLABLE}, the request named a
+ *   catalogue key this rail cannot sell: unknown, not a subscription, the free
+ *   floor, or a subscription with no Stripe price. Without a `code`, the
+ *   adopter has published no tier ranking at all. Both share one remedy shape
+ *   (fix the config, or ask for a product that exists) and each carries its
+ *   own sentence.
  *
  * EVERY CASHIER CALL SITS BEHIND `method_exists()`, and that is not defensive
  * padding. This package ships the billing COLUMNS and the endpoints, not the
@@ -115,6 +119,16 @@ class BillingController
     public const REASON_SUBSCRIPTION_EXISTS = 'subscription_exists';
 
     /**
+     * The 422 `code` for a checkout or swap naming a product this rail cannot
+     * sell.
+     *
+     * One code for every way a key can fail, because the client's next step is
+     * the same for all of them (offer something else) and the sentence beside
+     * it already tells an adopter which config closes the gap.
+     */
+    public const REFUSAL_PRODUCT_NOT_SELLABLE = 'product_not_sellable';
+
+    /**
      * How many invoices one page of the invoice list carries.
      *
      * Untyped on purpose: the package's PHP floor is 8.2 and a typed class
@@ -132,26 +146,24 @@ class BillingController
     }
 
     /**
-     * Return the adopter's published tier catalogue, cheapest tier first.
+     * Return the adopter's tier rows, floor first, each carrying the catalogue
+     * products that sell it.
      *
      * Served from config with no rail call and no per-subject state, so it is
-     * safe on the hot path, and read through
-     * {@see ReadsBillableAttributes::planCatalogue()} rather than straight from
-     * `config()` so that the endpoint, the checkout validation and the paid-tier
-     * floor all read exactly the same sanitised catalogue.
+     * safe on the hot path. The rows come from
+     * {@see ReadsBillableAttributes::planCatalogue()}, which is
+     * {@see BillingCatalogue::tiers()}: the `tier_order` ranking decides which
+     * tiers exist and in what order, and the `tiers` map only describes them.
      *
-     * Entries reach the client VERBATIM but for ONE key. The package names the
-     * fields every billing screen needs (`id`, `name`, `tagline`, `monthly`,
-     * `annual`, `currency`, `features`, `recommended`) and passes everything
-     * else through untouched, which is where a tier's limits and any capability
-     * copy live. The exception is `cycles`, which
-     * {@see self::sellableCatalogue()} DERIVES from the price map and writes
-     * over: it is a reserved key, said so in the config comment beside the
-     * catalogue, and an adopter carrying their own would otherwise have it
-     * silently replaced by a list computed from somewhere else. A
-     * schema for those would mean this package owning product knowledge it does
-     * not have, the same reason counting leaves through {@see ReportsUsage} and
-     * the tier vocabulary is the consumer's throughout.
+     * `data` stays a LIST of tier rows rather than a list of products, because
+     * the client decoder refuses anything else and a plan grid is drawn per
+     * tier. A product rides inside the row of the tier it sells; a one-off
+     * product names no tier and has no row to ride in.
+     *
+     * Entries reach the client VERBATIM but for two keys, `cycles` and
+     * `products`, which {@see self::sellableCatalogue()} DERIVES from the
+     * products and writes over. Everything else (a tier's limits, capability
+     * copy) is the adopter's product knowledge and passes through untouched.
      *
      * An adopter who has published nothing gets an empty list rather than a 404.
      * The catalogue being empty is a legitimate state (a fresh install sells
@@ -166,27 +178,18 @@ class BillingController
     }
 
     /**
-     * The published catalogue, with each entry told which cycles it can be SOLD
-     * on.
+     * The tier rows, each told which cycles the card rail can sell it on and
+     * which catalogue products sell it at all.
      *
-     * The catalogue and the price map are two independent config keys, and
-     * nothing on the wire related them. An adopter who fills in both display
-     * figures for a tier but maps only its monthly price therefore ships an
-     * annual button on every billing screen, and the customer learns that price
-     * does not exist from a 422 AFTER committing to buy. That is the same
-     * divergence between what a screen shows and what the rail will do that the
-     * cycle itself was added to close, moved one step later, so it is closed on
-     * the read the client already makes rather than at the point of sale.
+     * `cycles` counts only subscriptions with a Stripe price, because it is what
+     * a web billing screen offers: a tier priced on the stores only would
+     * otherwise render a web button the customer learns about from a 422 AFTER
+     * committing to buy. `products` lists every product of the tier, on any
+     * rail, because the stores buy by the same key.
      *
-     * `cycles` is DERIVED, and it is the ONE key an entry does not carry to the
-     * client verbatim: the write below is unconditional, so an adopter who put
-     * their own `cycles` on a plan entry has it replaced by a list computed from
-     * the price map. That is why it is declared reserved beside the catalogue in
-     * `config/magic-starter.php` and in {@see self::plans()}; two values under
-     * one key, one hand-written and one derived, is a disagreement with no
-     * reader able to tell which they got. An entry with no mapped price at all
-     * gets an empty list, which is the honest answer and the one a client needs
-     * to hide a tier's purchase affordance rather than offer a refusal.
+     * Both writes are unconditional, so an adopter's own `cycles` or `products`
+     * on a tier definition is replaced: two values under one key, one
+     * hand-written and one derived, is a disagreement no reader can resolve.
      *
      * @return array<int, array<string, mixed>>
      */
@@ -198,18 +201,70 @@ class BillingController
             $sellable[$entry['tier']][$entry['cycle']] = true;
         }
 
+        $products = [];
+        $pricing = BillingCatalogue::pricing();
+
+        foreach (BillingCatalogue::products() as $product) {
+            if ($product['tier'] === null) {
+                continue;
+            }
+
+            $products[$product['tier']][] = [
+                'key' => $product['key'],
+                'type' => $product['type'],
+                'tier' => $product['tier'],
+                'cycle' => $product['cycle'],
+                'prices' => [
+                    BillingCatalogue::CHANNEL_WEB => $this->displayPrices(
+                        PriceTable::for($product, BillingCatalogue::CHANNEL_WEB, $pricing),
+                    ),
+                ],
+            ];
+        }
+
         return array_map(
-            static function (array $entry) use ($sellable): array {
+            static function (array $entry) use ($sellable, $products): array {
                 $id = is_string($entry['id'] ?? null) ? $entry['id'] : null;
 
                 $entry['cycles'] = $id === null
                     ? []
                     : array_keys($sellable[$id] ?? []);
+                $entry['products'] = $id === null
+                    ? []
+                    : $products[$id] ?? [];
 
                 return $entry;
             },
             $this->planCatalogue(),
         );
+    }
+
+    /**
+     * One channel's prices with a display string beside each amount, so no
+     * client does minor-unit math.
+     *
+     * An empty table is an empty OBJECT, not an empty array: PHP encodes `[]`
+     * for both, and a client decoding a currency map refuses a list.
+     *
+     * @param  array<string, array{amount_minor: int, source: string}>  $table  {@see PriceTable::for()}.
+     * @return array<string, array{amount_minor: int, display: string}>|stdClass
+     */
+    protected function displayPrices(array $table): array|stdClass
+    {
+        if ($table === []) {
+            return new stdClass;
+        }
+
+        $prices = [];
+
+        foreach ($table as $currency => $price) {
+            $prices[$currency] = [
+                'amount_minor' => $price['amount_minor'],
+                'display' => Currency::display($price['amount_minor'], $currency),
+            ];
+        }
+
+        return $prices;
     }
 
     /**
@@ -436,19 +491,17 @@ class BillingController
     }
 
     /**
-     * Begin a Stripe Checkout session for a tier the adopter publishes,
-     * unwrapped to a JSON `{checkout_url, session_id}` shape.
+     * Begin a Stripe Checkout session for a catalogue product, unwrapped to a
+     * JSON `{checkout_url, session_id}` shape.
      *
      * Cashier's `Checkout` object is never returned or redirected to directly.
      * It is `Responsable` and renders an HTML redirect, which is not an answer a
      * JSON client can follow, so only its two useful fields travel.
      *
-     * WHAT MAY BE BOUGHT is the adopter's own published ranking and nothing
-     * else. The application this was ported from validated against two literal
-     * cases of a tier enum it owned; this package ships no tier vocabulary, so
-     * naming one here would be inventing product knowledge it does not have. The
-     * FLOOR tier is sellable like any other, because deciding that an adopter's
-     * cheapest tier costs nothing is the same invention from the other end.
+     * WHAT MAY BE BOUGHT is a product KEY from the adopter's catalogue, the same
+     * key a store purchase names, and only one this rail can honestly sell
+     * ({@see self::sellablePriceId()}). The key fixes the tier and the cycle
+     * together, so the price charged is the one the screen showed.
      */
     public function checkout(Request $request): JsonResponse
     {
@@ -498,40 +551,21 @@ class BillingController
             );
         }
 
-        // 4. The tier must be one the adopter sells; the two URLs are where
-        //    Stripe sends the customer back and are the client's to choose.
+        // 4. The product is a catalogue key; the two URLs are where Stripe sends
+        //    the customer back and are the client's to choose.
+        $this->guardPublishedRanking();
+
         $validated = $request->validate([
-            'plan' => ['required', 'string', Rule::in($this->sellableTiers())],
-            // The cycle decides WHICH of the tier's prices is charged, so it is
-            // required rather than defaulted. A default would be the whole
-            // defect this parameter closes: a client showing an annual figure
-            // and a producer choosing the monthly price is how a customer gets
-            // billed an amount nothing on screen ever displayed.
-            'cycle' => ['required', 'string', Rule::in(StripeSubscriptionState::CYCLES)],
+            'product' => ['required', 'string'],
             'success_url' => ['required', 'string', 'url'],
             'cancel_url' => ['required', 'string', 'url'],
         ]);
 
-        // 5. A sellable tier with no price behind THIS CYCLE is a config gap and
-        //    not a client fault, so it is refused with its own sentence rather
-        //    than checked out against the tier's other price. An adopter who
-        //    sells a tier one way only refuses the other way here, which is the
-        //    honest answer: the alternative is charging a figure the customer
-        //    was never shown.
-        $priceId = $this->resolvePriceId($validated['plan'], $validated['cycle']);
-
-        abort_if(
-            $priceId === null,
-            HttpResponse::HTTP_UNPROCESSABLE_ENTITY,
-            __('magic-starter::billing.refusals.unmapped_price', [
-                // The cycle is the one dimension this sentence exists to name,
-                // so it is named in the reader's language rather than in the
-                // wire's. The wire word is unchanged and is what the lookup is
-                // keyed by; only what a human is shown goes through the
-                // catalogue.
-                'cycle' => __('magic-starter::billing.cycles.' . $validated['cycle']),
-            ]),
-        );
+        // 5. Only a paid subscription with a Stripe price reaches the rail. A
+        //    store-only product is a config gap and not a client fault, so it is
+        //    refused by a sentence naming the ref that closes it rather than
+        //    checked out against some other product's price.
+        $priceId = $this->sellablePriceId($validated['product']);
 
         // 6. One price, through the SUBSCRIPTION builder. Quantity is not the
         //    client's to send: a request body carrying it would let a caller
@@ -561,7 +595,12 @@ class BillingController
     }
 
     /**
-     * Swap the billable's default subscription onto a different tier's price.
+     * Swap the billable's default subscription onto a different catalogue
+     * product's price.
+     *
+     * A product key carries its cycle, so moving from monthly to annual on the
+     * same tier is a swap like any other rather than a change this endpoint
+     * cannot express.
      *
      * The entitlement on the wire afterwards is still the LOCAL one, because a
      * swap is a Stripe write and the provenance columns are written by the
@@ -582,35 +621,20 @@ class BillingController
         //    which rail owns the subscription does not depend on the body.
         $this->guardStoreOwnedSubscription($billable);
 
+        $this->guardPublishedRanking();
+
         $validated = $request->validate([
-            'plan' => ['required', 'string', Rule::in($this->sellableTiers())],
-            // Required here as well as on checkout, and not because the two
-            // endpoints should look alike: moving a customer from monthly to
-            // annual on the SAME tier is a real change, and a swap that could
-            // not express the cycle would answer 200 while leaving them on the
-            // price they were trying to leave.
-            'cycle' => ['required', 'string', Rule::in(StripeSubscriptionState::CYCLES)],
+            'product' => ['required', 'string'],
         ]);
 
-        // 3. Reached only on a rail this application controls, so an absent
+        // 3. The same sellability rule as checkout's, and before the
+        //    subscription is read: a product a checkout could not have named
+        //    must not be reachable through a swap either.
+        $priceId = $this->sellablePriceId($validated['product']);
+
+        // 4. Reached only on a rail this application controls, so an absent
         //    subscription really does mean there is nothing to swap.
         $subscription = $this->actionableSubscription($billable, 'swap');
-
-        // 4. Same config gap as checkout's, refused the same way.
-        $priceId = $this->resolvePriceId($validated['plan'], $validated['cycle']);
-
-        abort_if(
-            $priceId === null,
-            HttpResponse::HTTP_UNPROCESSABLE_ENTITY,
-            __('magic-starter::billing.refusals.unmapped_price', [
-                // The cycle is the one dimension this sentence exists to name,
-                // so it is named in the reader's language rather than in the
-                // wire's. The wire word is unchanged and is what the lookup is
-                // keyed by; only what a human is shown goes through the
-                // catalogue.
-                'cycle' => __('magic-starter::billing.cycles.' . $validated['cycle']),
-            ]),
-        );
 
         $subscription->swap($priceId);
 
@@ -804,45 +828,95 @@ class BillingController
     }
 
     /**
-     * The tier ids a checkout or a swap may name, refusing when the adopter has
-     * published none.
+     * Refuse every checkout and swap while the adopter publishes no tier
+     * ranking.
      *
-     * Read through {@see ReadsBillableAttributes::tierOrder()} and never
-     * straight from `magic-starter.billing.tier_order`, which is the key the
-     * plan for this port named. The difference is not cosmetic: that reader
-     * falls back to the CATALOGUE's entry ids when no explicit ranking is
-     * published, because a catalogue carries the same cheapest-first convention
-     * and publishing one is already a declaration of order. A reader that went
-     * to the raw key would refuse every tier such an adopter sells while their
-     * own billing screen rendered all of them, and the fault would look like the
-     * client's.
+     * Boot refuses an empty `tier_order` under the billing feature, so this is
+     * reached only by a config changed at runtime. It stays a refusal of its own
+     * rather than folding into {@see self::sellablePriceId()}, because the fault
+     * is in the adopter's config and not in the product the client named: the
+     * sentence names the three catalogue keys that resolve it, where a
+     * per-product refusal would send them reading their client's request body.
      *
-     * The empty case is the whole reason this method exists rather than a bare
-     * `Rule::in()` at each call site. `Rule::in([])` refuses too, but with the
-     * validator's generic sentence, which sends an adopter reading their
-     * client's request body for a fault that is in their config. So the refusal
-     * NAMES the situation and both keys that resolve it. Naming only one would
-     * be wrong half the time now that either list answers.
-     *
-     * A tier is never named here. Which tiers exist and which of them cost money
-     * is the adopter's knowledge, so an empty list refuses everything rather
-     * than falling back to a default this package would have had to invent.
-     *
-     * @return list<string>
-     *
-     * @throws ValidationException When the adopter has published no tiers at all.
+     * @throws ValidationException When no tier ranking is published.
      */
-    protected function sellableTiers(): array
+    protected function guardPublishedRanking(): void
     {
-        $tiers = $this->tierOrder();
-
-        if ($tiers === []) {
-            throw ValidationException::withMessages([
-                'plan' => [__('magic-starter::billing.refusals.no_published_catalogue')],
-            ]);
+        if ($this->tierOrder() !== []) {
+            return;
         }
 
-        return $tiers;
+        throw ValidationException::withMessages([
+            'product' => [__('magic-starter::billing.refusals.no_published_catalogue')],
+        ]);
+    }
+
+    /**
+     * The Stripe price of the catalogue product [$key], refusing a product this
+     * rail cannot sell.
+     *
+     * Sellable here means four things at once, each closing a different way to
+     * charge for the wrong thing: the key is in the catalogue; it is a
+     * SUBSCRIPTION, because this rail opens subscription sessions only and a
+     * one-off price would be refused by Stripe after the customer committed;
+     * its tier is ranked and is not the free floor, which nothing sells; and it
+     * carries a Stripe price, since a product without one is sold on the stores
+     * only and reaching past it for another product's price would charge a
+     * figure the screen did not show.
+     *
+     * The ranking is read per request rather than trusted from boot, so a tier
+     * removed from `tier_order` at runtime stops selling at once.
+     *
+     * @throws ValidationException When the product is not sellable on this rail.
+     */
+    protected function sellablePriceId(string $key): string
+    {
+        $product = BillingCatalogue::product($key);
+
+        if ($product === null || $product['type'] !== BillingCatalogue::TYPE_SUBSCRIPTION) {
+            $this->refuseUnsellableProduct($key);
+        }
+
+        $tierOrder = $this->tierOrder();
+        $tier = $product['tier'];
+        $priceId = $product['refs']['stripe_price'];
+
+        if ($tier === null
+            || $tier === ($tierOrder[0] ?? null)
+            || ! in_array($tier, $tierOrder, true)
+            || $priceId === null
+        ) {
+            $this->refuseUnsellableProduct($key);
+        }
+
+        return $priceId;
+    }
+
+    /**
+     * Refuse a product key with a 422 carrying a machine `code` beside the
+     * localised sentence.
+     *
+     * Raised as a {@see ValidationException} so the `errors` bag still points a
+     * form at the `product` field, with the body replaced so the `code` travels:
+     * the client branches on it and never on the prose.
+     *
+     * @throws ValidationException Always.
+     */
+    protected function refuseUnsellableProduct(string $key): never
+    {
+        $message = (string) __('magic-starter::billing.refusals.product_not_sellable', ['product' => $key]);
+
+        $exception = ValidationException::withMessages([
+            'product' => [$message],
+        ]);
+
+        $exception->response = new JsonResponse([
+            'message' => $message,
+            'code' => self::REFUSAL_PRODUCT_NOT_SELLABLE,
+            'errors' => $exception->errors(),
+        ], HttpResponse::HTTP_UNPROCESSABLE_ENTITY);
+
+        throw $exception;
     }
 
     /**
@@ -872,27 +946,6 @@ class BillingController
         }
 
         return $subscription;
-    }
-
-    /**
-     * The Stripe price id that sells [$tier], or null when none does.
-     *
-     * The reverse direction of {@see StripeSubscriptionState::planForPrice()},
-     * and it goes through that class's own reader rather than through `config()`
-     * a second time. The application this was ported from kept the map under
-     * `cashier.plans` and read it from two places: a webhook asking which tier a
-     * price sells, and this one asking which price sells a tier. Two readers of
-     * one key each decide for themselves what an unusable entry means, and only
-     * one of them has to decide it wrong for an empty price id to become the
-     * price of a paid tier. `prices()` strips those once, for both directions.
-     *
-     * The cast is not decorative. PHP stores a numeric-looking array key as an
-     * INT, so a price id that happens to look like a number comes back from the
-     * reverse lookup as one.
-     */
-    protected function resolvePriceId(string $tier, string $cycle): ?string
-    {
-        return StripeSubscriptionState::priceFor($tier, $cycle);
     }
 
     /**

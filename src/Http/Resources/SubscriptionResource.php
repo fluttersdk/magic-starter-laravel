@@ -3,35 +3,46 @@
 namespace FlutterSdk\MagicStarter\Http\Resources;
 
 use FlutterSdk\MagicStarter\Actions\WriteEntitlement;
+use FlutterSdk\MagicStarter\Contracts\ReportsUsage;
 use FlutterSdk\MagicStarter\Enums\BillingProvider;
 use FlutterSdk\MagicStarter\Enums\PlanStatus;
+use FlutterSdk\MagicStarter\Support\BillingCatalogue;
 use FlutterSdk\MagicStarter\Support\ReadsBillableAttributes;
 use FlutterSdk\MagicStarter\Support\StripeSubscriptionState;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Http\Request;
 use Illuminate\Http\Resources\Json\JsonResource;
 use Laravel\Cashier\Concerns\ManagesCustomer;
+use stdClass;
 
 /**
  * JSON shape for a billable subject's billing entitlement, in rail-neutral words.
  *
- * Every field is read from the billable's own row: `plan`/`plan_status` are the
- * single entitlement truth and the eight `plan_*` provenance columns are written
- * by whichever rail's event last claimed the subject ({@see WriteEntitlement}).
- * Naming a rail on the wire would force every client to learn one rail's dialect
- * and then relearn it when a second rail arrives, so the rail's own words survive
- * only in `provider_status`, which is opaque debug text and never a gate.
+ * Every entitlement field is read from the billable's own row: `plan`/
+ * `plan_status` are the single entitlement truth and the eight `plan_*`
+ * provenance columns are written by whichever rail's event last claimed the
+ * subject ({@see WriteEntitlement}). Naming a rail on the wire would force every
+ * client to learn one rail's dialect and then relearn it when a second rail
+ * arrives, so the rail's own words survive only in `provider_status`, which is
+ * opaque debug text and never a gate.
  *
- * FOUR of the twelve fields are non-null guaranteed, and a decoder may rely on
- * it: `plan_status`, `subscribed`, `provider`, `manage_via`. The other eight are
- * nullable, and `plan` is nullable HERE while the application this shape was
- * ported from could promise it non-null. That promise was kept by a tier reader
- * that read a revoked NULL back as its own free tier, and this package has no
- * tier vocabulary to name one with, so a null `plan` on this wire means the
- * billable holds nothing and the client decides what to call that. Four of the
- * remaining seven are nullable on the Stripe rail BY DESIGN rather than by
- * accident: `manage_url` and `grace_period_ends_at` have no Stripe source at all,
- * and `provider_status` and `product_id` stay null until a rail writes them.
+ * SEVEN of the seventeen fields are non-null guaranteed, and a decoder may rely
+ * on it: `plan_status`, `subscribed`, `provider`, `manage_via`, and the three
+ * collections `owned` (a list), `balances` and `allowances` (both objects, `{}`
+ * when empty, never `[]`). The other ten are nullable, and `plan` is nullable
+ * HERE while the application this shape was ported from could promise it
+ * non-null. That promise was kept by a tier reader that read a revoked NULL back
+ * as its own free tier, and this package has no tier vocabulary to name one
+ * with, so a null `plan` on this wire means the billable holds nothing and the
+ * client decides what to call that. Several of the rest are nullable on the
+ * Stripe rail BY DESIGN rather than by accident: `manage_url` and
+ * `grace_period_ends_at` have no Stripe source at all, `provider_status` and
+ * `product_id` stay null until a rail writes them, and `product` and `cycle`
+ * stay null while the catalogue maps no product to that id.
+ *
+ * `owned` and `balances` are always empty for now: one-off purchases and credit
+ * ledgers are not stored by this package yet, and the keys ship so a client
+ * decoder can rely on their shape before they carry anything.
  *
  * Every provenance read goes through {@see ReadsBillableAttributes} rather than
  * through a typed property, because this package ships the COLUMNS and not the
@@ -67,6 +78,8 @@ class SubscriptionResource extends JsonResource
         $plan = $this->stringAttribute($billable, 'plan');
         $status = PlanStatus::fromWire($this->stringAttribute($billable, 'plan_status'));
         $provider = BillingProvider::fromWire($this->stringAttribute($billable, 'plan_provider'));
+        $productId = $this->stringAttribute($billable, 'plan_product_id');
+        $product = $this->catalogueProduct($productId);
 
         return [
             // The consuming application's own tier word, passed through, or null
@@ -77,25 +90,25 @@ class SubscriptionResource extends JsonResource
             // Nullable on purpose: null means the rail has not said whether this
             // subscription rolls over, which is not the claim `false` makes.
             'renews' => $this->booleanAttribute($billable, 'plan_renews'),
-            // How often the customer is charged, DERIVED from the price their
-            // subscription sits on rather than stored beside it, so it cannot
-            // drift from the price that is actually billing them.
+            // How often the customer is charged, DERIVED from the catalogue
+            // product their subscription sits on rather than stored beside it,
+            // so it cannot drift from what is actually billing them.
             //
-            // Null on three honest occasions and none of them defaulted: a
-            // billable on no rail, a price the adopter mapped without declaring
-            // its cycle, and a STORE subscription, whose `plan_product_id` is a
-            // store product id that this Stripe catalogue rightly cannot name.
-            // A default would put a billing claim on a screen that nothing
-            // verified, which is the defect this field exists to close.
-            'cycle' => StripeSubscriptionState::cycleForPrice(
-                $this->stringAttribute($billable, 'plan_product_id'),
-            ),
+            // Null whenever the catalogue maps no product to the rail's id: a
+            // billable on no rail, a price or store id the adopter never mapped,
+            // and a bare Play subscription id, which names no base plan and so
+            // no cycle. A default would put a billing claim on a screen that
+            // nothing verified, which is the defect this field exists to close.
+            'cycle' => $product['cycle'] ?? null,
             'provider' => $provider->value,
             // Debug and support text only. It carries a rail's own word,
             // including words the neutral vocabulary has none for, so it must
             // never reach a gate or a computed field.
             'provider_status' => $this->stringAttribute($billable, 'plan_provider_status'),
-            'product_id' => $this->stringAttribute($billable, 'plan_product_id'),
+            'product_id' => $productId,
+            // The catalogue key the client buys and compares by, the same on
+            // every rail; `product_id` stays the rail's own id for support.
+            'product' => $product['key'] ?? null,
             'manage_via' => $this->manageVia($provider, $billable),
             'manage_url' => $this->manageUrl($provider, $billable),
             // When the paid period ends, whether or not it renews. Deliberately
@@ -104,7 +117,60 @@ class SubscriptionResource extends JsonResource
             'current_period_end' => $this->dateAttribute($billable, 'plan_current_period_end')?->toIso8601String(),
             'trial_ends_at' => $this->trialEndsAt($billable),
             'grace_period_ends_at' => $this->dateAttribute($billable, 'plan_grace_period_ends_at')?->toIso8601String(),
+            'owned' => [],
+            'balances' => new stdClass,
+            'allowances' => $this->allowances($billable),
         ];
+    }
+
+    /**
+     * The catalogue product behind the rail's own product id, or null.
+     *
+     * A Stripe price is tried first and a store id second; the two id spaces do
+     * not overlap in practice (`price_...` against a bundle-style or
+     * `<sub>:<base_plan>` id), so one lookup serves every rail without a branch
+     * per provider. A store id is matched EXACTLY, so a bare Play subscription
+     * id names nothing rather than the first base plan sharing its prefix.
+     *
+     * @return array{key: string, cycle: ?string}|null
+     */
+    protected function catalogueProduct(?string $productId): ?array
+    {
+        $product = BillingCatalogue::productForStripePrice($productId)
+            ?? BillingCatalogue::productForStoreId($productId);
+
+        if ($product === null) {
+            return null;
+        }
+
+        return [
+            'key' => $product['key'],
+            'cycle' => $product['cycle'],
+        ];
+    }
+
+    /**
+     * The consumer's usage report for this billable, as a JSON object.
+     *
+     * Read through {@see ReportsUsage} only while a consumer has bound it; the
+     * package ships no default because an empty map reads to a cap as "used
+     * nothing". Unbound, or bound and reporting nothing, it is an empty OBJECT:
+     * PHP would encode `[]`, which a client decoding a map refuses. The
+     * reporter is the consumer's own counting, not a payment rail, so it does
+     * not break this resource's no-network rule, but it does run on every
+     * entitlement read once bound.
+     *
+     * @return array<string, array{used: int, limit: int|null}>|stdClass
+     */
+    protected function allowances(Model $billable): array|stdClass
+    {
+        if (! app()->bound(ReportsUsage::class)) {
+            return new stdClass;
+        }
+
+        $usage = app(ReportsUsage::class)->forBillable($billable);
+
+        return $usage === [] ? new stdClass : $usage;
     }
 
     /**

@@ -105,14 +105,21 @@ return [
          * adopter reads their client's request body looking for a problem that
          * is in their config file.
          *
-         * 'no_published_catalogue' names BOTH keys because either one answers.
-         * The ranking is read cheapest-first from 'tier_order' when it is
-         * published and from the catalogue's entry ids when it is not, so an
-         * adopter who has published only the catalogue already has a valid list
-         * and naming the other key alone would send half of them to the wrong
-         * file.
+         * 'no_published_catalogue' names all three catalogue keys because a
+         * sale needs all three: 'tier_order' ranks the tiers and is the only
+         * list of tiers that exist, 'tiers' describes them, and 'products'
+         * sells them. The removed 'plans' key is not named, because boot
+         * refuses a config that still carries it.
          */
-        'no_published_catalogue' => 'No plans are published, so there is nothing to buy yet. Publish magic-starter.billing.plans or magic-starter.billing.tier_order to sell one.',
+        'no_published_catalogue' => 'No plans are published, so there is nothing to buy yet. Rank your tiers cheapest first in magic-starter.billing.tier_order, describe them in magic-starter.billing.tiers and sell them under magic-starter.billing.products.',
+        /*
+         * A checkout or a swap named a product the card rail cannot sell: not
+         * in the catalogue, not a subscription, the free floor, or a
+         * subscription with no Stripe price (sold on the stores only). It names
+         * the product and the ref that would make it sellable here, because the
+         * last case is a config gap rather than a client fault.
+         */
+        'product_not_sellable' => 'The product :product cannot be bought here: only a paid subscription with a Stripe price is sold on this rail. Choose another plan, or set refs.stripe_price on it under magic-starter.billing.products.',
         /*
          * It names the CYCLE because the cycle is what fails. Since a checkout
          * asks for a (tier, cycle) pair, an adopter selling `business` annually

@@ -548,17 +548,20 @@ class SyncRevenueCatEntitlement implements ShouldQueue
         // by hand in App Store Connect and Play Console, so until a human puts
         // their ids on a catalogue product, every event lands on this branch. If it
         // downgraded anybody, going live would be a mass revocation.
-        $plan = $this->planFor($productId);
+        $composedId = $this->composedProductId($productId, $subscription);
+        $mapped = $this->planFor($productId, $composedId, $provider);
 
-        if ($plan === null) {
+        if ($mapped === null) {
             $this->warn(
                 'unmapped_product',
                 'A RevenueCat product id is not mapped to a plan; entitlement left untouched.',
-                ['billable_id' => $billable->getKey(), 'product_id' => $productId],
+                ['billable_id' => $billable->getKey(), 'product_id' => $composedId],
             );
 
             return null;
         }
+
+        ['plan' => $plan, 'productId' => $storedProductId] = $mapped;
 
         // Apple Family Sharing: the access is real and the store granted it, so
         // refusing it would deny a tier the customer genuinely has. But the
@@ -585,7 +588,7 @@ class SyncRevenueCatEntitlement implements ShouldQueue
             // land rather than being refused as a same-tier duplicate.
             authoritative: true,
             providerStatus: $this->eventType(),
-            productId: $productId,
+            productId: $storedProductId,
             currentPeriodEnd: $this->instant($subscription['expires_date'] ?? null),
             renews: $this->renews($subscription),
             gracePeriodEndsAt: $this->instant($subscription['grace_period_expires_date'] ?? null),
@@ -776,13 +779,54 @@ class SyncRevenueCatEntitlement implements ShouldQueue
      * card rail, and a product with no tier behind it (a one-off purchase)
      * reads as unmapped rather than granting a tier nobody published.
      *
-     * Google Play sends `<subscription_id>:<base_plan_id>`, so the ref is that
-     * whole string and the match is exact; keyed on the bare subscription id it
-     * would be an unmapped-product warning on every Android renewal.
+     * Google Play does not arrive as `<subscription_id>:<base_plan_id>` here: the
+     * v1 API keys `subscriber.subscriptions` by the BARE subscription id and
+     * names the base plan in `product_plan_identifier`, which is why
+     * {@see self::composedProductId()} builds the catalogue's ref. The lookup
+     * order is the composed id exactly, then the raw key exactly (every App
+     * Store id), then, on Play only, the bare subscription id, which names the
+     * TIER (the catalogue keeps one tier per Play subscription) and never a
+     * product or a cycle, so the stored product id is null on that last path.
+     *
+     * @return array{plan: string, productId: ?string}|null
      */
-    protected function planFor(string $productId): ?string
+    protected function planFor(string $rawId, string $composedId, BillingProvider $provider): ?array
     {
-        return BillingCatalogue::productForStoreId($productId)['tier'] ?? null;
+        foreach (array_unique([$composedId, $rawId]) as $candidate) {
+            $tier = BillingCatalogue::productForStoreId($candidate)['tier'] ?? null;
+
+            if ($tier !== null) {
+                return ['plan' => $tier, 'productId' => $candidate];
+            }
+        }
+
+        if ($provider !== BillingProvider::PLAY_STORE) {
+            return null;
+        }
+
+        foreach (BillingCatalogue::products() as $product) {
+            $play = $product['refs']['play'];
+
+            if ($product['tier'] !== null && $play !== null && explode(':', $play, 2)[0] === $rawId) {
+                return ['plan' => $product['tier'], 'productId' => null];
+            }
+        }
+
+        return null;
+    }
+
+    /**
+     * The id a Play subscription is known by in the catalogue,
+     * `<subscription_id>:<base_plan_id>`, or the raw key when the subscription
+     * names no base plan (an App Store id, or a Play purchase the API gave none).
+     *
+     * @param  array<string, mixed>  $subscription
+     */
+    protected function composedProductId(string $rawId, array $subscription): string
+    {
+        $basePlan = $subscription['product_plan_identifier'] ?? null;
+
+        return is_string($basePlan) && trim($basePlan) !== '' ? "{$rawId}:{$basePlan}" : $rawId;
     }
 
     /**
