@@ -9,6 +9,7 @@ use FlutterSdk\MagicStarter\Enums\BillingProvider;
 use FlutterSdk\MagicStarter\Enums\PlanStatus;
 use FlutterSdk\MagicStarter\MagicStarter;
 use FlutterSdk\MagicStarter\Models\ProcessedWebhookEvent;
+use FlutterSdk\MagicStarter\Support\BillingCatalogue;
 use FlutterSdk\MagicStarter\Support\EntitlementWrite;
 use FlutterSdk\MagicStarter\Support\ReadsBillableAttributes;
 use FlutterSdk\MagicStarter\Support\RevenueCatClient;
@@ -544,8 +545,8 @@ class SyncRevenueCatEntitlement implements ShouldQueue
         // An unmapped product is a CONFIG gap, exactly as an unmapped Stripe
         // price is: the absence of a reason to grant is not a reason to revoke.
         // It matters more here, because an adopter creates their store products
-        // by hand in App Store Connect and Play Console, so until a human fills
-        // `billing.store_products` in, every event lands on this branch. If it
+        // by hand in App Store Connect and Play Console, so until a human puts
+        // their ids on a catalogue product, every event lands on this branch. If it
         // downgraded anybody, going live would be a mass revocation.
         $plan = $this->planFor($productId);
 
@@ -770,26 +771,18 @@ class SyncRevenueCatEntitlement implements ShouldQueue
      *
      * The tier arrives as a plain string because the tier vocabulary belongs to
      * the consuming application; this package has no opinion about what any of
-     * them means. `billing.store_products` is the store rail's half of the same
-     * question `billing.prices` answers for the card rail, and an entry with no
-     * usable tier behind it reads as unmapped rather than being stringified into
-     * a tier nobody published.
+     * them means. A catalogue product's `refs.app_store` and `refs.play` are the
+     * store rail's half of the same question `refs.stripe_price` answers for the
+     * card rail, and a product with no tier behind it (a one-off purchase)
+     * reads as unmapped rather than granting a tier nobody published.
      *
-     * Google Play sends `<subscription_id>:<base_plan_id>`, so the map keys on
-     * that whole string; keyed on the bare subscription id it would be an
-     * unmapped-product warning on every Android renewal.
+     * Google Play sends `<subscription_id>:<base_plan_id>`, so the ref is that
+     * whole string and the match is exact; keyed on the bare subscription id it
+     * would be an unmapped-product warning on every Android renewal.
      */
     protected function planFor(string $productId): ?string
     {
-        $map = config('magic-starter.billing.store_products', []);
-
-        if (! is_array($map)) {
-            return null;
-        }
-
-        $plan = $map[$productId] ?? null;
-
-        return is_string($plan) && $plan !== '' ? $plan : null;
+        return BillingCatalogue::productForStoreId($productId)['tier'] ?? null;
     }
 
     /**

@@ -158,12 +158,12 @@ trait ReadsBillableAttributes
      * convention is cheapest first, so it is the adopter's own declaration of
      * what free means to them. That is the adopter naming their floor, not this
      * package inventing one, which is the distinction that made a null check the
-     * only honest answer before either list existed.
+     * only honest answer before the ranking existed.
      *
-     * An adopter who has published NEITHER list yields a null floor, and
-     * `$tier !== null` has already answered by then, so they keep exactly the
-     * behaviour they had before this read existed. This widens what the package
-     * can recognise; it never narrows it.
+     * Billing refuses to boot without a ranking, so an empty one only reaches
+     * here with the feature off; it yields a null floor, and `$tier !== null`
+     * has already answered by then. This widens what the package can
+     * recognise; it never narrows it.
      */
     protected function holdsPaidTier(?string $tier, PlanStatus $status): bool
     {
@@ -208,43 +208,26 @@ trait ReadsBillableAttributes
     /**
      * The adopter's tier ranking, cheapest first.
      *
-     * Read from config rather than from any enum here, because the package
-     * ships no tier vocabulary at all. Non-string entries are discarded rather
-     * than cast: a ranking holding something other than plan ids is not one
-     * this package can compare against, and silently stringifying it would
-     * invent an order.
-     *
-     * `billing.tier_order` is the ranking when it is published. When it is not,
-     * the order is taken from `billing.plans`' entry ids instead, because those
-     * carry the same convention (cheapest first) and an adopter who published a
-     * catalogue has already declared the order once. Without that fallback,
-     * publishing only the catalogue would leave a billing screen that renders
-     * correctly beside a cross-rail write that cannot be decided, which is a
-     * pairing no adopter would choose on purpose.
+     * Read through {@see BillingCatalogue::tierOrder()} rather than from any
+     * enum here, because the package ships no tier vocabulary at all. The
+     * ranking is `billing.tier_order` and nothing else: boot refuses an empty
+     * one under the billing feature, so there is no second list to fall back to
+     * and no way for two lists to disagree about which tier is free.
      *
      * It lives on this trait rather than on the action that first needed it
-     * because three readers now rank against the same list, and the rule it
-     * encodes decides whether money keeps moving. A second copy would be free
-     * to disagree with the first while both sides' tests stayed green.
+     * because three readers rank against the same list, and the rule it encodes
+     * decides whether money keeps moving. A second copy would be free to
+     * disagree with the first while both sides' tests stayed green.
      *
      * @return list<string>
      */
     protected function tierOrder(): array
     {
-        $explicit = $this->planIds(config('magic-starter.billing.tier_order', []));
-
-        if ($explicit !== []) {
-            return $explicit;
-        }
-
-        return $this->planIds(array_map(
-            static fn (mixed $entry): mixed => is_array($entry) ? ($entry['id'] ?? null) : null,
-            $this->planCatalogue(),
-        ));
+        return BillingCatalogue::tierOrder();
     }
 
     /**
-     * The adopter's plan catalogue, cheapest first, exactly as they wrote it.
+     * The adopter's tier definitions in ranking order, each carrying its `id`.
      *
      * Entries reach the client untouched. The package names the fields every
      * billing screen needs and reads only `id` itself; everything else on an
@@ -253,52 +236,11 @@ trait ReadsBillableAttributes
      * this package does not have, which is the same reason counting left
      * through {@see \FlutterSdk\MagicStarter\Contracts\ReportsUsage}.
      *
-     * A non-array entry is dropped rather than served, because the endpoint
-     * promises a list of objects and a client decoding one field off a string
-     * fails further from the cause than the drop does.
-     *
      * @return list<array<string, mixed>>
      */
     protected function planCatalogue(): array
     {
-        $configured = config('magic-starter.billing.plans', []);
-
-        if (! is_array($configured)) {
-            return [];
-        }
-
-        $catalogue = [];
-
-        foreach ($configured as $entry) {
-            if (is_array($entry)) {
-                $catalogue[] = $entry;
-            }
-        }
-
-        return $catalogue;
-    }
-
-    /**
-     * Keep the usable plan ids out of a configured list, in order.
-     *
-     * @param  mixed  $configured
-     * @return list<string>
-     */
-    protected function planIds($configured): array
-    {
-        if (! is_array($configured)) {
-            return [];
-        }
-
-        $ids = [];
-
-        foreach ($configured as $planId) {
-            if (is_string($planId) && $planId !== '') {
-                $ids[] = $planId;
-            }
-        }
-
-        return $ids;
+        return array_values(BillingCatalogue::tiers());
     }
 
     /**

@@ -218,6 +218,8 @@ class BillingPolicyTest extends TestCase
         config([
             'magic-starter.features' => $features,
             'magic-starter.billing.billable' => $billable,
+            // Billing refuses to boot without a ranking.
+            'magic-starter.billing.tier_order' => ['free', 'pro'],
         ]);
 
         $this->app->forgetInstance(GateContract::class);

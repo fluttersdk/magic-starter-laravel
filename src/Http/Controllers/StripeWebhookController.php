@@ -33,8 +33,9 @@ use Symfony\Component\HttpFoundation\Response;
  *     Stripe ONE feeder of a column several rails may feed rather than the truth
  *     itself.
  *
- * The price to tier map lives under `magic-starter.billing.prices` and is read
- * through {@see StripeSubscriptionState}, never here.
+ * Which tier a price sells lives on the catalogue product carrying it as
+ * `refs.stripe_price`, and is read through {@see StripeSubscriptionState},
+ * never here.
  *
  * ## The subject is whatever the application bills
  *

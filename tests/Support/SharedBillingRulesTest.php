@@ -196,6 +196,27 @@ class SharedBillingRulesTest extends TestCase
      * an empty haystack, which is exactly what the `assertIsString()` call above
      * is there to catch.
      */
+    /**
+     * Publish one subscription product per entry, each sold through Stripe.
+     *
+     * @param  array<string, array{0: string, 1: string, 2: string}>  $subscriptions  key => [tier, cycle, price id]
+     */
+    private function publishSubscriptions(array $subscriptions): void
+    {
+        $products = [];
+
+        foreach ($subscriptions as $key => [$tier, $cycle, $priceId]) {
+            $products[$key] = [
+                'type' => 'subscription',
+                'tier' => $tier,
+                'cycle' => $cycle,
+                'refs' => ['stripe_price' => $priceId],
+            ];
+        }
+
+        config()->set('magic-starter.billing.products', $products);
+    }
+
     private static function packageRoot(): string
     {
         return dirname(__DIR__, 2);
@@ -240,7 +261,9 @@ class SharedBillingRulesTest extends TestCase
         // which is true for the string '0'. No Stripe price looks like that, so
         // nothing was broken; two copies of one rule disagreeing about an edge
         // case is how they always start.
-        config()->set('magic-starter.billing.prices', ['0' => 'pro']);
+        $this->publishSubscriptions([
+            'pro_monthly' => ['pro', 'monthly', '0'],
+        ]);
 
         $this->assertSame('pro', StripeSubscriptionState::planForPrice('0'));
         $this->assertNull(StripeSubscriptionState::planForPrice(''));
@@ -249,53 +272,49 @@ class SharedBillingRulesTest extends TestCase
     }
 
     /**
-     * An empty key in the map cannot sell a tier, and a real one beside it still
+     * An empty Stripe ref cannot sell a tier, and a real one beside it still
      * does.
      *
-     * The map is normally assembled from the environment, so one unset variable
-     * is all it takes to write `'' => 'pro'` into it. The lookup's own guard
+     * Refs are normally assembled from the environment, so one unset variable
+     * is all it takes to write `'stripe_price' => ''`. The lookup's own guard
      * already refuses an empty price id, which is exactly why the second half of
      * this test exists: asserting only `planForPrice('')` passes whether or not
-     * the map is filtered, and the entry survives to be found by the REVERSE
+     * the ref is normalised, and the entry survives to be found by the REVERSE
      * lookup a checkout makes, where the empty string would come back as the
      * price that sells a paid tier.
      */
     public function test_an_empty_price_id_cannot_sell_a_paid_tier(): void
     {
-        config()->set('magic-starter.billing.prices', [
-            '' => 'pro',
-            'price_business' => 'business',
+        $this->publishSubscriptions([
+            'pro_monthly' => ['pro', 'monthly', ''],
+            'business_monthly' => ['business', 'monthly', 'price_business'],
         ]);
 
         $this->assertNull(StripeSubscriptionState::planForPrice(''));
         $this->assertSame('business', StripeSubscriptionState::planForPrice('price_business'));
 
-        // The half that distinguishes a filtered map from an unfiltered one.
+        // The half that distinguishes a normalised ref from a raw one.
         $this->assertSame(['price_business' => 'business'], StripeSubscriptionState::prices());
         $this->assertFalse(array_search('pro', StripeSubscriptionState::prices(), true));
+        $this->assertNull(StripeSubscriptionState::priceFor('pro', 'monthly'));
     }
 
-    public function test_a_price_declares_its_cycle_and_a_bare_one_is_read_as_monthly(): void
+    public function test_a_price_answers_the_cycle_its_product_declares(): void
     {
         /*
-         * The two accepted forms, and the default that matters. A vendor selling one price
-         * per tier should not have to write a map to say so, but a bare value carries no
-         * interval and this array cannot ask Stripe for one, so it is read as monthly. The
-         * PAIR is the test: the declared entry proves the map form is honoured, and the bare
-         * entry proves the default is the one documented rather than null.
+         * A subscription product declares its cycle (boot refuses one that does not), so the
+         * cycle is read off the product the price belongs to rather than guessed.
          */
-        config()->set('magic-starter.billing.prices', [
-            'price_pro_monthly' => ['tier' => 'pro', 'cycle' => 'monthly'],
-            'price_pro_annual' => ['tier' => 'pro', 'cycle' => 'annual'],
-            'price_business' => 'business',
+        $this->publishSubscriptions([
+            'pro_monthly' => ['pro', 'monthly', 'price_pro_monthly'],
+            'pro_annual' => ['pro', 'annual', 'price_pro_annual'],
         ]);
 
         $this->assertSame('monthly', StripeSubscriptionState::cycleForPrice('price_pro_monthly'));
         $this->assertSame('annual', StripeSubscriptionState::cycleForPrice('price_pro_annual'));
-        $this->assertSame('monthly', StripeSubscriptionState::cycleForPrice('price_business'));
 
         // A price nobody mapped, which is the store rail's case: `plan_product_id`
-        // there is a store product id, and this Stripe catalogue cannot name its
+        // there is a store product id, and this Stripe lookup cannot name its
         // cycle. Null rather than a guess, so no screen claims one.
         $this->assertNull(StripeSubscriptionState::cycleForPrice('com.example.pro.monthly'));
         $this->assertNull(StripeSubscriptionState::cycleForPrice(null));
@@ -317,10 +336,10 @@ class SharedBillingRulesTest extends TestCase
          * would satisfy every "a published tier is sellable" assertion in this suite, and the
          * customer would find out on their statement.
          */
-        config()->set('magic-starter.billing.prices', [
-            'price_pro_monthly' => ['tier' => 'pro', 'cycle' => 'monthly'],
-            'price_pro_annual' => ['tier' => 'pro', 'cycle' => 'annual'],
-            'price_business_annual' => ['tier' => 'business', 'cycle' => 'annual'],
+        $this->publishSubscriptions([
+            'pro_monthly' => ['pro', 'monthly', 'price_pro_monthly'],
+            'pro_annual' => ['pro', 'annual', 'price_pro_annual'],
+            'business_annual' => ['business', 'annual', 'price_business_annual'],
         ]);
 
         $this->assertSame('price_pro_monthly', StripeSubscriptionState::priceFor('pro', 'monthly'));
@@ -332,27 +351,16 @@ class SharedBillingRulesTest extends TestCase
         // annual figure.
         $this->assertNull(StripeSubscriptionState::priceFor('business', 'monthly'));
         $this->assertNull(StripeSubscriptionState::priceFor('enterprise', 'annual'));
-    }
 
-    public function test_an_unrecognised_cycle_word_drops_the_entry_instead_of_defaulting_it(): void
-    {
-        /*
-         * A typo costs the adopter a 422 on that tier, not a charge on the wrong price.
-         * Defaulting `'anual'` to monthly would sell the annual price at the monthly cycle's
-         * request, silently, and the entry that is wrong is the one nobody is looking at.
-         */
-        config()->set('magic-starter.billing.prices', [
-            'price_pro_annual' => ['tier' => 'pro', 'cycle' => 'anual'],
-            'price_pro_monthly' => ['tier' => 'pro', 'cycle' => 'monthly'],
-        ]);
-
-        $this->assertNull(StripeSubscriptionState::priceFor('pro', 'annual'));
-        $this->assertNull(StripeSubscriptionState::cycleForPrice('price_pro_annual'));
-        $this->assertSame('price_pro_monthly', StripeSubscriptionState::priceFor('pro', 'monthly'));
-
-        // Dropped from the tier map as well, so the webhook cannot grant a tier
-        // from a price this config declined to understand.
-        $this->assertNull(StripeSubscriptionState::planForPrice('price_pro_annual'));
+        // The catalogue the plans endpoint derives `cycles` from, keyed by price.
+        $this->assertSame(
+            [
+                'price_pro_monthly' => ['tier' => 'pro', 'cycle' => 'monthly'],
+                'price_pro_annual' => ['tier' => 'pro', 'cycle' => 'annual'],
+                'price_business_annual' => ['tier' => 'business', 'cycle' => 'annual'],
+            ],
+            StripeSubscriptionState::catalogue(),
+        );
     }
 
     public function test_a_billable_key_is_judged_against_this_deployments_switch(): void

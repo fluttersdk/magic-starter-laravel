@@ -186,6 +186,8 @@ class RevenueCatWebhookTest extends TestCase
             ],
             'magic-starter.features' => [Features::billing()],
             'magic-starter.billing.billable' => 'user',
+            // Billing refuses to boot without a ranking.
+            'magic-starter.billing.tier_order' => ['free', 'pro', 'business'],
             'magic-starter.models.user' => ConcreteUser::class,
             'auth.providers.users.model' => ConcreteUser::class,
             'magic-starter.billing.revenuecat.webhook_secret' => static::WEBHOOK_SECRET,
@@ -359,7 +361,6 @@ class RevenueCatWebhookTest extends TestCase
         $this->bootRoutes([Features::billing()], billing: [
             'magic-starter.billing.revenuecat.webhook_secret' => null,
             'magic-starter.billing.revenuecat.secret_api_key' => null,
-            'magic-starter.billing.store_products' => [],
         ]);
 
         $this->assertNotNull($this->matchRoute('POST', static::ROUTE));
@@ -368,23 +369,35 @@ class RevenueCatWebhookTest extends TestCase
     }
 
     /**
-     * A store PRODUCT MAP alone configures the rail too.
+     * Store refs in the catalogue alone do NOT configure the rail.
      *
-     * The API key is the obvious half; the product map is the half a narrower
-     * predicate would miss. An adopter who mapped their App Store products has
-     * declared that they sell through a store, and a webhook they cannot
-     * authenticate is exactly as broken with or without the outbound key.
+     * The catalogue carries every rail's id on one product, so an adopter who
+     * sells on the card rail today and lists their App Store id for later has
+     * declared nothing about RevenueCat. Only the RevenueCat key says the rail
+     * is meant to work; treating a catalogue ref as that declaration would
+     * withhold a route and log an error at every boot of a card-only install.
      */
-    public function test_a_store_product_map_alone_is_enough_to_configure_the_rail(): void
+    public function test_store_refs_in_the_catalogue_alone_do_not_configure_the_rail(): void
     {
         $this->bootRoutes([Features::billing()], billing: [
             'magic-starter.billing.revenuecat.webhook_secret' => null,
             'magic-starter.billing.revenuecat.secret_api_key' => null,
-            'magic-starter.billing.store_products' => ['com.example.app.pro.monthly' => 'pro'],
+            'magic-starter.billing.products.pro_monthly' => [
+                'type' => 'subscription',
+                'tier' => 'pro',
+                'cycle' => 'monthly',
+                'refs' => ['app_store' => 'com.example.app.pro.monthly'],
+            ],
         ]);
 
+        $this->assertFalse(StoreRailConfiguration::railIsConfigured());
+        $this->assertFalse(StoreRailConfiguration::isMisconfigured());
+        $this->assertNotNull($this->matchRoute('POST', static::ROUTE));
+
+        // The control: the RevenueCat key alone is what configures it.
+        config(['magic-starter.billing.revenuecat.secret_api_key' => 'sk_test']);
+
         $this->assertTrue(StoreRailConfiguration::isMisconfigured());
-        $this->assertNull($this->matchRoute('POST', static::ROUTE));
     }
 
     /**

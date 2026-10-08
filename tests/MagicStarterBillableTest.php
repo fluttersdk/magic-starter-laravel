@@ -209,6 +209,7 @@ class MagicStarterBillableTest extends TestCase
         config([
             'magic-starter.features' => [Features::teams(), Features::billing()],
             'magic-starter.billing.billable' => 'team',
+            'magic-starter.billing.tier_order' => ['free', 'pro'],
         ]);
 
         (new MagicStarterServiceProvider($this->app))->boot();
@@ -228,6 +229,7 @@ class MagicStarterBillableTest extends TestCase
         config([
             'magic-starter.features' => [Features::billing()],
             'magic-starter.billing.billable' => 'user',
+            'magic-starter.billing.tier_order' => ['free', 'pro'],
         ]);
 
         (new MagicStarterServiceProvider($this->app))->boot();

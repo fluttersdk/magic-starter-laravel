@@ -116,11 +116,20 @@ class SyncRevenueCatEntitlementTest extends TestCase
             // The adopter's own ranking, cheapest first. The write action reads
             // it, so a scenario that moves a tier has to be decidable.
             'magic-starter.billing.tier_order' => ['free', 'pro', 'business'],
-            // The store rail's half of the price map: which rail-native product
-            // id sells which of the adopter's tiers.
-            'magic-starter.billing.store_products' => [
-                self::APP_STORE_BUSINESS => 'business',
-                self::PLAY_PRO => 'pro',
+            // Which rail-native product id sells which of the adopter's tiers.
+            'magic-starter.billing.products' => [
+                'pro_monthly' => [
+                    'type' => 'subscription',
+                    'tier' => 'pro',
+                    'cycle' => 'monthly',
+                    'refs' => ['play' => self::PLAY_PRO],
+                ],
+                'business_monthly' => [
+                    'type' => 'subscription',
+                    'tier' => 'business',
+                    'cycle' => 'monthly',
+                    'refs' => ['app_store' => self::APP_STORE_BUSINESS],
+                ],
             ],
             'magic-starter.billing.revenuecat.secret_api_key' => self::API_KEY,
             'magic-starter.billing.revenuecat.base_url' => RevenueCatClient::DEFAULT_BASE_URL,
@@ -445,7 +454,7 @@ class SyncRevenueCatEntitlementTest extends TestCase
      * An unmapped product warns and writes nothing.
      *
      * A config gap is not a reason to revoke, and this is the branch every event
-     * lands on before an adopter has filled `billing.store_products` in: if it
+     * lands on before an adopter has put their store ids on a product: if it
      * downgraded anybody, going live would be a mass revocation.
      */
     public function test_a_live_subscription_whose_product_is_unmapped_warns_and_writes_nothing(): void

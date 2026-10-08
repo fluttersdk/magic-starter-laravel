@@ -54,6 +54,9 @@ class MiscResourcesTest extends FilamentTestCase
             Features::newsletterSubscription(),
             Features::audit(),
         ]);
+
+        // Billing refuses to boot without a ranking.
+        $app['config']->set('magic-starter.billing.tier_order', ['free', 'pro']);
     }
 
     /**

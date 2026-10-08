@@ -189,21 +189,21 @@ class SubscriptionResourceTest extends TestCase
      * the price, would pass the populated limb and keep passing after the price
      * moved. Both null cases are real production states rather than edge cases:
      * a store subscription's `plan_product_id` is a store product id this Stripe
-     * catalogue cannot name, and an adopter is free to map a price without
-     * declaring its cycle.
+     * catalogue cannot name, and a product whose Stripe ref is unset (an
+     * environment variable nobody filled in) maps no price at all.
      */
     public function test_the_cycle_is_read_off_the_price_and_is_null_when_unmappable(): void
     {
-        config(['magic-starter.billing.prices' => [
-            'price_pro' => ['tier' => 'pro', 'cycle' => 'annual'],
+        config(['magic-starter.billing.products' => [
+            'pro' => $this->stripeSubscription('annual', 'price_pro'),
         ]]);
 
         $this->assertSame('annual', $this->wire($this->rawSubject())['cycle']);
 
         // The same row on the tier's other price, which is the drift a hardcoded
         // cycle would hide.
-        config(['magic-starter.billing.prices' => [
-            'price_pro' => ['tier' => 'pro', 'cycle' => 'monthly'],
+        config(['magic-starter.billing.products' => [
+            'pro' => $this->stripeSubscription('monthly', 'price_pro'),
         ]]);
 
         $this->assertSame('monthly', $this->wire($this->rawSubject())['cycle']);
@@ -215,12 +215,28 @@ class SubscriptionResourceTest extends TestCase
             'plan_product_id' => 'com.example.pro.monthly',
         ]))['cycle']);
 
-        // And a Stripe price the adopter mapped without saying which cycle it
-        // sells falls back to monthly, which is `catalogue()`'s documented
-        // default rather than this resource's decision.
-        config(['magic-starter.billing.prices' => ['price_pro' => 'pro']]);
+        // An unset Stripe ref maps nothing, so the price on the row names no
+        // product and no cycle.
+        config(['magic-starter.billing.products' => [
+            'pro' => $this->stripeSubscription('monthly', ''),
+        ]]);
 
-        $this->assertSame('monthly', $this->wire($this->rawSubject())['cycle']);
+        $this->assertNull($this->wire($this->rawSubject())['cycle']);
+    }
+
+    /**
+     * A subscription product selling `pro` through one Stripe price.
+     *
+     * @return array<string, mixed>
+     */
+    private function stripeSubscription(string $cycle, string $priceId): array
+    {
+        return [
+            'type' => 'subscription',
+            'tier' => 'pro',
+            'cycle' => $cycle,
+            'refs' => ['stripe_price' => $priceId],
+        ];
     }
 
     /**

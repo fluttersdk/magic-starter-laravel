@@ -27,9 +27,8 @@ class StoreRailConfiguration
      * Deliberately narrower than "the webhook secret is empty": on a fresh
      * install with billing on, nothing about the store rail is set and there is
      * nothing to complain about. What this catches is the half-configured
-     * deployment, where an outbound API key or a product map says the adopter
-     * means to sell through a store while the inbound secret says no delivery
-     * can be believed.
+     * deployment, where an outbound API key says the adopter means to sell
+     * through a store while the inbound secret says no delivery can be believed.
      */
     public static function isMisconfigured(): bool
     {
@@ -37,21 +36,22 @@ class StoreRailConfiguration
     }
 
     /**
-     * Whether anything about the store rail has been configured at all.
+     * Whether the store rail has been configured at all: the RevenueCat API key
+     * is set.
      *
-     * The outbound API key and the product map are the two keys an adopter
-     * cannot sell through a store without: the first is what the authoritative
-     * re-read authenticates with, and the second is what maps a store product
-     * onto one of their tiers. Either one present means the rail is meant to
-     * work.
+     * The key is what the authoritative re-read authenticates with, so it is the
+     * one setting that says the adopter means this rail to work. Store refs on a
+     * catalogue product do NOT count: the catalogue carries every rail's id on
+     * one product, and an adopter selling on the card rail today may list their
+     * App Store and Play ids long before they turn RevenueCat on. Counting them
+     * would withhold the webhook route and log an error at every boot of an
+     * install that never asked for the store rail.
      */
     public static function railIsConfigured(): bool
     {
         $apiKey = config('magic-starter.billing.revenuecat.secret_api_key');
-        $products = config('magic-starter.billing.store_products', []);
 
-        return (is_string($apiKey) && trim($apiKey) !== '')
-            || (is_array($products) && $products !== []);
+        return is_string($apiKey) && trim($apiKey) !== '';
     }
 
     /**

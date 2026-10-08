@@ -76,18 +76,23 @@ class BillingWriteEndpointsTest extends TestCase
             'magic-starter.models.team' => BillingWriteTeam::class,
             'magic-starter.models.membership' => \FlutterSdk\MagicStarter\Tests\Fixtures\ConcreteTeamUser::class,
             'magic-starter.route_prefix' => '',
-            // The adopter's ranking, cheapest first, and the prices that sell two
-            // of its three tiers. `business` is deliberately unpriced: it is what
-            // makes the config-gap refusal drivable without editing the ranking.
+            // The adopter's ranking, cheapest first, and the price that sells one
+            // of its two paid tiers. `business` is deliberately unpriced: it is
+            // what makes the config-gap refusal drivable without editing the
+            // ranking. The free floor has no product, which boot requires.
             'magic-starter.billing.tier_order' => ['free', 'pro', 'business'],
-            'magic-starter.billing.plans' => [
-                ['id' => 'free', 'name' => 'Free'],
-                ['id' => 'pro', 'name' => 'Pro'],
-                ['id' => 'business', 'name' => 'Business'],
+            'magic-starter.billing.tiers' => [
+                'free' => ['name' => 'Free'],
+                'pro' => ['name' => 'Pro'],
+                'business' => ['name' => 'Business'],
             ],
-            'magic-starter.billing.prices' => [
-                'price_free' => 'free',
-                'price_pro' => 'pro',
+            'magic-starter.billing.products' => [
+                'pro_monthly' => [
+                    'type' => 'subscription',
+                    'tier' => 'pro',
+                    'cycle' => 'monthly',
+                    'refs' => ['stripe_price' => 'price_pro'],
+                ],
             ],
             'auth.providers.users' => [
                 'driver' => 'eloquent',
@@ -260,10 +265,25 @@ class BillingWriteEndpointsTest extends TestCase
     public function test_each_cycle_reaches_its_own_price_and_an_unsold_cycle_is_refused(): void
     {
         config([
-            'magic-starter.billing.prices' => [
-                'price_pro_monthly' => ['tier' => 'pro', 'cycle' => 'monthly'],
-                'price_pro_annual' => ['tier' => 'pro', 'cycle' => 'annual'],
-                'price_business_annual' => ['tier' => 'business', 'cycle' => 'annual'],
+            'magic-starter.billing.products' => [
+                'pro_monthly' => [
+                    'type' => 'subscription',
+                    'tier' => 'pro',
+                    'cycle' => 'monthly',
+                    'refs' => ['stripe_price' => 'price_pro_monthly'],
+                ],
+                'pro_annual' => [
+                    'type' => 'subscription',
+                    'tier' => 'pro',
+                    'cycle' => 'annual',
+                    'refs' => ['stripe_price' => 'price_pro_annual'],
+                ],
+                'business_annual' => [
+                    'type' => 'subscription',
+                    'tier' => 'business',
+                    'cycle' => 'annual',
+                    'refs' => ['stripe_price' => 'price_business_annual'],
+                ],
             ],
         ]);
 
@@ -318,9 +338,19 @@ class BillingWriteEndpointsTest extends TestCase
     public function test_a_swap_can_change_the_cycle_while_the_tier_stays_put(): void
     {
         config([
-            'magic-starter.billing.prices' => [
-                'price_pro_monthly' => ['tier' => 'pro', 'cycle' => 'monthly'],
-                'price_pro_annual' => ['tier' => 'pro', 'cycle' => 'annual'],
+            'magic-starter.billing.products' => [
+                'pro_monthly' => [
+                    'type' => 'subscription',
+                    'tier' => 'pro',
+                    'cycle' => 'monthly',
+                    'refs' => ['stripe_price' => 'price_pro_monthly'],
+                ],
+                'pro_annual' => [
+                    'type' => 'subscription',
+                    'tier' => 'pro',
+                    'cycle' => 'annual',
+                    'refs' => ['stripe_price' => 'price_pro_annual'],
+                ],
             ],
         ]);
 
@@ -341,21 +371,27 @@ class BillingWriteEndpointsTest extends TestCase
      * An adopter who has published nothing sells nothing, and the sentence names
      * the config that is missing.
      *
-     * This is the step's QA, both limbs of it. The refusal is asserted for the
-     * SAME tier id the second limb then sells, so the difference between them is
-     * the published ranking and nothing else. And the message is asserted to name
-     * BOTH keys, because either one is a valid answer to it: an adopter reading a
-     * sentence that named only the other would go looking in the wrong file.
+     * Boot refuses an empty ranking, so the ranking is emptied AFTER boot: this
+     * is the controller's own refusal, reached only by a config changed at
+     * runtime. The refusal is asserted for the SAME tier id the second limb then
+     * sells, so the difference between them is the published ranking and
+     * nothing else.
      */
     public function test_an_unpublished_catalogue_refuses_every_checkout_and_names_both_config_keys(): void
     {
+        $this->bootBillingRoutes('user');
+
         config([
             'magic-starter.billing.tier_order' => [],
-            'magic-starter.billing.plans' => [],
-            'magic-starter.billing.prices' => ['price_starter' => 'starter'],
+            'magic-starter.billing.products' => [
+                'starter_monthly' => [
+                    'type' => 'subscription',
+                    'tier' => 'starter',
+                    'cycle' => 'monthly',
+                    'refs' => ['stripe_price' => 'price_starter'],
+                ],
+            ],
         ]);
-
-        $this->bootBillingRoutes('user');
 
         $user = $this->createUser('unpublished@example.test');
 
@@ -366,13 +402,12 @@ class BillingWriteEndpointsTest extends TestCase
         $message = $refused->json('message');
 
         $this->assertSame($this->shippedLine('en', 'no_published_catalogue'), $message);
-        $this->assertStringContainsString('magic-starter.billing.plans', $message);
         $this->assertStringContainsString('magic-starter.billing.tier_order', $message);
 
-        // The disarming limb: publish a two-entry ranking and the FIRST of them
-        // sells. Without it this test passes against an endpoint that refuses
-        // every checkout there has ever been.
-        config(['magic-starter.billing.tier_order' => ['starter', 'scale']]);
+        // The disarming limb: publish a ranking and its paid tier sells. Without
+        // it this test passes against an endpoint that refuses every checkout
+        // there has ever been.
+        config(['magic-starter.billing.tier_order' => ['free', 'starter']]);
 
         $this->buy($user, 'starter')->assertOk();
 
@@ -380,25 +415,28 @@ class BillingWriteEndpointsTest extends TestCase
     }
 
     /**
-     * An adopter who published only the CATALOGUE still sells its tiers.
+     * A tier DEFINED for display but absent from the ranking is not sellable.
      *
-     * The ranking falls back to the catalogue's entry ids when no explicit order
-     * is published, so such an adopter has a valid list. An endpoint validating
-     * against the raw `billing.tier_order` key instead would refuse every tier
-     * they sell while their own billing screen rendered all of them, and nothing
-     * in the populated fixture above can see that: it publishes both lists.
+     * The ranking is the one list of tiers that exist; the `tiers` map is only
+     * display copy. A checkout validating against the map would sell a tier the
+     * cross-rail rules cannot rank and the floor reader cannot place.
      */
-    public function test_a_catalogue_published_without_a_ranking_still_sells_its_tiers(): void
+    public function test_a_defined_tier_outside_the_ranking_is_not_sellable(): void
     {
         config([
-            'magic-starter.billing.tier_order' => [],
-            'magic-starter.billing.plans' => [
-                ['id' => 'starter', 'name' => 'Starter'],
-                ['id' => 'scale', 'name' => 'Scale'],
+            'magic-starter.billing.tier_order' => ['free', 'starter'],
+            'magic-starter.billing.tiers' => [
+                'free' => ['name' => 'Free'],
+                'starter' => ['name' => 'Starter'],
+                'scale' => ['name' => 'Scale'],
             ],
-            'magic-starter.billing.prices' => [
-                'price_starter' => 'starter',
-                'price_scale' => 'scale',
+            'magic-starter.billing.products' => [
+                'starter_monthly' => [
+                    'type' => 'subscription',
+                    'tier' => 'starter',
+                    'cycle' => 'monthly',
+                    'refs' => ['stripe_price' => 'price_starter'],
+                ],
             ],
         ]);
 
@@ -406,14 +444,15 @@ class BillingWriteEndpointsTest extends TestCase
 
         $user = $this->createUser('catalogue-only@example.test');
 
-        $this->buy($user, 'scale')->assertOk();
-        $this->assertSame(['price_scale' => 1], BillingWriteRail::$checkoutItems);
-
-        // Still a ranking and not a free-for-all: a tier absent from the
-        // catalogue is refused exactly as one absent from an explicit list is.
-        $this->buy($user, 'enterprise')
+        $this->buy($user, 'scale')
             ->assertStatus(422)
             ->assertJsonValidationErrors('plan');
+
+        $this->assertNull(BillingWriteRail::$checkoutItems);
+
+        // The control: the ranked neighbour sells, so the refusal is the ranking.
+        $this->buy($user, 'starter')->assertOk();
+        $this->assertSame(['price_starter' => 1], BillingWriteRail::$checkoutItems);
     }
 
     /**
@@ -481,14 +520,14 @@ class BillingWriteEndpointsTest extends TestCase
      * An empty price map is refused per tier and never resolved to an empty
      * price id.
      *
-     * The map's reader strips empty keys, and this is the endpoint half of that
-     * guard: an adopter assembling the map from unset environment variables
-     * writes `'' => 'pro'`, and a reverse lookup that honoured it would open a
-     * Stripe session against no price at all.
+     * The catalogue reads an empty ref as no ref, and this is the endpoint half
+     * of that guard: an adopter assembling refs from unset environment variables
+     * writes `'stripe_price' => ''`, and a reverse lookup that honoured it would
+     * open a Stripe session against no price at all.
      */
     public function test_an_empty_price_id_never_sells_a_tier(): void
     {
-        config(['magic-starter.billing.prices' => ['' => 'pro']]);
+        config(['magic-starter.billing.products.pro_monthly.refs.stripe_price' => '']);
 
         $this->bootBillingRoutes('user');
 

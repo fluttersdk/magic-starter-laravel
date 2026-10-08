@@ -224,6 +224,16 @@ class MagicStarterServiceProvider extends ServiceProvider
         // coexistence this comment defends is only real when both are on, so the
         // two registrations sit where a reader sees them together.
         if (Features::hasBillingFeatures()) {
+            // 3.4a. Refuse a catalogue that would sell the wrong thing.
+            //
+            // A throw, unlike the store-rail log below, because what it catches
+            // moves money the wrong way rather than leaving a rail inert: a
+            // config published before the catalogue existed (the merge is
+            // shallow, so it maps no tier at all), a buyable free floor, one
+            // Play subscription granting two tiers. First in the gate so nothing
+            // below it registers against a catalogue it cannot trust.
+            Support\BillingCatalogue::validate();
+
             Gate::define('manageBilling', [Policies\BillingPolicy::class, 'manage']);
 
             // 3.4b. Say ONCE that a configured store rail has no signing secret.
