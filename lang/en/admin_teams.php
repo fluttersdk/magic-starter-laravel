@@ -32,6 +32,8 @@ return [
     ],
 
     'actions' => [
+        'edit' => 'Edit',
+
         'delete' => [
             'label' => 'Delete team',
             'heading' => 'Delete this team?',

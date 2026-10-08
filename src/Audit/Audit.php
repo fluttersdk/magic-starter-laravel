@@ -2,8 +2,10 @@
 
 namespace FlutterSdk\MagicStarter\Audit;
 
+use FlutterSdk\MagicStarter\MagicStarter;
 use FlutterSdk\MagicStarter\Support\ConditionallyUsesUuids;
 use Illuminate\Database\Eloquent\Model;
+use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Support\Carbon;
 
 /**
@@ -53,5 +55,41 @@ class Audit extends Model
             'new_values' => 'array',
             'context' => 'array',
         ];
+    }
+
+    /**
+     * The user who acted, matched on `actor_id` alone.
+     *
+     * The key is shared with every other actor type, so the result means
+     * something only while {@see actedByUser()} holds; read it through that.
+     *
+     * @return BelongsTo<Model, $this>
+     */
+    public function actorUser(): BelongsTo
+    {
+        return $this->belongsTo(MagicStarter::userModel(), 'actor_id');
+    }
+
+    /**
+     * The user the subject belongs to, when the subject has one.
+     *
+     * @return BelongsTo<Model, $this>
+     */
+    public function relatedUser(): BelongsTo
+    {
+        return $this->belongsTo(MagicStarter::userModel(), 'related_user_id');
+    }
+
+    /**
+     * Whether the actor recorded on the row is of the configured user model.
+     *
+     * Still true after that user was deleted: the row keeps `actor_type` and
+     * loses `actor_id`, so {@see actorUser} is then null.
+     */
+    public function actedByUser(): bool
+    {
+        $userModel = MagicStarter::userModel();
+
+        return $this->actor_type === (new $userModel)->getMorphClass();
     }
 }

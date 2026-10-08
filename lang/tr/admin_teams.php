@@ -32,6 +32,8 @@ return [
     ],
 
     'actions' => [
+        'edit' => 'Düzenle',
+
         'delete' => [
             'label' => 'Takımı sil',
             'heading' => 'Bu takım silinsin mi?',

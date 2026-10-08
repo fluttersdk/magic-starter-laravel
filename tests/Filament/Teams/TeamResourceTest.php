@@ -113,6 +113,21 @@ class TeamResourceTest extends FilamentTestCase
         $this->assertSame([], $component->instance()->getTable()->getBulkActions());
     }
 
+    public function test_each_row_offers_an_edit_link_and_the_edit_page_is_titled_with_the_team_name(): void
+    {
+        $staff = $this->staff();
+        $team = $this->team($staff, ['name' => 'Night Shift']);
+
+        Livewire::actingAs($staff)
+            ->test(ListTeams::class)
+            ->assertTableActionExists('edit', record: $team)
+            ->assertTableActionHasUrl('edit', TeamResource::getUrl('edit', ['record' => $team]), record: $team);
+
+        Livewire::actingAs($staff)
+            ->test(EditTeam::class, ['record' => $team->getKey()])
+            ->assertSee('Edit Night Shift');
+    }
+
     public function test_the_form_edits_only_the_team_name(): void
     {
         $team = $this->team($this->user('owner@example.com'));
