@@ -90,6 +90,32 @@ class BillingDoctorCommandTest extends TestCase
         );
     }
 
+    /**
+     * A product kept only to map an old price has no Stripe price or store id to
+     * be asked for: the checks that demand them are for what is sold.
+     */
+    public function test_a_product_kept_for_mapping_is_not_asked_for_a_price_or_store_ids(): void
+    {
+        config([
+            'magic-starter.billing.products.pro_monthly_2025' => [
+                'type' => 'subscription',
+                'tier' => 'pro',
+                'cycle' => 'monthly',
+                'sellable' => false,
+                'refs' => ['stripe_price' => null],
+            ],
+        ]);
+
+        $doctor = $this->doctor();
+
+        $this->assertSame(0, $doctor['exit']);
+        $this->assertSame('ok', $doctor['checks']['catalogue.valid']['status']);
+        $this->assertArrayNotHasKey('stripe.price.pro_monthly_2025', $doctor['checks']);
+        $this->assertArrayNotHasKey('store.pro_monthly_2025', $doctor['checks']);
+        $this->assertArrayHasKey('stripe.price.pro_monthly', $doctor['checks']);
+        $this->assertArrayHasKey('store.pro_monthly', $doctor['checks']);
+    }
+
     public function test_a_configured_store_rail_without_an_hmac_secret_is_an_error(): void
     {
         config(['magic-starter.billing.revenuecat.webhook_secret' => '']);

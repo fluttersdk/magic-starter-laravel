@@ -136,7 +136,12 @@ final class BillingManifest
     }
 
     /**
-     * Every subscription product with a known cycle, in catalogue order.
+     * Every sellable subscription product with a known cycle, in catalogue order.
+     *
+     * A product kept only so an old price still maps is left out: an agent
+     * applies this list, and a store product or Stripe price created for it
+     * would put the retired offer back on sale. `billing:doctor` reads its
+     * per-product checks from here for the same reason.
      *
      * @return array<string, array<string, mixed>>
      */
@@ -145,6 +150,7 @@ final class BillingManifest
         return array_filter(
             BillingCatalogue::products(),
             static fn (array $product): bool => $product['type'] === BillingCatalogue::TYPE_SUBSCRIPTION
+                && $product['sellable']
                 && $product['tier'] !== null
                 && $product['cycle'] !== null
                 && isset(self::PERIODS[$product['cycle']]),

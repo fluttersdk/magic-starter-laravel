@@ -27,7 +27,7 @@ return [
     'password_already_set' => 'Your account already has a password set.',
 
     // Owned teams other people still belong to block an account deletion.
-    'owns_shared_teams' => 'You own teams that you cannot delete. Transfer ownership or delete them before deleting your account.',
+    'owns_shared_teams' => 'You own teams that other people belong to. Hand them over or delete them before deleting your account.',
 
     'team_has_active_subscription' => 'One of your teams has an active subscription. Cancel it first.',
 

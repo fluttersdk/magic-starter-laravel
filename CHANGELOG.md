@@ -4,6 +4,40 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Added
+
+- **One billing catalogue: `tiers`, `tier_order`, `products` and `pricing`.** A product is keyed `<tier>_<cycle>` (`pro_monthly`) and carries its `type`, `tier`, `cycle`, `prices` (channel, then currency, in minor units) and every rail's id under `refs` (`stripe_price`, `app_store`, `play` as `<subscription_id>:<base_plan_id>`). `tier_order` is required, cheapest first, and its first entry is the free floor that no product may sell. Boot validates the whole catalogue and throws naming the problem: an unknown type, a subscription with no ranked tier or no known cycle, a product selling the floor, a store id on two products, and one Play subscription whose base plans sell two tiers. (`config/magic-starter.php`, `src/Support/BillingCatalogue.php`)
+- **Store prices derive from the same currency's web price.** `pricing.commission` is `absorb` (the store charges the web figure) or `gross_up` (`ceil(web / (1 - rate))`, in integer minor units); an explicit store price wins, and a currency the web channel does not price is absent on a store channel, never converted. `GET billing/plans` carries each product's web prices with a display string. (`src/Support/PriceTable.php`, `src/Support/Currency.php`)
+- **`sellable` on a product, default `true`.** `false` keeps a product mapped for webhooks, reconciliation and entitlement reads (a grandfathered price), but it is not listed in `billing/plans`, cannot be checked out or swapped to, and is left out of `billing:manifest` and `billing:doctor`. A `sellable` that is not a boolean stops boot, and so do two sellable subscriptions on one tier and cycle: keep one and mark the retired price `sellable: false`. (`src/Support/BillingCatalogue.php`)
+- **`billing:manifest` and `billing:doctor`, for an agent holding `asc`, `gplay`, `rc` and `stripe`.** The manifest (`--json`, `--section=`) prints the App Store group and levels, Play subscriptions and base plans, RevenueCat products, entitlements, offering and webhook, and Stripe products and prices whose lookup key is the product key. The doctor checks the configuration and, with `--remote`, diffs Stripe and RevenueCat against it; every check has a stable id and any `error` exits 1. Both only read and never print a secret. `billing-setup.md` in the Boost skill is the procedure. (`src/Console/BillingManifestCommand.php`, `src/Console/BillingDoctorCommand.php`)
+- **`HasEntitlement` for the billable model:** `entitled()`, `onTier()`, `tierAtLeast()`, `onGracePeriod()`, `entitlementProvider()` and `entitledProduct()`, read from the provenance columns so a store buyer is entitled like a card buyer. (`src/Traits/HasEntitlement.php`)
+- **New config keys `billing.revenuecat.api_v2_key` and `billing.revenuecat.project_id`**, read by `billing:doctor --remote` only (`REVENUECAT_API_V2_KEY`, `REVENUECAT_PROJECT_ID`); neither is needed to sell. A product's Stripe price id is read from `CASHIER_PRICE_<KEY>`, the product key uppercased. (`config/magic-starter.php`)
+- **`GET billing` adds `product` (the catalogue key behind the stored rail id), `owned`, `balances` and `allowances`.** `owned` is `[]` and `balances` is `{}` until one-off purchases are stored; `allowances` is the application's `ReportsUsage` answer or `{}`. (`src/Http/Resources/SubscriptionResource.php`)
+- **The 422 `team_has_active_subscription` carries `team_providers`**, a map from team id to the rail billing it (`stripe`, `app_store` or `play_store`). (`src/Actions/ScheduleUserDeletion.php`)
+
+### Changed
+
+- **BREAKING: `billing.plans`, `billing.prices` and `billing.store_products` are removed, and boot refuses them by name, even empty.** There is no alias. To migrate, rewrite the three into the catalogue above:
+  1. `plans`: each entry's display copy moves to `tiers.<id>`, and the ids, cheapest first, become `tier_order`. Its `monthly` and `annual` figures become `products.<tier>_<cycle>.prices.web.<CURRENCY>` in minor units. A `tiers` entry passes through untouched, so any other key you kept (limits, copy) can stay.
+  2. `prices`: each `'price_x' => ['tier' => 'pro', 'cycle' => 'annual']` becomes `refs.stripe_price` on the `pro_annual` product, ideally `env('CASHIER_PRICE_PRO_ANNUAL')`.
+  3. `store_products`: each store id becomes `refs.app_store` or `refs.play` on the product that sells it, with Play as `<subscription_id>:<base_plan_id>`.
+
+  Run `php artisan billing:doctor` to confirm. (`src/Support/BillingCatalogue.php`)
+- **BREAKING: `POST billing/checkout` and `POST billing/swap` take `product`, a catalogue key, instead of `plan` and `cycle`.** The key fixes the tier and the cycle together. A product this rail cannot sell answers 422 with `code: "product_not_sellable"`: an unknown key, a non-subscription, the free floor, a product with no `refs.stripe_price`, or one marked `sellable: false`. Update the client to send `{"product": "pro_monthly"}`. (`src/Http/Controllers/BillingController.php`)
+- **BREAKING: each tier row of `GET billing/plans` carries a `products` list** (`key`, `type`, `tier`, `cycle`, `prices.web`), and `cycles` is derived from the products that have a Stripe price. The row no longer has `monthly`, `annual` or `currency` unless you keep them in `tiers` yourself; read prices from `products`. (`src/Http/Controllers/BillingController.php`)
+- **BREAKING: the store rail is on when `REVENUECAT_SECRET_API_KEY` is set, and store ids on a product no longer count.** Listing App Store and Play ids ahead of turning RevenueCat on no longer withholds the webhook route or fails `magic-starter:install`. (`src/Support/StoreRailConfiguration.php`)
+- **A Play purchase resolves by the composed `<subscription_id>:<base_plan_id>`, then the raw id, then the bare subscription id**, which names the tier only, so `product` and `cycle` are `null` for it. (`src/Jobs/SyncRevenueCatEntitlement.php`)
+- **The RevenueCat webhook is documented as HMAC only.** Turn on HMAC signing on the webhook in the RevenueCat dashboard, put the secret it shows once into `REVENUECAT_WEBHOOK_SECRET`, and use no static `Authorization` header: the endpoint refuses it. (`doc/basics/billing.md`)
+- **The `owns_shared_teams` sentence no longer says "Transfer ownership"**, since the package serves no transfer endpoint: it asks the user to hand the team over or delete it, in `en` and `tr`. (`lang/en/social.php`, `lang/tr/social.php`)
+
+### Removed
+
+- **The `billing.cycles` language group and the `billing.refusals.unmapped_price` sentence**, replaced by `billing.refusals.product_not_sellable`. Rename them in a published `lang/vendor/magic-starter/` copy, which wins over the package's own. (`lang/en/billing.php`, `lang/tr/billing.php`)
+
+### Documentation
+
+- `doc/basics/billing.md` documents the catalogue, product keys, prices, store ids, `HasEntitlement`, the refusals, the HMAC webhook and the agent commands; `doc/getting-started/configuration.md` lists the billing keys and variables; `doc/basics/account-deletion.md` describes `team_providers`.
+
 ## [0.0.19] - 2026-10-08
 
 ### Changed

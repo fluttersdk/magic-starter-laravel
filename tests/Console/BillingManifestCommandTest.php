@@ -205,6 +205,46 @@ class BillingManifestCommandTest extends TestCase
         $this->assertSame([], array_diff(array_unique(array_values($env)), ['present', 'absent']));
     }
 
+    /**
+     * An agent applies the manifest, so a product kept only to map an old price
+     * must be nowhere in it: a store product or a Stripe price created for it
+     * would put the retired offer back on sale.
+     */
+    public function test_a_product_kept_for_mapping_is_left_out_of_every_section(): void
+    {
+        config([
+            'magic-starter.billing.products.pro_monthly_2025' => [
+                'type' => 'subscription',
+                'tier' => 'pro',
+                'cycle' => 'monthly',
+                'sellable' => false,
+                'prices' => ['web' => ['USD' => 1900]],
+                'refs' => [
+                    'stripe_price' => 'price_old',
+                    'app_store' => 'com.example.pro.monthly.2025',
+                    'play' => 'pro_sub:monthly_2025',
+                ],
+            ],
+        ]);
+
+        Artisan::call(BillingManifestCommand::NAME, ['--json' => true]);
+        $json = Artisan::output();
+
+        // The key, the App Store id, the Play base plan and the price variable.
+        foreach (['pro_monthly_2025', 'pro.monthly.2025', 'monthly_2025', 'PRO_MONTHLY_2025'] as $needle) {
+            $this->assertStringNotContainsString($needle, $json);
+        }
+
+        $manifest = $this->manifest();
+        $pro = $this->entry($manifest['play']['subscriptions'], 'product_id', 'pro_sub');
+
+        $this->assertSame(['pro_monthly', 'pro_annual'], array_column($pro['base_plans'], 'key'));
+        $this->assertSame(
+            ['pro_monthly', 'pro_annual', 'business_monthly', 'business_annual'],
+            array_column($manifest['revenuecat']['offering']['packages'], 'lookup_key'),
+        );
+    }
+
     public function test_no_secret_reaches_either_output(): void
     {
         Artisan::call(BillingManifestCommand::NAME, ['--json' => true]);

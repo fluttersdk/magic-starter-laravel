@@ -399,6 +399,13 @@ return [
     |             names the product KEY so the customer is charged the figure
     |             the screen showed them.
     |   'credits' optional integer a one-off purchase grants
+    |   'sellable' optional boolean, default true. false keeps a product MAPPED
+    |             without selling it: a grandfathered Stripe price or a retired
+    |             store product that existing subscribers still pay, so a webhook
+    |             or the reconciler still names their tier. It is not listed in
+    |             GET billing/plans, billing/checkout and billing/swap refuse it
+    |             (422 product_not_sellable), and billing:manifest and
+    |             billing:doctor leave it out. Anything but a boolean stops boot.
     |   'prices'  channel (web | app_store | play) => currency => amount in
     |             MINOR units (cents, kurus; 3400 yen is 3400, 1.500 KWD is
     |             1500). Display figures, never a charge: each rail charges what
@@ -410,10 +417,11 @@ return [
     |             Google sends. A map keyed on the bare subscription id misses on
     |             every Android renewal.
     |
-    | Write ONE product per (tier, cycle) and put every rail's ref on it. A
-    | checkout sells the product key it names; a reverse lookup (a Stripe
-    | price or a store id back to its product) answers the FIRST product
-    | carrying that ref, in config order.
+    | Write ONE sellable product per (tier, cycle) and put every rail's ref on
+    | it; a second one for the same pair is refused at boot unless it is
+    | 'sellable' => false. A checkout sells the product key it names; a
+    | reverse lookup (a Stripe price or a store id back to its product) answers
+    | the FIRST product carrying that ref, in config order.
     |
     | A store id belongs to one product, and ONE PLAY SUBSCRIPTION SELLS ONE
     | TIER: Play moves a customer between base plans of a subscription as a

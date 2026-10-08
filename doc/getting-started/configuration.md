@@ -11,6 +11,7 @@
 - [UUID Configuration](#uuid-configuration)
 - [Model Resolution](#model-resolution)
 - [Two-Factor Authentication Settings](#two-factor-authentication-settings)
+- [Billing](#billing)
 - [Environment Variables](#environment-variables)
 
 <a name="introduction"></a>
@@ -142,6 +143,21 @@ Every key available in `config/magic-starter.php`:
 | `two_factor.recovery_codes_count` | `8` | Number of recovery codes generated when a user enables 2FA |
 | `two_factor.geoip_db_path` | `null` | Absolute path to MaxMind GeoIP2 `.mmdb` database file; `null` disables location resolution |
 | `two_factor.challenge_token_ttl` | `5` | Minutes until a two-factor challenge token expires |
+| `billing.billable` | `'user'` | What is billed: `'user'` or `'team'`. `'team'` needs the teams feature |
+| `billing.tier_order` | `[]` | Tier ids, cheapest first. The first is the free floor. Required with billing on |
+| `billing.tiers` | `[]` | Display copy per tier id, reaching the client untouched |
+| `billing.products` | `[]` | What you sell, keyed `<tier>_<cycle>`: type, tier, cycle, prices, refs, `sellable` |
+| `billing.pricing.currency` | `'USD'` | Base currency a screen falls back to |
+| `billing.pricing.commission` | `absorb`, `0.15` | How store prices derive from web prices: `mode` is `absorb` or `gross_up` |
+| `billing.reconcile.cadence` | `env('MAGIC_STARTER_BILLING_RECONCILE_CADENCE', 'daily')` | Frequency word or cron expression for `billing:reconcile` |
+| `billing.revenuecat.path` | `env('REVENUECAT_WEBHOOK_PATH', 'webhooks/revenuecat')` | Whole served path of the RevenueCat webhook |
+| `billing.revenuecat.webhook_secret` | `env('REVENUECAT_WEBHOOK_SECRET')` | HMAC signing secret of the webhook; without it the route is withheld |
+| `billing.revenuecat.secret_api_key` | `env('REVENUECAT_SECRET_API_KEY')` | RevenueCat v1 secret key for the authoritative subscriber read; setting it turns the store rail on |
+| `billing.revenuecat.base_url` | `env('REVENUECAT_BASE_URL')` | RevenueCat API base URL |
+| `billing.revenuecat.operation_budget_seconds` | `10` | Time budget for the whole retried read |
+| `billing.revenuecat.accept_sandbox` | `false` | Whether sandbox purchases may grant a tier. Never in production |
+| `billing.revenuecat.api_v2_key` | `env('REVENUECAT_API_V2_KEY')` | RevenueCat v2 read key, used by `billing:doctor --remote` only |
+| `billing.revenuecat.project_id` | `env('REVENUECAT_PROJECT_ID')` | RevenueCat project id, used by `billing:doctor --remote` only |
 
 <a name="authentication-identity"></a>
 ## Authentication Identity
@@ -357,6 +373,42 @@ When the `two-factor-authentication` feature is enabled, the following settings 
 > [!TIP]
 > To use GeoIP location resolution, download a MaxMind GeoLite2-City database and set the `geoip_db_path` to its absolute path on disk. The database is not included with the package.
 
+<a name="billing"></a>
+## Billing
+
+With the `billing` feature on, `config('magic-starter.billing')` holds one catalogue that every rail reads: tiers, their ranking, the products that sell them, and the pricing rule behind store prices. Boot validates it and refuses a catalogue that could sell the wrong thing.
+
+```php
+'billing' => [
+    'billable' => 'user',
+    'tier_order' => ['free', 'pro'],
+    'tiers' => [
+        'free' => ['name' => 'Free'],
+        'pro' => ['name' => 'Pro'],
+    ],
+    'products' => [
+        'pro_monthly' => [
+            'type' => 'subscription',
+            'tier' => 'pro',
+            'cycle' => 'monthly',
+            'prices' => ['web' => ['USD' => 2900]],
+            'refs' => [
+                'stripe_price' => env('CASHIER_PRICE_PRO_MONTHLY'),
+                'app_store' => 'com.example.app.pro.monthly',
+                'play' => 'pro:monthly',
+            ],
+        ],
+    ],
+],
+```
+
+The Stripe price id of a product is read from `CASHIER_PRICE_<KEY>`, the product key uppercased: `pro_monthly` reads `CASHIER_PRICE_PRO_MONTHLY`. The RevenueCat keys are `webhook_secret` (the HMAC signing secret), `secret_api_key` (reads subscribers), and `api_v2_key` with `project_id` (read by `billing:doctor --remote` only; neither is needed to sell).
+
+> [!WARNING]
+> `plans`, `prices` and `store_products` were removed. A config that still carries one, even empty, stops boot with a message naming where its content moved. See the [changelog](../../CHANGELOG.md).
+
+The full reference, including the refusals and the webhook, is in [Billing](../basics/billing.md).
+
 <a name="environment-variables"></a>
 ## Environment Variables
 
@@ -381,3 +433,13 @@ All environment variables recognized by the package:
 | `MAGIC_STARTER_AUTH_EMAIL` | `auth.email` | `true` | Enable email-based authentication |
 | `MAGIC_STARTER_AUTH_PHONE` | `auth.phone` | `false` | Enable phone-based authentication |
 | `APP_NAME` | `two_factor.company_name` | `'Laravel'` | Company name in authenticator apps |
+| `CASHIER_PRICE_<KEY>` | `billing.products.<key>.refs.stripe_price` | `null` | Stripe price id of a product; `<KEY>` is the product key uppercased (`CASHIER_PRICE_PRO_MONTHLY`) |
+| `MAGIC_STARTER_BILLING_RECONCILE_CADENCE` | `billing.reconcile.cadence` | `'daily'` | How often `billing:reconcile` runs; `hourly` suits a store-heavy app |
+| `REVENUECAT_WEBHOOK_PATH` | `billing.revenuecat.path` | `'webhooks/revenuecat'` | Served path of the RevenueCat webhook |
+| `REVENUECAT_WEBHOOK_SECRET` | `billing.revenuecat.webhook_secret` | `null` | HMAC signing secret, shown once in the RevenueCat dashboard |
+| `REVENUECAT_SECRET_API_KEY` | `billing.revenuecat.secret_api_key` | `null` | RevenueCat v1 secret key |
+| `REVENUECAT_BASE_URL` | `billing.revenuecat.base_url` | RevenueCat's API | RevenueCat API base URL |
+| `REVENUECAT_OPERATION_BUDGET_SECONDS` | `billing.revenuecat.operation_budget_seconds` | `10` | Time budget for the whole retried read |
+| `REVENUECAT_ACCEPT_SANDBOX` | `billing.revenuecat.accept_sandbox` | `false` | Act on sandbox purchases. Never in production |
+| `REVENUECAT_API_V2_KEY` | `billing.revenuecat.api_v2_key` | `null` | v2 read key for `billing:doctor --remote` |
+| `REVENUECAT_PROJECT_ID` | `billing.revenuecat.project_id` | `null` | RevenueCat project id for `billing:doctor --remote` |

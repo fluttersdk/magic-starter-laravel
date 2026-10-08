@@ -28,6 +28,7 @@ use LogicException;
  *     tier: ?string,
  *     cycle: ?string,
  *     credits: ?int,
+ *     sellable: bool,
  *     prices: array<string, mixed>,
  *     refs: Refs,
  * }
@@ -139,7 +140,11 @@ final class BillingCatalogue
             }
         }
 
-        // 5. Store ids name one product each, and a Play subscription one tier.
+        // 5. A tier and cycle are sold by one product, so a checkout never has to
+        //    choose between two prices for what the screen shows as one.
+        self::validateOneSellablePerTierAndCycle($products);
+
+        // 6. Store ids name one product each, and a Play subscription one tier.
         self::validateStoreIds($products);
     }
 
@@ -259,27 +264,6 @@ final class BillingCatalogue
     }
 
     /**
-     * The subscription selling [$tier] on [$cycle], exact pair, first in config
-     * order. Never the nearest: answering with the tier's other cycle would
-     * charge a figure the screen did not show.
-     *
-     * @return Product|null
-     */
-    public static function productForTierAndCycle(string $tier, string $cycle): ?array
-    {
-        foreach (self::products() as $product) {
-            if ($product['type'] === self::TYPE_SUBSCRIPTION
-                && $product['tier'] === $tier
-                && $product['cycle'] === $cycle
-            ) {
-                return $product;
-            }
-        }
-
-        return null;
-    }
-
-    /**
      * The base currency and the commission rule store prices derive under.
      *
      * @return Pricing
@@ -304,8 +288,9 @@ final class BillingCatalogue
     }
 
     /**
-     * Refuse a product whose type is unknown, or a subscription that does not
-     * name a ranked tier and a known cycle.
+     * Refuse a product whose type is unknown or whose `sellable` is not a
+     * boolean, or a subscription that does not name a ranked tier and a known
+     * cycle.
      *
      * @param  list<string>  $tierOrder
      *
@@ -321,6 +306,16 @@ final class BillingCatalogue
                 $key,
                 is_string($type) ? $type : get_debug_type($type),
                 implode(', ', self::TYPES),
+            ));
+        }
+
+        // A string such as 'no' is truthy to a loose reader, so a typo would keep
+        // a retired product on sale; refusing it by name is the only safe answer.
+        if (array_key_exists('sellable', $product) && ! is_bool($product['sellable'])) {
+            throw new LogicException(sprintf(
+                'Product [%s] has [sellable] of type [%s]; use true or false.',
+                $key,
+                get_debug_type($product['sellable']),
             ));
         }
 
@@ -354,6 +349,44 @@ final class BillingCatalogue
                 is_string($cycle) ? $cycle : get_debug_type($cycle),
                 implode(', ', StripeSubscriptionState::CYCLES),
             ));
+        }
+    }
+
+    /**
+     * Refuse two sellable subscriptions on the same tier and cycle.
+     *
+     * A retired price that must stay mapped is the legitimate second product for
+     * a pair, and `sellable: false` is how it says so. Two products both for
+     * sale would make the plans screen list one tier and cycle twice, at
+     * figures a customer could not tell apart.
+     *
+     * @param  array<string, Product>  $products
+     *
+     * @throws LogicException
+     */
+    private static function validateOneSellablePerTierAndCycle(array $products): void
+    {
+        $owners = [];
+
+        foreach ($products as $product) {
+            if ($product['type'] !== self::TYPE_SUBSCRIPTION || ! $product['sellable']) {
+                continue;
+            }
+
+            $pair = $product['tier'] . '|' . $product['cycle'];
+
+            if (isset($owners[$pair])) {
+                throw new LogicException(sprintf(
+                    'Subscription products [%s] and [%s] both sell tier [%s] on cycle [%s]; keep one sellable '
+                    . 'and set [sellable] to false on a product kept only so an old price still maps.',
+                    $owners[$pair],
+                    $product['key'],
+                    $product['tier'],
+                    $product['cycle'],
+                ));
+            }
+
+            $owners[$pair] = $product['key'];
         }
     }
 
@@ -470,6 +503,7 @@ final class BillingCatalogue
             'tier' => self::stringOrNull($product['tier'] ?? null),
             'cycle' => self::stringOrNull($product['cycle'] ?? null),
             'credits' => is_int($product['credits'] ?? null) ? $product['credits'] : null,
+            'sellable' => ($product['sellable'] ?? true) === true,
             'prices' => is_array($product['prices'] ?? null) ? $product['prices'] : [],
             'refs' => [
                 'stripe_price' => self::stringOrNull($refs['stripe_price'] ?? null),

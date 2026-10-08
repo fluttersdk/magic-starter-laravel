@@ -363,6 +363,49 @@ class BillingWriteEndpointsTest extends TestCase
     }
 
     /**
+     * A product kept only so an old price still maps is not for sale, by checkout
+     * or by swap, and no Stripe write follows the refusal.
+     *
+     * The key carries a Stripe price, so everything but `sellable` says it can be
+     * bought: the refusal is the flag and nothing else, and the sibling that
+     * sells the same tier and cycle is the limb that shows the rail still works.
+     */
+    public function test_a_product_kept_for_mapping_is_refused_by_checkout_and_swap(): void
+    {
+        config([
+            'magic-starter.billing.products' => [
+                'pro_monthly' => [
+                    'type' => 'subscription',
+                    'tier' => 'pro',
+                    'cycle' => 'monthly',
+                    'refs' => ['stripe_price' => 'price_pro'],
+                ],
+                'pro_monthly_2025' => [
+                    'type' => 'subscription',
+                    'tier' => 'pro',
+                    'cycle' => 'monthly',
+                    'sellable' => false,
+                    'refs' => ['stripe_price' => 'price_old'],
+                ],
+            ],
+        ]);
+
+        $this->bootBillingRoutes('user');
+
+        $user = $this->createUser('grandfathered@example.test');
+        BillingWriteRail::$subscription = new BillingWriteSubscription;
+
+        $this->assertNotSellable($this->buy($user, 'pro_monthly_2025'));
+        $this->assertNull(BillingWriteRail::$checkoutItems, 'A retired product must open no session.');
+
+        $this->assertNotSellable($this->write($user, '/billing/swap', ['product' => 'pro_monthly_2025']));
+        $this->assertNull(BillingWriteSubscription::$swappedTo, 'A retired product must not be swapped onto.');
+
+        $this->buy($user, 'pro_monthly')->assertOk();
+        $this->assertSame(['price_pro' => 1], BillingWriteRail::$checkoutItems);
+    }
+
+    /**
      * An adopter who has published nothing sells nothing, and the sentence names
      * the config that is missing.
      *

@@ -225,11 +225,96 @@ class BillingCatalogueTest extends TestCase
         $this->assertNull(BillingCatalogue::productForStoreId(''));
     }
 
-    public function test_a_subscription_is_found_by_its_exact_tier_and_cycle(): void
+    public function test_a_product_is_sellable_unless_it_says_otherwise(): void
     {
-        $this->assertSame('pro_monthly', BillingCatalogue::productForTierAndCycle('pro', 'monthly')['key'] ?? null);
-        $this->assertNull(BillingCatalogue::productForTierAndCycle('pro', 'annual'));
-        $this->assertNull(BillingCatalogue::productForTierAndCycle('enterprise', 'monthly'));
+        config(['magic-starter.billing.products.business_monthly.sellable' => false]);
+
+        $this->assertTrue(BillingCatalogue::product('pro_monthly')['sellable'] ?? null);
+        $this->assertFalse(BillingCatalogue::product('business_monthly')['sellable'] ?? null);
+
+        BillingCatalogue::validate();
+    }
+
+    #[DataProvider('nonBooleanSellable')]
+    public function test_a_sellable_flag_that_is_not_a_boolean_is_refused_naming_the_product(mixed $value): void
+    {
+        config(['magic-starter.billing.products.pro_monthly.sellable' => $value]);
+
+        $message = $this->refusal();
+
+        $this->assertStringContainsString('[pro_monthly]', $message);
+        $this->assertStringContainsString('sellable', $message);
+    }
+
+    /**
+     * @return array<string, array{0: mixed}>
+     */
+    public static function nonBooleanSellable(): array
+    {
+        return [
+            'string' => ['no'],
+            'integer' => [0],
+            'null' => [null],
+        ];
+    }
+
+    /**
+     * A grandfathered price is kept mapped so its subscribers keep their tier:
+     * the reverse lookups every webhook and reconcile run must still find it.
+     */
+    public function test_a_product_kept_for_mapping_still_resolves_by_its_rail_refs(): void
+    {
+        config([
+            'magic-starter.billing.products.pro_monthly_2025' => [
+                'type' => 'subscription',
+                'tier' => 'pro',
+                'cycle' => 'monthly',
+                'sellable' => false,
+                'refs' => [
+                    'stripe_price' => 'price_old',
+                    'app_store' => 'com.example.pro.monthly.2025',
+                    'play' => 'pro_sub:monthly_2025',
+                ],
+            ],
+        ]);
+
+        BillingCatalogue::validate();
+
+        $this->assertSame('pro_monthly_2025', BillingCatalogue::productForStripePrice('price_old')['key'] ?? null);
+        $this->assertSame(
+            'pro_monthly_2025',
+            BillingCatalogue::productForStoreId('com.example.pro.monthly.2025')['key'] ?? null,
+        );
+        $this->assertSame(
+            'pro_monthly_2025',
+            BillingCatalogue::productForStoreId('pro_sub:monthly_2025')['key'] ?? null,
+        );
+    }
+
+    public function test_two_sellable_products_for_one_tier_and_cycle_are_refused(): void
+    {
+        config([
+            'magic-starter.billing.products.pro_monthly_b' => [
+                'type' => 'subscription',
+                'tier' => 'pro',
+                'cycle' => 'monthly',
+                'refs' => ['stripe_price' => 'price_pro_monthly_b'],
+            ],
+        ]);
+
+        $message = $this->refusal();
+
+        $this->assertStringContainsString('[pro_monthly]', $message);
+        $this->assertStringContainsString('[pro_monthly_b]', $message);
+        $this->assertStringContainsString('[pro]', $message);
+        $this->assertStringContainsString('[monthly]', $message);
+
+        // The disarming limb: retiring either one makes the pair legal.
+        config(['magic-starter.billing.products.pro_monthly_b.sellable' => false]);
+
+        BillingCatalogue::validate();
+
+        $this->addToAssertionCount(1);
     }
 
     public function test_a_product_is_read_by_key_with_normalised_refs(): void

@@ -865,6 +865,63 @@ class BillingControllerTest extends TestCase
     }
 
     /**
+     * A product kept for mapping is neither listed nor counted as a cycle, and
+     * the entitlement of a team still on its price still names it.
+     *
+     * The two halves are one test because they are one claim: the catalogue
+     * keeps the product so the subscriber's tier survives, and the plans screen
+     * stops offering it.
+     */
+    public function test_a_product_kept_for_mapping_is_not_offered_but_still_names_its_subscriber_tier(): void
+    {
+        config([
+            'magic-starter.billing.products' => [
+                'pro_monthly' => [
+                    'type' => 'subscription',
+                    'tier' => 'pro',
+                    'cycle' => 'monthly',
+                    'refs' => ['stripe_price' => 'price_pro_monthly'],
+                ],
+                'pro_monthly_2025' => [
+                    'type' => 'subscription',
+                    'tier' => 'pro',
+                    'cycle' => 'monthly',
+                    'sellable' => false,
+                    'refs' => ['stripe_price' => 'price_old'],
+                ],
+                'business_monthly_2025' => [
+                    'type' => 'subscription',
+                    'tier' => 'business',
+                    'cycle' => 'monthly',
+                    'sellable' => false,
+                    'refs' => ['stripe_price' => 'price_business_old'],
+                ],
+            ],
+        ]);
+
+        $this->bindUsageReporter();
+        $this->bootBillingRoutes('team');
+
+        $owner = $this->createUser('retired-product@example.test');
+        $team = $this->createTeam($owner, [
+            'plan' => 'pro',
+            'plan_status' => 'active',
+            'plan_provider' => 'stripe',
+            'plan_product_id' => 'price_old',
+        ]);
+        $this->setCurrentTeam($owner, $team);
+
+        $data = $this->ask($owner, '/billing/plans')->assertOk()->json('data');
+
+        $this->assertSame(['pro_monthly'], array_column($data[1]['products'], 'key'));
+        $this->assertSame(['monthly'], $data[1]['cycles']);
+        $this->assertSame([], $data[2]['products']);
+        $this->assertSame([], $data[2]['cycles']);
+
+        $this->assertSame('pro_monthly_2025', $this->ask($owner, '/billing')->assertOk()->json('data.product'));
+    }
+
+    /**
      * The entitlement names the catalogue product it sits on and the consumer's
      * allowances, in the shapes the client decoder reads.
      *

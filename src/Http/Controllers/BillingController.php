@@ -185,7 +185,9 @@ class BillingController
      * a web billing screen offers: a tier priced on the stores only would
      * otherwise render a web button the customer learns about from a 422 AFTER
      * committing to buy. `products` lists every product of the tier, on any
-     * rail, because the stores buy by the same key.
+     * rail, because the stores buy by the same key. Neither carries a product
+     * marked `sellable: false`: it is kept mapped for existing subscribers and
+     * is not offered.
      *
      * Both writes are unconditional, so an adopter's own `cycles` or `products`
      * on a tier definition is replaced: two values under one key, one
@@ -196,17 +198,19 @@ class BillingController
     protected function sellableCatalogue(): array
     {
         $sellable = [];
-
-        foreach (StripeSubscriptionState::catalogue() as $entry) {
-            $sellable[$entry['tier']][$entry['cycle']] = true;
-        }
-
         $products = [];
         $pricing = BillingCatalogue::pricing();
 
         foreach (BillingCatalogue::products() as $product) {
-            if ($product['tier'] === null) {
+            if ($product['tier'] === null || ! $product['sellable']) {
                 continue;
+            }
+
+            if ($product['type'] === BillingCatalogue::TYPE_SUBSCRIPTION
+                && $product['refs']['stripe_price'] !== null
+                && in_array($product['cycle'], StripeSubscriptionState::CYCLES, true)
+            ) {
+                $sellable[$product['tier']][$product['cycle']] = true;
             }
 
             $products[$product['tier']][] = [
@@ -855,11 +859,13 @@ class BillingController
      * The Stripe price of the catalogue product [$key], refusing a product this
      * rail cannot sell.
      *
-     * Sellable here means four things at once, each closing a different way to
+     * Sellable here means five things at once, each closing a different way to
      * charge for the wrong thing: the key is in the catalogue; it is a
      * SUBSCRIPTION, because this rail opens subscription sessions only and a
-     * one-off price would be refused by Stripe after the customer committed;
-     * its tier is ranked and is not the free floor, which nothing sells; and it
+     * one-off price would be refused by Stripe after the customer committed; it
+     * is not marked `sellable: false`, since a retired price is kept mapped for
+     * its existing subscribers and must not be bought again; its tier is ranked
+     * and is not the free floor, which nothing sells; and it
      * carries a Stripe price, since a product without one is sold on the stores
      * only and reaching past it for another product's price would charge a
      * figure the screen did not show.
@@ -873,7 +879,10 @@ class BillingController
     {
         $product = BillingCatalogue::product($key);
 
-        if ($product === null || $product['type'] !== BillingCatalogue::TYPE_SUBSCRIPTION) {
+        if ($product === null
+            || $product['type'] !== BillingCatalogue::TYPE_SUBSCRIPTION
+            || ! $product['sellable']
+        ) {
             $this->refuseUnsellableProduct($key);
         }
 
