@@ -4,6 +4,8 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [0.0.19] - 2026-10-08
+
 ### Changed
 
 - **The audit entry page reads as a record of what happened.** Its sections span the page instead of squeezing Before and After into two narrow columns beside the summary, and the changes are one Field, Before, After table that shows only the sides the row recorded (no empty Before on a creation); it stacks into labelled cards on a phone. The title names the subject and event (`Team updated`) instead of "View updated", a dotted event such as `admin.team.updated` stands alone, the subject type is the class name without its namespace (the full name is the tooltip), and the subject id is monospaced and copyable. The actor is the user's name and address, linked to the user, or "System" for a row with no actor, or "Deleted user"; the related user is named and linked the same way. A stored empty string reads `""`, so `-` keeps meaning "not recorded". Context is collapsible. (`src/Filament/Resources/Audits/AuditResource.php`, `src/Filament/Resources/Audits/Pages/ViewAudit.php`)
