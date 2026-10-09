@@ -161,10 +161,12 @@ class BillingController
      * tier. A product rides inside the row of the tier it sells; a one-off
      * product names no tier and has no row to ride in.
      *
-     * Entries reach the client VERBATIM but for two keys, `cycles` and
-     * `products`, which {@see self::sellableCatalogue()} DERIVES from the
-     * products and writes over. Everything else (a tier's limits, capability
-     * copy) is the adopter's product knowledge and passes through untouched.
+     * Entries reach the client as configured but for two things. `cycles` and
+     * `products` are DERIVED by {@see self::sellableCatalogue()} from the
+     * products and written over, and the display copy is translated into the
+     * request locale ({@see self::translatedTierCopy()}). Everything else (a
+     * tier's limits, any data keyed by name) is the adopter's product knowledge
+     * and passes through untouched.
      *
      * An adopter who has published nothing gets an empty list rather than a 404.
      * The catalogue being empty is a legitimate state (a fresh install sells
@@ -238,9 +240,10 @@ class BillingController
         }
 
         return array_map(
-            static function (array $entry) use ($sellable, $products): array {
+            function (array $entry) use ($sellable, $products): array {
                 $id = is_string($entry['id'] ?? null) ? $entry['id'] : null;
 
+                $entry = $this->translatedTierCopy($entry);
                 $entry['cycles'] = $id === null
                     ? []
                     : array_keys($sellable[$id] ?? []);
@@ -252,6 +255,63 @@ class BillingController
             },
             $this->planCatalogue(),
         );
+    }
+
+    /**
+     * The tier row with its display copy in the request locale.
+     *
+     * The adopter's English copy is the translation KEY, the convention of a
+     * Laravel JSON translation file: `lang/tr.json` maps the English sentence
+     * to the Turkish one, and `__()` answers the input unchanged when no line
+     * exists. Translated per request, never cached, because the locale is the
+     * caller's.
+     *
+     * Every top-level string is copy except `id`, the identifier a client
+     * matches the entitlement against, and so is every string inside a LIST
+     * (the `features` bullets). An associative array is left alone: `limits`
+     * and anything shaped like it is data the adopter's client reads by key.
+     * `cycles` and `products` are written after this runs, so they are never
+     * seen here.
+     *
+     * @param  array<string, mixed>  $entry
+     * @return array<string, mixed>
+     */
+    protected function translatedTierCopy(array $entry): array
+    {
+        foreach ($entry as $key => $value) {
+            if ($key === 'id') {
+                continue;
+            }
+
+            if (is_string($value)) {
+                $entry[$key] = $this->translatedLine($value);
+
+                continue;
+            }
+
+            if (is_array($value) && array_is_list($value)) {
+                $entry[$key] = array_map(
+                    fn (mixed $line): mixed => is_string($line) ? $this->translatedLine($line) : $line,
+                    $value,
+                );
+            }
+        }
+
+        return $entry;
+    }
+
+    /**
+     * One line of copy through `__()`, never anything but a string.
+     *
+     * `__()` falls back to the PHP translation GROUP of the same name when the
+     * JSON lookup misses, so copy that happens to read `validation` would come
+     * back as the whole validation file. Such a line is served as written.
+     */
+    private function translatedLine(string $line): string
+    {
+        $translated = __($line);
+
+        return is_string($translated) ? $translated : $line;
     }
 
     /**

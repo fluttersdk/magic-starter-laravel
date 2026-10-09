@@ -129,7 +129,12 @@ class MagicStarterServiceProvider extends ServiceProvider
         //
         // The two subscription calls hand over a CLASS NAME the package owns
         // outright, and neither instantiates a model nor reads the billable
-        // subject. useCustomerModel() is the one that DOES resolve the billable,
+        // subject. They are skipped when 'billing.package_subscription_models'
+        // is false: an application whose subscription tables came from
+        // Cashier's own migrations has bigint keys there, and the package's
+        // models would key them by use_uuids, so every subscription write would
+        // fail. Cashier's own integer-keyed models are left in place for it.
+        // useCustomerModel() is the one that DOES resolve the billable,
         // which is why the guard runs beside it here rather than only in boot():
         // by boot() Cashier has already been handed a model, so a refusal there
         // would come after the wrong one was accepted.
@@ -142,8 +147,10 @@ class MagicStarterServiceProvider extends ServiceProvider
         if (Features::hasBillingFeatures()) {
             Cashier::ignoreRoutes();
 
-            Cashier::useSubscriptionModel(Models\Subscription::class);
-            Cashier::useSubscriptionItemModel(Models\SubscriptionItem::class);
+            if (config('magic-starter.billing.package_subscription_models', true)) {
+                Cashier::useSubscriptionModel(Models\Subscription::class);
+                Cashier::useSubscriptionItemModel(Models\SubscriptionItem::class);
+            }
 
             $this->guardBillableSubject();
 

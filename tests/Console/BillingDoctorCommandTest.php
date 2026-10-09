@@ -5,15 +5,22 @@ namespace FlutterSdk\MagicStarter\Tests\Console;
 use Closure;
 use FlutterSdk\MagicStarter\Console\BillingDoctorCommand;
 use FlutterSdk\MagicStarter\Features;
+use FlutterSdk\MagicStarter\Models\Subscription;
+use FlutterSdk\MagicStarter\Models\SubscriptionItem;
 use FlutterSdk\MagicStarter\Support\RevenueCatProjectClient;
 use FlutterSdk\MagicStarter\Support\StripePriceReader;
 use FlutterSdk\MagicStarter\Tests\TestCase;
 use GuzzleHttp\Promise\PromiseInterface;
+use Illuminate\Database\Schema\Blueprint;
 use Illuminate\Http\Client\Factory;
 use Illuminate\Http\Client\Request;
 use Illuminate\Support\Facades\Artisan;
 use Illuminate\Support\Facades\Http;
+use Illuminate\Support\Facades\Schema;
 use Illuminate\Support\Sleep;
+use Laravel\Cashier\Cashier;
+use Laravel\Cashier\Subscription as CashierSubscription;
+use Laravel\Cashier\SubscriptionItem as CashierSubscriptionItem;
 use Stripe\Exception\AuthenticationException;
 
 /**
@@ -97,12 +104,17 @@ class BillingDoctorCommandTest extends TestCase
         $this->assertSame('ok', $doctor['checks']['revenuecat.hmac_secret']['status']);
         $this->assertSame('ok', $doctor['checks']['stripe.price.pro_annual']['status']);
         $this->assertSame('ok', $doctor['checks']['billable.uuid']['status']);
+        $this->assertSame('ok', $doctor['checks']['schema.subscription_keys']['status']);
         $this->assertArrayNotHasKey('revenuecat.remote', $doctor['checks']);
     }
 
     protected function tearDown(): void
     {
         $_SERVER['argv'] = $this->argv;
+
+        // Statics on Cashier, so they outlive the application this test booted.
+        Cashier::useSubscriptionModel(CashierSubscription::class);
+        Cashier::useSubscriptionItemModel(CashierSubscriptionItem::class);
 
         parent::tearDown();
     }
@@ -362,6 +374,93 @@ class BillingDoctorCommandTest extends TestCase
         $this->artisan(BillingDoctorCommand::NAME)
             ->expectsOutputToContain('WARNING')
             ->assertExitCode(0);
+    }
+
+    /**
+     * Cashier's own bigint tables under the package's UUID-keyed models are the
+     * mismatch that 500s every Stripe webhook, and the finding names the switch
+     * that fixes it.
+     */
+    public function test_cashier_tables_under_uuid_keyed_package_models_are_an_error_naming_the_switch(): void
+    {
+        Cashier::useSubscriptionModel(Subscription::class);
+        Cashier::useSubscriptionItemModel(SubscriptionItem::class);
+        $this->createSubscriptionTables(uuid: false);
+
+        $doctor = $this->doctor();
+
+        $this->assertSame(1, $doctor['exit']);
+        $this->assertSame('error', $doctor['checks']['schema.subscription_keys']['status']);
+        $this->assertStringContainsString('subscriptions.id', $doctor['checks']['schema.subscription_keys']['message']);
+        $this->assertStringContainsString(
+            'subscription_items.id',
+            $doctor['checks']['schema.subscription_keys']['message'],
+        );
+        $this->assertStringContainsString(
+            'MAGIC_STARTER_PACKAGE_SUBSCRIPTION_MODELS=false',
+            $doctor['checks']['schema.subscription_keys']['message'],
+        );
+    }
+
+    /**
+     * The same tables under Cashier's own models, which is what the switch
+     * leaves in place, pass.
+     */
+    public function test_cashier_tables_under_cashiers_own_models_pass(): void
+    {
+        Cashier::useSubscriptionModel(CashierSubscription::class);
+        Cashier::useSubscriptionItemModel(CashierSubscriptionItem::class);
+        $this->createSubscriptionTables(uuid: false);
+
+        $doctor = $this->doctor();
+
+        $this->assertSame(0, $doctor['exit']);
+        $this->assertSame('ok', $doctor['checks']['schema.subscription_keys']['status']);
+    }
+
+    /**
+     * The reverse: the package's UUID tables under an integer-keyed model, which
+     * is the switch turned off on the wrong application.
+     */
+    public function test_uuid_tables_under_integer_keyed_models_are_an_error_naming_use_uuids(): void
+    {
+        Cashier::useSubscriptionModel(CashierSubscription::class);
+        Cashier::useSubscriptionItemModel(CashierSubscriptionItem::class);
+        $this->createSubscriptionTables(uuid: true);
+
+        $doctor = $this->doctor();
+
+        $this->assertSame(1, $doctor['exit']);
+        $this->assertSame('error', $doctor['checks']['schema.subscription_keys']['status']);
+        $this->assertStringContainsString(
+            'magic-starter.use_uuids',
+            $doctor['checks']['schema.subscription_keys']['message'],
+        );
+    }
+
+    /**
+     * A database the doctor cannot reach is a warning that says the comparison
+     * did not happen, not a stack trace in place of the JSON an agent parses.
+     */
+    public function test_an_unreadable_schema_is_a_warning_not_a_crash(): void
+    {
+        config([
+            'database.connections.unreachable' => [
+                'driver' => 'sqlite',
+                'database' => '/nonexistent/magic-starter-doctor.sqlite',
+                'prefix' => '',
+            ],
+            'database.default' => 'unreachable',
+        ]);
+
+        $doctor = $this->doctor();
+
+        $this->assertSame(0, $doctor['exit']);
+        $this->assertSame('warning', $doctor['checks']['schema.subscription_keys']['status']);
+        $this->assertStringContainsString(
+            'could not be read',
+            $doctor['checks']['schema.subscription_keys']['message'],
+        );
     }
 
     /**
@@ -689,6 +788,20 @@ class BillingDoctorCommandTest extends TestCase
             'report' => $report,
             'checks' => $checks,
         ];
+    }
+
+    /**
+     * Create the two subscription tables keyed by a UUID or, as Cashier's own
+     * migrations key them, by an auto-incrementing bigint.
+     */
+    private function createSubscriptionTables(bool $uuid): void
+    {
+        foreach (['subscriptions', 'subscription_items'] as $table) {
+            Schema::create($table, function (Blueprint $blueprint) use ($uuid): void {
+                $uuid ? $blueprint->uuid('id')->primary() : $blueprint->id();
+                $blueprint->timestamps();
+            });
+        }
     }
 
     /**

@@ -243,6 +243,63 @@ class StripeWebhookTest extends TestCase
         );
     }
 
+    /**
+     * An application whose subscription tables came from CASHIER'S OWN
+     * migrations, with `use_uuids` on and the package models switched off,
+     * records a subscription and its item and is granted the tier.
+     *
+     * This is the adopter the switch exists for. Cashier's tables key both rows
+     * with an auto-incrementing bigint, and the package's models would hand
+     * them an ordered UUID instead: SQLite refuses that as a datatype mismatch
+     * and PostgreSQL as invalid input for type bigint, so the webhook 500s,
+     * Stripe retries for days and the plan never lands. The rows are read back
+     * through Cashier's own models, because a write that only LOOKED fine
+     * through the package's models would hide the key it was given.
+     */
+    public function test_cashiers_own_tables_record_a_subscription_with_the_package_models_off(): void
+    {
+        // 1. A fresh process with the switch off: Cashier's statics start at
+        //    its own models and the provider leaves them there.
+        Cashier::useSubscriptionModel(CashierSubscription::class);
+        Cashier::useSubscriptionItemModel(CashierSubscriptionItem::class);
+
+        config([
+            'magic-starter.use_uuids' => true,
+            'magic-starter.billing.package_subscription_models' => false,
+        ]);
+
+        (new MagicStarterServiceProvider($this->app))->register();
+
+        $this->assertSame(CashierSubscription::class, Cashier::$subscriptionModel);
+        $this->assertSame(CashierSubscriptionItem::class, Cashier::$subscriptionItemModel);
+
+        // 2. Swap the package's subscription tables for Cashier's own.
+        Schema::drop('subscription_items');
+        Schema::drop('subscriptions');
+
+        $this->runCashierMigration('2019_05_03_000002_create_subscriptions_table.php');
+        $this->runCashierMigration('2019_05_03_000003_create_subscription_items_table.php');
+
+        // 3. The delivery lands and grants the tier.
+        $billable = $this->createBillable();
+
+        $this->postSignedWebhook(
+            $this->subscriptionEvent('evt_cashier_tables', 'customer.subscription.created', 'price_pro', 'active'),
+        )->assertOk();
+
+        $subscription = CashierSubscription::query()->sole();
+        $item = CashierSubscriptionItem::query()->sole();
+
+        $this->assertIsInt($subscription->getKey());
+        $this->assertSame('sub_webhook_test', $subscription->stripe_id);
+        $this->assertSame($subscription->getKey(), (int) $item->subscription_id);
+        $this->assertSame('price_pro', $item->stripe_price);
+
+        $billable->refresh();
+        $this->assertSame('pro', $billable->getAttribute('plan'));
+        $this->assertSame(PlanStatus::ACTIVE->value, $billable->getAttribute('plan_status'));
+    }
+
     // -------------------------------------------------------------------------
     // The route: where it is, and where it is not
     // -------------------------------------------------------------------------
@@ -1121,6 +1178,17 @@ class StripeWebhookTest extends TestCase
     private function runMigration(string $filename): void
     {
         $migration = require __DIR__ . '/../../../database/migrations/' . $filename;
+
+        $migration->up();
+    }
+
+    /**
+     * Run one of Cashier's own shipped migrations, the ones an adopter gets
+     * from `vendor:publish --tag=cashier-migrations`.
+     */
+    private function runCashierMigration(string $filename): void
+    {
+        $migration = require __DIR__ . '/../../../vendor/laravel/cashier/database/migrations/' . $filename;
 
         $migration->up();
     }

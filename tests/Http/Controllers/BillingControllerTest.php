@@ -20,6 +20,7 @@ use Illuminate\Foundation\Auth\Access\Authorizable;
 use Illuminate\Pagination\CursorPaginator;
 use Illuminate\Routing\RouteCollection;
 use Illuminate\Support\Facades\Gate;
+use Illuminate\Support\Facades\Lang;
 use Illuminate\Testing\TestResponse;
 use Laravel\Cashier\Invoice;
 use Laravel\Cashier\PaymentMethod;
@@ -702,7 +703,8 @@ class BillingControllerTest extends TestCase
     }
 
     /**
-     * The catalogue endpoint serves the adopter's entries VERBATIM.
+     * The catalogue endpoint serves the adopter's entries VERBATIM while no
+     * translation exists for their copy.
      *
      * The assertion is exact-JSON against the configured array rather than a
      * field-by-field check, which is the only shape that can fail when the
@@ -743,6 +745,88 @@ class BillingControllerTest extends TestCase
         $this->ask($user, '/billing/plans')
             ->assertOk()
             ->assertExactJson(['data' => []]);
+    }
+
+    /**
+     * Every display string of a tier is translated into the request locale.
+     *
+     * The English copy in config is the translation KEY, exactly like a JSON
+     * translation file expects, so a multilingual application translates its
+     * plan grid with `lang/tr.json` and nothing else. Each control below fails
+     * a different mutant: the untranslated bullet one that drops a line it
+     * cannot translate, `limits` one that walks into associative arrays, `id`
+     * one that translates the identifier a client matches the entitlement
+     * against, and the group name one that hands a client the whole PHP
+     * translation file `__()` answers for it.
+     */
+    public function test_the_plans_endpoint_translates_tier_copy_into_the_request_locale(): void
+    {
+        $this->bootBillingRoutes('user');
+
+        config([
+            'magic-starter.billing.tier_order' => ['free', 'pro'],
+            'magic-starter.billing.tiers' => [
+                'free' => [
+                    'name' => 'Free',
+                ],
+                'pro' => [
+                    'name' => 'Pro',
+                    'tagline' => 'For growing teams.',
+                    'ai_line' => 'AI triage on every incident.',
+                    'features' => [
+                        'Unlimited monitors',
+                        'An untranslated bullet',
+                        42,
+                    ],
+                    'recommended' => true,
+                    'limits' => [
+                        'seats' => 10,
+                        'label' => 'Unlimited monitors',
+                    ],
+                    'note' => 'validation',
+                ],
+            ],
+        ]);
+
+        // A JSON translation file, keyed by the English source string, which is
+        // the shape an adopter's `lang/tr.json` has. It also translates `free`
+        // and `pro`, so an `id` that went through `__()` would show.
+        Lang::addJsonPath(__DIR__ . '/../../Fixtures/lang');
+
+        app()->setLocale('tr');
+
+        $data = $this->ask($this->createUser('locale@example.test'), '/billing/plans')
+            ->assertOk()
+            ->json('data');
+
+        $this->assertSame(['id' => 'free', 'name' => 'Free', 'cycles' => [], 'products' => []], $data[0]);
+        $this->assertSame([
+            'id' => 'pro',
+            'name' => 'Profesyonel',
+            'tagline' => 'Buyuyen ekipler icin.',
+            'ai_line' => 'Her olayda yapay zeka triyaji.',
+            'features' => [
+                'Sinirsiz monitor',
+                'An untranslated bullet',
+                42,
+            ],
+            'recommended' => true,
+            'limits' => [
+                'seats' => 10,
+                'label' => 'Unlimited monitors',
+            ],
+            'note' => 'validation',
+            'cycles' => [],
+            'products' => [],
+        ], $data[1]);
+
+        // The control: the same request in the source locale is the config.
+        app()->setLocale('en');
+
+        $this->ask($this->createUser('source@example.test'), '/billing/plans')
+            ->assertOk()
+            ->assertJsonPath('data.1.name', 'Pro')
+            ->assertJsonPath('data.1.features.0', 'Unlimited monitors');
     }
 
     /**

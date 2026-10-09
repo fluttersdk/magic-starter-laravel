@@ -381,8 +381,14 @@ return [
     |
     | 'tiers' is the DISPLAY copy per tier id: 'name', 'tagline', 'features',
     | 'recommended', and anything else you add, which travels to the client
-    | UNTOUCHED (what a tier caps, what it unlocks, copy for a capability only
-    | your product has). GET billing/plans serves one entry per ranked tier, in
+    | (what a tier caps, what it unlocks, copy for a capability only your
+    | product has). THE COPY IS PASSED THROUGH __() PER REQUEST, so author it
+    | as English source strings or translation keys: every top-level string
+    | but 'id', and every string inside a list such as 'features', is looked
+    | up in the request locale, the way lang/tr.json maps an English sentence
+    | to a Turkish one, and comes back unchanged when no line exists. An
+    | associative array ('limits') and anything that is not a string travel
+    | untouched. GET billing/plans serves one entry per ranked tier, in
     | ranking order, with its 'id' added; the map's own order never ranks. A
     | ranked tier with no definition is served as its bare id. 'cycles' and
     | 'products' are RESERVED: both are derived from the products below and
@@ -525,6 +531,20 @@ return [
     | folded into the items create. `magic-starter:install` publishes them in
     | dependency order.
     |
+    | 'package_subscription_models' is for the application that ran Cashier's
+    | migrations anyway, before it adopted this package. Its `subscriptions`
+    | and `subscription_items` are keyed by an auto-incrementing bigint, and
+    | the package's Subscription and SubscriptionItem models key by
+    | 'use_uuids': with UUIDs on, the database refuses every subscription write
+    | (PostgreSQL: invalid input syntax for type bigint), the Stripe webhook
+    | answers 500, Stripe retries for days and the plan never lands. Set it
+    | false (MAGIC_STARTER_PACKAGE_SUBSCRIPTION_MODELS=false) when the
+    | subscription tables were created by Cashier's own migrations rather than
+    | this package's: the provider then hands Cashier neither model and its own
+    | integer-keyed ones stay. Leave it true, the default and what a config
+    | published without the key gets, when the package's migrations created
+    | them. `billing:doctor` reports a mismatch as `schema.subscription_keys`.
+    |
     | USAGE REPORTING has no key here, because it has no default to hold: the
     | package ships FlutterSdk\MagicStarter\Contracts\ReportsUsage with
     | deliberately NO default implementation and NO binding, and the usage
@@ -656,6 +676,8 @@ return [
 
     'billing' => [
         'billable' => 'user',
+
+        'package_subscription_models' => (bool) env('MAGIC_STARTER_PACKAGE_SUBSCRIPTION_MODELS', true),
 
         'tiers' => [
             // 'free' => [

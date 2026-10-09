@@ -4,6 +4,14 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Added
+
+- **`billing.package_subscription_models`, default `true` (`MAGIC_STARTER_PACKAGE_SUBSCRIPTION_MODELS`).** Set it `false` when the `subscriptions` and `subscription_items` tables came from Cashier's own migrations rather than the package's: the provider then hands Cashier neither `Subscription` nor `SubscriptionItem`, and Cashier's own integer-keyed models stay. Left on, an application with `use_uuids` and Cashier's bigint tables could not record a subscription: the `customer.subscription.created` webhook answered 500 (`invalid input syntax for type bigint` on PostgreSQL), Stripe retried for days and the plan never landed. `billing:doctor` reports a table keyed differently from its model as `schema.subscription_keys`, naming the setting that fixes it. (`config/magic-starter.php`, `src/MagicStarterServiceProvider.php`, `src/Console/BillingDoctorCommand.php`)
+
+### Changed
+
+- **`GET billing/plans` translates tier copy into the request locale.** Every top-level string of a `tiers` entry except `id`, and every string inside a list such as `features`, is passed through `__()` per request, so the English copy in config works as the key of a JSON translation (`lang/tr.json`) and comes back unchanged when no line exists. Associative arrays such as `limits` and non-string values are served as configured. Author tier copy as English source strings or translation keys. (`src/Http/Controllers/BillingController.php`)
+
 ## [0.0.20] - 2026-10-09
 
 ### Added
