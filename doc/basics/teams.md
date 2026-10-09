@@ -349,6 +349,12 @@ If the team being left was the user's current active team, the user is switched 
 Team owner cannot leave the team. Delete the team instead.
 ```
 
+On the owner's personal team, which cannot be deleted either:
+
+```
+You may not leave your personal team.
+```
+
 **Error (not a member):** `404 Not Found`
 
 ```

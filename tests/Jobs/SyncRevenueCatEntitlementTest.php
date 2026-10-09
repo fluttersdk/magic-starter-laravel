@@ -486,6 +486,44 @@ class SyncRevenueCatEntitlementTest extends TestCase
     }
 
     /**
+     * A one-off product that names a tier is not a subscription to that tier.
+     * The card rail already refuses it (`StripeSubscriptionState`), so the store
+     * rail granting the tier for the same product would make the rail decide
+     * what a catalogue entry means.
+     */
+    public function test_a_store_product_that_is_not_a_subscription_grants_no_tier(): void
+    {
+        Log::spy();
+        config(['magic-starter.billing.products.business_lifetime' => [
+            'type' => 'non_consumable',
+            'tier' => 'business',
+            'refs' => ['app_store' => 'starter_business_lifetime'],
+        ]]);
+
+        $billable = $this->makeBillable([
+            'plan' => 'free',
+            'plan_status' => PlanStatus::ACTIVE->value,
+            'plan_provider' => BillingProvider::APP_STORE->value,
+        ]);
+
+        $this->fakeAuthoritativeReads([
+            (string) $billable->getKey() => $this->subscriber([
+                'starter_business_lifetime' => $this->subscription(),
+            ]),
+        ]);
+
+        $this->sync($this->event('RENEWAL', $billable));
+
+        $billable->refresh();
+        $this->assertSame('free', $billable->getAttribute('plan'));
+        $this->assertWarned([
+            'reason' => 'unmapped_product',
+            'billable_id' => $billable->getKey(),
+            'product_id' => 'starter_business_lifetime',
+        ]);
+    }
+
+    /**
      * The v1 API keys a Play subscription by its BARE subscription id and names
      * the base plan in `product_plan_identifier`, so the product id the catalogue
      * knows (`<sub>:<plan>`) has to be composed from the two.

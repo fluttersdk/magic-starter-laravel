@@ -8,6 +8,7 @@ use FlutterSdk\MagicStarter\Contracts\WritesEntitlement;
 use FlutterSdk\MagicStarter\Enums\BillingChannel;
 use FlutterSdk\MagicStarter\Enums\BillingProvider;
 use FlutterSdk\MagicStarter\Enums\PlanStatus;
+use FlutterSdk\MagicStarter\Enums\ProductType;
 use FlutterSdk\MagicStarter\MagicStarter;
 use FlutterSdk\MagicStarter\Models\ProcessedWebhookEvent;
 use FlutterSdk\MagicStarter\Support\BillingCatalogue;
@@ -777,8 +778,10 @@ class SyncRevenueCatEntitlement implements ShouldQueue
      * the consuming application; this package has no opinion about what any of
      * them means. A catalogue product's `refs.app_store` and `refs.play` are the
      * store rail's half of the same question `refs.stripe_price` answers for the
-     * card rail, and a product with no tier behind it (a one-off purchase)
-     * reads as unmapped rather than granting a tier nobody published.
+     * card rail, and a product that is not a subscription, or names no tier,
+     * reads as unmapped rather than granting a tier nobody sold: a one-off
+     * product carrying a `tier` is refused here exactly as the card rail
+     * refuses it.
      *
      * Google Play does not arrive as `<subscription_id>:<base_plan_id>` here: the
      * v1 API keys `subscriber.subscriptions` by the BARE subscription id and
@@ -794,10 +797,10 @@ class SyncRevenueCatEntitlement implements ShouldQueue
     protected function planFor(string $rawId, string $composedId, BillingProvider $provider): ?array
     {
         foreach (array_unique([$composedId, $rawId]) as $candidate) {
-            $tier = BillingCatalogue::productForStoreId($candidate)['tier'] ?? null;
+            $product = BillingCatalogue::productForStoreId($candidate);
 
-            if ($tier !== null) {
-                return ['plan' => $tier, 'productId' => $candidate];
+            if ($product !== null && $product['type'] === ProductType::SUBSCRIPTION && $product['tier'] !== null) {
+                return ['plan' => $product['tier'], 'productId' => $candidate];
             }
         }
 
@@ -808,7 +811,12 @@ class SyncRevenueCatEntitlement implements ShouldQueue
         foreach (BillingCatalogue::products() as $product) {
             $play = $product['refs'][BillingChannel::PLAY->value];
 
-            if ($product['tier'] !== null && $play !== null && BillingCatalogue::playSubscriptionId($play) === $rawId) {
+            if (
+                $product['type'] === ProductType::SUBSCRIPTION
+                && $product['tier'] !== null
+                && $play !== null
+                && BillingCatalogue::playSubscriptionId($play) === $rawId
+            ) {
                 return ['plan' => $product['tier'], 'productId' => null];
             }
         }
