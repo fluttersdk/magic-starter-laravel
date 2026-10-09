@@ -3,6 +3,7 @@
 namespace FlutterSdk\MagicStarter\Support;
 
 use FlutterSdk\MagicStarter\Enums\PlanStatus;
+use FlutterSdk\MagicStarter\Enums\ProductType;
 
 /**
  * Stripe's own subscription vocabulary, read the same way by every feeder.
@@ -29,28 +30,6 @@ use FlutterSdk\MagicStarter\Enums\PlanStatus;
  */
 final class StripeSubscriptionState
 {
-    /**
-     * The two billing cycles a price can be charged on.
-     *
-     * The words match `magic_payments`' `BillingCycle` on the Dart side, which
-     * is what lets the client send one and read one back without a translation
-     * table in between. Two members and no more: an interval this package
-     * cannot name is refused rather than defaulted, because every default here
-     * is a statement about what somebody is being charged.
-     */
-    public const CYCLE_MONTHLY = 'monthly';
-
-    public const CYCLE_ANNUAL = 'annual';
-
-    /**
-     * Untyped, like every other constant here: this package's floor is PHP 8.2
-     * and typed class constants are 8.3, so a type annotation would be a syntax
-     * error on the oldest version CI builds against.
-     *
-     * @var array<int, string>
-     */
-    public const CYCLES = [self::CYCLE_MONTHLY, self::CYCLE_ANNUAL];
-
     /**
      * The Cashier subscription TYPE this package's Stripe rail acts on.
      *
@@ -142,7 +121,7 @@ final class StripeSubscriptionState
 
         $product = BillingCatalogue::productForStripePrice($priceId);
 
-        return $product !== null && $product['type'] === BillingCatalogue::TYPE_SUBSCRIPTION
+        return $product !== null && $product['type'] === ProductType::SUBSCRIPTION
             ? $product['tier']
             : null;
     }

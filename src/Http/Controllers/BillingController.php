@@ -5,7 +5,9 @@ namespace FlutterSdk\MagicStarter\Http\Controllers;
 use Carbon\CarbonInterface;
 use FlutterSdk\MagicStarter\Actions\SubscriptionGuardedDeleteTeam;
 use FlutterSdk\MagicStarter\Contracts\ReportsUsage;
+use FlutterSdk\MagicStarter\Enums\BillingChannel;
 use FlutterSdk\MagicStarter\Enums\BillingProvider;
+use FlutterSdk\MagicStarter\Enums\ProductType;
 use FlutterSdk\MagicStarter\Http\Resources\SubscriptionResource;
 use FlutterSdk\MagicStarter\MagicStarter;
 use FlutterSdk\MagicStarter\Policies\BillingPolicy;
@@ -206,30 +208,30 @@ class BillingController
         $pricing = BillingCatalogue::pricing();
 
         foreach (BillingCatalogue::products() as $product) {
-            if ($product['type'] !== BillingCatalogue::TYPE_SUBSCRIPTION || $product['tier'] === null) {
+            if ($product['type'] !== ProductType::SUBSCRIPTION || $product['tier'] === null) {
                 continue;
             }
 
             if ($product['sellable']
                 && $product['refs']['stripe_price'] !== null
-                && in_array($product['cycle'], StripeSubscriptionState::CYCLES, true)
+                && $product['cycle'] !== null
             ) {
-                $sellable[$product['tier']][$product['cycle']] = true;
+                $sellable[$product['tier']][$product['cycle']->value] = true;
             }
 
             $products[$product['tier']][] = [
                 'key' => $product['key'],
-                'type' => $product['type'],
+                'type' => $product['type']->value,
                 'tier' => $product['tier'],
-                'cycle' => $product['cycle'],
+                'cycle' => $product['cycle']?->value,
                 'sellable' => $product['sellable'],
                 'store_ids' => [
-                    BillingCatalogue::CHANNEL_APP_STORE => $product['refs'][BillingCatalogue::CHANNEL_APP_STORE],
-                    BillingCatalogue::CHANNEL_PLAY => $product['refs'][BillingCatalogue::CHANNEL_PLAY],
+                    BillingChannel::APP_STORE->value => $product['refs'][BillingChannel::APP_STORE->value],
+                    BillingChannel::PLAY->value => $product['refs'][BillingChannel::PLAY->value],
                 ],
                 'prices' => [
-                    BillingCatalogue::CHANNEL_WEB => JsonObject::map(PriceTable::display(
-                        PriceTable::for($product, BillingCatalogue::CHANNEL_WEB, $pricing),
+                    BillingChannel::WEB->value => JsonObject::map(PriceTable::display(
+                        PriceTable::for($product, BillingChannel::WEB, $pricing),
                     )),
                 ],
             ];
@@ -861,7 +863,7 @@ class BillingController
         $product = BillingCatalogue::product($key);
 
         if ($product === null
-            || $product['type'] !== BillingCatalogue::TYPE_SUBSCRIPTION
+            || $product['type'] !== ProductType::SUBSCRIPTION
             || ! $product['sellable']
         ) {
             $this->refuseUnsellableProduct($key);

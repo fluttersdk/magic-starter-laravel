@@ -2,6 +2,8 @@
 
 namespace FlutterSdk\MagicStarter\Support;
 
+use FlutterSdk\MagicStarter\Enums\BillingChannel;
+use FlutterSdk\MagicStarter\Enums\CommissionMode;
 use LogicException;
 
 /**
@@ -19,6 +21,8 @@ use LogicException;
  * currencies the web channel prices, because an exchange rate is a decision
  * about money this package has no business taking, and a rate frozen into
  * config is wrong the day after it is written.
+ *
+ * @phpstan-import-type Pricing from BillingCatalogue
  */
 final class PriceTable
 {
@@ -33,18 +37,6 @@ final class PriceTable
     public const SOURCE_DERIVED = 'derived';
 
     /**
-     * The store's cut comes out of the web price: the store channel charges the
-     * web figure and the adopter nets less.
-     */
-    public const MODE_ABSORB = 'absorb';
-
-    /**
-     * The store channel charges more, so the adopter nets the web figure after
-     * the store's cut.
-     */
-    public const MODE_GROSS_UP = 'gross_up';
-
-    /**
      * The rate is applied in parts per million so the gross-up stays integer
      * arithmetic: `3400 / 0.85` in floats lands a hair above 4000 and a ceil
      * would then charge 4001.
@@ -57,17 +49,15 @@ final class PriceTable
      *
      * @param  array<string, mixed>  $product  A catalogue product; only its `prices` (channel => currency =>
      *                                         amount_minor) is read.
-     * @param  string  $channel  `web`, `app_store` or `play`.
-     * @param  array{currency: string, commission: array{mode: string, rate: float}}  $pricing  The catalogue's
-     *                                                                                          `pricing` block.
+     * @param  Pricing  $pricing  The catalogue's `pricing` block.
      * @return array<string, array{amount_minor: int, source: string}> Keyed by uppercase ISO 4217 code.
      *
-     * @throws LogicException When the commission mode is not one this table knows.
+     * @throws LogicException When the commission rate leaves nothing to divide by.
      */
-    public static function for(array $product, string $channel, array $pricing): array
+    public static function for(array $product, BillingChannel $channel, array $pricing): array
     {
         $prices = is_array($product['prices'] ?? null) ? $product['prices'] : [];
-        $explicit = self::amounts($prices[$channel] ?? []);
+        $explicit = self::amounts($prices[$channel->value] ?? []);
 
         // 1. Explicit figures win outright, on every channel.
         $table = array_map(
@@ -75,13 +65,13 @@ final class PriceTable
             $explicit,
         );
 
-        if ($channel === BillingCatalogue::CHANNEL_WEB) {
+        if ($channel === BillingChannel::WEB) {
             return $table;
         }
 
         // 2. A store channel derives every remaining currency the web channel
         //    prices, and only those: a currency web does not price is absent.
-        foreach (self::amounts($prices[BillingCatalogue::CHANNEL_WEB] ?? []) as $currency => $web) {
+        foreach (self::amounts($prices[BillingChannel::WEB->value] ?? []) as $currency => $web) {
             if (isset($table[$currency])) {
                 continue;
             }
@@ -120,20 +110,15 @@ final class PriceTable
      * Apply the commission rule to a web price.
      *
      * @param  int  $web  Web price in the currency's minor unit.
-     * @param  array{mode: string, rate: float}  $commission
+     * @param  array{mode: CommissionMode, rate: float}  $commission
      *
-     * @throws LogicException When the mode is unknown or the rate leaves nothing to divide by.
+     * @throws LogicException When the rate leaves nothing to divide by.
      */
     private static function derive(int $web, array $commission): int
     {
         return match ($commission['mode']) {
-            self::MODE_ABSORB => $web,
-            self::MODE_GROSS_UP => self::grossUp($web, $commission['rate']),
-            default => throw new LogicException(sprintf(
-                'Commission mode [%s] is not one of [%s]; set [magic-starter.billing.pricing.commission.mode].',
-                $commission['mode'],
-                implode(', ', [self::MODE_ABSORB, self::MODE_GROSS_UP]),
-            )),
+            CommissionMode::ABSORB => $web,
+            CommissionMode::GROSS_UP => self::grossUp($web, $commission['rate']),
         };
     }
 

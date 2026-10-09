@@ -144,7 +144,7 @@ class SubscriptionResource extends JsonResource
 
         return [
             'key' => $product['key'],
-            'cycle' => $product['cycle'],
+            'cycle' => $product['cycle']?->value,
         ];
     }
 

@@ -2,10 +2,11 @@
 
 namespace FlutterSdk\MagicStarter\Tests\Support;
 
+use FlutterSdk\MagicStarter\Enums\BillingChannel;
+use FlutterSdk\MagicStarter\Enums\CommissionMode;
 use FlutterSdk\MagicStarter\Support\Currency;
 use FlutterSdk\MagicStarter\Support\PriceTable;
 use FlutterSdk\MagicStarter\Tests\TestCase;
-use LogicException;
 
 /**
  * Store prices derived from the web price, and the minor-unit arithmetic under
@@ -20,12 +21,12 @@ class PriceTableTest extends TestCase
 {
     private const ABSORB = [
         'currency' => 'USD',
-        'commission' => ['mode' => 'absorb', 'rate' => 0.15],
+        'commission' => ['mode' => CommissionMode::ABSORB, 'rate' => 0.15],
     ];
 
     private const GROSS_UP = [
         'currency' => 'USD',
-        'commission' => ['mode' => 'gross_up', 'rate' => 0.15],
+        'commission' => ['mode' => CommissionMode::GROSS_UP, 'rate' => 0.15],
     ];
 
     public function test_absorb_keeps_the_web_price_on_a_store_channel(): void
@@ -34,7 +35,7 @@ class PriceTableTest extends TestCase
 
         $this->assertSame(
             ['USD' => ['amount_minor' => 2900, 'source' => PriceTable::SOURCE_DERIVED]],
-            PriceTable::for($product, 'app_store', self::ABSORB),
+            PriceTable::for($product, BillingChannel::APP_STORE, self::ABSORB),
         );
     }
 
@@ -46,7 +47,7 @@ class PriceTableTest extends TestCase
 
         $this->assertSame(
             ['USD' => ['amount_minor' => 4000, 'source' => PriceTable::SOURCE_DERIVED]],
-            PriceTable::for($product, 'app_store', self::GROSS_UP),
+            PriceTable::for($product, BillingChannel::APP_STORE, self::GROSS_UP),
         );
     }
 
@@ -57,7 +58,7 @@ class PriceTableTest extends TestCase
 
         $this->assertSame(
             ['USD' => ['amount_minor' => 3412, 'source' => PriceTable::SOURCE_DERIVED]],
-            PriceTable::for($product, 'play', self::GROSS_UP),
+            PriceTable::for($product, BillingChannel::PLAY, self::GROSS_UP),
         );
     }
 
@@ -70,7 +71,7 @@ class PriceTableTest extends TestCase
 
         $this->assertSame(
             ['TRY' => ['amount_minor' => 99900, 'source' => PriceTable::SOURCE_EXPLICIT]],
-            PriceTable::for($product, 'app_store', self::GROSS_UP),
+            PriceTable::for($product, BillingChannel::APP_STORE, self::GROSS_UP),
         );
     }
 
@@ -78,7 +79,7 @@ class PriceTableTest extends TestCase
     {
         $product = ['prices' => ['web' => ['USD' => 2900]]];
 
-        $play = PriceTable::for($product, 'play', self::GROSS_UP);
+        $play = PriceTable::for($product, BillingChannel::PLAY, self::GROSS_UP);
 
         $this->assertArrayNotHasKey('EUR', $play);
         $this->assertSame(['USD'], array_keys($play));
@@ -88,22 +89,10 @@ class PriceTableTest extends TestCase
     {
         $product = ['prices' => ['app_store' => ['USD' => 3400]]];
 
-        $this->assertSame([], PriceTable::for($product, 'web', self::GROSS_UP));
+        $this->assertSame([], PriceTable::for($product, BillingChannel::WEB, self::GROSS_UP));
         $this->assertSame(
             ['USD' => ['amount_minor' => 3400, 'source' => PriceTable::SOURCE_EXPLICIT]],
-            PriceTable::for(['prices' => ['web' => ['USD' => 3400]]], 'web', self::GROSS_UP),
-        );
-    }
-
-    public function test_an_unknown_commission_mode_is_refused(): void
-    {
-        $this->expectException(LogicException::class);
-        $this->expectExceptionMessage('[split]');
-
-        PriceTable::for(
-            ['prices' => ['web' => ['USD' => 2900]]],
-            'app_store',
-            ['currency' => 'USD', 'commission' => ['mode' => 'split', 'rate' => 0.15]],
+            PriceTable::for(['prices' => ['web' => ['USD' => 3400]]], BillingChannel::WEB, self::GROSS_UP),
         );
     }
 

@@ -2,6 +2,8 @@
 
 namespace FlutterSdk\MagicStarter\Support;
 
+use FlutterSdk\MagicStarter\Enums\BillingChannel;
+use FlutterSdk\MagicStarter\Enums\ProductType;
 use stdClass;
 
 /**
@@ -22,6 +24,8 @@ use stdClass;
  * NO SECRET VALUE IS EVER READ INTO THIS ARRAY. The `env` section reports each
  * key as `present` or `absent`, and every other section is assembled from the
  * catalogue field by field, so the output is a whitelist by construction.
+ *
+ * @phpstan-import-type Product from BillingCatalogue
  */
 final class BillingManifest
 {
@@ -61,24 +65,6 @@ final class BillingManifest
         'REVENUECAT_WEBHOOK_SECRET' => 'magic-starter.billing.revenuecat.webhook_secret',
         'REVENUECAT_API_V2_KEY' => 'magic-starter.billing.revenuecat.api_v2_key',
         'REVENUECAT_PROJECT_ID' => 'magic-starter.billing.revenuecat.project_id',
-    ];
-
-    /**
-     * App Store periods and Play billing periods per catalogue cycle.
-     *
-     * @var array<string, array{app_store: string, play: string, stripe: string}>
-     */
-    private const PERIODS = [
-        'monthly' => [
-            'app_store' => 'ONE_MONTH',
-            'play' => 'P1M',
-            'stripe' => 'month',
-        ],
-        'annual' => [
-            'app_store' => 'ONE_YEAR',
-            'play' => 'P1Y',
-            'stripe' => 'year',
-        ],
     ];
 
     /**
@@ -136,24 +122,24 @@ final class BillingManifest
     }
 
     /**
-     * Every sellable subscription product with a known cycle, in catalogue order.
+     * Every sellable subscription product with a tier and a known cycle, in
+     * catalogue order.
      *
      * A product kept only so an old price still maps is left out: an agent
      * applies this list, and a store product or Stripe price created for it
      * would put the retired offer back on sale. `billing:doctor` reads its
      * per-product checks from here for the same reason.
      *
-     * @return array<string, array<string, mixed>>
+     * @return array<string, Product>
      */
     public static function subscriptions(): array
     {
         return array_filter(
             BillingCatalogue::products(),
-            static fn (array $product): bool => $product['type'] === BillingCatalogue::TYPE_SUBSCRIPTION
+            static fn (array $product): bool => $product['type'] === ProductType::SUBSCRIPTION
                 && $product['sellable']
                 && $product['tier'] !== null
-                && $product['cycle'] !== null
-                && isset(self::PERIODS[$product['cycle']]),
+                && $product['cycle'] !== null,
         );
     }
 
@@ -161,7 +147,7 @@ final class BillingManifest
      * One subscription group; the highest tier sits at level 1, which is what
      * Apple reads as the top of the group for upgrades and downgrades.
      *
-     * @param  array<string, array<string, mixed>>  $products
+     * @param  array<string, Product>  $products
      * @return array<string, mixed>
      */
     private static function appStore(array $products): array
@@ -172,12 +158,12 @@ final class BillingManifest
         foreach ($products as $product) {
             $entries[] = [
                 'key' => $product['key'],
-                'product_id' => $product['refs'][BillingCatalogue::CHANNEL_APP_STORE],
+                'product_id' => $product['refs'][BillingChannel::APP_STORE->value],
                 'reference_name' => self::referenceName($product),
                 'tier' => $product['tier'],
-                'period' => self::PERIODS[$product['cycle']]['app_store'],
+                'period' => $product['cycle']->appStorePeriod(),
                 'group_level' => ($levels[$product['tier']] ?? count($levels)) + 1,
-                'prices' => self::prices($product, BillingCatalogue::CHANNEL_APP_STORE),
+                'prices' => self::prices($product, BillingChannel::APP_STORE),
                 'price_point_rule' => self::PRICE_POINT_RULE,
             ];
         }
@@ -199,7 +185,7 @@ final class BillingManifest
      * refuses one id under two tiers; a product with no Play ref yet is grouped
      * under its tier with a null id for the agent to fill.
      *
-     * @param  array<string, array<string, mixed>>  $products
+     * @param  array<string, Product>  $products
      * @return array<string, mixed>
      */
     private static function play(array $products): array
@@ -207,7 +193,7 @@ final class BillingManifest
         $subscriptions = [];
 
         foreach ($products as $product) {
-            $ref = $product['refs'][BillingCatalogue::CHANNEL_PLAY];
+            $ref = $product['refs'][BillingChannel::PLAY->value];
             $subscriptionId = $ref === null ? null : BillingCatalogue::playSubscriptionId($ref);
             $basePlanId = $subscriptionId === null ? null : substr($ref, strlen($subscriptionId) + 1);
             $group = $subscriptionId ?? "tier:{$product['tier']}";
@@ -221,10 +207,10 @@ final class BillingManifest
 
             $subscriptions[$group]['base_plans'][] = [
                 'key' => $product['key'],
-                'base_plan_id' => $basePlanId ?? $product['cycle'],
-                'billing_period' => self::PERIODS[$product['cycle']]['play'],
+                'base_plan_id' => $basePlanId ?? $product['cycle']->value,
+                'billing_period' => $product['cycle']->playBillingPeriod(),
                 'auto_renewing' => true,
-                'prices' => self::prices($product, BillingCatalogue::CHANNEL_PLAY),
+                'prices' => self::prices($product, BillingChannel::PLAY),
             ];
         }
 
@@ -237,7 +223,7 @@ final class BillingManifest
      * RevenueCat's half: apps, products, an entitlement per paid tier, the
      * current offering with one package per product key, and the webhook.
      *
-     * @param  array<string, array<string, mixed>>  $products
+     * @param  array<string, Product>  $products
      * @return array<string, mixed>
      */
     private static function revenueCat(array $products): array
@@ -254,7 +240,7 @@ final class BillingManifest
                     'key' => $product['key'],
                     'store_identifier' => $identifier,
                     'app' => $app,
-                    'type' => BillingCatalogue::TYPE_SUBSCRIPTION,
+                    'type' => ProductType::SUBSCRIPTION->value,
                 ];
             }
 
@@ -313,7 +299,7 @@ final class BillingManifest
      * The base currency is the catalogue's when the web channel prices it; the
      * rest travel as `currency_options` on the same price.
      *
-     * @param  array<string, array<string, mixed>>  $products
+     * @param  array<string, Product>  $products
      * @return array<string, mixed>
      */
     private static function stripe(array $products): array
@@ -322,7 +308,7 @@ final class BillingManifest
         $tiers = [];
 
         foreach ($products as $product) {
-            $web = PriceTable::for($product, BillingCatalogue::CHANNEL_WEB, $pricing);
+            $web = PriceTable::for($product, BillingChannel::WEB, $pricing);
 
             if ($web === []) {
                 continue;
@@ -352,7 +338,7 @@ final class BillingManifest
                 'unit_amount' => $web[$base]['amount_minor'],
                 'currency_options' => JsonObject::map($options),
                 'recurring' => [
-                    'interval' => self::PERIODS[$product['cycle']]['stripe'],
+                    'interval' => $product['cycle']->stripeInterval(),
                 ],
                 'env_key' => self::stripePriceEnvKey($product['key']),
             ];
@@ -369,7 +355,7 @@ final class BillingManifest
      * A product's price variable reports on the ref it feeds, since the
      * catalogue normalises an empty ref to absent too.
      *
-     * @param  array<string, array<string, mixed>>  $products
+     * @param  array<string, Product>  $products
      * @return array<string, string>
      */
     private static function environment(array $products): array
@@ -391,24 +377,24 @@ final class BillingManifest
     /**
      * The store identifiers a product carries, keyed by RevenueCat app type.
      *
-     * @param  array<string, mixed>  $product
+     * @param  Product  $product
      * @return array<string, string>
      */
     private static function storeIdentifiers(array $product): array
     {
         return array_filter([
-            'app_store' => $product['refs'][BillingCatalogue::CHANNEL_APP_STORE],
-            'play_store' => $product['refs'][BillingCatalogue::CHANNEL_PLAY],
+            'app_store' => $product['refs'][BillingChannel::APP_STORE->value],
+            'play_store' => $product['refs'][BillingChannel::PLAY->value],
         ], static fn (?string $identifier): bool => $identifier !== null);
     }
 
     /**
      * One channel's prices with a display figure beside each amount.
      *
-     * @param  array<string, mixed>  $product
+     * @param  Product  $product
      * @return array<string, array{amount_minor: int, display: string, source: string}>|stdClass
      */
-    private static function prices(array $product, string $channel): array|stdClass
+    private static function prices(array $product, BillingChannel $channel): array|stdClass
     {
         $table = PriceTable::for($product, $channel, BillingCatalogue::pricing());
         $prices = PriceTable::display($table);
@@ -425,11 +411,11 @@ final class BillingManifest
     }
 
     /**
-     * @param  array<string, mixed>  $product
+     * @param  Product  $product
      */
     private static function referenceName(array $product): string
     {
-        return self::tierName($product['tier']) . ' ' . ucfirst((string) $product['cycle']);
+        return self::tierName($product['tier']) . ' ' . ucfirst($product['cycle']->value);
     }
 
     private static function tierName(string $tier): string

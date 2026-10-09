@@ -14,6 +14,7 @@ All notable changes to this project will be documented in this file.
 - **New config keys `billing.revenuecat.api_v2_key` and `billing.revenuecat.project_id`**, read by `billing:doctor --remote` only (`REVENUECAT_API_V2_KEY`, `REVENUECAT_PROJECT_ID`); neither is needed to sell. A product's Stripe price id is read from `CASHIER_PRICE_<KEY>`, the product key uppercased. (`config/magic-starter.php`)
 - **`GET billing` adds `product` (the catalogue key behind the stored rail id), `owned`, `balances` and `allowances`.** `owned` is `[]` and `balances` is `{}` until one-off purchases are stored; `allowances` is the application's `ReportsUsage` answer or `{}`. (`src/Http/Resources/SubscriptionResource.php`)
 - **The 422 `team_has_active_subscription` carries `team_providers`**, a map from team id to the rail billing it (`stripe`, `app_store` or `play_store`). (`src/Actions/ScheduleUserDeletion.php`)
+- **Backed enums for the catalogue's words: `ProductType`, `BillingChannel`, `BillingCycle` and `CommissionMode`.** A product from `BillingCatalogue::products()` carries `type` as a `ProductType` and `cycle` as a `BillingCycle` (null for a word the enum does not know), `BillingCatalogue::pricing()` carries `commission.mode` as a `CommissionMode` and refuses an unknown mode when it is read, and `PriceTable::for()` takes a `BillingChannel`. Config keeps the same strings, and so does every response, the manifest and the doctor report. (`src/Enums/`, `src/Support/BillingCatalogue.php`, `src/Support/PriceTable.php`)
 
 ### Changed
 
@@ -37,6 +38,7 @@ All notable changes to this project will be documented in this file.
 
 - **`StripeSubscriptionState::prices()`, `catalogue()`, `cycleForPrice()` and `priceFor()`.** Read the catalogue through `BillingCatalogue::products()`, `productForStripePrice()` and `productForRailId()`. (`src/Support/StripeSubscriptionState.php`)
 - **The `billing.cycles` language group and the `billing.refusals.unmapped_price` sentence**, replaced by `billing.refusals.product_not_sellable`. Rename them in a published `lang/vendor/magic-starter/` copy, which wins over the package's own. (`lang/en/billing.php`, `lang/tr/billing.php`)
+- **BREAKING: `StripeSubscriptionState::CYCLE_MONTHLY`, `CYCLE_ANNUAL` and `CYCLES`.** Use `BillingCycle::MONTHLY`, `BillingCycle::ANNUAL` and `BillingCycle::cases()`. (`src/Support/StripeSubscriptionState.php`, `src/Enums/BillingCycle.php`)
 
 ### Documentation
 

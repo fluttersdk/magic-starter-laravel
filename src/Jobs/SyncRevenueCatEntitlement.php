@@ -5,6 +5,7 @@ namespace FlutterSdk\MagicStarter\Jobs;
 use Carbon\CarbonImmutable;
 use Carbon\Exceptions\InvalidFormatException;
 use FlutterSdk\MagicStarter\Contracts\WritesEntitlement;
+use FlutterSdk\MagicStarter\Enums\BillingChannel;
 use FlutterSdk\MagicStarter\Enums\BillingProvider;
 use FlutterSdk\MagicStarter\Enums\PlanStatus;
 use FlutterSdk\MagicStarter\MagicStarter;
@@ -805,7 +806,7 @@ class SyncRevenueCatEntitlement implements ShouldQueue
         }
 
         foreach (BillingCatalogue::products() as $product) {
-            $play = $product['refs']['play'];
+            $play = $product['refs'][BillingChannel::PLAY->value];
 
             if ($product['tier'] !== null && $play !== null && BillingCatalogue::playSubscriptionId($play) === $rawId) {
                 return ['plan' => $product['tier'], 'productId' => null];

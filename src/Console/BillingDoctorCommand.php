@@ -2,6 +2,7 @@
 
 namespace FlutterSdk\MagicStarter\Console;
 
+use FlutterSdk\MagicStarter\Enums\BillingChannel;
 use FlutterSdk\MagicStarter\Support\BillingCatalogue;
 use FlutterSdk\MagicStarter\Support\BillingManifest;
 use FlutterSdk\MagicStarter\Support\PriceTable;
@@ -221,8 +222,8 @@ class BillingDoctorCommand extends Command
             $id = "store.{$product['key']}";
             $missing = array_keys(array_filter(
                 [
-                    'refs.app_store' => $product['refs'][BillingCatalogue::CHANNEL_APP_STORE],
-                    'refs.play' => $product['refs'][BillingCatalogue::CHANNEL_PLAY],
+                    'refs.app_store' => $product['refs'][BillingChannel::APP_STORE->value],
+                    'refs.play' => $product['refs'][BillingChannel::PLAY->value],
                 ],
                 static fn (?string $ref): bool => $ref === null,
             ));
@@ -557,7 +558,7 @@ class BillingDoctorCommand extends Command
 
     private function addAgentChecks(): void
     {
-        if ($this->hasRef(BillingCatalogue::CHANNEL_APP_STORE)) {
+        if ($this->hasRef(BillingChannel::APP_STORE)) {
             $this->check(
                 'app_store.remote',
                 self::AGENT_CHECK,
@@ -567,7 +568,7 @@ class BillingDoctorCommand extends Command
             );
         }
 
-        if ($this->hasRef(BillingCatalogue::CHANNEL_PLAY)) {
+        if ($this->hasRef(BillingChannel::PLAY)) {
             $this->check(
                 'play.remote',
                 self::AGENT_CHECK,
@@ -654,7 +655,7 @@ class BillingDoctorCommand extends Command
         return array_values(array_filter(
             BillingManifest::subscriptions(),
             static fn (array $product): bool => $product['refs']['stripe_price'] !== null
-                || PriceTable::for($product, BillingCatalogue::CHANNEL_WEB, $pricing) !== [],
+                || PriceTable::for($product, BillingChannel::WEB, $pricing) !== [],
         ));
     }
 
@@ -665,16 +666,16 @@ class BillingDoctorCommand extends Command
 
     private function listsStoreIds(): bool
     {
-        return $this->hasRef(BillingCatalogue::CHANNEL_APP_STORE) || $this->hasRef(BillingCatalogue::CHANNEL_PLAY);
+        return $this->hasRef(BillingChannel::APP_STORE) || $this->hasRef(BillingChannel::PLAY);
     }
 
     /**
      * Whether any subscription carries an id on [$channel].
      */
-    private function hasRef(string $channel): bool
+    private function hasRef(BillingChannel $channel): bool
     {
         foreach (BillingManifest::subscriptions() as $product) {
-            if ($product['refs'][$channel] !== null) {
+            if ($product['refs'][$channel->value] !== null) {
                 return true;
             }
         }

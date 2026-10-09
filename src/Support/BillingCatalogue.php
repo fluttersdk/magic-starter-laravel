@@ -2,6 +2,11 @@
 
 namespace FlutterSdk\MagicStarter\Support;
 
+use BackedEnum;
+use FlutterSdk\MagicStarter\Enums\BillingChannel;
+use FlutterSdk\MagicStarter\Enums\BillingCycle;
+use FlutterSdk\MagicStarter\Enums\CommissionMode;
+use FlutterSdk\MagicStarter\Enums\ProductType;
 use LogicException;
 
 /**
@@ -24,51 +29,18 @@ use LogicException;
  * @phpstan-type Refs array{stripe_price: ?string, app_store: ?string, play: ?string}
  * @phpstan-type Product array{
  *     key: string,
- *     type: string,
+ *     type: ?ProductType,
  *     tier: ?string,
- *     cycle: ?string,
+ *     cycle: ?BillingCycle,
  *     credits: ?int,
  *     sellable: bool,
  *     prices: array<string, mixed>,
  *     refs: Refs,
  * }
- * @phpstan-type Pricing array{currency: string, commission: array{mode: string, rate: float}}
+ * @phpstan-type Pricing array{currency: string, commission: array{mode: CommissionMode, rate: float}}
  */
 final class BillingCatalogue
 {
-    public const TYPE_SUBSCRIPTION = 'subscription';
-
-    public const TYPE_CONSUMABLE = 'consumable';
-
-    public const TYPE_NON_CONSUMABLE = 'non_consumable';
-
-    public const TYPE_PHYSICAL = 'physical';
-
-    /**
-     * @var array<int, string>
-     */
-    public const TYPES = [
-        self::TYPE_SUBSCRIPTION,
-        self::TYPE_CONSUMABLE,
-        self::TYPE_NON_CONSUMABLE,
-        self::TYPE_PHYSICAL,
-    ];
-
-    public const CHANNEL_WEB = 'web';
-
-    public const CHANNEL_APP_STORE = 'app_store';
-
-    public const CHANNEL_PLAY = 'play';
-
-    /**
-     * @var list<string>
-     */
-    public const CHANNELS = [
-        self::CHANNEL_WEB,
-        self::CHANNEL_APP_STORE,
-        self::CHANNEL_PLAY,
-    ];
-
     /**
      * The keys this catalogue replaced, and where their content lives now.
      *
@@ -92,7 +64,7 @@ final class BillingCatalogue
      */
     private const DEFAULT_CURRENCY = 'USD';
 
-    private const DEFAULT_COMMISSION_MODE = 'absorb';
+    private const DEFAULT_COMMISSION_MODE = CommissionMode::ABSORB;
 
     private const DEFAULT_COMMISSION_RATE = 0.15;
 
@@ -302,14 +274,20 @@ final class BillingCatalogue
      */
     public static function productForStoreId(?string $storeId): ?array
     {
-        return self::firstWithRef(self::CHANNEL_APP_STORE, $storeId)
-            ?? self::firstWithRef(self::CHANNEL_PLAY, $storeId);
+        return self::firstWithRef(BillingChannel::APP_STORE->value, $storeId)
+            ?? self::firstWithRef(BillingChannel::PLAY->value, $storeId);
     }
 
     /**
      * The base currency and the commission rule store prices derive under.
      *
+     * An absent or empty mode is the default; a mode that names nothing is
+     * refused here rather than defaulted, because absorbing a cut the adopter
+     * asked to pass on would sell every store product below its figure.
+     *
      * @return Pricing
+     *
+     * @throws LogicException When the configured commission mode is not one this package knows.
      */
     public static function pricing(): array
     {
@@ -324,7 +302,7 @@ final class BillingCatalogue
         return [
             'currency' => is_string($currency) && $currency !== '' ? strtoupper($currency) : self::DEFAULT_CURRENCY,
             'commission' => [
-                'mode' => is_string($mode) && $mode !== '' ? $mode : self::DEFAULT_COMMISSION_MODE,
+                'mode' => is_string($mode) && $mode !== '' ? self::commissionMode($mode) : self::DEFAULT_COMMISSION_MODE,
                 'rate' => is_int($rate) || is_float($rate) ? (float) $rate : self::DEFAULT_COMMISSION_RATE,
             ],
         ];
@@ -342,13 +320,14 @@ final class BillingCatalogue
     private static function validateProduct(string $key, mixed $product, array $tierOrder): void
     {
         $type = is_array($product) ? ($product['type'] ?? null) : null;
+        $productType = is_string($type) ? ProductType::tryFrom($type) : null;
 
-        if (! in_array($type, self::TYPES, true)) {
+        if ($productType === null) {
             throw new LogicException(sprintf(
                 'Product [%s] has type [%s]; use one of [%s].',
                 $key,
                 is_string($type) ? $type : get_debug_type($type),
-                implode(', ', self::TYPES),
+                implode(', ', array_column(ProductType::cases(), 'value')),
             ));
         }
 
@@ -365,7 +344,7 @@ final class BillingCatalogue
         self::validateRefs($key, $product);
         self::validatePrices($key, $product);
 
-        if ($type !== self::TYPE_SUBSCRIPTION) {
+        if ($productType !== ProductType::SUBSCRIPTION) {
             return;
         }
 
@@ -388,12 +367,12 @@ final class BillingCatalogue
             ));
         }
 
-        if (! in_array($cycle, StripeSubscriptionState::CYCLES, true)) {
+        if (! is_string($cycle) || BillingCycle::tryFrom($cycle) === null) {
             throw new LogicException(sprintf(
                 'Subscription product [%s] has cycle [%s]; set its [cycle] to one of [%s].',
                 $key,
                 is_string($cycle) ? $cycle : get_debug_type($cycle),
-                implode(', ', StripeSubscriptionState::CYCLES),
+                implode(', ', array_column(BillingCycle::cases(), 'value')),
             ));
         }
     }
@@ -413,8 +392,8 @@ final class BillingCatalogue
     private static function validateRefs(string $key, array $product): void
     {
         $refs = is_array($product['refs'] ?? null) ? $product['refs'] : [];
-        $play = self::stringOrNull($refs[self::CHANNEL_PLAY] ?? null);
-        $appStore = self::stringOrNull($refs[self::CHANNEL_APP_STORE] ?? null);
+        $play = self::stringOrNull($refs[BillingChannel::PLAY->value] ?? null);
+        $appStore = self::stringOrNull($refs[BillingChannel::APP_STORE->value] ?? null);
 
         if ($play !== null && preg_match('/^[^:]+:[^:]+$/', $play) !== 1) {
             throw new LogicException(sprintf(
@@ -461,12 +440,12 @@ final class BillingCatalogue
         }
 
         foreach ($product['prices'] as $channel => $currencies) {
-            if (! in_array($channel, self::CHANNELS, true) || ! is_array($currencies)) {
+            if (! is_string($channel) || BillingChannel::tryFrom($channel) === null || ! is_array($currencies)) {
                 throw new LogicException(sprintf(
                     'Product [%s] prices channel [%s]; use one of [%s], each a map of currency => amount.',
                     $key,
                     $channel,
-                    implode(', ', self::CHANNELS),
+                    implode(', ', array_column(BillingChannel::cases(), 'value')),
                 ));
             }
 
@@ -507,16 +486,13 @@ final class BillingCatalogue
     {
         $commission = config('magic-starter.billing.pricing.commission', []);
         $commission = is_array($commission) ? $commission : [];
-        $modes = [
-            PriceTable::MODE_ABSORB,
-            PriceTable::MODE_GROSS_UP,
-        ];
+        $mode = $commission['mode'] ?? null;
 
-        if (array_key_exists('mode', $commission) && ! in_array($commission['mode'], $modes, true)) {
+        if (array_key_exists('mode', $commission) && (! is_string($mode) || CommissionMode::tryFrom($mode) === null)) {
             throw new LogicException(sprintf(
                 '[magic-starter.billing.pricing.commission.mode] is [%s]; use one of [%s].',
-                is_scalar($commission['mode']) ? (string) $commission['mode'] : get_debug_type($commission['mode']),
-                implode(', ', $modes),
+                is_scalar($mode) ? (string) $mode : get_debug_type($mode),
+                implode(', ', array_column(CommissionMode::cases(), 'value')),
             ));
         }
 
@@ -587,11 +563,11 @@ final class BillingCatalogue
         $owners = [];
 
         foreach ($products as $product) {
-            if ($product['type'] !== self::TYPE_SUBSCRIPTION || ! $product['sellable']) {
+            if ($product['type'] !== ProductType::SUBSCRIPTION || ! $product['sellable']) {
                 continue;
             }
 
-            $pair = $product['tier'] . '|' . $product['cycle'];
+            $pair = $product['tier'] . '|' . $product['cycle']?->value;
 
             if (isset($owners[$pair])) {
                 throw new LogicException(sprintf(
@@ -600,7 +576,7 @@ final class BillingCatalogue
                     $owners[$pair],
                     $product['key'],
                     $product['tier'],
-                    $product['cycle'],
+                    $product['cycle']?->value,
                 ));
             }
 
@@ -627,8 +603,8 @@ final class BillingCatalogue
         $playTiers = [];
 
         foreach ($products as $product) {
-            foreach ([self::CHANNEL_APP_STORE, self::CHANNEL_PLAY] as $channel) {
-                $storeId = $product['refs'][$channel];
+            foreach ([BillingChannel::APP_STORE, BillingChannel::PLAY] as $channel) {
+                $storeId = $product['refs'][$channel->value];
 
                 if ($storeId === null) {
                     continue;
@@ -648,7 +624,7 @@ final class BillingCatalogue
                 $owners[$storeId] = $owner;
             }
 
-            $play = $product['refs'][self::CHANNEL_PLAY];
+            $play = $product['refs'][BillingChannel::PLAY->value];
 
             if ($play === null || $product['tier'] === null) {
                 continue;
@@ -717,18 +693,48 @@ final class BillingCatalogue
 
         return [
             'key' => $key,
-            'type' => self::stringOrNull($product['type'] ?? null) ?? '',
+            'type' => self::enumOrNull(ProductType::class, $product['type'] ?? null),
             'tier' => self::stringOrNull($product['tier'] ?? null),
-            'cycle' => self::stringOrNull($product['cycle'] ?? null),
+            'cycle' => self::enumOrNull(BillingCycle::class, $product['cycle'] ?? null),
             'credits' => is_int($product['credits'] ?? null) ? $product['credits'] : null,
             'sellable' => ($product['sellable'] ?? true) === true,
             'prices' => is_array($product['prices'] ?? null) ? $product['prices'] : [],
             'refs' => [
                 'stripe_price' => self::stringOrNull($refs['stripe_price'] ?? null),
-                'app_store' => self::stringOrNull($refs[self::CHANNEL_APP_STORE] ?? null),
-                'play' => self::stringOrNull($refs[self::CHANNEL_PLAY] ?? null),
+                'app_store' => self::stringOrNull($refs[BillingChannel::APP_STORE->value] ?? null),
+                'play' => self::stringOrNull($refs[BillingChannel::PLAY->value] ?? null),
             ],
         ];
+    }
+
+    /**
+     * The case of [$enum] that [$value] names, or null.
+     *
+     * Null rather than a throw, because this is a reader: {@see self::validate()}
+     * is where an unknown word is refused by name, at boot.
+     *
+     * @template TEnum of BackedEnum
+     *
+     * @param  class-string<TEnum>  $enum
+     * @return TEnum|null
+     */
+    private static function enumOrNull(string $enum, mixed $value): ?BackedEnum
+    {
+        $value = self::stringOrNull($value);
+
+        return $value === null ? null : $enum::tryFrom($value);
+    }
+
+    /**
+     * @throws LogicException When [$mode] names no {@see CommissionMode}.
+     */
+    private static function commissionMode(string $mode): CommissionMode
+    {
+        return CommissionMode::tryFrom($mode) ?? throw new LogicException(sprintf(
+            'Commission mode [%s] is not one of [%s]; set [magic-starter.billing.pricing.commission.mode].',
+            $mode,
+            implode(', ', array_column(CommissionMode::cases(), 'value')),
+        ));
     }
 
     private static function stringOrNull(mixed $value): ?string

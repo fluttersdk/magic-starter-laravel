@@ -3,6 +3,9 @@
 namespace FlutterSdk\MagicStarter\Tests\Support;
 
 use FlutterSdk\MagicStarter\Console\BillingDoctorCommand;
+use FlutterSdk\MagicStarter\Enums\BillingCycle;
+use FlutterSdk\MagicStarter\Enums\CommissionMode;
+use FlutterSdk\MagicStarter\Enums\ProductType;
 use FlutterSdk\MagicStarter\Features;
 use FlutterSdk\MagicStarter\MagicStarterServiceProvider;
 use FlutterSdk\MagicStarter\Support\BillingCatalogue;
@@ -499,7 +502,7 @@ class BillingCatalogueTest extends TestCase
         $product = BillingCatalogue::product('credits_100');
 
         $this->assertNotNull($product);
-        $this->assertSame(BillingCatalogue::TYPE_CONSUMABLE, $product['type']);
+        $this->assertSame(ProductType::CONSUMABLE, $product['type']);
         $this->assertSame(100, $product['credits']);
         $this->assertNull($product['tier']);
         $this->assertSame(
@@ -516,9 +519,36 @@ class BillingCatalogueTest extends TestCase
     public function test_pricing_reads_the_currency_and_commission(): void
     {
         $this->assertSame(
-            ['currency' => 'USD', 'commission' => ['mode' => 'gross_up', 'rate' => 0.15]],
+            ['currency' => 'USD', 'commission' => ['mode' => CommissionMode::GROSS_UP, 'rate' => 0.15]],
             BillingCatalogue::pricing(),
         );
+    }
+
+    public function test_pricing_defaults_to_absorbing_the_commission(): void
+    {
+        config(['magic-starter.billing.pricing' => []]);
+
+        $this->assertSame(CommissionMode::ABSORB, BillingCatalogue::pricing()['commission']['mode']);
+    }
+
+    /**
+     * Boot refuses the mode first; this is the reader's own refusal, for a
+     * process that reads pricing without having validated the catalogue.
+     */
+    public function test_an_unknown_commission_mode_is_refused_when_pricing_is_read(): void
+    {
+        config(['magic-starter.billing.pricing.commission.mode' => 'split']);
+
+        $this->expectException(LogicException::class);
+        $this->expectExceptionMessage('Commission mode [split] is not one of [absorb, gross_up]');
+
+        BillingCatalogue::pricing();
+    }
+
+    public function test_a_subscription_reads_its_cycle_as_a_billing_cycle(): void
+    {
+        $this->assertSame(BillingCycle::MONTHLY, BillingCatalogue::product('pro_monthly')['cycle'] ?? null);
+        $this->assertSame(ProductType::SUBSCRIPTION, BillingCatalogue::product('pro_monthly')['type'] ?? null);
     }
 
     /**
