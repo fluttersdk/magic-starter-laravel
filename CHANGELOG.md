@@ -4,6 +4,8 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [0.0.20] - 2026-10-09
+
 ### Added
 
 - **One billing catalogue: `tiers`, `tier_order`, `products` and `pricing`.** A product is keyed `<tier>_<cycle>` (`pro_monthly`) and carries its `type`, `tier`, `cycle`, `prices` (channel, then currency, in minor units) and every rail's id under `refs` (`stripe_price`, `app_store`, `play` as `<subscription_id>:<base_plan_id>`). `tier_order` is required, cheapest first, and its first entry is the free floor that no product may sell. Boot validates the whole catalogue and throws naming the problem: an unknown type, a subscription with no ranked tier or no known cycle, a product selling the floor, a Stripe price or a store id on two products, a `refs.play` that is not exactly `<subscription_id>:<base_plan_id>`, a `refs.app_store` containing `:`, a `prices` entry that is not a known channel (`web`, `app_store`, `play`) mapping a three-letter currency to a whole amount of 0 or more, a `pricing.commission.mode` other than `absorb` or `gross_up`, a `rate` that is not a number in [0, 1), and one Play subscription whose base plans sell two tiers. Every process refuses to boot on it, artisan commands included, except `billing:doctor`, which logs the refusal and reports it as `catalogue.valid`. (`config/magic-starter.php`, `src/Support/BillingCatalogue.php`, `src/MagicStarterServiceProvider.php`)
