@@ -929,10 +929,19 @@ class RevenueCatWebhookTest extends TestCase
 
     /**
      * Remove anything an installer run in this file published into the skeleton.
+     *
+     * The published language files included: a copy left in
+     * `lang/vendor/magic-starter` wins over the package's own lines in every
+     * later run, so a test asserting a sentence would read the one this
+     * installer copied rather than the one the package ships.
      */
     private function cleanupPublishedArtifacts(): void
     {
         File::delete(config_path('magic-starter.php'));
+
+        if (File::isDirectory($this->app->langPath('vendor/magic-starter'))) {
+            File::deleteDirectory($this->app->langPath('vendor/magic-starter'));
+        }
 
         foreach (glob(__DIR__ . '/../../../database/migrations/*.php') ?: [] as $source) {
             foreach (glob(database_path('migrations/*_' . basename($source))) ?: [] as $published) {
