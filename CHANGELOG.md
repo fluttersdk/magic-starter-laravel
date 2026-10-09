@@ -4,6 +4,8 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [0.0.21] - 2026-10-09
+
 ### Added
 
 - **`billing.package_subscription_models`, default `true` (`MAGIC_STARTER_PACKAGE_SUBSCRIPTION_MODELS`).** Set it `false` when the `subscriptions` and `subscription_items` tables came from Cashier's own migrations rather than the package's: the provider then hands Cashier neither `Subscription` nor `SubscriptionItem`, and Cashier's own integer-keyed models stay. Left on, an application with `use_uuids` and Cashier's bigint tables could not record a subscription: the `customer.subscription.created` webhook answered 500 (`invalid input syntax for type bigint` on PostgreSQL), Stripe retried for days and the plan never landed. `billing:doctor` reports a table keyed differently from its model as `schema.subscription_keys`, naming the setting that fixes it. (`config/magic-starter.php`, `src/MagicStarterServiceProvider.php`, `src/Console/BillingDoctorCommand.php`)
