@@ -5,10 +5,10 @@ namespace FlutterSdk\MagicStarter\Enums;
 /**
  * What a billing catalogue product is, as its `type` names it in config.
  *
- * Only a subscription names a tier and a cycle. Every reader that grants a tier
- * checks for {@see self::SUBSCRIPTION} first, because nothing refuses a `tier`
- * written on a one-off product, and a credit pack carrying one must never move
- * a subscriber.
+ * Only a subscription is validated to name a ranked tier and a known cycle.
+ * Nothing refuses a `tier` written on a one-off product, so a reader that
+ * grants a tier from a Stripe price checks for {@see self::SUBSCRIPTION} first
+ * (`StripeSubscriptionState::planForPrice()`).
  */
 enum ProductType: string
 {
