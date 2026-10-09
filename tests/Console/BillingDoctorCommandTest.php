@@ -2,6 +2,7 @@
 
 namespace FlutterSdk\MagicStarter\Tests\Console;
 
+use Closure;
 use FlutterSdk\MagicStarter\Console\BillingDoctorCommand;
 use FlutterSdk\MagicStarter\Features;
 use FlutterSdk\MagicStarter\Support\RevenueCatProjectClient;
@@ -13,6 +14,7 @@ use Illuminate\Http\Client\Request;
 use Illuminate\Support\Facades\Artisan;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Sleep;
+use Stripe\Exception\AuthenticationException;
 
 /**
  * The checks an agent runs before and after applying the manifest.
@@ -353,6 +355,316 @@ class BillingDoctorCommandTest extends TestCase
             ->assertExitCode(1);
     }
 
+    public function test_the_human_report_labels_a_warning_without_failing(): void
+    {
+        config(['magic-starter.use_uuids' => false]);
+
+        $this->artisan(BillingDoctorCommand::NAME)
+            ->expectsOutputToContain('WARNING')
+            ->assertExitCode(0);
+    }
+
+    /**
+     * A rate the catalogue accepts can still leave the store less than one
+     * part per million to divide by. The doctor has to name that as a finding
+     * an agent can parse, and read nothing that depends on the manifest.
+     */
+    public function test_a_manifest_that_cannot_be_built_is_reported_as_a_finding(): void
+    {
+        config(['magic-starter.billing.pricing.commission.rate' => 0.9999999]);
+
+        $doctor = $this->doctor(['--remote' => true]);
+
+        $this->assertSame(1, $doctor['exit']);
+        $this->assertSame('ok', $doctor['checks']['catalogue.valid']['status']);
+        $this->assertSame('error', $doctor['checks']['manifest.build']['status']);
+        $this->assertStringContainsString('(LogicException)', $doctor['checks']['manifest.build']['message']);
+        $this->assertStringContainsString(
+            'magic-starter.billing.pricing.commission.rate',
+            $doctor['checks']['manifest.build']['message'],
+        );
+        $this->assertSame(['catalogue.valid', 'manifest.build'], array_keys($doctor['checks']));
+    }
+
+    /**
+     * A web-only deployment never turns the store rail on, so the RevenueCat
+     * variables are nobody's requirement and the project is never read.
+     */
+    public function test_a_web_only_catalogue_asks_nothing_of_revenuecat(): void
+    {
+        foreach (self::KEYS as $key) {
+            config(["magic-starter.billing.products.{$key}.refs" => ['stripe_price' => "price_{$key}"]]);
+        }
+
+        config([
+            'magic-starter.billing.revenuecat.secret_api_key' => null,
+            'magic-starter.billing.revenuecat.webhook_secret' => null,
+            'magic-starter.billing.revenuecat.api_v2_key' => null,
+            'magic-starter.billing.revenuecat.project_id' => null,
+        ]);
+        Http::fake();
+
+        $doctor = $this->doctor(['--remote' => true]);
+
+        $this->assertSame(0, $doctor['exit'], json_encode($doctor['report'], JSON_PRETTY_PRINT) ?: '');
+        $this->assertSame('ok', $doctor['checks']['env.REVENUECAT_SECRET_API_KEY']['status']);
+        $this->assertSame(
+            'REVENUECAT_SECRET_API_KEY is not set and nothing needs it.',
+            $doctor['checks']['env.REVENUECAT_SECRET_API_KEY']['message'],
+        );
+        $this->assertSame('ok', $doctor['checks']['env.REVENUECAT_API_V2_KEY']['status']);
+        $this->assertSame('The store rail is off.', $doctor['checks']['revenuecat.hmac_secret']['message']);
+        $this->assertSame([], $this->checksStartingWith($doctor, 'store.'));
+        $this->assertSame([], $this->checksStartingWith($doctor, 'revenuecat.remote'));
+        $this->assertArrayNotHasKey('app_store.remote', $doctor['checks']);
+        $this->assertArrayNotHasKey('play.remote', $doctor['checks']);
+        $this->assertSame('ok', $doctor['checks']['stripe.remote.price.pro_annual']['status']);
+        Http::assertNothingSent();
+    }
+
+    /**
+     * A store-only deployment has no Stripe price to compare, so neither the
+     * Stripe secret nor a Stripe read is asked for.
+     */
+    public function test_a_store_only_catalogue_asks_nothing_of_stripe(): void
+    {
+        foreach (self::KEYS as $key) {
+            $product = BillingManifestCommandTest::billing()['products'][$key];
+
+            config([
+                "magic-starter.billing.products.{$key}.prices" => ['app_store' => $product['prices']['web']],
+                "magic-starter.billing.products.{$key}.refs.stripe_price" => null,
+            ]);
+        }
+
+        config([
+            'cashier.secret' => null,
+            'cashier.webhook.secret' => null,
+        ]);
+        $this->fakeRevenueCat();
+        $stripe = $this->stripe($this->stripePrices());
+        $this->app->instance(StripePriceReader::class, $stripe);
+
+        $doctor = $this->doctor(['--remote' => true]);
+
+        $this->assertSame(0, $doctor['exit'], json_encode($doctor['report'], JSON_PRETTY_PRINT) ?: '');
+        $this->assertSame(
+            'STRIPE_SECRET is not set and nothing needs it.',
+            $doctor['checks']['env.STRIPE_SECRET']['message'],
+        );
+        $this->assertSame([], $this->checksStartingWith($doctor, 'stripe.'));
+        $this->assertSame('ok', $doctor['checks']['revenuecat.product.pro_sub:annual']['status']);
+        $this->assertSame([], $stripe->reads);
+    }
+
+    public function test_remote_without_a_stripe_secret_reports_stripe_unreadable_without_asking(): void
+    {
+        config(['cashier.secret' => null]);
+        $this->fakeRevenueCat();
+        $stripe = $this->stripe($this->stripePrices());
+        $this->app->instance(StripePriceReader::class, $stripe);
+
+        $doctor = $this->doctor(['--remote' => true]);
+
+        $this->assertSame(1, $doctor['exit']);
+        $this->assertSame('error', $doctor['checks']['stripe.remote']['status']);
+        $this->assertSame(
+            'Stripe cannot be read: STRIPE_SECRET is not set.',
+            $doctor['checks']['stripe.remote']['message'],
+        );
+        $this->assertSame([], $this->checksStartingWith($doctor, 'stripe.remote.price.'));
+        $this->assertSame([], $stripe->reads);
+    }
+
+    /**
+     * Stripe's refusal message can quote the key it was given, so the finding
+     * carries the exception's class and status and never its message.
+     */
+    public function test_remote_reports_a_stripe_refusal_by_class_and_status_only(): void
+    {
+        $this->fakeRevenueCat();
+        $this->app->instance(StripePriceReader::class, new class extends StripePriceReader
+        {
+            public function byLookupKeys(array $lookupKeys): array
+            {
+                throw AuthenticationException::factory('Invalid API Key provided: SENTINEL-stripe-secret', 401);
+            }
+        });
+
+        $doctor = $this->doctor(['--remote' => true]);
+
+        $this->assertSame(1, $doctor['exit']);
+        $this->assertSame(
+            'Stripe refused the price read (AuthenticationException, HTTP 401).',
+            $doctor['checks']['stripe.remote']['message'],
+        );
+        $this->assertStringNotContainsString(
+            'SENTINEL-stripe-secret',
+            (string) json_encode($doctor['report']),
+        );
+        $this->assertSame('ok', $doctor['checks']['revenuecat.webhook']['status']);
+    }
+
+    public function test_remote_reports_a_stripe_refusal_without_a_status_as_none(): void
+    {
+        $this->fakeRevenueCat();
+        $this->app->instance(StripePriceReader::class, new class extends StripePriceReader
+        {
+            public function byLookupKeys(array $lookupKeys): array
+            {
+                throw AuthenticationException::factory('No API key provided.');
+            }
+        });
+
+        $doctor = $this->doctor(['--remote' => true]);
+
+        $this->assertSame(
+            'Stripe refused the price read (AuthenticationException, HTTP none).',
+            $doctor['checks']['stripe.remote']['message'],
+        );
+    }
+
+    public function test_remote_reports_a_price_billed_on_another_interval(): void
+    {
+        $this->fakeRevenueCat();
+        $prices = $this->stripePrices();
+        $prices['pro_annual']['interval'] = 'month';
+        $prices['business_annual']['interval'] = null;
+        $this->app->instance(StripePriceReader::class, $this->stripe($prices));
+
+        $doctor = $this->doctor(['--remote' => true]);
+
+        $this->assertSame(1, $doctor['exit']);
+        $this->assertSame(
+            'Lookup key [pro_annual]: interval is [month], expected [year].',
+            $doctor['checks']['stripe.remote.price.pro_annual']['message'],
+        );
+        $this->assertSame(
+            'Lookup key [business_annual]: interval is [none], expected [year].',
+            $doctor['checks']['stripe.remote.price.business_annual']['message'],
+        );
+    }
+
+    public function test_remote_reports_a_revenuecat_it_cannot_reach(): void
+    {
+        Http::fake(['*' => Http::failedConnection()]);
+
+        $doctor = $this->doctor(['--remote' => true]);
+
+        $this->assertSame(1, $doctor['exit']);
+        $this->assertSame('error', $doctor['checks']['revenuecat.remote']['status']);
+        $this->assertSame('RevenueCat could not be reached.', $doctor['checks']['revenuecat.remote']['message']);
+        $this->assertSame([], $this->checksStartingWith($doctor, 'revenuecat.app.'));
+    }
+
+    /**
+     * Without a Play app, every Play product is filed under an app the
+     * manifest does not name, which is its own finding per product.
+     */
+    public function test_remote_reports_a_missing_store_app_and_the_products_it_strands(): void
+    {
+        $this->fakeRevenueCat(tamper: static function (array $project): array {
+            $project['apps'] = [$project['apps'][0]];
+
+            return $project;
+        });
+
+        $doctor = $this->doctor(['--remote' => true]);
+
+        $this->assertSame(1, $doctor['exit']);
+        $this->assertSame('ok', $doctor['checks']['revenuecat.app.app_store']['status']);
+        $this->assertSame(
+            'The project has no [play_store] app.',
+            $doctor['checks']['revenuecat.app.play_store']['message'],
+        );
+        $this->assertSame(
+            'Product [pro_sub:annual] is not under a [play_store] app.',
+            $doctor['checks']['revenuecat.product.pro_sub:annual']['message'],
+        );
+        $this->assertSame('ok', $doctor['checks']['revenuecat.product.com.example.pro.annual']['status']);
+    }
+
+    public function test_remote_reports_products_and_entitlements_the_project_lacks(): void
+    {
+        $this->fakeRevenueCat(tamper: static function (array $project): array {
+            $project['products'] = array_values(array_filter(
+                $project['products'],
+                static fn (array $product): bool => $product['store_identifier'] !== 'pro_sub:annual',
+            ));
+            // Business is gone, and Pro no longer carries its annual Play product.
+            $project['entitlements'] = [$project['entitlements'][0]];
+            $project['entitlements'][0]['products']['items'] = array_values(array_filter(
+                $project['entitlements'][0]['products']['items'],
+                static fn (array $product): bool => $product['store_identifier'] !== 'pro_sub:annual',
+            ));
+
+            return $project;
+        });
+
+        $doctor = $this->doctor(['--remote' => true]);
+
+        $this->assertSame(1, $doctor['exit']);
+        $this->assertSame(
+            'No product [pro_sub:annual] for [pro_annual].',
+            $doctor['checks']['revenuecat.product.pro_sub:annual']['message'],
+        );
+        $this->assertSame(
+            'Entitlement [pro] is missing pro_sub:annual.',
+            $doctor['checks']['revenuecat.entitlement.pro']['message'],
+        );
+        $this->assertSame('No entitlement [business].', $doctor['checks']['revenuecat.entitlement.business']['message']);
+    }
+
+    public function test_remote_reports_an_offering_that_is_not_current_and_its_package_drift(): void
+    {
+        $this->fakeRevenueCat(tamper: static function (array $project): array {
+            $project['offerings'][0]['is_current'] = false;
+            // Pro monthly moved to the end; Pro annual lost its Play product.
+            $project['packages'][0]['position'] = 4;
+            $project['packages'][1]['products']['items'] = [$project['packages'][1]['products']['items'][0]];
+
+            return $project;
+        });
+
+        $doctor = $this->doctor(['--remote' => true]);
+
+        $this->assertSame(1, $doctor['exit']);
+        $this->assertSame(
+            'The offering exists but is not the current one.',
+            $doctor['checks']['revenuecat.offering.default']['message'],
+        );
+        $this->assertSame('warning', $doctor['checks']['revenuecat.package.pro_monthly']['status']);
+        $this->assertSame(
+            'Package [pro_monthly] sits at position [4], expected [1].',
+            $doctor['checks']['revenuecat.package.pro_monthly']['message'],
+        );
+        $this->assertSame('error', $doctor['checks']['revenuecat.package.pro_annual']['status']);
+        $this->assertSame(
+            'Package [pro_annual] is missing pro_sub:annual.',
+            $doctor['checks']['revenuecat.package.pro_annual']['message'],
+        );
+        $this->assertSame('ok', $doctor['checks']['revenuecat.package.business_annual']['status']);
+    }
+
+    public function test_remote_without_the_offering_checks_no_package(): void
+    {
+        $this->fakeRevenueCat(tamper: static function (array $project): array {
+            $project['offerings'] = [];
+
+            return $project;
+        });
+
+        $doctor = $this->doctor(['--remote' => true]);
+
+        $this->assertSame(1, $doctor['exit']);
+        $this->assertSame(
+            'No offering [default]; no package can be checked.',
+            $doctor['checks']['revenuecat.offering.default']['message'],
+        );
+        $this->assertSame([], $this->checksStartingWith($doctor, 'revenuecat.package.'));
+        Http::assertNotSent(fn (Request $request): bool => str_contains($request->url(), '/packages'));
+    }
+
     /**
      * @param  array<string, mixed>  $options
      * @return array{exit: int, report: array<string, mixed>, checks: array<string, array<string, mixed>>}
@@ -380,16 +692,34 @@ class BillingDoctorCommandTest extends TestCase
     }
 
     /**
+     * The ids of the checks under [$prefix].
+     *
+     * @param  array{checks: array<string, array<string, mixed>>}  $doctor
+     * @return list<string>
+     */
+    private function checksStartingWith(array $doctor, string $prefix): array
+    {
+        return array_values(array_filter(
+            array_keys($doctor['checks']),
+            static fn (string $id): bool => str_starts_with($id, $prefix),
+        ));
+    }
+
+    /**
      * Fake a RevenueCat project that matches the manifest, minus whatever the
-     * arguments take away.
+     * arguments take away. [$tamper] receives the project's lists keyed by
+     * resource (apps, products, entitlements, offerings, packages, webhooks)
+     * and answers the lists to serve.
      *
      * @param  list<string>  $packages
      * @param  array<string, mixed>  $webhookFields  Extra fields on the webhook integration.
+     * @param  (Closure(array<string, list<array<string, mixed>>>): array<string, list<array<string, mixed>>>)|null  $tamper
      */
     private function fakeRevenueCat(
         array $packages = self::KEYS,
         string $webhookUrl = 'https://app.example.test/webhooks/revenuecat',
         array $webhookFields = [],
+        ?Closure $tamper = null,
     ): void {
         $base = RevenueCatProjectClient::BASE_URL . '/projects/' . self::PROJECT;
         $storeIds = static fn (string $key): array => [
@@ -405,8 +735,8 @@ class BillingDoctorCommandTest extends TestCase
         ];
         $allStoreIds = array_merge(...array_map($storeIds, self::KEYS));
 
-        Http::fake([
-            "{$base}/apps*" => $this->page([
+        $project = [
+            'apps' => [
                 [
                     'id' => 'app_ios',
                     'type' => 'app_store',
@@ -415,9 +745,9 @@ class BillingDoctorCommandTest extends TestCase
                     'id' => 'app_android',
                     'type' => 'play_store',
                 ],
-            ]),
-            "{$base}/products*" => $this->page(array_map($product, $allStoreIds)),
-            "{$base}/entitlements*" => $this->page(array_map(
+            ],
+            'products' => array_map($product, $allStoreIds),
+            'entitlements' => array_map(
                 static fn (string $tier): array => [
                     'object' => 'entitlement',
                     'id' => "entl_{$tier}",
@@ -431,8 +761,16 @@ class BillingDoctorCommandTest extends TestCase
                     ],
                 ],
                 ['pro', 'business'],
-            )),
-            "{$base}/offerings/ofrng_default/packages*" => $this->page(array_map(
+            ),
+            'offerings' => [
+                [
+                    'object' => 'offering',
+                    'id' => 'ofrng_default',
+                    'lookup_key' => 'default',
+                    'is_current' => true,
+                ],
+            ],
+            'packages' => array_map(
                 static fn (string $key): array => [
                     'object' => 'package',
                     'id' => "pkg_{$key}",
@@ -450,16 +788,8 @@ class BillingDoctorCommandTest extends TestCase
                     ],
                 ],
                 $packages,
-            )),
-            "{$base}/offerings*" => $this->page([
-                [
-                    'object' => 'offering',
-                    'id' => 'ofrng_default',
-                    'lookup_key' => 'default',
-                    'is_current' => true,
-                ],
-            ]),
-            "{$base}/integrations/webhooks*" => $this->page([
+            ),
+            'webhooks' => [
                 [
                     'object' => 'webhook_integration',
                     'id' => 'wh_1',
@@ -467,7 +797,20 @@ class BillingDoctorCommandTest extends TestCase
                     'environment' => 'production',
                     ...$webhookFields,
                 ],
-            ]),
+            ],
+        ];
+
+        if ($tamper !== null) {
+            $project = $tamper($project);
+        }
+
+        Http::fake([
+            "{$base}/apps*" => $this->page($project['apps']),
+            "{$base}/products*" => $this->page($project['products']),
+            "{$base}/entitlements*" => $this->page($project['entitlements']),
+            "{$base}/offerings/ofrng_default/packages*" => $this->page($project['packages']),
+            "{$base}/offerings*" => $this->page($project['offerings']),
+            "{$base}/integrations/webhooks*" => $this->page($project['webhooks']),
         ]);
     }
 
@@ -516,12 +859,21 @@ class BillingDoctorCommandTest extends TestCase
         return new class($prices) extends StripePriceReader
         {
             /**
+             * Every read, by the lookup keys it named.
+             *
+             * @var list<list<string>>
+             */
+            public array $reads = [];
+
+            /**
              * @param  array<string, array<string, mixed>>  $prices
              */
             public function __construct(private array $prices) {}
 
             public function byLookupKeys(array $lookupKeys): array
             {
+                $this->reads[] = $lookupKeys;
+
                 return array_intersect_key($this->prices, array_flip($lookupKeys));
             }
         };

@@ -107,6 +107,55 @@ class RevenueCatProjectClientTest extends TestCase
         Sleep::assertSlept(fn ($duration): bool => (int) $duration->totalSeconds === 7);
     }
 
+    public function test_a_server_error_without_retry_after_waits_one_second_and_then_reads(): void
+    {
+        Http::fake([
+            '*' => Http::sequence()
+                ->push(['message' => 'unavailable'], 503)
+                ->push([
+                    'object' => 'list',
+                    'items' => [],
+                    'next_page' => null,
+                ]),
+        ]);
+
+        $this->assertSame([], (new RevenueCatProjectClient)->apps());
+
+        Http::assertSentCount(2);
+        Sleep::assertSlept(fn ($duration): bool => (int) $duration->totalSeconds === 1);
+    }
+
+    /**
+     * A cursor that never ends would page forever; the read stops at a fixed
+     * cap and names the resource instead of returning a silently partial list.
+     */
+    public function test_a_cursor_that_never_ends_is_refused_at_the_page_cap(): void
+    {
+        Http::fake([
+            '*' => Http::response([
+                'object' => 'list',
+                'items' => [
+                    [
+                        'id' => 'prod_1',
+                    ],
+                ],
+                'next_page' => '/v2/projects/' . self::PROJECT . '/products?starting_after=prod_1',
+            ]),
+        ]);
+
+        try {
+            (new RevenueCatProjectClient)->products();
+            $this->fail('A cursor that never ends was read to completion.');
+        } catch (RuntimeException $refusal) {
+            $this->assertSame(
+                'RevenueCat kept paging [products] past 50 pages; the cursor is not advancing.',
+                $refusal->getMessage(),
+            );
+        }
+
+        Http::assertSentCount(50);
+    }
+
     public function test_a_permanent_failure_is_raised_without_a_retry(): void
     {
         Http::fake(['*' => Http::response(['message' => 'forbidden'], 403)]);
