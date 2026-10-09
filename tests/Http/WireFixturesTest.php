@@ -96,6 +96,7 @@ class WireFixturesTest extends TestCase
             ],
             // Every product shape the wire can carry: a subscription sold on
             // every rail, one sold on the card rail with a derived store price,
+            // a grandfathered one kept mapped on every rail but no longer sold,
             // one sold on the stores only, and a one-off purchase with no tier.
             'magic-starter.billing.products' => [
                 'pro_monthly' => [
@@ -125,6 +126,22 @@ class WireFixturesTest extends TestCase
                     ],
                     'refs' => [
                         'stripe_price' => 'price_pro_annual',
+                    ],
+                ],
+                'pro_monthly_2025' => [
+                    'type' => 'subscription',
+                    'tier' => 'pro',
+                    'cycle' => 'monthly',
+                    'sellable' => false,
+                    'prices' => [
+                        'web' => [
+                            'USD' => 1900,
+                        ],
+                    ],
+                    'refs' => [
+                        'stripe_price' => 'price_pro_monthly_2025',
+                        'app_store' => 'com.example.pro.monthly.2025',
+                        'play' => 'pro:monthly-2025',
                     ],
                 ],
                 'business_monthly' => [

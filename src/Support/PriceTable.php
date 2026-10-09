@@ -96,6 +96,27 @@ final class PriceTable
     }
 
     /**
+     * A price table with a display string beside each amount, so no client
+     * does minor-unit math.
+     *
+     * @param  array<string, array{amount_minor: int, source: string}>  $table  {@see self::for()}.
+     * @return array<string, array{amount_minor: int, display: string}>
+     */
+    public static function display(array $table): array
+    {
+        $prices = [];
+
+        foreach ($table as $currency => $price) {
+            $prices[$currency] = [
+                'amount_minor' => $price['amount_minor'],
+                'display' => Currency::display($price['amount_minor'], $currency),
+            ];
+        }
+
+        return $prices;
+    }
+
+    /**
      * Apply the commission rule to a web price.
      *
      * @param  int  $web  Web price in the currency's minor unit.

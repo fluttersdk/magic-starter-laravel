@@ -7,6 +7,7 @@ use FlutterSdk\MagicStarter\Contracts\ReportsUsage;
 use FlutterSdk\MagicStarter\Enums\BillingProvider;
 use FlutterSdk\MagicStarter\Enums\PlanStatus;
 use FlutterSdk\MagicStarter\Support\BillingCatalogue;
+use FlutterSdk\MagicStarter\Support\JsonObject;
 use FlutterSdk\MagicStarter\Support\ReadsBillableAttributes;
 use FlutterSdk\MagicStarter\Support\StripeSubscriptionState;
 use Illuminate\Database\Eloquent\Model;
@@ -118,7 +119,7 @@ class SubscriptionResource extends JsonResource
             'trial_ends_at' => $this->trialEndsAt($billable),
             'grace_period_ends_at' => $this->dateAttribute($billable, 'plan_grace_period_ends_at')?->toIso8601String(),
             'owned' => [],
-            'balances' => new stdClass,
+            'balances' => JsonObject::map([]),
             'allowances' => $this->allowances($billable),
         ];
     }
@@ -126,18 +127,16 @@ class SubscriptionResource extends JsonResource
     /**
      * The catalogue product behind the rail's own product id, or null.
      *
-     * A Stripe price is tried first and a store id second; the two id spaces do
-     * not overlap in practice (`price_...` against a bundle-style or
-     * `<sub>:<base_plan>` id), so one lookup serves every rail without a branch
-     * per provider. A store id is matched EXACTLY, so a bare Play subscription
-     * id names nothing rather than the first base plan sharing its prefix.
+     * Read through {@see BillingCatalogue::productForRailId()}, the order the
+     * entitlement read on the model uses too, so one stored id never names two
+     * products. A store id is matched EXACTLY, so a bare Play subscription id
+     * names nothing rather than the first base plan sharing its prefix.
      *
      * @return array{key: string, cycle: ?string}|null
      */
     protected function catalogueProduct(?string $productId): ?array
     {
-        $product = BillingCatalogue::productForStripePrice($productId)
-            ?? BillingCatalogue::productForStoreId($productId);
+        $product = BillingCatalogue::productForRailId($productId);
 
         if ($product === null) {
             return null;
@@ -165,12 +164,10 @@ class SubscriptionResource extends JsonResource
     protected function allowances(Model $billable): array|stdClass
     {
         if (! app()->bound(ReportsUsage::class)) {
-            return new stdClass;
+            return JsonObject::map([]);
         }
 
-        $usage = app(ReportsUsage::class)->forBillable($billable);
-
-        return $usage === [] ? new stdClass : $usage;
+        return JsonObject::map(app(ReportsUsage::class)->forBillable($billable));
     }
 
     /**

@@ -151,6 +151,24 @@ class HasEntitlementTest extends TestCase
         $this->assertSame('business_monthly', $stripe->entitledProduct());
     }
 
+    /**
+     * The entitlement read and the wire name the same product for one stored
+     * id: a Stripe price first, a store id second.
+     */
+    public function test_an_id_that_is_both_a_stripe_price_and_a_store_id_names_the_stripe_product(): void
+    {
+        config(['magic-starter.billing.products.business_monthly.refs.app_store' => 'price_pro_monthly']);
+
+        $team = $this->billable([
+            'plan' => 'pro',
+            'plan_status' => 'active',
+            'plan_provider' => 'stripe',
+            'plan_product_id' => 'price_pro_monthly',
+        ]);
+
+        $this->assertSame('pro_monthly', $team->entitledProduct());
+    }
+
     public function test_no_product_is_named_without_an_entitlement_or_a_catalogue_match(): void
     {
         $lapsed = $this->billable([

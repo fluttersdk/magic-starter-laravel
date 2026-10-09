@@ -129,6 +129,10 @@ final class StripeSubscriptionState
      *
      * The empty check is explicit rather than `! $priceId`, which is the form
      * one of the two copies used: they differ on `'0'`.
+     *
+     * Only a subscription names a tier here. Nothing refuses a `tier` written on
+     * a one-off product, and reading it would let a credit pack's price move a
+     * subscriber onto a paid tier.
      */
     public static function planForPrice(?string $priceId): ?string
     {
@@ -136,53 +140,10 @@ final class StripeSubscriptionState
             return null;
         }
 
-        return BillingCatalogue::productForStripePrice($priceId)['tier'] ?? null;
-    }
+        $product = BillingCatalogue::productForStripePrice($priceId);
 
-    /**
-     * The Stripe price to tier map, derived from the catalogue.
-     *
-     * @return array<string, string>
-     */
-    public static function prices(): array
-    {
-        return array_map(
-            static fn (array $entry): string => $entry['tier'],
-            self::catalogue(),
-        );
-    }
-
-    /**
-     * Every Stripe price a subscription product carries, with the tier and
-     * cycle it sells.
-     *
-     * The shape the plans endpoint derives each tier's sellable `cycles` from.
-     * Only subscriptions appear: a one-off product grants no tier, so it has no
-     * place in a map from price to tier. A price carried by two products keeps
-     * the first, the same answer {@see BillingCatalogue::productForStripePrice()}
-     * gives.
-     *
-     * @return array<string, array{tier: string, cycle: string}>
-     */
-    public static function catalogue(): array
-    {
-        $catalogue = [];
-
-        foreach (BillingCatalogue::products() as $product) {
-            $priceId = $product['refs']['stripe_price'];
-
-            if ($priceId === null
-                || isset($catalogue[$priceId])
-                || $product['type'] !== BillingCatalogue::TYPE_SUBSCRIPTION
-                || $product['tier'] === null
-                || ! in_array($product['cycle'], self::CYCLES, true)
-            ) {
-                continue;
-            }
-
-            $catalogue[$priceId] = ['tier' => $product['tier'], 'cycle' => $product['cycle']];
-        }
-
-        return $catalogue;
+        return $product !== null && $product['type'] === BillingCatalogue::TYPE_SUBSCRIPTION
+            ? $product['tier']
+            : null;
     }
 }

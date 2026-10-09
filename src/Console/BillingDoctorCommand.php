@@ -14,6 +14,7 @@ use Illuminate\Http\Client\RequestException;
 use LogicException;
 use RuntimeException;
 use Stripe\Exception\ApiErrorException;
+use Throwable;
 
 /**
  * Check that the billing configuration, and with `--remote` the vendors, hold
@@ -29,7 +30,11 @@ use Stripe\Exception\ApiErrorException;
  * status codes; a secret is reported as set or not set. A remote failure is
  * reported by its status and never by its exception message, because
  * Laravel's RequestException carries the response body, and RevenueCat's
- * webhook payloads carry `signing_secret`.
+ * rotate response carries the webhook's signing secret.
+ *
+ * An invalid catalogue reaches this command rather than a stack trace: the
+ * billing gate stops boot on it in every other process, and in this one only
+ * logs it, so `catalogue.valid` is where it is read back.
  */
 class BillingDoctorCommand extends Command
 {
@@ -65,10 +70,11 @@ class BillingDoctorCommand extends Command
         // Reset per run: Artisan reuses one command instance within a process.
         $this->checks = [];
 
-        // 1. Nothing else can be read from a catalogue that does not validate.
-        if ($this->checkCatalogue()) {
-            $manifest = BillingManifest::build();
+        // 1. Nothing else can be read from a catalogue that does not validate,
+        //    or from a manifest that could not be built from it.
+        $manifest = $this->checkCatalogue() ? $this->buildManifest() : null;
 
+        if ($manifest !== null) {
             // 2. What this deployment's own configuration says.
             $this->checkEnvironment($manifest['env']);
             $this->checkHmacSecret();
@@ -103,6 +109,30 @@ class BillingDoctorCommand extends Command
         $this->check('catalogue.valid', self::OK, 'The catalogue validates.');
 
         return true;
+    }
+
+    /**
+     * The manifest, or null with a finding when building it failed.
+     *
+     * Every check below reads it, and an agent parsing `--json` gets nothing
+     * it can act on from a stack trace. The message is safe to print: the
+     * manifest is assembled from the catalogue and reads no secret value.
+     *
+     * @return array<string, mixed>|null
+     */
+    private function buildManifest(): ?array
+    {
+        try {
+            return BillingManifest::build();
+        } catch (Throwable $failure) {
+            $this->check('manifest.build', self::ERROR, sprintf(
+                'The manifest could not be built (%s): %s',
+                class_basename($failure),
+                $failure->getMessage(),
+            ));
+
+            return null;
+        }
     }
 
     /**
@@ -511,12 +541,18 @@ class BillingDoctorCommand extends Command
             return;
         }
 
-        // Presence only: the secret itself is never read into a message.
-        $signed = is_string($found['signing_secret'] ?? null) && $found['signing_secret'] !== '';
+        $this->check('revenuecat.webhook', self::OK, "A webhook delivers to [{$url}].");
 
-        $signed
-            ? $this->check('revenuecat.webhook', self::OK, "The webhook to [{$url}] is HMAC-signed.")
-            : $this->check('revenuecat.webhook', self::ERROR, "The webhook to [{$url}] has HMAC signing off.");
+        // RevenueCat returns the signing secret only in the response to a
+        // rotate request, so a list read cannot tell a signed webhook from an
+        // unsigned one. A person confirms the toggle; a delivery that is not
+        // signed answers 403 at the endpoint in the meantime.
+        $this->check(
+            'revenuecat.webhook.hmac',
+            self::AGENT_CHECK,
+            "Confirm HMAC signing is on for the webhook to [{$url}] in the RevenueCat dashboard; "
+            . 'the API does not report it.',
+        );
     }
 
     private function addAgentChecks(): void

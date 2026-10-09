@@ -807,7 +807,7 @@ class SyncRevenueCatEntitlement implements ShouldQueue
         foreach (BillingCatalogue::products() as $product) {
             $play = $product['refs']['play'];
 
-            if ($product['tier'] !== null && $play !== null && explode(':', $play, 2)[0] === $rawId) {
+            if ($product['tier'] !== null && $play !== null && BillingCatalogue::playSubscriptionId($play) === $rawId) {
                 return ['plan' => $product['tier'], 'productId' => null];
             }
         }
@@ -869,14 +869,26 @@ class SyncRevenueCatEntitlement implements ShouldQueue
     }
 
     /**
-     * Whether a subscription still entitles: the paid period, or the dunning
-     * window the store is retrying inside, reaches into the future.
+     * Whether a subscription entitles now: it has begun, and the paid period,
+     * or the dunning window the store is retrying inside, reaches into the
+     * future.
      *
      * @param  array<string, mixed>  $subscription
      */
     protected function isLive(array $subscription): bool
     {
         $now = CarbonImmutable::now();
+
+        // A deferred Play replacement (a downgrade, or a change set to apply at
+        // renewal) is issued at once with a `purchase_date` in the future: its
+        // entitlement begins when the item it replaces expires. It also expires
+        // later than that item, so read as live it would win the ranking and
+        // move the tier before the period the customer paid for has run out.
+        $begins = $this->instant($subscription['purchase_date'] ?? null);
+
+        if ($begins !== null && $begins->greaterThan($now)) {
+            return false;
+        }
 
         // `refunded_at` is deliberately NOT read here, and this comment exists so
         // it is not added back. It was, briefly, on the reasoning that an Apple

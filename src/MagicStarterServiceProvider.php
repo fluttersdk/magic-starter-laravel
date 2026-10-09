@@ -28,6 +28,7 @@ use Illuminate\Support\Facades\RateLimiter;
 use Illuminate\Support\ServiceProvider;
 use Laravel\Cashier\Cashier;
 use Laravel\Sanctum\Sanctum;
+use LogicException;
 use RuntimeException;
 use SocialiteProviders\Manager\SocialiteWasCalled;
 use SocialiteProviders\Microsoft\MicrosoftExtendSocialite;
@@ -225,17 +226,17 @@ class MagicStarterServiceProvider extends ServiceProvider
         // Gated on the feature and defined AFTER the teams block on purpose: the
         // coexistence this comment defends is only real when both are on, so the
         // two registrations sit where a reader sees them together.
-        if (Features::hasBillingFeatures()) {
-            // 3.4a. Refuse a catalogue that would sell the wrong thing.
-            //
-            // A throw, unlike the store-rail log below, because what it catches
-            // moves money the wrong way rather than leaving a rail inert: a
-            // config published before the catalogue existed (the merge is
-            // shallow, so it maps no tier at all), a buyable free floor, one
-            // Play subscription granting two tiers. First in the gate so nothing
-            // below it registers against a catalogue it cannot trust.
-            Support\BillingCatalogue::validate();
-
+        //
+        // 3.4a. Refuse a catalogue that would sell the wrong thing.
+        //
+        // A throw, unlike the store-rail log below, because what it catches
+        // moves money the wrong way rather than leaving a rail inert: a config
+        // published before the catalogue existed (the merge is shallow, so it
+        // maps no tier at all), a buyable free floor, one Play subscription
+        // granting two tiers. First in the gate so nothing below it registers
+        // against a catalogue it cannot trust; the one process it lets through,
+        // `billing:doctor`, registers nothing else.
+        if (Features::hasBillingFeatures() && $this->billingCatalogueBoots()) {
             Gate::define('manageBilling', [Policies\BillingPolicy::class, 'manage']);
 
             // 3.4b. Say ONCE that a configured store rail has no signing secret.
@@ -503,6 +504,42 @@ class MagicStarterServiceProvider extends ServiceProvider
             . 'cannot run either.',
             Features::teams(),
         ));
+    }
+
+    /**
+     * Whether the billing catalogue validates, refusing boot when it does not.
+     *
+     * One process is let through: `billing:doctor`, which exists to report this
+     * exact failure and cannot while boot throws before it is registered. It
+     * logs the refusal, registers the doctor alone and answers false, so no
+     * gate, schedule or reconciler is wired against the catalogue. Every other
+     * process keeps the throw, the console included: a deploy's `migrate`
+     * failing on the catalogue is what stops a broken config before the web
+     * serves it.
+     *
+     * @throws LogicException The catalogue's own refusal, outside the doctor.
+     */
+    private function billingCatalogueBoots(): bool
+    {
+        try {
+            Support\BillingCatalogue::validate();
+        } catch (LogicException $refusal) {
+            if (! $this->app->runningConsoleCommand(BillingDoctorCommand::NAME)) {
+                throw $refusal;
+            }
+
+            Log::error($refusal->getMessage(), [
+                'reason' => 'invalid_billing_catalogue',
+            ]);
+
+            $this->commands([
+                BillingDoctorCommand::class,
+            ]);
+
+            return false;
+        }
+
+        return true;
     }
 
     /**

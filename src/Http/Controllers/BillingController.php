@@ -10,7 +10,7 @@ use FlutterSdk\MagicStarter\Http\Resources\SubscriptionResource;
 use FlutterSdk\MagicStarter\MagicStarter;
 use FlutterSdk\MagicStarter\Policies\BillingPolicy;
 use FlutterSdk\MagicStarter\Support\BillingCatalogue;
-use FlutterSdk\MagicStarter\Support\Currency;
+use FlutterSdk\MagicStarter\Support\JsonObject;
 use FlutterSdk\MagicStarter\Support\PriceTable;
 use FlutterSdk\MagicStarter\Support\ReadsBillableAttributes;
 use FlutterSdk\MagicStarter\Support\StripeSubscriptionState;
@@ -24,7 +24,6 @@ use Illuminate\Support\Facades\Log;
 use Illuminate\Validation\ValidationException;
 use Laravel\Cashier\Invoice;
 use Laravel\Cashier\PaymentMethod;
-use stdClass;
 use Stripe\Exception\ApiErrorException;
 use Stripe\StripeObject;
 use Symfony\Component\HttpFoundation\Response as HttpResponse;
@@ -179,15 +178,20 @@ class BillingController
 
     /**
      * The tier rows, each told which cycles the card rail can sell it on and
-     * which catalogue products sell it at all.
+     * which subscription products it is sold as.
      *
-     * `cycles` counts only subscriptions with a Stripe price, because it is what
-     * a web billing screen offers: a tier priced on the stores only would
-     * otherwise render a web button the customer learns about from a 422 AFTER
-     * committing to buy. `products` lists every product of the tier, on any
-     * rail, because the stores buy by the same key. Neither carries a product
-     * marked `sellable: false`: it is kept mapped for existing subscribers and
-     * is not offered.
+     * `cycles` counts only SELLABLE subscriptions with a Stripe price, because
+     * it is what a web billing screen offers: a tier priced on the stores only
+     * would otherwise render a web button the customer learns about from a 422
+     * AFTER committing to buy.
+     *
+     * `products` lists every subscription of the tier, on any rail and sellable
+     * or not, each flagged `sellable` and carrying its `store_ids`. A product
+     * kept only so an old price still maps is listed because a client ranks
+     * what a customer HOLDS against the row, and a grandfathered product missing
+     * from it could not be placed; the flag is what keeps the client from
+     * offering it. A one-off product names no subscription of any tier, so it
+     * rides in no row even when it carries a `tier`.
      *
      * Both writes are unconditional, so an adopter's own `cycles` or `products`
      * on a tier definition is replaced: two values under one key, one
@@ -202,11 +206,11 @@ class BillingController
         $pricing = BillingCatalogue::pricing();
 
         foreach (BillingCatalogue::products() as $product) {
-            if ($product['tier'] === null || ! $product['sellable']) {
+            if ($product['type'] !== BillingCatalogue::TYPE_SUBSCRIPTION || $product['tier'] === null) {
                 continue;
             }
 
-            if ($product['type'] === BillingCatalogue::TYPE_SUBSCRIPTION
+            if ($product['sellable']
                 && $product['refs']['stripe_price'] !== null
                 && in_array($product['cycle'], StripeSubscriptionState::CYCLES, true)
             ) {
@@ -218,10 +222,15 @@ class BillingController
                 'type' => $product['type'],
                 'tier' => $product['tier'],
                 'cycle' => $product['cycle'],
+                'sellable' => $product['sellable'],
+                'store_ids' => [
+                    BillingCatalogue::CHANNEL_APP_STORE => $product['refs'][BillingCatalogue::CHANNEL_APP_STORE],
+                    BillingCatalogue::CHANNEL_PLAY => $product['refs'][BillingCatalogue::CHANNEL_PLAY],
+                ],
                 'prices' => [
-                    BillingCatalogue::CHANNEL_WEB => $this->displayPrices(
+                    BillingCatalogue::CHANNEL_WEB => JsonObject::map(PriceTable::display(
                         PriceTable::for($product, BillingCatalogue::CHANNEL_WEB, $pricing),
-                    ),
+                    )),
                 ],
             ];
         }
@@ -241,34 +250,6 @@ class BillingController
             },
             $this->planCatalogue(),
         );
-    }
-
-    /**
-     * One channel's prices with a display string beside each amount, so no
-     * client does minor-unit math.
-     *
-     * An empty table is an empty OBJECT, not an empty array: PHP encodes `[]`
-     * for both, and a client decoding a currency map refuses a list.
-     *
-     * @param  array<string, array{amount_minor: int, source: string}>  $table  {@see PriceTable::for()}.
-     * @return array<string, array{amount_minor: int, display: string}>|stdClass
-     */
-    protected function displayPrices(array $table): array|stdClass
-    {
-        if ($table === []) {
-            return new stdClass;
-        }
-
-        $prices = [];
-
-        foreach ($table as $currency => $price) {
-            $prices[$currency] = [
-                'amount_minor' => $price['amount_minor'],
-                'display' => Currency::display($price['amount_minor'], $currency),
-            ];
-        }
-
-        return $prices;
     }
 
     /**

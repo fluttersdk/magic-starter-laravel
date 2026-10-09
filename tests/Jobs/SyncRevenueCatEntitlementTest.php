@@ -629,6 +629,52 @@ class SyncRevenueCatEntitlementTest extends TestCase
     }
 
     /**
+     * A deferred Play downgrade does not apply before the paid period ends.
+     *
+     * Play issues the replacement purchase at once, with an expiry beyond the
+     * old one's, but its entitlement begins only when the old item expires. Read
+     * as live, it would reach furthest into the future and take the business
+     * tier away while the customer is still inside the month they paid for.
+     */
+    public function test_a_deferred_play_downgrade_keeps_the_tier_until_the_old_subscription_expires(): void
+    {
+        config(['magic-starter.billing.products.business_monthly.refs.play' => 'starter_business:monthly']);
+        $this->recordEntitlementWrites();
+
+        $billable = $this->makeBillable([
+            'plan' => 'business',
+            'plan_status' => PlanStatus::ACTIVE->value,
+            'plan_provider' => BillingProvider::PLAY_STORE->value,
+        ]);
+        $businessEnds = $this->grantedAt()->addDays(10);
+
+        $this->fakeAuthoritativeReads([
+            (string) $billable->getKey() => $this->subscriber([
+                'starter_business' => $this->subscription([
+                    'store' => 'play_store',
+                    'product_plan_identifier' => 'monthly',
+                    'expires_date' => $businessEnds->toIso8601ZuluString(),
+                ]),
+                'starter_pro' => $this->subscription([
+                    'store' => 'play_store',
+                    'product_plan_identifier' => 'monthly',
+                    'purchase_date' => $businessEnds->toIso8601ZuluString(),
+                    'expires_date' => $businessEnds->addMonth()->toIso8601ZuluString(),
+                ]),
+            ]),
+        ]);
+
+        $this->sync($this->event('PRODUCT_CHANGE', $billable, ['store' => 'PLAY_STORE']));
+
+        $this->assertCount(1, RecordingEntitlementWriter::$claims);
+        $this->assertSame('business', RecordingEntitlementWriter::$claims[0]->plan);
+        $this->assertSame('starter_business:monthly', RecordingEntitlementWriter::$claims[0]->productId);
+
+        $billable->refresh();
+        $this->assertSame('business', $billable->getAttribute('plan'));
+    }
+
+    /**
      * A `TRANSFER` re-reads BOTH sides: the source loses the subscription and
      * the destination gains it.
      *

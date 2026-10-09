@@ -95,8 +95,8 @@ trait HasEntitlement
      *
      * Null when the plan is not entitled, when no product id was recorded, or
      * when the recorded id matches no catalogue product (a config gap, never a
-     * guess). The id is a store product id or a Stripe price id, so both rails
-     * resolve to the same key.
+     * guess). The id is a Stripe price id or a store product id, resolved in
+     * the order the `billing` wire uses, so both name the same key.
      */
     public function entitledProduct(): ?string
     {
@@ -104,11 +104,7 @@ trait HasEntitlement
             return null;
         }
 
-        $productId = $this->stringAttribute($this, 'plan_product_id');
-        $product = BillingCatalogue::productForStoreId($productId)
-            ?? BillingCatalogue::productForStripePrice($productId);
-
-        return $product['key'] ?? null;
+        return BillingCatalogue::productForRailId($this->stringAttribute($this, 'plan_product_id'))['key'] ?? null;
     }
 
     /**

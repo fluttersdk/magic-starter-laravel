@@ -17,14 +17,25 @@ use Illuminate\Support\Sleep;
 /**
  * The checks an agent runs before and after applying the manifest.
  *
- * Every secret is a sentinel, and the RevenueCat fakes hand back a webhook
- * integration carrying `signing_secret` (which the real API does), so the
- * whitelist is proven against a response that would leak if anything passed a
- * remote object through.
+ * Every secret is a sentinel. RevenueCat returns a webhook's signing secret
+ * only in the response to a rotate request, so the list fakes carry none; the
+ * one fake that does is in the no-secret test, proving that a remote object
+ * holding the secret is never passed through to the output.
  */
 class BillingDoctorCommandTest extends TestCase
 {
     private const PROJECT = 'proj_test';
+
+    /**
+     * The test that boots the application as `billing:doctor` itself, over a
+     * catalogue that does not validate.
+     */
+    private const INVALID_CATALOGUE_TEST = 'test_the_doctor_reports_a_catalogue_that_stopped_boot_as_json';
+
+    /**
+     * @var list<string>
+     */
+    private array $argv = [];
 
     /**
      * The four product keys, in catalogue order.
@@ -52,10 +63,22 @@ class BillingDoctorCommandTest extends TestCase
             'magic-starter.billing' => BillingManifestCommandTest::billing(),
             ...BillingManifestCommandTest::SECRETS,
         ]);
+
+        if ($this->name() === self::INVALID_CATALOGUE_TEST) {
+            $app['config']->set('magic-starter.billing.plans', []);
+        }
     }
 
     protected function setUp(): void
     {
+        // The provider decides at boot whether this process is the doctor, so
+        // the command line has to say so before the application exists.
+        $this->argv = $_SERVER['argv'] ?? [];
+
+        if ($this->name() === self::INVALID_CATALOGUE_TEST) {
+            $_SERVER['argv'] = ['artisan', BillingDoctorCommand::NAME, '--json'];
+        }
+
         parent::setUp();
 
         Sleep::fake();
@@ -73,6 +96,31 @@ class BillingDoctorCommandTest extends TestCase
         $this->assertSame('ok', $doctor['checks']['stripe.price.pro_annual']['status']);
         $this->assertSame('ok', $doctor['checks']['billable.uuid']['status']);
         $this->assertArrayNotHasKey('revenuecat.remote', $doctor['checks']);
+    }
+
+    protected function tearDown(): void
+    {
+        $_SERVER['argv'] = $this->argv;
+
+        parent::tearDown();
+    }
+
+    /**
+     * A catalogue that fails validation stops every other process at boot, so
+     * the doctor is the one place it can be read back. It has to arrive as the
+     * same JSON an agent parses for any other finding, not as a stack trace.
+     */
+    public function test_the_doctor_reports_a_catalogue_that_stopped_boot_as_json(): void
+    {
+        $doctor = $this->doctor();
+
+        $this->assertSame(1, $doctor['exit']);
+        $this->assertFalse($doctor['report']['ok']);
+        $this->assertSame('error', $doctor['checks']['catalogue.valid']['status']);
+        $this->assertStringContainsString(
+            'magic-starter.billing.plans',
+            $doctor['checks']['catalogue.valid']['message'],
+        );
     }
 
     public function test_a_sellable_product_without_a_stripe_price_is_an_error(): void
@@ -186,16 +234,32 @@ class BillingDoctorCommandTest extends TestCase
         $this->assertSame('ok', $doctor['checks']['revenuecat.package.pro_monthly']['status']);
     }
 
-    public function test_remote_reports_an_hmac_less_webhook_and_a_wrong_url(): void
+    public function test_remote_reports_a_webhook_delivering_elsewhere(): void
     {
-        $this->fakeRevenueCat(signingSecret: null);
-
-        $this->assertSame('error', $this->doctor(['--remote' => true])['checks']['revenuecat.webhook']['status']);
-
-        Http::swap(new Factory);
         $this->fakeRevenueCat(webhookUrl: 'https://elsewhere.example.test/hook');
 
-        $this->assertSame('error', $this->doctor(['--remote' => true])['checks']['revenuecat.webhook']['status']);
+        $doctor = $this->doctor(['--remote' => true]);
+
+        $this->assertSame(1, $doctor['exit']);
+        $this->assertSame('error', $doctor['checks']['revenuecat.webhook']['status']);
+    }
+
+    /**
+     * RevenueCat returns the signing secret only in the response to a rotate
+     * request, so a list read without it says nothing about signing. Calling
+     * that an error would fail every correctly signed webhook; the toggle is a
+     * dashboard fact a person confirms.
+     */
+    public function test_remote_leaves_hmac_signing_to_a_person_to_confirm(): void
+    {
+        $this->fakeRevenueCat();
+
+        $doctor = $this->doctor(['--remote' => true]);
+
+        $this->assertSame(0, $doctor['exit']);
+        $this->assertSame('ok', $doctor['checks']['revenuecat.webhook']['status']);
+        $this->assertSame('agent_check', $doctor['checks']['revenuecat.webhook.hmac']['status']);
+        $this->assertStringContainsString('HMAC', $doctor['checks']['revenuecat.webhook.hmac']['message']);
     }
 
     public function test_remote_reports_a_lookup_key_resolving_to_another_price(): void
@@ -242,7 +306,10 @@ class BillingDoctorCommandTest extends TestCase
     {
         $outputs = [];
 
-        $this->fakeRevenueCat();
+        $secrets = BillingManifestCommandTest::SECRETS;
+        $this->fakeRevenueCat(webhookFields: [
+            'signing_secret' => $secrets['magic-starter.billing.revenuecat.webhook_secret'],
+        ]);
         Artisan::call(BillingDoctorCommand::NAME, ['--remote' => true, '--json' => true]);
         $outputs[] = Artisan::output();
         Artisan::call(BillingDoctorCommand::NAME, ['--remote' => true]);
@@ -255,12 +322,11 @@ class BillingDoctorCommandTest extends TestCase
         // A failing RevenueCat whose error body echoes the secret: Laravel's
         // RequestException message carries the body, so passing it through
         // would print what RevenueCat printed.
-        $secrets = BillingManifestCommandTest::SECRETS;
         Http::swap(new Factory);
         Http::fake([
             '*' => Http::response([
                 'message' => 'broken',
-                'signing_secret' => $secrets['magic-starter.billing.revenuecat.webhook_secret'],
+                'webhook_secret' => $secrets['magic-starter.billing.revenuecat.webhook_secret'],
                 'key' => $secrets['magic-starter.billing.revenuecat.api_v2_key'],
             ], 400),
         ]);
@@ -318,11 +384,12 @@ class BillingDoctorCommandTest extends TestCase
      * arguments take away.
      *
      * @param  list<string>  $packages
+     * @param  array<string, mixed>  $webhookFields  Extra fields on the webhook integration.
      */
     private function fakeRevenueCat(
         array $packages = self::KEYS,
-        ?string $signingSecret = BillingManifestCommandTest::SECRETS['magic-starter.billing.revenuecat.webhook_secret'],
         string $webhookUrl = 'https://app.example.test/webhooks/revenuecat',
+        array $webhookFields = [],
     ): void {
         $base = RevenueCatProjectClient::BASE_URL . '/projects/' . self::PROJECT;
         $storeIds = static fn (string $key): array => [
@@ -398,7 +465,7 @@ class BillingDoctorCommandTest extends TestCase
                     'id' => 'wh_1',
                     'url' => $webhookUrl,
                     'environment' => 'production',
-                    'signing_secret' => $signingSecret,
+                    ...$webhookFields,
                 ],
             ]),
         ]);

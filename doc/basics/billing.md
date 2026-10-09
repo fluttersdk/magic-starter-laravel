@@ -100,17 +100,22 @@ A product entry:
 | `credits` | Optional integer a one-off purchase grants. |
 | `prices` | `channel => currency => amount in minor units`. See [Prices](#prices). |
 | `refs` | Each rail's id for the product: `stripe_price`, `app_store`, `play`. See [Store Ids](#store-ids). |
-| `sellable` | Boolean, default `true`. `false` keeps the product mapped for webhooks, reconciliation and entitlement reads (a grandfathered price still bills people), but it is not listed in `billing/plans`, cannot be checked out or swapped to (422 `product_not_sellable`), and is left out of `billing:manifest` and `billing:doctor`. Anything but a boolean stops boot. |
+| `sellable` | Boolean, default `true`. `false` keeps the product mapped for webhooks, reconciliation and entitlement reads (a grandfathered price still bills people). `billing/plans` lists it with `sellable: false` so a client can place what a subscriber holds; a client must offer only sellable products. It cannot be checked out or swapped to (422 `product_not_sellable`), and is left out of `billing:manifest` and `billing:doctor`. Anything but a boolean stops boot. |
 
 ### What boot refuses
 
 - A leftover `plans`, `prices` or `store_products` key, even empty. The message names where its content moved: `tiers` and `tier_order`, `refs.stripe_price`, and `refs.app_store` and `refs.play`. There is no alias.
 - An empty `tier_order`.
 - A product with an unknown `type` or a `sellable` that is not a boolean, or a subscription with no tier, a tier outside `tier_order`, or a `cycle` that is not `monthly` or `annual`.
+- A `prices` entry that is not a known channel (`web`, `app_store`, `play`) mapping a three-letter currency code to a whole amount of 0 or more.
+- A `refs.play` that is not exactly `<subscription_id>:<base_plan_id>`, or a `refs.app_store` containing `:`.
+- A `pricing.commission.mode` other than `absorb` or `gross_up`, or a `rate` that is not a number of at least 0 and below 1.
 - A product that sells the free floor.
 - Two sellable subscriptions on the same tier and cycle, since the plans screen would list one offer twice. Keep one sellable and mark a retired price `sellable: false`.
-- One store id on two products.
+- One Stripe price or one store id on two products. The message names both.
 - One Play subscription whose base plans sell two different tiers. Play reports a base-plan change inside a subscription as a renewal of the same purchase, so the tier would move with nobody deciding.
+
+Every other process stops at boot on these, artisan commands included, so a deploy fails before the web serves a broken catalogue. `billing:doctor` is the one exception: it logs the refusal, boots, and reports it as `catalogue.valid`.
 
 > [!WARNING]
 > An unmapped Stripe price or store id is a config gap, never a downgrade. A rail that cannot name the tier a paying subscription sells leaves the entitlement alone and logs a warning.
@@ -131,7 +136,7 @@ A product key is `<tier>_<cycle>`, for example `pro_monthly` or `business_annual
 
 The price env variable is the key uppercased with every run of non-alphanumeric characters turned into `_`: `pro_monthly` reads `CASHIER_PRICE_PRO_MONTHLY`. `billing:manifest` prints the variable beside each Stripe price so an agent knows what to fill after creating it.
 
-A reverse lookup (a Stripe price or a store id back to its product) answers the first product carrying that ref, in config order. An empty ref is no ref: an unset env variable writes an empty string, and a lookup honouring it would name the empty string as the price of a paid tier.
+A reverse lookup (a Stripe price or a store id back to its product) is exact, and boot guarantees one product per ref. A stored id (`plan_product_id`) is tried as a Stripe price first and a store id second, by `GET billing` and `entitledProduct()` alike. An empty ref is no ref: an unset env variable writes an empty string, and a lookup honouring it would name the empty string as the price of a paid tier.
 
 ---
 
@@ -225,7 +230,7 @@ A finished or paused plan reads as the floor even if the tier is still stored, s
 
 ### Plans
 
-`data` is a list of tier rows in `tier_order` order, each carrying its `tiers` definition plus the derived `cycles` (the cycles a Stripe price sells it on) and `products`:
+`data` is a list of tier rows in `tier_order` order, each carrying its `tiers` definition plus the derived `cycles` (the cycles a sellable product with a Stripe price sells it on) and `products`, every subscription product of the tier:
 
 ```json
 {
@@ -240,8 +245,21 @@ A finished or paused plan reads as the floor even if the tier is still stored, s
           "type": "subscription",
           "tier": "pro",
           "cycle": "monthly",
+          "sellable": true,
+          "store_ids": { "app_store": "com.example.pro.monthly", "play": "pro:monthly" },
           "prices": {
-            "web": { "USD": { "amount_minor": 2900, "display": "$29.00" } }
+            "web": { "USD": { "amount_minor": 2900, "display": "29.00 USD" } }
+          }
+        },
+        {
+          "key": "pro_monthly_2025",
+          "type": "subscription",
+          "tier": "pro",
+          "cycle": "monthly",
+          "sellable": false,
+          "store_ids": { "app_store": "com.example.pro.monthly.2025", "play": "pro:monthly-2025" },
+          "prices": {
+            "web": { "USD": { "amount_minor": 1900, "display": "19.00 USD" } }
           }
         }
       ]
@@ -249,6 +267,8 @@ A finished or paused plan reads as the floor even if the tier is still stored, s
   ]
 }
 ```
+
+A product with `sellable: false` is listed so a client can rank what a subscriber already holds; offer only the sellable ones. `store_ids` carries `null` for a store the product is not on, and a product with no web price carries `"web": {}`.
 
 An application that has published nothing gets an empty list, not a 404.
 
@@ -340,7 +360,7 @@ php artisan billing:doctor --json
 php artisan billing:doctor --json --remote
 ```
 
-Without `--remote` it checks the configuration: the catalogue validates, the rail secrets that a sold product needs are set, `REVENUECAT_WEBHOOK_SECRET` exists while the store rail is on, every web-sold product has a Stripe price id, store ids are listed, billable keys are UUIDs, and the reconcile cadence suits the store rail. With `--remote` it also reads Stripe and RevenueCat and diffs them against the manifest: a Stripe price per lookup key (id, interval, amounts), and the RevenueCat apps, products, entitlements, `default` offering, packages and webhook (including that HMAC signing is on).
+Without `--remote` it checks the configuration: the catalogue validates, the rail secrets that a sold product needs are set, `REVENUECAT_WEBHOOK_SECRET` exists while the store rail is on, every web-sold product has a Stripe price id, store ids are listed, billable keys are UUIDs, and the reconcile cadence suits the store rail. With `--remote` it also reads Stripe and RevenueCat and diffs them against the manifest: a Stripe price per lookup key (id, interval, amounts), and the RevenueCat apps, products, entitlements, `default` offering, packages and webhook (that one delivers to this application's URL). RevenueCat returns a webhook's signing secret only when it is rotated, so whether HMAC signing is on cannot be read: the doctor reports it as an `agent_check` for a person to confirm in the dashboard.
 
 `REVENUECAT_API_V2_KEY` is a separate secret key scoped to `project_configuration:{apps,products,entitlements,offerings,packages,integrations}:read`, and `REVENUECAT_PROJECT_ID` names the project. Neither is needed to sell.
 

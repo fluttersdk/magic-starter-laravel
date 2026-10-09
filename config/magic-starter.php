@@ -402,20 +402,24 @@ return [
     |   'sellable' optional boolean, default true. false keeps a product MAPPED
     |             without selling it: a grandfathered Stripe price or a retired
     |             store product that existing subscribers still pay, so a webhook
-    |             or the reconciler still names their tier. It is not listed in
-    |             GET billing/plans, billing/checkout and billing/swap refuse it
-    |             (422 product_not_sellable), and billing:manifest and
-    |             billing:doctor leave it out. Anything but a boolean stops boot.
-    |   'prices'  channel (web | app_store | play) => currency => amount in
-    |             MINOR units (cents, kurus; 3400 yen is 3400, 1.500 KWD is
-    |             1500). Display figures, never a charge: each rail charges what
-    |             its own dashboard says.
+    |             or the reconciler still names their tier. GET billing/plans
+    |             lists it flagged 'sellable: false' so a client can place what a
+    |             subscriber holds, and never offers it: billing/checkout and
+    |             billing/swap refuse it (422 product_not_sellable), and
+    |             billing:manifest and billing:doctor leave it out. Anything but
+    |             a boolean stops boot.
+    |   'prices'  channel (web | app_store | play) => three-letter currency =>
+    |             whole amount >= 0 in MINOR units (cents, kurus; 3400 yen is
+    |             3400, 1.500 KWD is 1500). Display figures, never a charge: each
+    |             rail charges what its own dashboard says. Any other shape stops
+    |             boot.
     |   'refs'    each rail's id for this product: 'stripe_price' (env-backed,
     |             from CASHIER_PRICE_<KEY>: the product key uppercased, so
-    |             'pro_monthly' reads CASHIER_PRICE_PRO_MONTHLY), 'app_store',
-    |             and 'play' as '<subscription_id>:<base_plan_id>', the WHOLE id
-    |             Google sends. A map keyed on the bare subscription id misses on
-    |             every Android renewal.
+    |             'pro_monthly' reads CASHIER_PRICE_PRO_MONTHLY; one product per
+    |             price), 'app_store' (no colon), and 'play' as
+    |             '<subscription_id>:<base_plan_id>', the WHOLE id Google sends.
+    |             A bare subscription id stops boot: it misses on every Android
+    |             renewal.
     |
     | Write ONE sellable product per (tier, cycle) and put every rail's ref on
     | it; a second one for the same pair is refused at boot unless it is

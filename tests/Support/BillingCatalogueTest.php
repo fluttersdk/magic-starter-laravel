@@ -2,11 +2,13 @@
 
 namespace FlutterSdk\MagicStarter\Tests\Support;
 
+use FlutterSdk\MagicStarter\Console\BillingDoctorCommand;
 use FlutterSdk\MagicStarter\Features;
 use FlutterSdk\MagicStarter\MagicStarterServiceProvider;
 use FlutterSdk\MagicStarter\Support\BillingCatalogue;
 use FlutterSdk\MagicStarter\Tests\TestCase;
 use Illuminate\Routing\RouteCollection;
+use Illuminate\Support\Facades\Log;
 use LogicException;
 use PHPUnit\Framework\Attributes\DataProvider;
 
@@ -140,6 +142,147 @@ class BillingCatalogueTest extends TestCase
     }
 
     /**
+     * One Stripe price on two products would let a webhook name whichever
+     * product config order happens to put first, so the tier it grants depends
+     * on the order the adopter wrote the file in.
+     */
+    public function test_a_stripe_price_on_two_products_is_refused_naming_both(): void
+    {
+        config(['magic-starter.billing.products.business_monthly.refs.stripe_price' => 'price_pro_monthly']);
+
+        $message = $this->refusal();
+
+        $this->assertStringContainsString('[price_pro_monthly]', $message);
+        $this->assertStringContainsString('[pro_monthly]', $message);
+        $this->assertStringContainsString('[business_monthly]', $message);
+    }
+
+    /**
+     * @return array<string, array{0: string}>
+     */
+    public static function malformedPlayRefs(): array
+    {
+        return [
+            'bare subscription id' => ['pro_sub'],
+            'empty base plan' => ['pro_sub:'],
+            'empty subscription id' => [':monthly'],
+            'three parts' => ['pro_sub:monthly:extra'],
+        ];
+    }
+
+    #[DataProvider('malformedPlayRefs')]
+    public function test_a_play_ref_that_is_not_subscription_and_base_plan_is_refused(string $ref): void
+    {
+        config(['magic-starter.billing.products.pro_monthly.refs.play' => $ref]);
+
+        $message = $this->refusal();
+
+        $this->assertStringContainsString('[pro_monthly]', $message);
+        $this->assertStringContainsString('refs.play', $message);
+    }
+
+    public function test_an_app_store_ref_carrying_a_colon_is_refused(): void
+    {
+        // The Play form pasted into the App Store slot: it would never match a
+        // purchase, so the product would silently sell nothing on iOS.
+        config(['magic-starter.billing.products.pro_monthly.refs.app_store' => 'pro_sub:monthly']);
+
+        $message = $this->refusal();
+
+        $this->assertStringContainsString('[pro_monthly]', $message);
+        $this->assertStringContainsString('refs.app_store', $message);
+    }
+
+    /**
+     * @return array<string, array{0: mixed, 1: string}>
+     */
+    public static function malformedPrices(): array
+    {
+        return [
+            'prices not a map' => ['29.00', 'prices'],
+            'unknown channel' => [['stripe' => ['USD' => 2900]], '[stripe]'],
+            'channel not a map' => [['web' => 2900], '[web]'],
+            'currency not three letters' => [['web' => ['DOLLAR' => 2900]], '[DOLLAR]'],
+            'amount a float' => [['web' => ['USD' => 29.0]], '[USD]'],
+            'amount a string' => [['web' => ['USD' => '2900']], '[USD]'],
+            'amount negative' => [['web' => ['USD' => -1]], '[USD]'],
+        ];
+    }
+
+    #[DataProvider('malformedPrices')]
+    public function test_a_malformed_price_is_refused_naming_the_product(mixed $prices, string $named): void
+    {
+        config(['magic-starter.billing.products.pro_monthly.prices' => $prices]);
+
+        $message = $this->refusal();
+
+        $this->assertStringContainsString('[pro_monthly]', $message);
+        $this->assertStringContainsString($named, $message);
+    }
+
+    public function test_a_zero_price_on_every_channel_is_accepted(): void
+    {
+        config(['magic-starter.billing.products.pro_monthly.prices' => [
+            'web' => ['usd' => 0],
+            'app_store' => ['USD' => 0],
+            'play' => ['USD' => 0],
+        ]]);
+
+        BillingCatalogue::validate();
+
+        $this->addToAssertionCount(1);
+    }
+
+    /**
+     * @return array<string, array{0: string, 1: mixed}>
+     */
+    public static function malformedCommission(): array
+    {
+        return [
+            'unknown mode' => ['mode', 'pass_through'],
+            'rate of one' => ['rate', 1],
+            'rate above one' => ['rate', 1.5],
+            'negative rate' => ['rate', -0.1],
+            'rate as a string' => ['rate', '0.15'],
+        ];
+    }
+
+    #[DataProvider('malformedCommission')]
+    public function test_a_malformed_commission_is_refused_naming_its_key(string $key, mixed $value): void
+    {
+        config(["magic-starter.billing.pricing.commission.{$key}" => $value]);
+
+        $this->assertStringContainsString(
+            "magic-starter.billing.pricing.commission.{$key}",
+            $this->refusal(),
+        );
+    }
+
+    public function test_the_play_subscription_id_is_the_part_before_the_base_plan(): void
+    {
+        $this->assertSame('pro_sub', BillingCatalogue::playSubscriptionId('pro_sub:monthly'));
+        $this->assertSame('pro_sub', BillingCatalogue::playSubscriptionId('pro_sub'));
+    }
+
+    /**
+     * A rail id is a Stripe price first and a store id second, for every
+     * reader: two readers trying them in opposite orders would name two
+     * different products for one stored id.
+     */
+    public function test_a_rail_id_resolves_as_a_stripe_price_before_a_store_id(): void
+    {
+        config(['magic-starter.billing.products.business_monthly.refs.app_store' => 'price_pro_monthly']);
+
+        $this->assertSame('pro_monthly', BillingCatalogue::productForRailId('price_pro_monthly')['key'] ?? null);
+        $this->assertSame(
+            'business_monthly',
+            BillingCatalogue::productForRailId('business_sub:monthly')['key'] ?? null,
+        );
+        $this->assertNull(BillingCatalogue::productForRailId('price_unmapped'));
+        $this->assertNull(BillingCatalogue::productForRailId(null));
+    }
+
+    /**
      * The validation is wired into boot, and only under the billing feature.
      *
      * The disarming limb is the billing-off boot: the shipped config carries an
@@ -161,6 +304,40 @@ class BillingCatalogueTest extends TestCase
         $this->expectExceptionMessage('magic-starter.billing.plans');
 
         $this->bootProvider();
+    }
+
+    /**
+     * `billing:doctor` is the command that reports an invalid catalogue, so its
+     * own process must boot far enough to run it. Every other console process
+     * still refuses: a deploy's `migrate` failing on the catalogue is the
+     * signal that keeps a broken config from reaching the web.
+     */
+    public function test_boot_logs_an_invalid_catalogue_only_while_the_doctor_runs(): void
+    {
+        $argv = $_SERVER['argv'] ?? [];
+        Log::spy();
+
+        config([
+            'magic-starter.billing.plans' => [],
+            'magic-starter.features' => [Features::billing()],
+        ]);
+
+        try {
+            $_SERVER['argv'] = ['artisan', BillingDoctorCommand::NAME, '--json'];
+            $this->bootProvider();
+
+            Log::shouldHaveReceived('error')
+                ->once()
+                ->withArgs(fn (string $message): bool => str_contains($message, 'magic-starter.billing.plans'));
+
+            $_SERVER['argv'] = ['artisan', 'migrate'];
+            $this->expectException(LogicException::class);
+            $this->expectExceptionMessage('magic-starter.billing.plans');
+
+            $this->bootProvider();
+        } finally {
+            $_SERVER['argv'] = $argv;
+        }
     }
 
     public function test_tiers_follow_the_ranking_and_carry_their_id(): void

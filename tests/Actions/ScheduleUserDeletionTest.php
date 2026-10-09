@@ -165,6 +165,25 @@ class ScheduleUserDeletionTest extends TestCase
     }
 
     /**
+     * The refusal names only what the customer can do here. The package serves
+     * no ownership transfer, so a sentence asking for a hand-over sends them
+     * looking for a screen that does not exist; the wording is magic_starter's.
+     */
+    public function test_the_shared_teams_refusal_asks_for_nothing_the_package_cannot_do(): void
+    {
+        $this->assertSame(
+            'You own teams that other people belong to. '
+            . 'Remove their members or delete those teams before deleting your account.',
+            __('magic-starter::social.owns_shared_teams', [], 'en'),
+        );
+        $this->assertSame(
+            'Başka kişilerin de üye olduğu takımların sahibisiniz. '
+            . 'Hesabınızı silmeden önce üyeleri çıkarın veya bu takımları silin.',
+            __('magic-starter::social.owns_shared_teams', [], 'tr'),
+        );
+    }
+
+    /**
      * A solo team either rail is still billing refuses too: deleting it at the
      * purge would strand the charge, and nothing is cancelled for the customer.
      */

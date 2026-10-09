@@ -276,11 +276,7 @@ class SharedBillingRulesTest extends TestCase
      * does.
      *
      * Refs are normally assembled from the environment, so one unset variable
-     * is all it takes to write `'stripe_price' => ''`. The lookup's own guard
-     * already refuses an empty price id, which is exactly why the second half of
-     * this test exists: asserting only `planForPrice('')` passes whether or not
-     * the ref is normalised, and the entry survives into the price map, where
-     * the empty string would appear as a price that sells a paid tier.
+     * is all it takes to write `'stripe_price' => ''`.
      */
     public function test_an_empty_price_id_cannot_sell_a_paid_tier(): void
     {
@@ -291,29 +287,26 @@ class SharedBillingRulesTest extends TestCase
 
         $this->assertNull(StripeSubscriptionState::planForPrice(''));
         $this->assertSame('business', StripeSubscriptionState::planForPrice('price_business'));
-
-        // The half that distinguishes a normalised ref from a raw one.
-        $this->assertSame(['price_business' => 'business'], StripeSubscriptionState::prices());
-        $this->assertFalse(array_search('pro', StripeSubscriptionState::prices(), true));
     }
 
-    public function test_the_catalogue_maps_each_stripe_price_to_its_tier_and_cycle(): void
+    /**
+     * Only a subscription grants a tier. Nothing refuses a `tier` written on a
+     * one-off product, so a lookup that read it would let a credit pack's price
+     * move a subscriber onto a paid tier.
+     */
+    public function test_only_a_subscription_price_names_a_tier(): void
     {
         $this->publishSubscriptions([
             'pro_monthly' => ['pro', 'monthly', 'price_pro_monthly'],
-            'pro_annual' => ['pro', 'annual', 'price_pro_annual'],
-            'business_annual' => ['business', 'annual', 'price_business_annual'],
+        ]);
+        config()->set('magic-starter.billing.products.pro_credits', [
+            'type' => 'consumable',
+            'tier' => 'pro',
+            'refs' => ['stripe_price' => 'price_pro_credits'],
         ]);
 
-        // The catalogue the plans endpoint derives `cycles` from, keyed by price.
-        $this->assertSame(
-            [
-                'price_pro_monthly' => ['tier' => 'pro', 'cycle' => 'monthly'],
-                'price_pro_annual' => ['tier' => 'pro', 'cycle' => 'annual'],
-                'price_business_annual' => ['tier' => 'business', 'cycle' => 'annual'],
-            ],
-            StripeSubscriptionState::catalogue(),
-        );
+        $this->assertSame('pro', StripeSubscriptionState::planForPrice('price_pro_monthly'));
+        $this->assertNull(StripeSubscriptionState::planForPrice('price_pro_credits'));
     }
 
     public function test_a_billable_key_is_judged_against_this_deployments_switch(): void

@@ -817,6 +817,12 @@ class BillingControllerTest extends TestCase
                     'credits' => 100,
                     'prices' => ['web' => ['USD' => 500]],
                 ],
+                // A one-off naming a tier is still not a subscription of it.
+                'pro_boost' => [
+                    'type' => 'non_consumable',
+                    'tier' => 'pro',
+                    'prices' => ['web' => ['USD' => 900]],
+                ],
             ],
         ]);
 
@@ -834,6 +840,11 @@ class BillingControllerTest extends TestCase
                 'type' => 'subscription',
                 'tier' => 'pro',
                 'cycle' => 'monthly',
+                'sellable' => true,
+                'store_ids' => [
+                    'app_store' => 'com.example.pro.monthly',
+                    'play' => null,
+                ],
                 'prices' => [
                     'web' => [
                         'USD' => [
@@ -852,6 +863,11 @@ class BillingControllerTest extends TestCase
                 'type' => 'subscription',
                 'tier' => 'pro',
                 'cycle' => 'annual',
+                'sellable' => true,
+                'store_ids' => [
+                    'app_store' => null,
+                    'play' => 'pro:annual',
+                ],
                 'prices' => ['web' => []],
             ],
         ], $data[1]['products']);
@@ -865,12 +881,13 @@ class BillingControllerTest extends TestCase
     }
 
     /**
-     * A product kept for mapping is neither listed nor counted as a cycle, and
-     * the entitlement of a team still on its price still names it.
+     * A product kept for mapping is listed flagged `sellable: false` and is not
+     * counted as a cycle, and the entitlement of a team still on its price still
+     * names it.
      *
-     * The two halves are one test because they are one claim: the catalogue
-     * keeps the product so the subscriber's tier survives, and the plans screen
-     * stops offering it.
+     * Listed rather than hidden because a client ranks what a customer holds
+     * against the row: a grandfathered product missing from it could not be
+     * placed at all. The flag is what keeps the client from offering it.
      */
     public function test_a_product_kept_for_mapping_is_not_offered_but_still_names_its_subscriber_tier(): void
     {
@@ -913,9 +930,11 @@ class BillingControllerTest extends TestCase
 
         $data = $this->ask($owner, '/billing/plans')->assertOk()->json('data');
 
-        $this->assertSame(['pro_monthly'], array_column($data[1]['products'], 'key'));
+        $this->assertSame(['pro_monthly', 'pro_monthly_2025'], array_column($data[1]['products'], 'key'));
+        $this->assertSame([true, false], array_column($data[1]['products'], 'sellable'));
         $this->assertSame(['monthly'], $data[1]['cycles']);
-        $this->assertSame([], $data[2]['products']);
+        $this->assertSame(['business_monthly_2025'], array_column($data[2]['products'], 'key'));
+        $this->assertSame([false], array_column($data[2]['products'], 'sellable'));
         $this->assertSame([], $data[2]['cycles']);
 
         $this->assertSame('pro_monthly_2025', $this->ask($owner, '/billing')->assertOk()->json('data.product'));

@@ -61,6 +61,15 @@ final class BillingCatalogue
     public const CHANNEL_PLAY = 'play';
 
     /**
+     * @var list<string>
+     */
+    public const CHANNELS = [
+        self::CHANNEL_WEB,
+        self::CHANNEL_APP_STORE,
+        self::CHANNEL_PLAY,
+    ];
+
+    /**
      * The keys this catalogue replaced, and where their content lives now.
      *
      * `mergeConfigFrom()` is a SHALLOW merge, so a config published before the
@@ -96,6 +105,9 @@ final class BillingCatalogue
      * tiers means a base-plan change Play reports as a renewal silently moves a
      * customer between tiers.
      *
+     * The billing gate catches it in exactly one process, `billing:doctor`,
+     * which reports it; everywhere else it stops boot.
+     *
      * @throws LogicException Naming the offending key, product or tier.
      */
     public static function validate(): void
@@ -121,7 +133,10 @@ final class BillingCatalogue
             );
         }
 
-        // 3. Each product's own shape.
+        // 3. The rule every store price derives under, then each product's own
+        //    shape: a price nobody can derive is refused before any request.
+        self::validatePricing();
+
         foreach (self::configuredProducts() as $key => $product) {
             self::validateProduct((string) $key, $product, $tierOrder);
         }
@@ -144,7 +159,8 @@ final class BillingCatalogue
         //    choose between two prices for what the screen shows as one.
         self::validateOneSellablePerTierAndCycle($products);
 
-        // 6. Store ids name one product each, and a Play subscription one tier.
+        // 6. Every rail id names one product, and a Play subscription one tier.
+        self::validateStripePrices($products);
         self::validateStoreIds($products);
     }
 
@@ -250,6 +266,33 @@ final class BillingCatalogue
     }
 
     /**
+     * The product behind a rail's own id, as a billable's `plan_product_id`
+     * stores it: a Stripe price first, then a store id.
+     *
+     * One order for every reader, because the entitlement read and the wire
+     * would otherwise name different products for one id that both a Stripe
+     * price and a store id carry.
+     *
+     * @return Product|null
+     */
+    public static function productForRailId(?string $id): ?array
+    {
+        return self::productForStripePrice($id) ?? self::productForStoreId($id);
+    }
+
+    /**
+     * The subscription id of a Play ref `<subscription_id>:<base_plan_id>`.
+     *
+     * The subscription is what Play moves a customer within (a base-plan change
+     * reaches the rail as a renewal), so it is the unit the catalogue keeps to
+     * one tier and the unit a bare Play id from the v1 API names.
+     */
+    public static function playSubscriptionId(string $playRef): string
+    {
+        return explode(':', $playRef, 2)[0];
+    }
+
+    /**
      * The product an App Store or Play product id sells, matched EXACTLY.
      *
      * Play reports `<subscription_id>:<base_plan_id>`, and that whole string is
@@ -319,6 +362,9 @@ final class BillingCatalogue
             ));
         }
 
+        self::validateRefs($key, $product);
+        self::validatePrices($key, $product);
+
         if ($type !== self::TYPE_SUBSCRIPTION) {
             return;
         }
@@ -349,6 +395,178 @@ final class BillingCatalogue
                 is_string($cycle) ? $cycle : get_debug_type($cycle),
                 implode(', ', StripeSubscriptionState::CYCLES),
             ));
+        }
+    }
+
+    /**
+     * Refuse a store ref in the other store's shape.
+     *
+     * The Play form is `<subscription_id>:<base_plan_id>`, exactly two parts,
+     * because that composed id is what a purchase is matched against; a bare
+     * subscription id would match nothing. An App Store id never carries a
+     * colon, so one that does is a Play ref pasted into the wrong slot.
+     *
+     * @param  array<array-key, mixed>  $product
+     *
+     * @throws LogicException
+     */
+    private static function validateRefs(string $key, array $product): void
+    {
+        $refs = is_array($product['refs'] ?? null) ? $product['refs'] : [];
+        $play = self::stringOrNull($refs[self::CHANNEL_PLAY] ?? null);
+        $appStore = self::stringOrNull($refs[self::CHANNEL_APP_STORE] ?? null);
+
+        if ($play !== null && preg_match('/^[^:]+:[^:]+$/', $play) !== 1) {
+            throw new LogicException(sprintf(
+                'Product [%s] has refs.play [%s]; write it as <subscription_id>:<base_plan_id>.',
+                $key,
+                $play,
+            ));
+        }
+
+        if ($appStore !== null && str_contains($appStore, ':')) {
+            throw new LogicException(sprintf(
+                'Product [%s] has refs.app_store [%s]; an App Store product id has no colon '
+                . '(the <subscription_id>:<base_plan_id> form belongs in refs.play).',
+                $key,
+                $appStore,
+            ));
+        }
+    }
+
+    /**
+     * Refuse a price table that is not channel => currency => minor units.
+     *
+     * {@see PriceTable} skips what it cannot read, which is right for a reader
+     * and wrong for the catalogue: a float or a string amount, an unknown
+     * channel or a misspelt currency would drop out of every price list with no
+     * trace, and the tier would show as unpriced on that channel.
+     *
+     * @param  array<array-key, mixed>  $product
+     *
+     * @throws LogicException
+     */
+    private static function validatePrices(string $key, array $product): void
+    {
+        if (! array_key_exists('prices', $product)) {
+            return;
+        }
+
+        if (! is_array($product['prices'])) {
+            throw new LogicException(sprintf(
+                'Product [%s] has [prices] of type [%s]; use channel => currency => amount in minor units.',
+                $key,
+                get_debug_type($product['prices']),
+            ));
+        }
+
+        foreach ($product['prices'] as $channel => $currencies) {
+            if (! in_array($channel, self::CHANNELS, true) || ! is_array($currencies)) {
+                throw new LogicException(sprintf(
+                    'Product [%s] prices channel [%s]; use one of [%s], each a map of currency => amount.',
+                    $key,
+                    $channel,
+                    implode(', ', self::CHANNELS),
+                ));
+            }
+
+            foreach ($currencies as $currency => $amount) {
+                if (! is_string($currency) || preg_match('/^[A-Za-z]{3}$/', $currency) !== 1) {
+                    throw new LogicException(sprintf(
+                        'Product [%s] prices [%s] in currency [%s]; use a three-letter ISO 4217 code.',
+                        $key,
+                        $channel,
+                        $currency,
+                    ));
+                }
+
+                if (! is_int($amount) || $amount < 0) {
+                    throw new LogicException(sprintf(
+                        'Product [%s] prices [%s] [%s] at [%s]; use a whole amount in minor units, 0 or more.',
+                        $key,
+                        $channel,
+                        $currency,
+                        is_scalar($amount) ? (string) $amount : get_debug_type($amount),
+                    ));
+                }
+            }
+        }
+    }
+
+    /**
+     * Refuse a commission rule {@see PriceTable} cannot derive under.
+     *
+     * Read from the raw config rather than through {@see self::pricing()},
+     * which falls back to the default rate for a value that is not a number:
+     * a rate written as the string `'0.30'` would otherwise price every store
+     * product at the default cut with nothing said.
+     *
+     * @throws LogicException
+     */
+    private static function validatePricing(): void
+    {
+        $commission = config('magic-starter.billing.pricing.commission', []);
+        $commission = is_array($commission) ? $commission : [];
+        $modes = [
+            PriceTable::MODE_ABSORB,
+            PriceTable::MODE_GROSS_UP,
+        ];
+
+        if (array_key_exists('mode', $commission) && ! in_array($commission['mode'], $modes, true)) {
+            throw new LogicException(sprintf(
+                '[magic-starter.billing.pricing.commission.mode] is [%s]; use one of [%s].',
+                is_scalar($commission['mode']) ? (string) $commission['mode'] : get_debug_type($commission['mode']),
+                implode(', ', $modes),
+            ));
+        }
+
+        if (! array_key_exists('rate', $commission)) {
+            return;
+        }
+
+        $rate = $commission['rate'];
+
+        if (! (is_int($rate) || is_float($rate)) || $rate < 0 || $rate >= 1) {
+            throw new LogicException(sprintf(
+                '[magic-starter.billing.pricing.commission.rate] is [%s]; use a number of at least 0 and below 1.',
+                is_scalar($rate) ? (string) $rate : get_debug_type($rate),
+            ));
+        }
+    }
+
+    /**
+     * Refuse one Stripe price on two products.
+     *
+     * A webhook names a price and the catalogue answers with the first product
+     * carrying it, so a second product on the same price would never be found:
+     * the tier it grants would depend on the order the config was written in.
+     * A grandfathered product keeps its OWN old price, not a sold one's.
+     *
+     * @param  array<string, Product>  $products
+     *
+     * @throws LogicException
+     */
+    private static function validateStripePrices(array $products): void
+    {
+        $owners = [];
+
+        foreach ($products as $product) {
+            $priceId = $product['refs']['stripe_price'];
+
+            if ($priceId === null) {
+                continue;
+            }
+
+            if (isset($owners[$priceId])) {
+                throw new LogicException(sprintf(
+                    'Stripe price [%s] is on both [%s] and [%s]; a Stripe price names one product.',
+                    $priceId,
+                    $owners[$priceId],
+                    $product['key'],
+                ));
+            }
+
+            $owners[$priceId] = $product['key'];
         }
     }
 
@@ -436,7 +654,7 @@ final class BillingCatalogue
                 continue;
             }
 
-            $subscriptionId = explode(':', $play, 2)[0];
+            $subscriptionId = self::playSubscriptionId($play);
             $tier = $playTiers[$subscriptionId] ?? $product['tier'];
 
             if ($tier !== $product['tier']) {

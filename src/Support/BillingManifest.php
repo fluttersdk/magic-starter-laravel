@@ -208,7 +208,8 @@ final class BillingManifest
 
         foreach ($products as $product) {
             $ref = $product['refs'][BillingCatalogue::CHANNEL_PLAY];
-            [$subscriptionId, $basePlanId] = $ref === null ? [null, null] : array_pad(explode(':', $ref, 2), 2, null);
+            $subscriptionId = $ref === null ? null : BillingCatalogue::playSubscriptionId($ref);
+            $basePlanId = $subscriptionId === null ? null : substr($ref, strlen($subscriptionId) + 1);
             $group = $subscriptionId ?? "tier:{$product['tier']}";
 
             $subscriptions[$group] ??= [
@@ -349,7 +350,7 @@ final class BillingManifest
                 'lookup_key' => $product['key'],
                 'currency' => strtolower($base),
                 'unit_amount' => $web[$base]['amount_minor'],
-                'currency_options' => self::map($options),
+                'currency_options' => JsonObject::map($options),
                 'recurring' => [
                     'interval' => self::PERIODS[$product['cycle']]['stripe'],
                 ],
@@ -409,17 +410,18 @@ final class BillingManifest
      */
     private static function prices(array $product, string $channel): array|stdClass
     {
-        $prices = [];
+        $table = PriceTable::for($product, $channel, BillingCatalogue::pricing());
+        $prices = PriceTable::display($table);
 
-        foreach (PriceTable::for($product, $channel, BillingCatalogue::pricing()) as $currency => $price) {
-            $prices[$currency] = [
-                'amount_minor' => $price['amount_minor'],
-                'display' => Currency::display($price['amount_minor'], $currency),
-                'source' => $price['source'],
+        // The agent needs to know which figures it may override in a store
+        // dashboard and which follow the web price, so `source` rides along.
+        foreach ($prices as $currency => $price) {
+            $prices[$currency] = $price + [
+                'source' => $table[$currency]['source'],
             ];
         }
 
-        return self::map($prices);
+        return JsonObject::map($prices);
     }
 
     /**
@@ -440,19 +442,5 @@ final class BillingManifest
     private static function presence(bool $present): string
     {
         return $present ? 'present' : 'absent';
-    }
-
-    /**
-     * An empty map as a JSON object: PHP encodes `[]` as a list, and a reader
-     * expecting currency => amount refuses one.
-     *
-     * @template T
-     *
-     * @param  array<string, T>  $map
-     * @return array<string, T>|stdClass
-     */
-    private static function map(array $map): array|stdClass
-    {
-        return $map === [] ? new stdClass : $map;
     }
 }
