@@ -552,10 +552,40 @@ class CashierMigrationTest extends TestCase
 
         config(['magic-starter.features' => [Features::billing()]]);
 
+        // The shipped default: the package's models, whose keys follow use_uuids.
+        $this->assertTrue(config('magic-starter.billing.package_subscription_models'));
+
         (new MagicStarterServiceProvider($this->app))->register();
 
         $this->assertSame(Subscription::class, Cashier::$subscriptionModel);
         $this->assertSame(SubscriptionItem::class, Cashier::$subscriptionItemModel);
+    }
+
+    /**
+     * Switched off, the provider hands Cashier neither model.
+     *
+     * An application whose subscription tables came from Cashier's own
+     * migrations keeps Cashier's integer-keyed models; the package's would key
+     * them with a UUID under use_uuids and refuse every subscription write.
+     * The customer model is still the package's to set, so the rest of the
+     * wiring is asserted to have run.
+     */
+    public function test_the_provider_leaves_cashiers_subscription_models_when_switched_off(): void
+    {
+        Cashier::useSubscriptionModel(CashierSubscription::class);
+        Cashier::useSubscriptionItemModel(CashierSubscriptionItem::class);
+
+        config([
+            'magic-starter.use_uuids' => true,
+            'magic-starter.features' => [Features::billing()],
+            'magic-starter.billing.package_subscription_models' => false,
+        ]);
+
+        (new MagicStarterServiceProvider($this->app))->register();
+
+        $this->assertSame(CashierSubscription::class, Cashier::$subscriptionModel);
+        $this->assertSame(CashierSubscriptionItem::class, Cashier::$subscriptionItemModel);
+        $this->assertSame(MagicStarter::billableModel(), Cashier::$customerModel);
     }
 
     public function test_cashier_keeps_its_own_subscription_models_when_billing_is_disabled(): void

@@ -10,8 +10,10 @@ use FlutterSdk\MagicStarter\Support\RevenueCatProjectClient;
 use FlutterSdk\MagicStarter\Support\StoreRailConfiguration;
 use FlutterSdk\MagicStarter\Support\StripePriceReader;
 use Illuminate\Console\Command;
+use Illuminate\Database\Eloquent\Model;
 use Illuminate\Http\Client\ConnectionException;
 use Illuminate\Http\Client\RequestException;
+use Laravel\Cashier\Cashier;
 use LogicException;
 use RuntimeException;
 use Stripe\Exception\ApiErrorException;
@@ -50,6 +52,24 @@ class BillingDoctorCommand extends Command
     public const AGENT_CHECK = 'agent_check';
 
     /**
+     * Integer column types as {@see \Illuminate\Database\Schema\Builder::getColumnType()}
+     * names them on SQLite, MySQL, MariaDB, PostgreSQL and SQL Server.
+     *
+     * @var list<string>
+     */
+    private const INTEGER_COLUMN_TYPES = [
+        'integer',
+        'int',
+        'bigint',
+        'mediumint',
+        'smallint',
+        'tinyint',
+        'int2',
+        'int4',
+        'int8',
+    ];
+
+    /**
      * @var string
      */
     protected $signature = self::NAME . '
@@ -82,6 +102,7 @@ class BillingDoctorCommand extends Command
             $this->checkStripePrices();
             $this->checkStoreIds();
             $this->checkBillableKeys();
+            $this->checkSubscriptionKeys();
             $this->checkReconcileCadence();
 
             // 3. What the vendors hold, read and never written.
@@ -250,6 +271,70 @@ class BillingDoctorCommand extends Command
             'Billable keys are sequential integers. The key is the RevenueCat app_user_id, so it is guessable and '
             . 'collides between environments sharing a project; UUID keys (use_uuids) are recommended.',
         );
+    }
+
+    /**
+     * Whether each subscription table's key column is the type the model
+     * Cashier writes it through mints.
+     *
+     * The mismatch this exists for is an application whose tables came from
+     * Cashier's own migrations (bigint keys) under the package's models with
+     * use_uuids on: every subscription write is refused by the database, so the
+     * Stripe webhook answers 500 until Stripe gives up. Only the schema is read;
+     * a database the doctor cannot reach is reported by exception class alone,
+     * since a connection message can carry a host or a user.
+     */
+    private function checkSubscriptionKeys(): void
+    {
+        try {
+            $mismatches = array_values(array_filter([
+                $this->subscriptionKeyMismatch(new Cashier::$subscriptionModel),
+                $this->subscriptionKeyMismatch(new Cashier::$subscriptionItemModel),
+            ]));
+        } catch (Throwable $failure) {
+            $this->check('schema.subscription_keys', self::WARNING, sprintf(
+                'The subscription tables could not be read (%s), so their keys were not compared with the models.',
+                class_basename($failure),
+            ));
+
+            return;
+        }
+
+        $mismatches === []
+            ? $this->check(
+                'schema.subscription_keys',
+                self::OK,
+                'Every subscription table present is keyed the way its model writes it.',
+            )
+            : $this->check('schema.subscription_keys', self::ERROR, implode(' ', $mismatches));
+    }
+
+    /**
+     * The finding for one model's table, or null when the table is absent or
+     * agrees with the model.
+     */
+    private function subscriptionKeyMismatch(Model $model): ?string
+    {
+        $schema = $model->getConnection()->getSchemaBuilder();
+
+        if (! $schema->hasTable($model->getTable())) {
+            return null;
+        }
+
+        $column = $model->getTable() . '.' . $model->getKeyName();
+        $type = strtolower($schema->getColumnType($model->getTable(), $model->getKeyName()));
+        $integerColumn = in_array($type, self::INTEGER_COLUMN_TYPES, true);
+
+        if ($integerColumn === $model->getIncrementing()) {
+            return null;
+        }
+
+        return $integerColumn
+            ? "{$column} is an integer column and its model writes a UUID key, so every subscription write fails; "
+                . 'the table came from Cashier\'s own migrations, so set MAGIC_STARTER_PACKAGE_SUBSCRIPTION_MODELS=false.'
+            : "{$column} is a [{$type}] column and its model expects an auto-incrementing integer, so every "
+                . 'subscription write fails; the table came from the package\'s UUID migrations, so turn '
+                . 'magic-starter.use_uuids on and leave MAGIC_STARTER_PACKAGE_SUBSCRIPTION_MODELS true.';
     }
 
     private function checkReconcileCadence(): void

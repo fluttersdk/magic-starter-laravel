@@ -144,8 +144,9 @@ Every key available in `config/magic-starter.php`:
 | `two_factor.geoip_db_path` | `null` | Absolute path to MaxMind GeoIP2 `.mmdb` database file; `null` disables location resolution |
 | `two_factor.challenge_token_ttl` | `5` | Minutes until a two-factor challenge token expires |
 | `billing.billable` | `'user'` | What is billed: `'user'` or `'team'`. `'team'` needs the teams feature |
+| `billing.package_subscription_models` | `env('MAGIC_STARTER_PACKAGE_SUBSCRIPTION_MODELS', true)` | Hand Cashier the package's `Subscription` and `SubscriptionItem`, keyed by `use_uuids`. Set `false` when the subscription tables came from Cashier's own migrations |
 | `billing.tier_order` | `[]` | Tier ids, cheapest first. The first is the free floor. Required with billing on |
-| `billing.tiers` | `[]` | Display copy per tier id, reaching the client untouched |
+| `billing.tiers` | `[]` | Display copy per tier id; every string but `id`, and every string in a list, is passed through `__()` per request |
 | `billing.products` | `[]` | What you sell, keyed `<tier>_<cycle>`: type, tier, cycle, prices, refs, `sellable` |
 | `billing.pricing.currency` | `'USD'` | Base currency a screen falls back to |
 | `billing.pricing.commission` | `absorb`, `0.15` | How store prices derive from web prices: `mode` is `absorb` or `gross_up` |

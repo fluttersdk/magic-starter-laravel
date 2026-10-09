@@ -33,6 +33,7 @@ Throughout this document `{prefix}` is `config('magic-starter.route_prefix')`.
 ## Requirements
 
 - `Features::billing()` in `magic-starter.features`, then `php artisan magic-starter:install --features=billing` for the migrations. Do not run `vendor:publish --tag=cashier-migrations`: the package ships its own three, which resolve the billable table and the key type from config.
+- Already ran Cashier's own migrations? Set `MAGIC_STARTER_PACKAGE_SUBSCRIPTION_MODELS=false` (`billing.package_subscription_models`, default `true`). Cashier's `subscriptions` and `subscription_items` are keyed by a bigint, and the package's `Subscription` and `SubscriptionItem` models key by `use_uuids`; with UUIDs on, every subscription write fails and the Stripe webhook answers 500 until Stripe gives up. With the switch off the package hands Cashier neither model, so Cashier's own integer-keyed models stay. `billing:doctor` reports the mismatch as `schema.subscription_keys`.
 - `billing.billable` is `'user'` (the default) or `'team'`. `'team'` needs the teams feature, and boot refuses it without. The billable is the subject the entitlement is written to, and its key is the RevenueCat `app_user_id`.
 - Cashier's `Billable` trait on the billable model for the card rail. A store-only application can leave it off.
 - Stripe: `STRIPE_SECRET` and `STRIPE_WEBHOOK_SECRET`. The webhook is Cashier's own path, `stripe/webhook`.
@@ -86,7 +87,7 @@ Four keys describe what you sell. One product entry carries everything every rai
 | Key | Meaning |
 |-----|---------|
 | `tier_order` | Your tier ids, cheapest first. Required. The first entry is the **free floor**: what a billable holds when nobody pays, so no product may sell it. It is the only list of tiers that exist, and the order every cross-rail decision reads. |
-| `tiers` | Display copy per tier id: `name`, `tagline`, `features`, `recommended`, and anything else you add, which reaches the client untouched. `cycles` and `products` are reserved: they are derived and written over. |
+| `tiers` | Display copy per tier id: `name`, `tagline`, `features`, `recommended`, and anything else you add. Copy is passed through `__()` per request, so author it as English source strings or translation keys (see [Translating tier copy](#translating-tier-copy)). `cycles` and `products` are reserved: they are derived and written over. |
 | `products` | What you sell, keyed by [product key](#product-keys). |
 | `pricing` | The base `currency` a screen falls back to, and the `commission` rule that [derives store prices](#prices). |
 
@@ -272,6 +273,18 @@ A product with `sellable: false` is listed so a client can rank what a subscribe
 
 An application that has published nothing gets an empty list, not a 404.
 
+<a name="translating-tier-copy"></a>
+#### Translating tier copy
+
+Copy is passed through `__()` per request, so author it as English source strings or translation keys. Every top-level string of a tier except `id`, and every string inside a list such as `features`, is translated into the request locale; a line with no translation comes back unchanged. An associative array such as `limits`, and any value that is not a string, is served as configured. A Turkish plan grid is then one entry per line in `lang/tr.json`:
+
+```json
+{
+    "Kick the tires.": "Bir deneyin.",
+    "Everything you need to try it": "Denemek için gereken her şey"
+}
+```
+
 ### The entitlement
 
 `GET billing` answers `plan`, `plan_status`, `subscribed`, `renews`, `cycle`, `provider`, `provider_status`, `product_id` (the rail's own id), `product` (the catalogue key), `manage_via`, `manage_url`, `current_period_end`, `trial_ends_at`, `grace_period_ends_at`, and three collections that are never `null`: `owned` (always `[]` for now), `balances` (always `{}` for now) and `allowances` (your `ReportsUsage` answer, or `{}`). A `null` `plan` means the billable holds nothing; this package names no free tier.
@@ -360,7 +373,7 @@ php artisan billing:doctor --json
 php artisan billing:doctor --json --remote
 ```
 
-Without `--remote` it checks the configuration: the catalogue validates, the rail secrets that a sold product needs are set, `REVENUECAT_WEBHOOK_SECRET` exists while the store rail is on, every web-sold product has a Stripe price id, store ids are listed, billable keys are UUIDs, and the reconcile cadence suits the store rail. With `--remote` it also reads Stripe and RevenueCat and diffs them against the manifest: a Stripe price per lookup key (id, interval, amounts), and the RevenueCat apps, products, entitlements, `default` offering, packages and webhook (that one delivers to this application's URL). RevenueCat returns a webhook's signing secret only when it is rotated, so whether HMAC signing is on cannot be read: the doctor reports it as an `agent_check` for a person to confirm in the dashboard.
+Without `--remote` it checks the configuration: the catalogue validates, the rail secrets that a sold product needs are set, `REVENUECAT_WEBHOOK_SECRET` exists while the store rail is on, every web-sold product has a Stripe price id, store ids are listed, billable keys are UUIDs, the subscription tables are keyed the way their models write them (`schema.subscription_keys`), and the reconcile cadence suits the store rail. With `--remote` it also reads Stripe and RevenueCat and diffs them against the manifest: a Stripe price per lookup key (id, interval, amounts), and the RevenueCat apps, products, entitlements, `default` offering, packages and webhook (that one delivers to this application's URL). RevenueCat returns a webhook's signing secret only when it is rotated, so whether HMAC signing is on cannot be read: the doctor reports it as an `agent_check` for a person to confirm in the dashboard.
 
 `REVENUECAT_API_V2_KEY` is a separate secret key scoped to `project_configuration:{apps,products,entitlements,offerings,packages,integrations}:read`, and `REVENUECAT_PROJECT_ID` names the project. Neither is needed to sell.
 
