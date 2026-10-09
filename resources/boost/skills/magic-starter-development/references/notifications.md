@@ -23,6 +23,7 @@
 - Checks registry has(notificationClass); if unregistered, allows delivery by default.
 - Skips gating if notifiable lacks prefers() method or if channel is locked — locked channels always deliver regardless of user preference.
 - Resolves logical channel name from driver via resolveLogicalChannel() to handle aliased channels.
+- A notification implementing Contracts\BypassesNotificationPreferences can deliver a channel to a notifiable despite a disabled preference: bypassesPreference($notifiable, $logicalChannel) is asked after the locked check and before prefers().
 
 ### HasNotifications trait prefers() uses 3-step fallback
 
