@@ -88,6 +88,24 @@ final class TeamOwnerGuardsTest extends TestCase
         $this->assertSame('owner', $this->roleOf($this->owner));
     }
 
+    /**
+     * The refusal names only what an owner can do. An end user has no way to
+     * hand a team over (only an operator can, from the admin panel), so a
+     * sentence asking for a transfer sends them looking for a screen that
+     * does not exist.
+     */
+    public function test_the_owner_leaving_refusal_asks_for_nothing_an_owner_cannot_do(): void
+    {
+        $this->assertSame(
+            'Team owner cannot leave the team. Delete the team instead.',
+            __('magic-starter::teams.members.owner_cannot_leave', [], 'en'),
+        );
+        $this->assertSame(
+            'Takım sahibi takımdan ayrılamaz. Bunun yerine takımı silin.',
+            __('magic-starter::teams.members.owner_cannot_leave', [], 'tr'),
+        );
+    }
+
     public function test_a_member_who_is_not_the_owner_is_removed(): void
     {
         app(RemovesTeamMembers::class)->remove($this->owner, $this->team, $this->staff);
