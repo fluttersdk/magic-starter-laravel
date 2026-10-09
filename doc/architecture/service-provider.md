@@ -235,6 +235,7 @@ Event::listen(NotificationSending::class, Listeners\GateNotificationChannels::cl
 2. Returns `true` (allow) if the notification class is not registered in `NotificationPreferenceRegistry`.
 3. Returns `true` if the notifiable does not implement `prefers()`.
 4. Returns `true` for unknown or locked channels.
+4a. Returns `true` when the notification implements `BypassesNotificationPreferences` and `bypassesPreference($notifiable, $logicalChannel)` says so.
 5. Calls `$notifiable->prefers($slug, $logicalChannel)` as the final gate — returning `false` cancels delivery for that channel.
 
 <a name="team-policy"></a>

@@ -2,6 +2,7 @@
 
 namespace FlutterSdk\MagicStarter\Tests\Listeners;
 
+use FlutterSdk\MagicStarter\Contracts\BypassesNotificationPreferences;
 use FlutterSdk\MagicStarter\Listeners\GateNotificationChannels;
 use FlutterSdk\MagicStarter\NotificationPreferenceRegistry;
 use FlutterSdk\MagicStarter\Tests\TestCase;
@@ -193,11 +194,105 @@ class GateNotificationChannelsTest extends TestCase
 
         $this->assertFalse($listener->handle($event));
     }
+
+    public function test_allows_disabled_channel_the_notification_bypasses(): void
+    {
+        $this->registerBypassingNotification();
+
+        $listener = new GateNotificationChannels;
+        $notifiable = new GateTestNotifiable;
+        $notifiable->disabledPreferences = [['gate_test_bypassing', 'mail']];
+        $notification = new GateTestBypassingNotification(['mail']);
+        $event = new NotificationSending($notifiable, $notification, 'mail');
+
+        $this->assertTrue($listener->handle($event));
+    }
+
+    public function test_does_not_bypass_a_channel_the_notification_did_not_name(): void
+    {
+        $this->registerBypassingNotification();
+
+        $listener = new GateNotificationChannels;
+        $notifiable = new GateTestNotifiable;
+        $notifiable->disabledPreferences = [['gate_test_bypassing', 'push']];
+        $notification = new GateTestBypassingNotification(['mail']);
+        $event = new NotificationSending($notifiable, $notification, 'push');
+
+        $this->assertFalse($listener->handle($event));
+    }
+
+    public function test_bypass_receives_the_notifiable_and_logical_channel(): void
+    {
+        NotificationPreferenceRegistry::channelAliases([
+            'push' => 'SomeVendor\\PushChannel',
+        ]);
+        $this->registerBypassingNotification();
+
+        $listener = new GateNotificationChannels;
+        $notifiable = new GateTestNotifiable;
+        $notifiable->disabledPreferences = [['gate_test_bypassing', 'push']];
+        $notification = new GateTestBypassingNotification(['push']);
+        $event = new NotificationSending($notifiable, $notification, 'SomeVendor\\PushChannel');
+
+        $this->assertTrue($listener->handle($event));
+        $this->assertSame([[$notifiable, 'push']], $notification->asked);
+    }
+
+    public function test_still_gates_a_notification_without_the_bypass_contract(): void
+    {
+        NotificationPreferenceRegistry::register([
+            GateTestNotification::class => [
+                'label' => 'Test Notification',
+                'channels' => ['mail'],
+                'default' => ['mail'],
+                'locked' => [],
+            ],
+        ]);
+
+        $listener = new GateNotificationChannels;
+        $notifiable = new GateTestNotifiable;
+        $notifiable->disabledPreferences = [['gate_test', 'mail']];
+        $notification = new GateTestNotification;
+        $event = new NotificationSending($notifiable, $notification, 'mail');
+
+        $this->assertFalse($listener->handle($event));
+    }
+
+    private function registerBypassingNotification(): void
+    {
+        NotificationPreferenceRegistry::register([
+            GateTestBypassingNotification::class => [
+                'slug' => 'gate_test_bypassing',
+                'label' => 'Test Notification',
+                'channels' => ['mail', 'push'],
+                'default' => ['mail', 'push'],
+                'locked' => [],
+            ],
+        ]);
+    }
 }
 
 class GateTestNotification extends \Illuminate\Notifications\Notification
 {
     //
+}
+
+class GateTestBypassingNotification extends \Illuminate\Notifications\Notification implements BypassesNotificationPreferences
+{
+    /** @var list<array{0: object, 1: string}> */
+    public array $asked = [];
+
+    /**
+     * @param  list<string>  $bypassed
+     */
+    public function __construct(private array $bypassed) {}
+
+    public function bypassesPreference(object $notifiable, string $logicalChannel): bool
+    {
+        $this->asked[] = [$notifiable, $logicalChannel];
+
+        return in_array($logicalChannel, $this->bypassed, true);
+    }
 }
 
 class GateTestUnregisteredNotification extends \Illuminate\Notifications\Notification

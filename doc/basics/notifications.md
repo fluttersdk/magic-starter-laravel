@@ -537,7 +537,29 @@ This event listener is registered automatically by `MagicStarterServiceProvider`
 5. Resolve the logical channel name from the driver channel name via `NotificationPreferenceRegistry::resolveLogicalChannel()`.
 6. If the logical channel is not in the registry's channels list for this type → **allow** (unknown channel passes through).
 7. If the channel is marked as **locked** for this type → **allow** (locked channels are always delivered).
-8. Call `$notifiable->prefers($slug, $logicalChannel)` and return the result.
+8. If the notification implements `BypassesNotificationPreferences` and `bypassesPreference($notifiable, $logicalChannel)` returns `true` → **allow**.
+9. Call `$notifiable->prefers($slug, $logicalChannel)` and return the result.
+
+### Bypassing a preference
+
+`FlutterSdk\MagicStarter\Contracts\BypassesNotificationPreferences`
+
+A notification can ask the gate to deliver a channel to a notifiable even though the person disabled it. The app owns the decision, for example a fallback when a paid channel is unavailable and the person must still hear by another one.
+
+```php
+use FlutterSdk\MagicStarter\Contracts\BypassesNotificationPreferences;
+
+class IncidentOpenedNotification extends Notification implements BypassesNotificationPreferences
+{
+    public function bypassesPreference(object $notifiable, string $logicalChannel): bool
+    {
+        return in_array($logicalChannel, ['mail', 'push'], true)
+            && $this->smsRefusedFor($notifiable);
+    }
+}
+```
+
+The gate asks once per channel per notifiable at `NotificationSending` time. The notification instance is shared across recipients, so key the answer by `$notifiable` inside the notification. `$logicalChannel` is the registry name (`push`), not the driver class. Only the preference check is bypassed: an unregistered type or an unknown channel already passes, and a locked channel is delivered without asking.
 
 > [!NOTE]
 > Channel aliases allow you to map driver channel class names (e.g., `NotificationChannels\OneSignal\OneSignalChannel`) to logical names (e.g., `push`). Register aliases at boot time with `NotificationPreferenceRegistry::channelAliases(['push' => OneSignalChannel::class])`.
