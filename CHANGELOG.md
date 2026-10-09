@@ -4,6 +4,12 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [0.0.22] - 2026-10-10
+
+### Added
+
+- **`Contracts\BypassesNotificationPreferences`: a notification can deliver a channel despite a disabled preference.** `GateNotificationChannels` asks `bypassesPreference($notifiable, $logicalChannel)` after the locked-channel allow and before `prefers()`, so the application owns a fallback such as reaching a person by email and push when a paid channel is unavailable, even if they turned those off. The notification instance is shared across recipients and cloned per channel after `via()`, so key the decision by notifiable. A notification that does not implement the contract is gated exactly as before. (`src/Contracts/BypassesNotificationPreferences.php`, `src/Listeners/GateNotificationChannels.php`)
+
 ## [0.0.21] - 2026-10-09
 
 ### Added
