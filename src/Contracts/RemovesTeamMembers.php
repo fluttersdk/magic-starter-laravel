@@ -19,7 +19,8 @@ interface RemovesTeamMembers
      *
      * @throws \Illuminate\Validation\ValidationException When the member owns the team
      *                                                    (`owner_not_removable`, or `owner_cannot_leave`
-     *                                                    when the owner removes themselves).
+     *                                                    when the owner removes themselves, which is
+     *                                                    `personal_team_cannot_leave` on a personal team).
      */
     public function remove(Authenticatable $user, Model $team, Model $teamMember): void;
 }

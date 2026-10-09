@@ -5,10 +5,13 @@ namespace FlutterSdk\MagicStarter\Jobs;
 use Carbon\CarbonImmutable;
 use Carbon\Exceptions\InvalidFormatException;
 use FlutterSdk\MagicStarter\Contracts\WritesEntitlement;
+use FlutterSdk\MagicStarter\Enums\BillingChannel;
 use FlutterSdk\MagicStarter\Enums\BillingProvider;
 use FlutterSdk\MagicStarter\Enums\PlanStatus;
+use FlutterSdk\MagicStarter\Enums\ProductType;
 use FlutterSdk\MagicStarter\MagicStarter;
 use FlutterSdk\MagicStarter\Models\ProcessedWebhookEvent;
+use FlutterSdk\MagicStarter\Support\BillingCatalogue;
 use FlutterSdk\MagicStarter\Support\EntitlementWrite;
 use FlutterSdk\MagicStarter\Support\ReadsBillableAttributes;
 use FlutterSdk\MagicStarter\Support\RevenueCatClient;
@@ -544,20 +547,23 @@ class SyncRevenueCatEntitlement implements ShouldQueue
         // An unmapped product is a CONFIG gap, exactly as an unmapped Stripe
         // price is: the absence of a reason to grant is not a reason to revoke.
         // It matters more here, because an adopter creates their store products
-        // by hand in App Store Connect and Play Console, so until a human fills
-        // `billing.store_products` in, every event lands on this branch. If it
+        // by hand in App Store Connect and Play Console, so until a human puts
+        // their ids on a catalogue product, every event lands on this branch. If it
         // downgraded anybody, going live would be a mass revocation.
-        $plan = $this->planFor($productId);
+        $composedId = $this->composedProductId($productId, $subscription);
+        $mapped = $this->planFor($productId, $composedId, $provider);
 
-        if ($plan === null) {
+        if ($mapped === null) {
             $this->warn(
                 'unmapped_product',
                 'A RevenueCat product id is not mapped to a plan; entitlement left untouched.',
-                ['billable_id' => $billable->getKey(), 'product_id' => $productId],
+                ['billable_id' => $billable->getKey(), 'product_id' => $composedId],
             );
 
             return null;
         }
+
+        ['plan' => $plan, 'productId' => $storedProductId] = $mapped;
 
         // Apple Family Sharing: the access is real and the store granted it, so
         // refusing it would deny a tier the customer genuinely has. But the
@@ -584,7 +590,7 @@ class SyncRevenueCatEntitlement implements ShouldQueue
             // land rather than being refused as a same-tier duplicate.
             authoritative: true,
             providerStatus: $this->eventType(),
-            productId: $productId,
+            productId: $storedProductId,
             currentPeriodEnd: $this->instant($subscription['expires_date'] ?? null),
             renews: $this->renews($subscription),
             gracePeriodEndsAt: $this->instant($subscription['grace_period_expires_date'] ?? null),
@@ -770,26 +776,66 @@ class SyncRevenueCatEntitlement implements ShouldQueue
      *
      * The tier arrives as a plain string because the tier vocabulary belongs to
      * the consuming application; this package has no opinion about what any of
-     * them means. `billing.store_products` is the store rail's half of the same
-     * question `billing.prices` answers for the card rail, and an entry with no
-     * usable tier behind it reads as unmapped rather than being stringified into
-     * a tier nobody published.
+     * them means. A catalogue product's `refs.app_store` and `refs.play` are the
+     * store rail's half of the same question `refs.stripe_price` answers for the
+     * card rail, and a product that is not a subscription, or names no tier,
+     * reads as unmapped rather than granting a tier nobody sold: a one-off
+     * product carrying a `tier` is refused here exactly as the card rail
+     * refuses it.
      *
-     * Google Play sends `<subscription_id>:<base_plan_id>`, so the map keys on
-     * that whole string; keyed on the bare subscription id it would be an
-     * unmapped-product warning on every Android renewal.
+     * Google Play does not arrive as `<subscription_id>:<base_plan_id>` here: the
+     * v1 API keys `subscriber.subscriptions` by the BARE subscription id and
+     * names the base plan in `product_plan_identifier`, which is why
+     * {@see self::composedProductId()} builds the catalogue's ref. The lookup
+     * order is the composed id exactly, then the raw key exactly (every App
+     * Store id), then, on Play only, the bare subscription id, which names the
+     * TIER (the catalogue keeps one tier per Play subscription) and never a
+     * product or a cycle, so the stored product id is null on that last path.
+     *
+     * @return array{plan: string, productId: ?string}|null
      */
-    protected function planFor(string $productId): ?string
+    protected function planFor(string $rawId, string $composedId, BillingProvider $provider): ?array
     {
-        $map = config('magic-starter.billing.store_products', []);
+        foreach (array_unique([$composedId, $rawId]) as $candidate) {
+            $product = BillingCatalogue::productForStoreId($candidate);
 
-        if (! is_array($map)) {
+            if ($product !== null && $product['type'] === ProductType::SUBSCRIPTION && $product['tier'] !== null) {
+                return ['plan' => $product['tier'], 'productId' => $candidate];
+            }
+        }
+
+        if ($provider !== BillingProvider::PLAY_STORE) {
             return null;
         }
 
-        $plan = $map[$productId] ?? null;
+        foreach (BillingCatalogue::products() as $product) {
+            $play = $product['refs'][BillingChannel::PLAY->value];
 
-        return is_string($plan) && $plan !== '' ? $plan : null;
+            if (
+                $product['type'] === ProductType::SUBSCRIPTION
+                && $product['tier'] !== null
+                && $play !== null
+                && BillingCatalogue::playSubscriptionId($play) === $rawId
+            ) {
+                return ['plan' => $product['tier'], 'productId' => null];
+            }
+        }
+
+        return null;
+    }
+
+    /**
+     * The id a Play subscription is known by in the catalogue,
+     * `<subscription_id>:<base_plan_id>`, or the raw key when the subscription
+     * names no base plan (an App Store id, or a Play purchase the API gave none).
+     *
+     * @param  array<string, mixed>  $subscription
+     */
+    protected function composedProductId(string $rawId, array $subscription): string
+    {
+        $basePlan = $subscription['product_plan_identifier'] ?? null;
+
+        return is_string($basePlan) && trim($basePlan) !== '' ? "{$rawId}:{$basePlan}" : $rawId;
     }
 
     /**
@@ -832,14 +878,26 @@ class SyncRevenueCatEntitlement implements ShouldQueue
     }
 
     /**
-     * Whether a subscription still entitles: the paid period, or the dunning
-     * window the store is retrying inside, reaches into the future.
+     * Whether a subscription entitles now: it has begun, and the paid period,
+     * or the dunning window the store is retrying inside, reaches into the
+     * future.
      *
      * @param  array<string, mixed>  $subscription
      */
     protected function isLive(array $subscription): bool
     {
         $now = CarbonImmutable::now();
+
+        // A deferred Play replacement (a downgrade, or a change set to apply at
+        // renewal) is issued at once with a `purchase_date` in the future: its
+        // entitlement begins when the item it replaces expires. It also expires
+        // later than that item, so read as live it would win the ranking and
+        // move the tier before the period the customer paid for has run out.
+        $begins = $this->instant($subscription['purchase_date'] ?? null);
+
+        if ($begins !== null && $begins->greaterThan($now)) {
+            return false;
+        }
 
         // `refunded_at` is deliberately NOT read here, and this comment exists so
         // it is not added back. It was, briefly, on the reasoning that an Apple

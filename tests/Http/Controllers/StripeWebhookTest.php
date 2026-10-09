@@ -124,9 +124,19 @@ class StripeWebhookTest extends TestCase
             'auth.providers.users.model' => User::class,
             // Which Stripe price sells which of the adopter's tiers, and the
             // ranking the cross-rail rules compare against.
-            'magic-starter.billing.prices' => [
-                'price_pro' => 'pro',
-                'price_business' => 'business',
+            'magic-starter.billing.products' => [
+                'pro_monthly' => [
+                    'type' => 'subscription',
+                    'tier' => 'pro',
+                    'cycle' => 'monthly',
+                    'refs' => ['stripe_price' => 'price_pro'],
+                ],
+                'business_monthly' => [
+                    'type' => 'subscription',
+                    'tier' => 'business',
+                    'cycle' => 'monthly',
+                    'refs' => ['stripe_price' => 'price_business'],
+                ],
             ],
             'magic-starter.billing.tier_order' => ['free', 'pro', 'business'],
         ]);

@@ -29,8 +29,9 @@ return [
     /*
      * Membership. The three owner refusals are separate lines because they
      * refuse three different actions, and only one of them can name a way
-     * forward: an owner who wants out has to transfer ownership or delete the
-     * team, so that sentence carries the instruction the other two cannot.
+     * forward: an owner who wants out can delete the team, so that sentence
+     * carries the instruction the other two cannot. It names no transfer,
+     * because an end user has none; only an operator moves ownership.
      */
     'members' => [
         'updated' => 'Team member updated successfully.',
@@ -38,7 +39,8 @@ return [
         'left' => 'You have left the team.',
         'owner_role_locked' => 'Cannot change role of team owner.',
         'owner_not_removable' => 'Cannot remove team owner.',
-        'owner_cannot_leave' => 'Team owner cannot leave the team. Transfer ownership first or delete the team.',
+        'owner_cannot_leave' => 'Team owner cannot leave the team. Delete the team instead.',
+        'personal_team_cannot_leave' => 'You may not leave your personal team.',
         'role_not_assignable' => 'The owner role is given by transferring ownership, not by changing a role.',
         'new_owner_not_a_member' => 'Ownership can only be transferred to a member of the team.',
         'user_not_found' => 'The selected user could not be found.',

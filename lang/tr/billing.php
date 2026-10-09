@@ -37,16 +37,6 @@ return [
     ],
 
     /*
-     * Human names for the two billing cycles, keyed by the wire word. See the
-     * English file for why they exist: `unmapped_price` names the cycle, and the
-     * wire word is English.
-     */
-    'cycles' => [
-        'monthly' => 'aylık',
-        'annual' => 'yıllık',
-    ],
-
-    /*
      * Refusal sentences the billing actions and endpoints raise, keyed by a
      * short reason. Shipped here rather than inlined so every reader gets the
      * same wording in their own locale, and so a test can assert the two
@@ -76,12 +66,13 @@ return [
          * their original form because they are literal config paths and a
          * translated one would point at nothing.
          *
-         * 'no_published_catalogue' names BOTH keys because either one answers:
-         * the ranking falls back to the catalogue's entry ids when no explicit
-         * order is published.
+         * 'no_published_catalogue' names all three catalogue keys because a
+         * sale needs all three; the removed 'plans' key is not named, because
+         * boot refuses a config that still carries it. 'product_not_sellable'
+         * names the ref that makes a store-only product sellable here.
          */
-        'no_published_catalogue' => 'Yayımlanmış bir plan yok, dolayısıyla henüz satın alınabilecek bir şey de yok. Bir plan satmak için magic-starter.billing.plans ya da magic-starter.billing.tier_order anahtarını yayımlayın.',
-        'unmapped_price' => 'Bu planı :cycle döngüsünde satan bir Stripe fiyatı yok. magic-starter.billing.prices altında bir fiyat tanımlayın veya diğer döngüyü sunun.',
+        'no_published_catalogue' => 'Yayımlanmış bir plan yok, dolayısıyla henüz satın alınabilecek bir şey de yok. Katmanlarınızı en ucuzdan başlayarak magic-starter.billing.tier_order altında sıralayın, magic-starter.billing.tiers altında tanımlayın ve magic-starter.billing.products altında satışa sunun.',
+        'product_not_sellable' => ':product ürünü burada satın alınamaz: bu kanalda yalnızca Stripe fiyatı olan ücretli bir abonelik satılır. Başka bir plan seçin veya magic-starter.billing.products altında bu ürüne refs.stripe_price tanımlayın.',
         'no_subscription' => 'Değiştirilecek etkin bir abonelik yok.',
     ],
 

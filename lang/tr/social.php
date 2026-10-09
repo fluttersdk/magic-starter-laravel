@@ -24,7 +24,7 @@ return [
 
     'password_already_set' => 'Hesabınızda zaten bir şifre ayarlanmış.',
 
-    'owns_shared_teams' => 'Sizin sahip olduğunuz takımlar var, bunları silemezsiniz. Hesabınızı silmeden önce sahipliği devreyiniz veya takımları siliniz.',
+    'owns_shared_teams' => 'Başka kişilerin de üye olduğu takımların sahibisiniz. Hesabınızı silmeden önce üyeleri çıkarın veya bu takımları silin.',
 
     'team_has_active_subscription' => 'Takımlarınızdan birinin aktif bir aboneliği var. Lütfen önce iptal ediniz.',
 

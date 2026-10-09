@@ -1,0 +1,167 @@
+<?php
+
+namespace FlutterSdk\MagicStarter\Support;
+
+use FlutterSdk\MagicStarter\Enums\BillingChannel;
+use FlutterSdk\MagicStarter\Enums\CommissionMode;
+use LogicException;
+
+/**
+ * The price a product sells at on one channel, explicit or derived from web.
+ *
+ * An adopter writes the WEB price and, where a store needs a different figure,
+ * an explicit store price. Everything else on a store channel is derived from
+ * the same currency's web price under the catalogue's commission rule, so a
+ * store price exists without being typed twice and cannot drift from web by
+ * accident.
+ *
+ * Two derivations are refused on purpose. The web channel is never derived: it
+ * is the source, and deriving it from a store figure would run the commission
+ * backwards. And a currency is never converted: a store channel offers only the
+ * currencies the web channel prices, because an exchange rate is a decision
+ * about money this package has no business taking, and a rate frozen into
+ * config is wrong the day after it is written.
+ *
+ * @phpstan-import-type Pricing from BillingCatalogue
+ */
+final class PriceTable
+{
+    /**
+     * The adopter wrote this figure for this channel.
+     */
+    public const SOURCE_EXPLICIT = 'explicit';
+
+    /**
+     * The figure was computed from the same currency's web price.
+     */
+    public const SOURCE_DERIVED = 'derived';
+
+    /**
+     * The rate is applied in parts per million so the gross-up stays integer
+     * arithmetic: `3400 / 0.85` in floats lands a hair above 4000 and a ceil
+     * would then charge 4001.
+     */
+    private const RATE_SCALE = 1_000_000;
+
+    /**
+     * Every currency [$product] sells in on [$channel], with where the figure
+     * came from.
+     *
+     * @param  array<string, mixed>  $product  A catalogue product; only its `prices` (channel => currency =>
+     *                                         amount_minor) is read.
+     * @param  Pricing  $pricing  The catalogue's `pricing` block.
+     * @return array<string, array{amount_minor: int, source: string}> Keyed by uppercase ISO 4217 code.
+     *
+     * @throws LogicException When the commission rate leaves nothing to divide by.
+     */
+    public static function for(array $product, BillingChannel $channel, array $pricing): array
+    {
+        $prices = is_array($product['prices'] ?? null) ? $product['prices'] : [];
+        $explicit = self::amounts($prices[$channel->value] ?? []);
+
+        // 1. Explicit figures win outright, on every channel.
+        $table = array_map(
+            static fn (int $amount): array => ['amount_minor' => $amount, 'source' => self::SOURCE_EXPLICIT],
+            $explicit,
+        );
+
+        if ($channel === BillingChannel::WEB) {
+            return $table;
+        }
+
+        // 2. A store channel derives every remaining currency the web channel
+        //    prices, and only those: a currency web does not price is absent.
+        foreach (self::amounts($prices[BillingChannel::WEB->value] ?? []) as $currency => $web) {
+            if (isset($table[$currency])) {
+                continue;
+            }
+
+            $table[$currency] = [
+                'amount_minor' => self::derive($web, $pricing['commission']),
+                'source' => self::SOURCE_DERIVED,
+            ];
+        }
+
+        return $table;
+    }
+
+    /**
+     * A price table with a display string beside each amount, so no client
+     * does minor-unit math.
+     *
+     * @param  array<string, array{amount_minor: int, source: string}>  $table  {@see self::for()}.
+     * @return array<string, array{amount_minor: int, display: string}>
+     */
+    public static function display(array $table): array
+    {
+        $prices = [];
+
+        foreach ($table as $currency => $price) {
+            $prices[$currency] = [
+                'amount_minor' => $price['amount_minor'],
+                'display' => Currency::display($price['amount_minor'], $currency),
+            ];
+        }
+
+        return $prices;
+    }
+
+    /**
+     * Apply the commission rule to a web price.
+     *
+     * @param  int  $web  Web price in the currency's minor unit.
+     * @param  array{mode: CommissionMode, rate: float}  $commission
+     *
+     * @throws LogicException When the rate leaves nothing to divide by.
+     */
+    private static function derive(int $web, array $commission): int
+    {
+        return match ($commission['mode']) {
+            CommissionMode::ABSORB => $web,
+            CommissionMode::GROSS_UP => self::grossUp($web, $commission['rate']),
+        };
+    }
+
+    /**
+     * `ceil(web / (1 - rate))` in integer minor units, rounded UP so the net
+     * after the store's cut never falls below the web price.
+     *
+     * @param  float  $rate  The store's share, a fraction in [0, 1).
+     */
+    private static function grossUp(int $web, float $rate): int
+    {
+        $kept = self::RATE_SCALE - (int) round($rate * self::RATE_SCALE);
+
+        if ($kept <= 0 || $kept > self::RATE_SCALE) {
+            throw new LogicException(sprintf(
+                'Commission rate [%s] must be at least 0 and below 1; '
+                . 'set [magic-starter.billing.pricing.commission.rate].',
+                $rate,
+            ));
+        }
+
+        return intdiv($web * self::RATE_SCALE + $kept - 1, $kept);
+    }
+
+    /**
+     * Keep the integer amounts of one channel, keyed by uppercase currency.
+     *
+     * @return array<string, int>
+     */
+    private static function amounts(mixed $configured): array
+    {
+        if (! is_array($configured)) {
+            return [];
+        }
+
+        $amounts = [];
+
+        foreach ($configured as $currency => $amount) {
+            if (is_int($amount)) {
+                $amounts[strtoupper((string) $currency)] = $amount;
+            }
+        }
+
+        return $amounts;
+    }
+}

@@ -88,14 +88,13 @@ class BillingControllerTest extends TestCase
             // The adopter's ranking, cheapest first. `free` being index 0 is
             // what makes `pro` a PAID tier to the shared floor reader.
             'magic-starter.billing.tier_order' => ['free', 'pro', 'business'],
-            // The adopter's catalogue, served verbatim by the plans endpoint.
-            // `limits` is deliberately here: it is product knowledge the package
-            // names nowhere, so a test that did not carry one could not tell
-            // "passed through untouched" from "happened to keep the fields the
-            // package does know".
-            'magic-starter.billing.plans' => [
-                [
-                    'id' => 'free',
+            // The adopter's tier definitions, served verbatim by the plans
+            // endpoint. `limits` is deliberately here: it is product knowledge the
+            // package names nowhere, so a test that did not carry one could not
+            // tell "passed through untouched" from "happened to keep the fields
+            // the package does know".
+            'magic-starter.billing.tiers' => [
+                'free' => [
                     'name' => 'Free',
                     'monthly' => 0,
                     'currency' => 'usd',
@@ -103,8 +102,7 @@ class BillingControllerTest extends TestCase
                     'recommended' => false,
                     'limits' => ['seats' => 1],
                 ],
-                [
-                    'id' => 'pro',
+                'pro' => [
                     'name' => 'Pro',
                     'monthly' => 1900,
                     'currency' => 'usd',
@@ -112,8 +110,7 @@ class BillingControllerTest extends TestCase
                     'recommended' => true,
                     'limits' => ['seats' => 10],
                 ],
-                [
-                    'id' => 'business',
+                'business' => [
                     'name' => 'Business',
                     'monthly' => 4900,
                     'currency' => 'usd',
@@ -724,25 +721,24 @@ class BillingControllerTest extends TestCase
 
         $user = $this->createUser('plans@example.test');
 
-        // Every key the adopter wrote travels untouched; `cycles` is the one
-        // field the endpoint DERIVES, and it says which of a tier's display
-        // figures can actually be bought. Without it a catalogue that prices a
-        // tier annually while the price map does not renders an annual button
-        // and answers 422 after the customer commits.
-        $expected = array_map(
-            static function (array $entry): array {
-                $entry['cycles'] = [];
+        // Every key the adopter wrote travels untouched; `cycles` and
+        // `products` are the two fields the endpoint DERIVES from the products
+        // that sell the tier. This catalogue sells nothing, so both are empty
+        // LISTS rather than absent.
+        $expected = [];
 
-                return $entry;
-            },
-            config('magic-starter.billing.plans'),
-        );
+        foreach (config('magic-starter.billing.tiers') as $id => $definition) {
+            $expected[] = ['id' => $id] + $definition + [
+                'cycles' => [],
+                'products' => [],
+            ];
+        }
 
         $this->ask($user, '/billing/plans')
             ->assertOk()
             ->assertExactJson(['data' => $expected]);
 
-        config(['magic-starter.billing.plans' => []]);
+        config(['magic-starter.billing.tier_order' => []]);
 
         $this->ask($user, '/billing/plans')
             ->assertOk()
@@ -750,23 +746,247 @@ class BillingControllerTest extends TestCase
     }
 
     /**
-     * An entry that is not an object is dropped rather than served.
+     * A ranked tier whose definition is not an object is served as its bare id.
      *
-     * The endpoint promises a list of objects, and a client decoding `id` off a
-     * bare string fails further from the cause than the drop does.
+     * The endpoint promises a list of objects, so a string definition is never
+     * served as one. It is not dropped either: the ranking says the tier exists,
+     * and hiding a tier the rails can sell would leave a customer holding
+     * something the screen cannot name.
      */
-    public function test_the_plans_endpoint_drops_an_entry_that_is_not_an_object(): void
+    public function test_the_plans_endpoint_serves_a_malformed_definition_as_the_bare_tier(): void
     {
         $this->bootBillingRoutes('user');
 
-        config(['magic-starter.billing.plans' => [
-            ['id' => 'pro', 'name' => 'Pro'],
-            'business',
-        ]]);
+        config([
+            'magic-starter.billing.tier_order' => ['pro', 'business'],
+            'magic-starter.billing.tiers' => [
+                'pro' => ['name' => 'Pro'],
+                'business' => 'Business',
+            ],
+        ]);
 
         $this->ask($this->createUser('shape@example.test'), '/billing/plans')
             ->assertOk()
-            ->assertExactJson(['data' => [['id' => 'pro', 'name' => 'Pro', 'cycles' => []]]]);
+            ->assertExactJson(['data' => [
+                ['id' => 'pro', 'name' => 'Pro', 'cycles' => [], 'products' => []],
+                ['id' => 'business', 'cycles' => [], 'products' => []],
+            ]]);
+    }
+
+    /**
+     * Each tier row lists the catalogue products that sell it, with web prices
+     * the client can show without doing amount math.
+     *
+     * `data` stays a LIST of tier rows, floor first, because the client decoder
+     * refuses anything else; the products ride INSIDE the row they sell rather
+     * than beside it. A one-off product names no tier, so it belongs to no row.
+     *
+     * The display string is checked per currency because the exponent differs:
+     * a hardcoded `/ 100` would show the yen price a hundred times too small.
+     */
+    public function test_each_tier_row_lists_the_products_that_sell_it_with_web_prices(): void
+    {
+        $this->bootBillingRoutes('user');
+
+        config([
+            'magic-starter.billing.products' => [
+                'pro_monthly' => [
+                    'type' => 'subscription',
+                    'tier' => 'pro',
+                    'cycle' => 'monthly',
+                    'prices' => [
+                        'web' => [
+                            'USD' => 1900,
+                            'JPY' => 2900,
+                        ],
+                        'app_store' => ['USD' => 2299],
+                    ],
+                    'refs' => [
+                        'stripe_price' => 'price_pro_monthly',
+                        'app_store' => 'com.example.pro.monthly',
+                    ],
+                ],
+                'pro_annual' => [
+                    'type' => 'subscription',
+                    'tier' => 'pro',
+                    'cycle' => 'annual',
+                    'refs' => ['play' => 'pro:annual'],
+                ],
+                'credits_100' => [
+                    'type' => 'consumable',
+                    'credits' => 100,
+                    'prices' => ['web' => ['USD' => 500]],
+                ],
+                // A one-off naming a tier is still not a subscription of it.
+                'pro_boost' => [
+                    'type' => 'non_consumable',
+                    'tier' => 'pro',
+                    'prices' => ['web' => ['USD' => 900]],
+                ],
+            ],
+        ]);
+
+        $response = $this->ask($this->createUser('products@example.test'), '/billing/plans')->assertOk();
+        $data = $response->json('data');
+
+        $this->assertTrue(array_is_list($data));
+        $this->assertSame(['free', 'pro', 'business'], array_column($data, 'id'));
+        $this->assertSame([], $data[0]['products']);
+        $this->assertSame([], $data[2]['products']);
+
+        $this->assertSame([
+            [
+                'key' => 'pro_monthly',
+                'type' => 'subscription',
+                'tier' => 'pro',
+                'cycle' => 'monthly',
+                'sellable' => true,
+                'store_ids' => [
+                    'app_store' => 'com.example.pro.monthly',
+                    'play' => null,
+                ],
+                'prices' => [
+                    'web' => [
+                        'USD' => [
+                            'amount_minor' => 1900,
+                            'display' => '19.00 USD',
+                        ],
+                        'JPY' => [
+                            'amount_minor' => 2900,
+                            'display' => '2900 JPY',
+                        ],
+                    ],
+                ],
+            ],
+            [
+                'key' => 'pro_annual',
+                'type' => 'subscription',
+                'tier' => 'pro',
+                'cycle' => 'annual',
+                'sellable' => true,
+                'store_ids' => [
+                    'app_store' => null,
+                    'play' => 'pro:annual',
+                ],
+                'prices' => ['web' => []],
+            ],
+        ], $data[1]['products']);
+
+        // A product with no web price still carries a `web` OBJECT, because a
+        // client decoding a currency map cannot read `[]` as one.
+        $this->assertStringContainsString('"prices":{"web":{}}', (string) $response->getContent());
+
+        // Only a product with a Stripe price makes a cycle sellable on this rail.
+        $this->assertSame(['monthly'], $data[1]['cycles']);
+    }
+
+    /**
+     * A product kept for mapping is listed flagged `sellable: false` and is not
+     * counted as a cycle, and the entitlement of a team still on its price still
+     * names it.
+     *
+     * Listed rather than hidden because a client ranks what a customer holds
+     * against the row: a grandfathered product missing from it could not be
+     * placed at all. The flag is what keeps the client from offering it.
+     */
+    public function test_a_product_kept_for_mapping_is_not_offered_but_still_names_its_subscriber_tier(): void
+    {
+        config([
+            'magic-starter.billing.products' => [
+                'pro_monthly' => [
+                    'type' => 'subscription',
+                    'tier' => 'pro',
+                    'cycle' => 'monthly',
+                    'refs' => ['stripe_price' => 'price_pro_monthly'],
+                ],
+                'pro_monthly_2025' => [
+                    'type' => 'subscription',
+                    'tier' => 'pro',
+                    'cycle' => 'monthly',
+                    'sellable' => false,
+                    'refs' => ['stripe_price' => 'price_old'],
+                ],
+                'business_monthly_2025' => [
+                    'type' => 'subscription',
+                    'tier' => 'business',
+                    'cycle' => 'monthly',
+                    'sellable' => false,
+                    'refs' => ['stripe_price' => 'price_business_old'],
+                ],
+            ],
+        ]);
+
+        $this->bindUsageReporter();
+        $this->bootBillingRoutes('team');
+
+        $owner = $this->createUser('retired-product@example.test');
+        $team = $this->createTeam($owner, [
+            'plan' => 'pro',
+            'plan_status' => 'active',
+            'plan_provider' => 'stripe',
+            'plan_product_id' => 'price_old',
+        ]);
+        $this->setCurrentTeam($owner, $team);
+
+        $data = $this->ask($owner, '/billing/plans')->assertOk()->json('data');
+
+        $this->assertSame(['pro_monthly', 'pro_monthly_2025'], array_column($data[1]['products'], 'key'));
+        $this->assertSame([true, false], array_column($data[1]['products'], 'sellable'));
+        $this->assertSame(['monthly'], $data[1]['cycles']);
+        $this->assertSame(['business_monthly_2025'], array_column($data[2]['products'], 'key'));
+        $this->assertSame([false], array_column($data[2]['products'], 'sellable'));
+        $this->assertSame([], $data[2]['cycles']);
+
+        $this->assertSame('pro_monthly_2025', $this->ask($owner, '/billing')->assertOk()->json('data.product'));
+    }
+
+    /**
+     * The entitlement names the catalogue product it sits on and the consumer's
+     * allowances, in the shapes the client decoder reads.
+     *
+     * `owned` is a LIST and `balances` and `allowances` are OBJECTS even when
+     * empty: PHP encodes an empty array as `[]`, which a client decoding a map
+     * refuses, so the empty object is asserted on the raw body.
+     */
+    public function test_the_entitlement_names_its_catalogue_product_and_the_bound_allowances(): void
+    {
+        config([
+            'magic-starter.billing.products' => [
+                'pro_monthly' => [
+                    'type' => 'subscription',
+                    'tier' => 'pro',
+                    'cycle' => 'monthly',
+                    'refs' => ['stripe_price' => 'price_pro_monthly'],
+                ],
+                'pro_annual' => [
+                    'type' => 'subscription',
+                    'tier' => 'pro',
+                    'cycle' => 'annual',
+                    'refs' => ['stripe_price' => 'price_pro_annual'],
+                ],
+            ],
+        ]);
+
+        $this->bindUsageReporter();
+        $this->bootBillingRoutes('team');
+
+        $owner = $this->createUser('product-read@example.test');
+        $team = $this->createTeam($owner, [
+            'plan' => 'pro',
+            'plan_status' => 'active',
+            'plan_provider' => 'stripe',
+            'plan_product_id' => 'price_pro_annual',
+        ]);
+        $this->setCurrentTeam($owner, $team);
+
+        $response = $this->ask($owner, '/billing')->assertOk();
+
+        $this->assertSame('pro_annual', $response->json('data.product'));
+        $this->assertSame('annual', $response->json('data.cycle'));
+        $this->assertSame([], $response->json('data.owned'));
+        $this->assertSame(['seats' => ['used' => 3, 'limit' => 10]], $response->json('data.allowances'));
+        $this->assertStringContainsString('"owned":[]', (string) $response->getContent());
+        $this->assertStringContainsString('"balances":{}', (string) $response->getContent());
     }
 
     /**
@@ -788,15 +1008,25 @@ class BillingControllerTest extends TestCase
         $this->bootBillingRoutes('user');
 
         config([
-            'magic-starter.billing.plans' => [
-                ['id' => 'free', 'name' => 'Free'],
-                ['id' => 'pro', 'name' => 'Pro'],
-                ['id' => 'business', 'name' => 'Business'],
-            ],
-            'magic-starter.billing.prices' => [
-                'price_pro_monthly' => ['tier' => 'pro', 'cycle' => 'monthly'],
-                'price_pro_annual' => ['tier' => 'pro', 'cycle' => 'annual'],
-                'price_business' => 'business',
+            'magic-starter.billing.products' => [
+                'pro_monthly' => [
+                    'type' => 'subscription',
+                    'tier' => 'pro',
+                    'cycle' => 'monthly',
+                    'refs' => ['stripe_price' => 'price_pro_monthly'],
+                ],
+                'pro_annual' => [
+                    'type' => 'subscription',
+                    'tier' => 'pro',
+                    'cycle' => 'annual',
+                    'refs' => ['stripe_price' => 'price_pro_annual'],
+                ],
+                'business_monthly' => [
+                    'type' => 'subscription',
+                    'tier' => 'business',
+                    'cycle' => 'monthly',
+                    'refs' => ['stripe_price' => 'price_business'],
+                ],
             ],
         ]);
 
@@ -812,62 +1042,21 @@ class BillingControllerTest extends TestCase
     }
 
     /**
-     * Publishing only the catalogue still ranks tiers.
+     * The ranking decides the floor, never the order the tiers map is written in.
      *
-     * Without this fallback an adopter who published `billing.plans` and not
-     * `billing.tier_order` would get a billing screen that renders correctly
-     * beside a cross-rail write that cannot be decided and a paid-tier floor
-     * that recognises nothing, which is a pairing nobody would choose on
-     * purpose. Asserted through the FLOOR rather than through the reader
-     * directly, because the floor is what the money rules actually ask.
+     * The definitions and the ranking are two keys, and a map is written in
+     * whatever order its author typed it. Reading the floor off the map would
+     * move a money rule (which tier is free) whenever somebody reordered display
+     * copy. Asserted through the FLOOR rather than through the reader directly,
+     * because the floor is what the money rules actually ask.
      */
-    public function test_an_unpublished_ranking_falls_back_to_the_catalogue_order(): void
-    {
-        config([
-            'magic-starter.billing.tier_order' => [],
-            'magic-starter.billing.plans' => [
-                ['id' => 'starter', 'name' => 'Starter'],
-                ['id' => 'scale', 'name' => 'Scale'],
-            ],
-        ]);
-
-        $this->bootBillingRoutes('team');
-
-        $owner = $this->createUser('fallback@example.test');
-        $team = $this->createTeam($owner, [
-            'plan' => 'starter',
-            'plan_status' => 'active',
-            'plan_provider' => 'app_store',
-        ]);
-
-        $this->assertFalse(
-            SubscriptionGuardedDeleteTeam::storeIsBilling($team),
-            'The catalogue\'s first entry is the floor when no explicit ranking is published.',
-        );
-
-        $team->forceFill(['plan' => 'scale'])->save();
-
-        $this->assertTrue(
-            SubscriptionGuardedDeleteTeam::storeIsBilling($team),
-            'The control: a tier above that floor still reads as paid, so the assertion '
-            . 'above is not passing because nothing was recognised at all.',
-        );
-    }
-
-    /**
-     * An explicitly published ranking wins over the catalogue's order.
-     *
-     * There is no reason to write two orders, but if both are written the more
-     * specific declaration is the one to obey, and silently preferring the other
-     * would move a money rule under an adopter who had said what they wanted.
-     */
-    public function test_an_explicit_ranking_wins_over_the_catalogue_order(): void
+    public function test_the_ranking_and_not_the_tiers_map_decides_the_floor(): void
     {
         config([
             'magic-starter.billing.tier_order' => ['scale', 'starter'],
-            'magic-starter.billing.plans' => [
-                ['id' => 'starter', 'name' => 'Starter'],
-                ['id' => 'scale', 'name' => 'Scale'],
+            'magic-starter.billing.tiers' => [
+                'starter' => ['name' => 'Starter'],
+                'scale' => ['name' => 'Scale'],
             ],
         ]);
 
@@ -882,8 +1071,16 @@ class BillingControllerTest extends TestCase
 
         $this->assertFalse(
             SubscriptionGuardedDeleteTeam::storeIsBilling($team),
-            'The explicit ranking puts `scale` on the floor, so it is the explicit list '
-            . 'being read and not the catalogue, which orders the two the other way.',
+            'The ranking puts `scale` on the floor, so it is the ranking being read and not '
+            . 'the tiers map, which orders the two the other way.',
+        );
+
+        $team->forceFill(['plan' => 'starter'])->save();
+
+        $this->assertTrue(
+            SubscriptionGuardedDeleteTeam::storeIsBilling($team),
+            'The control: a tier above that floor still reads as paid, so the assertion '
+            . 'above is not passing because nothing was recognised at all.',
         );
     }
 

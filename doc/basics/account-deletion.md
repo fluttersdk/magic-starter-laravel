@@ -88,7 +88,7 @@ A user who owns a team that deletion would damage, or whom a subscription bills 
 
 ```json
 {
-  "message": "You own teams that you cannot delete. Transfer ownership or delete them before deleting your account.",
+  "message": "You own teams that other people belong to. Hand them over or delete them before deleting your account.",
   "code": "owns_shared_teams",
   "team_ids": ["9a8b7c6d-..."],
   "errors": {
@@ -99,9 +99,27 @@ A user who owns a team that deletion would damage, or whom a subscription bills 
 
 The status is 422, and the client switches on `code` and uses `team_ids` to point the user at the teams to resolve. For `subscription_active` `team_ids` is empty, since the account itself is the reason.
 
+`team_has_active_subscription` adds `team_providers`, a map from each team id in `team_ids` to the rail billing it, so the client can send the user to the right place:
+
+```json
+{
+  "message": "One of your teams has an active subscription. Cancel it first.",
+  "code": "team_has_active_subscription",
+  "team_ids": ["9a8b7c6d-..."],
+  "team_providers": {
+    "9a8b7c6d-...": "app_store"
+  },
+  "errors": {
+    "user": ["..."]
+  }
+}
+```
+
+A value is `stripe`, `app_store` or `play_store`. A store is named from the team's `plan_provider`; anything else that refused did so on Cashier's own subscription rows and is `stripe`, since the provenance column is written by a webhook and can lag. The key is left out when there is nothing to name. A store subscription counts only while the team holds a paid tier, the same test `HasEntitlement::entitled()` answers: a plan above the free floor on a status that still grants. See [Billing](billing.md#reading-the-entitlement).
+
 | Code | Cause |
 |------|-------|
-| `owns_shared_teams` | The user owns a team that another person belongs to. Deleting the user would take that person's data with it. Transfer ownership or delete the team first. A pending invitation is not a member. |
+| `owns_shared_teams` | The user owns a team that another person belongs to. Deleting the user would take that person's data with it. Hand the team over or delete it first. A pending invitation is not a member. |
 | `team_has_active_subscription` | The user owns a team that a store subscription or a valid Stripe subscription is still billing. Cancel it first. |
 | `subscription_active` | The user itself is the billable subject (`magic-starter.billing.billable` is `user`) and a store or valid Stripe subscription is billing it. Cancel it first. |
 

@@ -1,6 +1,6 @@
 ---
 name: magic-starter-development
-description: "Use this skill when working with magic-starter-laravel in a Laravel project. Covers authentication (email/phone/social/guest/OTP), team management (create/invite/roles/membership), two-factor authentication (TOTP/recovery codes), user profiles (photo/locale/timezone/sessions), notification preferences (channel gating/registry), and the contract-action architecture pattern. Also covers model resolution, feature flags, UUID support, and migration helpers. Do not use for generic Laravel auth without magic-starter, standalone Sanctum setup, or Laravel Fortify."
+description: "Use this skill when working with magic-starter-laravel in a Laravel project. Covers authentication (email/phone/social/guest/OTP), team management (create/invite/roles/membership), two-factor authentication (TOTP/recovery codes), user profiles (photo/locale/timezone/sessions), notification preferences (channel gating/registry), billing setup (catalogue, store and Stripe configuration through `billing:manifest` and `billing:doctor`), and the contract-action architecture pattern. Also covers model resolution, feature flags, UUID support, and migration helpers. Do not use for generic Laravel auth without magic-starter, standalone Sanctum setup, or Laravel Fortify."
 license: MIT
 metadata:
   author: fluttersdk
@@ -24,6 +24,7 @@ For deeper guidance, read the relevant reference file before implementing:
 - `references/overriding.md` — customizing actions, models, routes, config; consumer patterns
 - `references/admin-panel.md`: the optional Filament admin panel, adding an app resource, eject, ops tools, the rule list
 - `references/audit.md`: the audit trail, exclude and redact config, `Auditor`, pruning, what is not captured
+- `references/billing-setup.md`: applying the billing catalogue to App Store Connect, Google Play, RevenueCat and Stripe with `asc`, `gplay`, `rc` and `stripe` from `billing:manifest`, then `billing:doctor`; writes only on the owner's request
 
 ## Contract-Action Pattern
 

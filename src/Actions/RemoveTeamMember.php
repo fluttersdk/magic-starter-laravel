@@ -46,9 +46,14 @@ class RemoveTeamMember implements RemovesTeamMembers
      * rule moved here, and so each endpoint keeps its own sentence: removing
      * yourself through the remove endpoint was always "not removable".
      *
+     * An owner leaving their PERSONAL team gets its own code: the shared-team
+     * sentence tells them to delete the team instead, and a personal team
+     * cannot be deleted either.
+     *
      * @param  bool  $leaving  Whether the owner is the one asking to go.
      *
-     * @throws ValidationException With code `owner_cannot_leave` or `owner_not_removable`.
+     * @throws ValidationException With code `owner_cannot_leave`, `personal_team_cannot_leave`
+     *                             or `owner_not_removable`.
      */
     public static function ensureRemovable(Model $team, Model $teamMember, bool $leaving): void
     {
@@ -56,7 +61,11 @@ class RemoveTeamMember implements RemovesTeamMembers
             return;
         }
 
-        $code = $leaving ? 'owner_cannot_leave' : 'owner_not_removable';
+        $code = match (true) {
+            ! $leaving => 'owner_not_removable',
+            (bool) $team->getAttribute('personal_team') => 'personal_team_cannot_leave',
+            default => 'owner_cannot_leave',
+        };
         $message = (string) __('magic-starter::teams.members.' . $code);
 
         $exception = ValidationException::withMessages([

@@ -289,8 +289,8 @@ class InstallCommand extends Command
             . 'integration, then run this command again.',
             'The secret is what authenticates an inbound delivery. Without it the webhook route is not '
             . 'registered at all, so no store purchase can reach this application.',
-            'Selling through a store is optional: drop REVENUECAT_SECRET_API_KEY and '
-            . '[magic-starter.billing.store_products] to install billing with the card rail alone.',
+            'Selling through a store is optional: unset REVENUECAT_SECRET_API_KEY to install billing '
+            . 'with the card rail alone.',
         ]);
     }
 

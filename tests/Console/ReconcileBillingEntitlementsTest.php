@@ -130,12 +130,19 @@ class ReconcileBillingEntitlementsTest extends TestCase
             // The adopter's own ranking, cheapest first. The write path reads it,
             // so a scenario that moves a tier has to be decidable.
             'magic-starter.billing.tier_order' => ['free', 'pro', 'business'],
-            'magic-starter.billing.prices' => [
-                'price_pro' => 'pro',
-                'price_business' => 'business',
-            ],
-            'magic-starter.billing.store_products' => [
-                self::APP_STORE_BUSINESS => 'business',
+            'magic-starter.billing.products' => [
+                'pro_monthly' => [
+                    'type' => 'subscription',
+                    'tier' => 'pro',
+                    'cycle' => 'monthly',
+                    'refs' => ['stripe_price' => 'price_pro'],
+                ],
+                'business_monthly' => [
+                    'type' => 'subscription',
+                    'tier' => 'business',
+                    'cycle' => 'monthly',
+                    'refs' => ['stripe_price' => 'price_business', 'app_store' => self::APP_STORE_BUSINESS],
+                ],
             ],
             'magic-starter.billing.revenuecat.secret_api_key' => self::API_KEY,
             'magic-starter.billing.revenuecat.base_url' => RevenueCatClient::DEFAULT_BASE_URL,
@@ -516,8 +523,8 @@ class ReconcileBillingEntitlementsTest extends TestCase
      * downgrade.
      *
      * The absence of a reason to grant is not a reason to revoke: an unmapped
-     * price means somebody added a price in Stripe and not in
-     * `magic-starter.billing.prices`, and taking a tier away from the customer
+     * price means somebody added a price in Stripe and not as a catalogue
+     * product's `refs.stripe_price`, and taking a tier away from the customer
      * whose card just cleared is the wrong direction to resolve that in.
      */
     public function test_an_unmapped_price_leaves_a_paying_subject_untouched(): void

@@ -361,102 +361,112 @@ return [
     | boot for the same reason. Leaving the key out entirely is not: an older
     | published config has no key at all, and 'user' is the answer for it.
     |
-    | 'tier_order' is your plan catalogue, CHEAPEST FIRST. The tier vocabulary
-    | belongs to your application, so this package never guesses it; list your
-    | own plan ids in the order a customer upgrades through them.
+    | THE CATALOGUE is four keys, and one product entry carries everything every
+    | rail needs to know about it. Validation runs at boot whenever the billing
+    | feature is on and throws a LogicException naming the problem, because each
+    | rule below guards money moving the wrong way, not a cosmetic slip.
     |
-    | WritesEntitlement uses this list for exactly one decision: whether an
-    | incoming write from a DIFFERENT billing rail than the one on record would
-    | leave the billable holding LESS than it holds now. Such a write is
-    | dropped, because a rail may only revoke what it granted.
+    | 'tier_order' is your tier ranking, CHEAPEST FIRST, and it is required. The
+    | tier vocabulary belongs to your application, so this package never guesses
+    | it; list your own tier ids in the order a customer upgrades through them.
+    | ELEMENT 0 IS THE FREE FLOOR: what a billable holds when nobody pays, so no
+    | product may sell it. A ranking is the only list of tiers that exist: a
+    | subscription naming a tier outside it is refused, and so is a checkout.
     |
-    | Leaving the list empty makes that comparison undecidable, and an
-    | undecidable cross-rail write against a tier the billable HOLDS is REFUSED,
-    | with a warning naming this key. A billable holding nothing is a separate
-    | case and is unaffected: there is no tier to take away, so such a write
-    | applies whether or not this list is published. So the empty default is
-    | safe for a fresh install and is not safe once you sell something on more
-    | than one rail: publish the order then.
+    | WritesEntitlement uses this list to decide whether an incoming write from a
+    | DIFFERENT billing rail than the one on record would leave the billable
+    | holding LESS than it holds now. Such a write is dropped, because a rail may
+    | only revoke what it granted. The shipped default is empty, which is fine
+    | with billing off and refused at boot with it on.
     |
-    | 'plans' is the CATALOGUE the billing screen renders: one entry per tier,
-    | cheapest first, served verbatim under a 'data' envelope by
-    | GET billing/plans. It is display data and gating data, never Stripe price
-    | ids (those are 'prices' below).
+    | 'tiers' is the DISPLAY copy per tier id: 'name', 'tagline', 'features',
+    | 'recommended', and anything else you add, which travels to the client
+    | UNTOUCHED (what a tier caps, what it unlocks, copy for a capability only
+    | your product has). GET billing/plans serves one entry per ranked tier, in
+    | ranking order, with its 'id' added; the map's own order never ranks. A
+    | ranked tier with no definition is served as its bare id. 'cycles' and
+    | 'products' are RESERVED: both are derived from the products below and
+    | written onto every tier row, so do not write either. A bullet in
+    | 'features' is a promise made to somebody holding a credit card, so it may
+    | only name something that works today.
     |
-    | 'prices' maps a Stripe price id onto the tier AND the cycle it sells. A
-    | tier is not a price: sold monthly and annually it is two, and the checkout
-    | asks for a (tier, cycle) pair so the customer is charged the figure the
-    | screen showed them. A bare value ('price_x' => 'pro') names the tier and is
-    | read as MONTHLY, which is a guess this package cannot verify, so declare
-    | ['tier' => ..., 'cycle' => ...] on anything that is not monthly or every
-    | screen will report the wrong interval over a real charge.
+    | 'products' is what you SELL, keyed by a name of your choosing:
     |
-    | THE FIRST ENTRY MATCHING A (tier, cycle) PAIR WINS, in the order written
-    | here. The old shape had one entry per tier by construction and this one
-    | invites several: the realistic case is a grandfathered price kept mapped so
-    | its webhooks still grant the tier, and new checkouts then go to whichever
-    | of the two is listed higher, silently. List the price you want SOLD first
-    | and keep retired ones below it.
+    |   'type'    subscription | consumable | non_consumable | physical
+    |   'tier'    a 'tier_order' id; required for a subscription
+    |   'cycle'   monthly | annual; required for a subscription. A tier is not
+    |             a price: sold both ways it is two products, and a checkout
+    |             names the product KEY so the customer is charged the figure
+    |             the screen showed them.
+    |   'credits' optional integer a one-off purchase grants
+    |   'sellable' optional boolean, default true. false keeps a product MAPPED
+    |             without selling it: a grandfathered Stripe price or a retired
+    |             store product that existing subscribers still pay, so a webhook
+    |             or the reconciler still names their tier. GET billing/plans
+    |             lists it flagged 'sellable: false' so a client can place what a
+    |             subscriber holds, and never offers it: billing/checkout and
+    |             billing/swap refuse it (422 product_not_sellable), and
+    |             billing:manifest and billing:doctor leave it out. Anything but
+    |             a boolean stops boot.
+    |   'prices'  channel (web | app_store | play) => three-letter currency =>
+    |             whole amount >= 0 in MINOR units (cents, kurus; 3400 yen is
+    |             3400, 1.500 KWD is 1500). Display figures, never a charge: each
+    |             rail charges what its own dashboard says. Any other shape stops
+    |             boot.
+    |   'refs'    each rail's id for this product: 'stripe_price' (env-backed,
+    |             from CASHIER_PRICE_<KEY>: the product key uppercased, so
+    |             'pro_monthly' reads CASHIER_PRICE_PRO_MONTHLY; one product per
+    |             price), 'app_store' (no colon), and 'play' as
+    |             '<subscription_id>:<base_plan_id>', the WHOLE id Google sends.
+    |             A bare subscription id stops boot: it misses on every Android
+    |             renewal.
     |
-    | The package names only the fields every billing screen needs: 'id', 'name',
-    | 'tagline', 'monthly', 'annual', 'currency', 'features', 'recommended', plus
-    | 'cycles', which is RESERVED and derived: the endpoint computes it from the
-    | price map below and overwrites whatever an entry carries under that key, so
-    | do not write one. Every other key you put on an entry travels to the client
-    | UNTOUCHED, which is where anything product-specific belongs: what a tier
-    | caps, what it unlocks, the copy for a capability only your product has.
-    | This package cannot know those and does not try, exactly as it delegates
-    | counting to ReportsUsage and the tier vocabulary to the list below. A null
-    | price means "contact us"; what a null LIMIT means is your application's
-    | business, not this package's.
+    | Write ONE sellable product per (tier, cycle) and put every rail's ref on
+    | it; a second one for the same pair is refused at boot unless it is
+    | 'sellable' => false. A checkout sells the product key it names; a
+    | reverse lookup (a Stripe price or a store id back to its product) answers
+    | the FIRST product carrying that ref, in config order.
     |
-    | A bullet in 'features' is a promise made to somebody holding a credit card,
-    | so it may only name something that works today.
+    | A store id belongs to one product, and ONE PLAY SUBSCRIPTION SELLS ONE
+    | TIER: Play moves a customer between base plans of a subscription as a
+    | renewal of the same purchase, so 'pro_sub:monthly' under one tier and
+    | 'pro_sub:annual' under another would move the tier with nobody deciding.
+    | Both are refused at boot.
     |
-    | ORDER AND RANKING. When 'tier_order' below is published it is the ranking,
-    | full stop, and this catalogue is only display. When it is NOT published the
-    | order is taken from these entries' ids instead, so an adopter who publishes
-    | one list gets both behaviours rather than a working screen beside an
-    | undecidable cross-rail write. Publishing both and having them disagree
-    | means the explicit list wins, because it is the more specific declaration;
-    | there is no reason to write two orders, so write one.
+    | An EMPTY ref is no ref. Refs assembled from the environment write an empty
+    | string the moment a variable is unset, and a reverse lookup honouring it
+    | would name the empty string as the price of a paid tier; leaving one unset
+    | costs you a product that cannot be sold on that rail, never one that is
+    | given away.
     |
-    | 'prices' is which Stripe PRICE sells which tier ON WHICH CYCLE, in either
-    | of the two forms described above: a bare 'price_id' => 'tier_id' string,
-    | read as MONTHLY, or the explicit ['tier' => ..., 'cycle' => ...] entry. The
-    | Stripe rail reads it in both directions: a webhook asks which tier and
-    | cycle the price on a subscription sells, and a checkout asks which price
-    | sells the (tier, cycle) pair the customer picked.
+    | An unmapped price or store product is a CONFIG GAP and never a downgrade:
+    | a rail that cannot name the tier a paying subscription sells leaves the
+    | entitlement alone and warns, because the alternative is taking a tier
+    | away from somebody whose card just cleared.
     |
-    | It lives here rather than under cashier.plans, which is where an earlier
-    | application kept it. That key is NOT part of Cashier: Cashier's own config
-    | has no 'plans' key at all, so an adopter following Cashier's documentation
-    | would never create one, every price would resolve to no tier, and no
-    | webhook would ever grant anything, with no error anywhere to say why.
+    | 'pricing' is how a STORE price is derived when a product does not write
+    | one: from the SAME currency's web price, under 'commission'. 'absorb'
+    | charges the web figure and you net less; 'gross_up' charges
+    | ceil(web / (1 - rate)) in minor units so you net the web figure. An
+    | explicit store price always wins. A currency the web channel does not
+    | price is ABSENT on a store channel: this package never converts between
+    | currencies, because an exchange rate frozen into config is wrong the day
+    | after it is written. 'currency' is the base currency a screen falls back
+    | to.
     |
-    | 'store_products' is the same question for the STORE rail: which App Store
-    | or Play product sells which tier, as a ['product_id' => 'tier_id'] map. The
-    | store rail cannot grant anything until it is filled, and an unmapped
-    | product is logged and written nowhere, which is the direction that cannot
-    | hand out a tier nobody bought.
+    | THE KEYS THIS REPLACED ARE REFUSED BY NAME. 'plans', 'prices' and
+    | 'store_products' described the same products from three sides with
+    | nothing keeping them in step. mergeConfigFrom is a SHALLOW merge, so a
+    | config published before this catalogue replaces the whole 'billing'
+    | array and carries none of the keys above: booting it would map no tier on
+    | any rail with no error anywhere. With billing on, any of the three present
+    | (even empty) stops boot with a message naming where its content moved.
     |
-    | KEY IT ON THE WHOLE PRODUCT ID GOOGLE SENDS. Play reports a subscription as
-    | '<subscription_id>:<base_plan_id>', so a map keyed on the bare subscription
-    | id misses on every Android renewal and warns instead of granting. Apple
-    | sends the plain product id and needs no such care.
-    |
-    | An unmapped price is a CONFIG GAP and never a downgrade: a rail that cannot
-    | name the tier a paying subscription sells leaves the entitlement alone and
-    | warns, because the alternative is taking a tier away from somebody whose
-    | card just cleared.
-    |
-    | Assembling this from the environment is the normal case
-    | (env('CASHIER_PRICE_PRO') and friends), and it is also how the dangerous
-    | entry appears: an unset variable writes an EMPTY KEY, and an empty key that
-    | reached a reverse lookup would name the empty string as the price that
-    | sells a paid tier. Empty keys and empty tiers are therefore stripped when
-    | this map is read, so leaving a variable unset costs you one tier that
-    | cannot be sold rather than one that is given away.
+    | The Stripe price ids live here rather than under cashier.plans, which is
+    | where an earlier application kept them. That key is NOT part of Cashier:
+    | Cashier's own config has no 'plans' key at all, so an adopter following
+    | Cashier's documentation would never create one, every price would resolve
+    | to no tier, and no webhook would ever grant anything.
     |
     | WHY laravel/cashier IS A HARD REQUIRE. It is the one dependency in this
     | package that needed an argument. The four SDKs already in the require
@@ -480,7 +490,8 @@ return [
     | Cashier's groups stay listed under vendor:publish.
     |
     | THE STRIPE WEBHOOK KEEPS CASHIER'S PATH AND CASHIER'S SECRET, and both are
-    | deliberate exceptions to the package-owned-key rule 'prices' follows above.
+    | deliberate exceptions to the package-owned-key rule the Stripe refs follow
+    | above.
     |
     | The package serves the webhook itself (src/routes/webhooks.php, loaded from
     | its own loadRoutesFrom under the billing feature), and it registers the
@@ -496,9 +507,9 @@ return [
     | than convention: Cashier's own WebhookController::__construct() is what
     | reads it, and it attaches the signature middleware only when it is set.
     | Moving it under a package key would leave that constructor reading an empty
-    | value and would silently UNSIGN the endpoint. 'prices' moved precisely
-    | because the opposite is true of it: 'cashier.plans' was never a Cashier key
-    | at all, so nothing in Cashier reads it.
+    | value and would silently UNSIGN the endpoint. The Stripe refs moved
+    | precisely because the opposite is true of them: 'cashier.plans' was never a
+    | Cashier key at all, so nothing in Cashier reads it.
     |
     | DO NOT RUN `vendor:publish --tag=cashier-migrations`. That is the residual
     | cost turning into a broken schema, and it is the one instruction here that
@@ -569,7 +580,7 @@ return [
     | when you are changing the dashboard in the same breath.
     |
     | THE ROUTE IS WITHHELD ON A HALF-CONFIGURED RAIL. When the store rail is
-    | configured (an API key or a store product map) and 'webhook_secret' is not,
+    | configured ('secret_api_key' is set) and 'webhook_secret' is not,
     | the endpoint could not authenticate anybody, so it is not registered at all:
     | the provider logs the reason once at boot and `magic-starter:install`
     | refuses to complete. The application keeps serving; only the store rail is
@@ -587,6 +598,21 @@ return [
     |
     | 'operation_budget_seconds' bounds the WHOLE retried read, not one call: a
     | per-call timeout sized against a wall breaks the moment anything retries.
+    |
+    | 'api_v2_key' and 'project_id' are read by `billing:doctor --remote` only,
+    | through RevenueCat's v2 API. The v2 key is a SEPARATE secret key scoped
+    | to project_configuration:{apps,products,entitlements,offerings,packages,
+    | integrations}:read; the v1 key above reads subscribers and is not widened
+    | to cover configuration. Neither is needed to sell.
+    |
+    | THE AGENT PAIR. `billing:manifest` prints every store and rail object this
+    | catalogue needs (App Store group and levels, Play subscriptions and base
+    | plans, RevenueCat products, entitlements, offering and webhook, Stripe
+    | prices whose lookup key is the product key) for an agent to apply with
+    | asc, gplay, rc and stripe; `billing:doctor` checks the configuration and,
+    | with --remote, diffs Stripe and RevenueCat against it. Both only READ: the
+    | package never writes to a vendor, and neither prints a secret, only
+    | whether it is set.
     |
     | 'accept_sandbox' is whether this deployment may act on sandbox purchases
     | at all. FALSE in production, always: a sandbox purchase granting a real
@@ -631,14 +657,10 @@ return [
     'billing' => [
         'billable' => 'user',
 
-        'plans' => [
-            // [
-            //     'id' => 'free',
+        'tiers' => [
+            // 'free' => [
             //     'name' => 'Free',
             //     'tagline' => 'Kick the tires.',
-            //     'monthly' => 0,
-            //     'annual' => 0,
-            //     'currency' => 'usd',
             //     'features' => [
             //         'Everything you need to try it',
             //     ],
@@ -656,23 +678,30 @@ return [
             // 'business',
         ],
 
-        'prices' => [
-            // A bare value names the tier and is read as MONTHLY. Terse, and
-            // correct only when the price really is a monthly one.
-            // env('CASHIER_PRICE_PRO') => 'pro',
-            //
-            // Declare the cycle when you sell a tier both ways, which is the
-            // form that lets a customer buy the annual figure your billing
-            // screen is showing them. A checkout names a tier AND a cycle and
-            // gets the price behind that exact pair; a cycle you have not mapped
-            // is refused with a 422 rather than charged at the other price.
-            // env('CASHIER_PRICE_PRO_MONTHLY') => ['tier' => 'pro', 'cycle' => 'monthly'],
-            // env('CASHIER_PRICE_PRO_ANNUAL') => ['tier' => 'pro', 'cycle' => 'annual'],
+        'products' => [
+            // 'pro_monthly' => [
+            //     'type' => 'subscription',
+            //     'tier' => 'pro',
+            //     'cycle' => 'monthly',
+            //     'prices' => [
+            //         'web' => ['USD' => 2900, 'TRY' => 49900],
+            //         // Optional: an explicit store figure wins over the derivation.
+            //         'app_store' => ['TRY' => 59999],
+            //     ],
+            //     'refs' => [
+            //         'stripe_price' => env('CASHIER_PRICE_PRO_MONTHLY'),
+            //         'app_store' => 'com.example.app.pro.monthly',
+            //         'play' => 'pro:monthly',
+            //     ],
+            // ],
         ],
 
-        'store_products' => [
-            // 'com.example.app.pro.monthly' => 'pro',
-            // 'business_monthly:business-base' => 'business',
+        'pricing' => [
+            'currency' => 'USD',
+            'commission' => [
+                'mode' => 'absorb',
+                'rate' => 0.15,
+            ],
         ],
 
         'reconcile' => [
@@ -686,6 +715,8 @@ return [
             'base_url' => env('REVENUECAT_BASE_URL', RevenueCatClient::DEFAULT_BASE_URL),
             'operation_budget_seconds' => env('REVENUECAT_OPERATION_BUDGET_SECONDS', 10),
             'accept_sandbox' => (bool) env('REVENUECAT_ACCEPT_SANDBOX', false),
+            'api_v2_key' => env('REVENUECAT_API_V2_KEY'),
+            'project_id' => env('REVENUECAT_PROJECT_ID'),
         ],
     ],
 

@@ -3,10 +3,12 @@
 namespace FlutterSdk\MagicStarter\Actions;
 
 use FlutterSdk\MagicStarter\Contracts\SchedulesUserDeletion;
+use FlutterSdk\MagicStarter\Enums\BillingProvider;
 use FlutterSdk\MagicStarter\Events\UserDeletionScheduled;
 use FlutterSdk\MagicStarter\Jobs\PurgeUserNow;
 use FlutterSdk\MagicStarter\Models\PushDevice;
 use FlutterSdk\MagicStarter\Support\OwnedTeams;
+use FlutterSdk\MagicStarter\Support\ReadsBillableAttributes;
 use Illuminate\Contracts\Auth\Authenticatable;
 use Illuminate\Database\Eloquent\Collection;
 use Illuminate\Database\Eloquent\Model;
@@ -37,6 +39,8 @@ use RuntimeException;
  */
 class ScheduleUserDeletion implements SchedulesUserDeletion
 {
+    use ReadsBillableAttributes;
+
     /**
      * The two columns the pipeline reads, both added by
      * `add_deletion_columns_to_users_table.php`.
@@ -116,7 +120,7 @@ class ScheduleUserDeletion implements SchedulesUserDeletion
         $billing = OwnedTeams::billing($user);
 
         if ($billing->isNotEmpty()) {
-            $this->refuse('team_has_active_subscription', $billing);
+            $this->refuse('team_has_active_subscription', $billing, $this->providersOf($billing));
         }
 
         if ($user instanceof Model && OwnedTeams::isBilling($user)) {
@@ -134,10 +138,12 @@ class ScheduleUserDeletion implements SchedulesUserDeletion
      *
      * @param  string  $code  a key of `lang/<locale>/social.php`
      * @param  Collection<int, Model>  $teams
+     * @param  array<string, BillingProvider>  $providers  team id to the rail billing it; the
+     *                                                     `team_providers` key is left out when empty
      *
      * @throws ValidationException
      */
-    protected function refuse(string $code, Collection $teams): never
+    protected function refuse(string $code, Collection $teams, array $providers = []): never
     {
         $message = (string) __('magic-starter::social.' . $code);
 
@@ -145,14 +151,46 @@ class ScheduleUserDeletion implements SchedulesUserDeletion
             'user' => $message,
         ]);
 
-        $exception->response = new JsonResponse([
+        $body = [
             'message' => $message,
             'code' => $code,
             'team_ids' => $teams->map(fn (Model $team): string => (string) $team->getKey())->all(),
-            'errors' => $exception->errors(),
-        ], 422);
+        ];
+
+        if ($providers !== []) {
+            $body['team_providers'] = array_map(
+                static fn (BillingProvider $provider): string => $provider->value,
+                $providers,
+            );
+        }
+
+        $exception->response = new JsonResponse($body + ['errors' => $exception->errors()], 422);
 
         throw $exception;
+    }
+
+    /**
+     * The rail billing each of these teams, keyed by team id.
+     *
+     * A store is named from `plan_provider`, which is what the store guard read
+     * to refuse. Anything else that refused did so on Cashier's own rows, so it
+     * is Stripe whatever the provenance column says: that column is written by
+     * the webhook and can lag or be absent on a team Cashier is already billing.
+     *
+     * @param  Collection<int, Model>  $teams
+     * @return array<string, BillingProvider>
+     */
+    protected function providersOf(Collection $teams): array
+    {
+        $providers = [];
+
+        foreach ($teams as $team) {
+            $providers[(string) $team->getKey()] = SubscriptionGuardedDeleteTeam::storeIsBilling($team)
+                ? BillingProvider::fromWire($this->stringAttribute($team, 'plan_provider'))
+                : BillingProvider::STRIPE;
+        }
+
+        return $providers;
     }
 
     /**

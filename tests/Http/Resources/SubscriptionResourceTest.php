@@ -2,6 +2,7 @@
 
 namespace FlutterSdk\MagicStarter\Tests\Http\Resources;
 
+use FlutterSdk\MagicStarter\Contracts\ReportsUsage;
 use FlutterSdk\MagicStarter\Enums\BillingProvider;
 use FlutterSdk\MagicStarter\Enums\PlanStatus;
 use FlutterSdk\MagicStarter\Http\Resources\SubscriptionResource;
@@ -60,11 +61,15 @@ class SubscriptionResourceTest extends TestCase
             'provider',
             'provider_status',
             'product_id',
+            'product',
             'manage_via',
             'manage_url',
             'current_period_end',
             'trial_ends_at',
             'grace_period_ends_at',
+            'owned',
+            'balances',
+            'allowances',
         ], array_keys($wire));
 
         // A tier allowance is a consumer's gate, computed from a catalogue this
@@ -125,7 +130,10 @@ class SubscriptionResourceTest extends TestCase
         $this->assertIsString($uncast->getAttribute('plan_provider'));
         $this->assertInstanceOf(BillingProvider::class, $cast->getAttribute('plan_provider'));
 
-        $this->assertSame($this->wire($uncast), $this->wire($cast));
+        // Compared ENCODED, which is the byte-identical claim itself: the two
+        // empty-object fields are separate instances, and `assertSame` on the
+        // arrays would compare their identity rather than their wire.
+        $this->assertSame(json_encode($this->wire($uncast)), json_encode($this->wire($cast)));
 
         // Stated on the cast side too, so the shared value is pinned rather than
         // only compared: two wires agreeing on `1` would satisfy the line above.
@@ -189,21 +197,21 @@ class SubscriptionResourceTest extends TestCase
      * the price, would pass the populated limb and keep passing after the price
      * moved. Both null cases are real production states rather than edge cases:
      * a store subscription's `plan_product_id` is a store product id this Stripe
-     * catalogue cannot name, and an adopter is free to map a price without
-     * declaring its cycle.
+     * catalogue cannot name, and a product whose Stripe ref is unset (an
+     * environment variable nobody filled in) maps no price at all.
      */
     public function test_the_cycle_is_read_off_the_price_and_is_null_when_unmappable(): void
     {
-        config(['magic-starter.billing.prices' => [
-            'price_pro' => ['tier' => 'pro', 'cycle' => 'annual'],
+        config(['magic-starter.billing.products' => [
+            'pro' => $this->stripeSubscription('annual', 'price_pro'),
         ]]);
 
         $this->assertSame('annual', $this->wire($this->rawSubject())['cycle']);
 
         // The same row on the tier's other price, which is the drift a hardcoded
         // cycle would hide.
-        config(['magic-starter.billing.prices' => [
-            'price_pro' => ['tier' => 'pro', 'cycle' => 'monthly'],
+        config(['magic-starter.billing.products' => [
+            'pro' => $this->stripeSubscription('monthly', 'price_pro'),
         ]]);
 
         $this->assertSame('monthly', $this->wire($this->rawSubject())['cycle']);
@@ -215,12 +223,101 @@ class SubscriptionResourceTest extends TestCase
             'plan_product_id' => 'com.example.pro.monthly',
         ]))['cycle']);
 
-        // And a Stripe price the adopter mapped without saying which cycle it
-        // sells falls back to monthly, which is `catalogue()`'s documented
-        // default rather than this resource's decision.
-        config(['magic-starter.billing.prices' => ['price_pro' => 'pro']]);
+        // An unset Stripe ref maps nothing, so the price on the row names no
+        // product and no cycle.
+        config(['magic-starter.billing.products' => [
+            'pro' => $this->stripeSubscription('monthly', ''),
+        ]]);
 
-        $this->assertSame('monthly', $this->wire($this->rawSubject())['cycle']);
+        $this->assertNull($this->wire($this->rawSubject())['cycle']);
+    }
+
+    /**
+     * `product` is the CATALOGUE key behind `plan_product_id`, whichever rail
+     * wrote it, and the cycle is read off that same product.
+     *
+     * Four limbs. The Stripe and the store limbs prove the lookup spans every
+     * rail; the two null limbs are what keep it honest. A bare Play subscription
+     * id is a real production value (Google sends `<sub>:<base_plan>`, an older
+     * writer kept the head) and names no product, so it must not be matched to
+     * the first base plan that shares its prefix and handed a cycle it may not
+     * be on.
+     */
+    public function test_the_product_is_the_catalogue_key_behind_the_rails_product_id(): void
+    {
+        config(['magic-starter.billing.products' => [
+            'pro_annual' => [
+                'type' => 'subscription',
+                'tier' => 'pro',
+                'cycle' => 'annual',
+                'refs' => [
+                    'stripe_price' => 'price_pro_annual',
+                    'app_store' => 'com.example.pro.annual',
+                    'play' => 'pro:annual',
+                ],
+            ],
+        ]]);
+
+        $stripe = $this->wire($this->rawSubject(overrides: ['plan_product_id' => 'price_pro_annual']));
+        $this->assertSame('pro_annual', $stripe['product']);
+        $this->assertSame('annual', $stripe['cycle']);
+
+        $play = $this->wire($this->rawSubject(overrides: [
+            'plan_provider' => 'play_store',
+            'plan_product_id' => 'pro:annual',
+        ]));
+        $this->assertSame('pro_annual', $play['product']);
+        $this->assertSame('annual', $play['cycle']);
+
+        $barePlay = $this->wire($this->rawSubject(overrides: [
+            'plan_provider' => 'play_store',
+            'plan_product_id' => 'pro',
+        ]));
+        $this->assertNull($barePlay['product']);
+        $this->assertNull($barePlay['cycle']);
+
+        $this->assertNull($this->wire($this->rawSubject(overrides: ['plan_product_id' => null]))['product']);
+    }
+
+    /**
+     * `owned` is a list and `balances` and `allowances` are objects, empty or
+     * not, and `allowances` is whatever the consumer's usage reporter answers.
+     *
+     * The objects are asserted ENCODED, because that is the only place the
+     * difference exists: PHP's empty array is `[]` on the wire, a client
+     * decoding a map refuses it, and `assertSame([], ...)` cannot tell the two
+     * apart.
+     */
+    public function test_owned_balances_and_allowances_keep_their_wire_shapes(): void
+    {
+        $unbound = json_encode($this->wire($this->rawSubject()));
+
+        $this->assertIsString($unbound);
+        $this->assertStringContainsString('"owned":[]', $unbound);
+        $this->assertStringContainsString('"balances":{}', $unbound);
+        $this->assertStringContainsString('"allowances":{}', $unbound);
+
+        $this->app->bind(ReportsUsage::class, fn (): ReportsUsage => new ResourceTestUsageReporter);
+
+        $this->assertSame(
+            ['seats' => ['used' => 2, 'limit' => 5]],
+            $this->wire($this->rawSubject())['allowances'],
+        );
+    }
+
+    /**
+     * A subscription product selling `pro` through one Stripe price.
+     *
+     * @return array<string, mixed>
+     */
+    private function stripeSubscription(string $cycle, string $priceId): array
+    {
+        return [
+            'type' => 'subscription',
+            'tier' => 'pro',
+            'cycle' => $cycle,
+            'refs' => ['stripe_price' => $priceId],
+        ];
     }
 
     /**
@@ -427,6 +524,25 @@ class CashierishSubject extends Model
     public function billingPortalUrl(string $returnUrl = ''): string
     {
         throw new RuntimeException('billingPortalUrl() mints a portal session over the network.');
+    }
+}
+
+/**
+ * A consumer's usage reporter, whose answer the resource carries as `allowances`.
+ */
+class ResourceTestUsageReporter implements ReportsUsage
+{
+    /**
+     * @return array<string, array{used: int, limit: int|null}>
+     */
+    public function forBillable(Model $billable): array
+    {
+        return [
+            'seats' => [
+                'used' => 2,
+                'limit' => 5,
+            ],
+        ];
     }
 }
 

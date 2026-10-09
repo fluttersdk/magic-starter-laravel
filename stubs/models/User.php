@@ -17,6 +17,9 @@ use Laravel\Sanctum\HasApiTokens;
 
 class User extends Authenticatable implements MustVerifyEmailContract
 {
+    // Billing with the user as the billable subject: opt in to `entitled()`, `onTier()` and `tierAtLeast()`
+    // reads that answer for every rail by importing `FlutterSdk\MagicStarter\Traits\HasEntitlement`
+    // and adding `use HasEntitlement;` here. Under team billing it belongs on the Team model instead.
     use ConditionallyUsesUuids;
     use HasApiTokens;
     use HasFactory;

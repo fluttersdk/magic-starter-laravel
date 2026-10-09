@@ -346,7 +346,13 @@ If the team being left was the user's current active team, the user is switched 
 **Error (owner leaving):** `403 Forbidden`
 
 ```
-Team owner cannot leave the team. Transfer ownership first or delete the team.
+Team owner cannot leave the team. Delete the team instead.
+```
+
+On the owner's personal team, which cannot be deleted either:
+
+```
+You may not leave your personal team.
 ```
 
 **Error (not a member):** `404 Not Found`

@@ -3,6 +3,7 @@
 namespace FlutterSdk\MagicStarter\Support;
 
 use FlutterSdk\MagicStarter\Enums\PlanStatus;
+use FlutterSdk\MagicStarter\Enums\ProductType;
 
 /**
  * Stripe's own subscription vocabulary, read the same way by every feeder.
@@ -29,28 +30,6 @@ use FlutterSdk\MagicStarter\Enums\PlanStatus;
  */
 final class StripeSubscriptionState
 {
-    /**
-     * The two billing cycles a price can be charged on.
-     *
-     * The words match `magic_payments`' `BillingCycle` on the Dart side, which
-     * is what lets the client send one and read one back without a translation
-     * table in between. Two members and no more: an interval this package
-     * cannot name is refused rather than defaulted, because every default here
-     * is a statement about what somebody is being charged.
-     */
-    public const CYCLE_MONTHLY = 'monthly';
-
-    public const CYCLE_ANNUAL = 'annual';
-
-    /**
-     * Untyped, like every other constant here: this package's floor is PHP 8.2
-     * and typed class constants are 8.3, so a type annotation would be a syntax
-     * error on the oldest version CI builds against.
-     *
-     * @var array<int, string>
-     */
-    public const CYCLES = [self::CYCLE_MONTHLY, self::CYCLE_ANNUAL];
-
     /**
      * The Cashier subscription TYPE this package's Stripe rail acts on.
      *
@@ -120,15 +99,19 @@ final class StripeSubscriptionState
      *
      * Null is a config gap and never a downgrade: a caller that cannot name the
      * tier leaves the entitlement alone and warns, because an unmapped price on
-     * a paying subscription means somebody added a price in Stripe and not in
-     * `magic-starter.billing.prices`.
+     * a paying subscription means somebody added a price in Stripe and not as a
+     * `refs.stripe_price` in `magic-starter.billing.products`.
      *
      * The tier travels as a plain string because the package ships no tier
-     * vocabulary; the consuming application owns those words, and this map is
-     * where it says which Stripe price sells which of them.
+     * vocabulary; the consuming application owns those words, and its catalogue
+     * is where it says which Stripe price sells which of them.
      *
      * The empty check is explicit rather than `! $priceId`, which is the form
      * one of the two copies used: they differ on `'0'`.
+     *
+     * Only a subscription names a tier here. Nothing refuses a `tier` written on
+     * a one-off product, and reading it would let a credit pack's price move a
+     * subscriber onto a paid tier.
      */
     public static function planForPrice(?string $priceId): ?string
     {
@@ -136,144 +119,10 @@ final class StripeSubscriptionState
             return null;
         }
 
-        $tier = self::prices()[$priceId] ?? null;
+        $product = BillingCatalogue::productForStripePrice($priceId);
 
-        return is_string($tier) && $tier !== '' ? $tier : null;
-    }
-
-    /**
-     * The consumer's price to tier map, with unusable entries stripped.
-     *
-     * The one place this key is read, in either direction: a Stripe event asks
-     * which tier a price sells, and a checkout asks which price sells a tier.
-     * Two readers of one config key would each have to decide what an empty
-     * entry means, and only one of them has to get it wrong for an unset price
-     * id to sell a paid tier.
-     *
-     * An EMPTY KEY is the entry that matters, and the filter is carried over
-     * from the application this map was extracted from, whose own comment gives
-     * the reason: "Null keys are stripped so an unset price id can never map an
-     * absent price to a paid tier." An adopter assembling this map from the
-     * environment (`env('CASHIER_PRICE_PRO')` and friends) writes `'' => 'pro'`
-     * the moment one of those variables is unset, and a reverse lookup then
-     * hands back the empty string as the price id of a real tier: a checkout
-     * against no price, or a paid tier granted to a price nobody sells. The
-     * lookup above refuses an empty price id on its own account as well, so
-     * these two guards overlap deliberately rather than accidentally; each one
-     * closes the hole the other one leaves when it is the one that is changed.
-     *
-     * @return array<string, string>
-     */
-    public static function prices(): array
-    {
-        return array_map(
-            static fn (array $entry): string => $entry['tier'],
-            self::catalogue(),
-        );
-    }
-
-    /**
-     * The billing cycle a Stripe price is charged on, or null when the config
-     * does not say.
-     *
-     * Null is reported rather than guessed, and it reaches the client as an
-     * absent `cycle` that decodes to null there too. A tier is not a price: the
-     * same tier sold monthly and annually is two prices, and a screen that
-     * assumed one would tell a customer what they are paying on no evidence.
-     * That is the defect this pair of methods was added to close, where a
-     * billing screen rendered "billed annually" over a monthly charge.
-     */
-    public static function cycleForPrice(?string $priceId): ?string
-    {
-        if ($priceId === null || $priceId === '') {
-            return null;
-        }
-
-        return self::catalogue()[$priceId]['cycle'] ?? null;
-    }
-
-    /**
-     * The Stripe price that sells [$tier] on [$cycle], or null when none does.
-     *
-     * An exact pair match, never a nearest one. A checkout asks for the price
-     * behind the figure it just showed the customer, so answering with the
-     * tier's other price would charge an amount the screen did not display,
-     * which is precisely the mismatch this lookup exists to prevent. An adopter
-     * who sells a tier one way only therefore refuses the other way with a 422
-     * rather than quietly billing the wrong figure.
-     *
-     * Two entries declaring the SAME pair resolve to whichever is written first
-     * in the config, silently. That was true of the old flat map as well, but it
-     * had one entry per tier by construction and this shape invites several: a
-     * grandfathered price kept mapped so its webhooks still grant the tier is
-     * the ordinary case. The config comment tells the adopter to list the price
-     * they want SOLD first and keep retired ones below it.
-     */
-    public static function priceFor(string $tier, string $cycle): ?string
-    {
-        foreach (self::catalogue() as $priceId => $entry) {
-            if ($entry['tier'] === $tier && $entry['cycle'] === $cycle) {
-                return $priceId;
-            }
-        }
-
-        return null;
-    }
-
-    /**
-     * The consumer's price map, normalised and with unusable entries stripped.
-     *
-     * Two forms are accepted, because a vendor selling one price per tier should
-     * not have to write a map to say so:
-     *
-     *     'price_pro'        => 'pro',
-     *     'price_pro_annual' => ['tier' => 'pro', 'cycle' => 'annual'],
-     *
-     * **A bare string is read as MONTHLY**, and that default is the one thing to
-     * get right in this config. It is a guess the package cannot verify: Stripe
-     * knows the interval and this array does not, and reading it would mean an
-     * API call per price on every request. So an adopter whose single mapped
-     * price is an ANNUAL one has to say so, or every screen will report a
-     * monthly cycle over an annual charge. Declaring the cycle is cheap and
-     * saying nothing is only safe when the price really is monthly.
-     *
-     * An unrecognised cycle word is dropped rather than defaulted, so a typo in
-     * `'cycle' => 'anual'` costs a 422 on that tier instead of a charge on the
-     * wrong price.
-     *
-     * @return array<string, array{tier: string, cycle: string}>
-     */
-    public static function catalogue(): array
-    {
-        $configured = config('magic-starter.billing.prices', []);
-
-        if (! is_array($configured)) {
-            return [];
-        }
-
-        $catalogue = [];
-
-        foreach ($configured as $priceId => $entry) {
-            $priceId = (string) $priceId;
-
-            if ($priceId === '') {
-                continue;
-            }
-
-            $tier = is_array($entry) ? ($entry['tier'] ?? null) : $entry;
-            $cycle = is_array($entry) ? ($entry['cycle'] ?? self::CYCLE_MONTHLY) : self::CYCLE_MONTHLY;
-
-            if (! is_string($tier) || $tier === '') {
-                continue;
-            }
-
-            if (! in_array($cycle, self::CYCLES, true)) {
-                continue;
-            }
-
-            $catalogue[$priceId] = ['tier' => $tier, 'cycle' => $cycle];
-        }
-
-        return $catalogue;
+        return $product !== null && $product['type'] === ProductType::SUBSCRIPTION
+            ? $product['tier']
+            : null;
     }
 }
