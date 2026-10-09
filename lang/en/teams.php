@@ -40,6 +40,7 @@ return [
         'owner_role_locked' => 'Cannot change role of team owner.',
         'owner_not_removable' => 'Cannot remove team owner.',
         'owner_cannot_leave' => 'Team owner cannot leave the team. Delete the team instead.',
+        'personal_team_cannot_leave' => 'You may not leave your personal team.',
         'role_not_assignable' => 'The owner role is given by transferring ownership, not by changing a role.',
         'new_owner_not_a_member' => 'Ownership can only be transferred to a member of the team.',
         'user_not_found' => 'The selected user could not be found.',

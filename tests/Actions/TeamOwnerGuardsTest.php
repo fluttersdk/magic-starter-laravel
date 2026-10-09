@@ -106,6 +106,39 @@ final class TeamOwnerGuardsTest extends TestCase
         );
     }
 
+    /**
+     * A personal team cannot be deleted either (`personal_team_undeletable`),
+     * so "delete the team instead" would send its owner to a refusal. Leaving
+     * it gets its own code and a sentence that offers nothing.
+     */
+    public function test_the_owner_of_a_personal_team_is_not_told_to_delete_it(): void
+    {
+        $this->team->forceFill(['personal_team' => true])->save();
+
+        $refusal = $this->refusalOf(
+            fn () => app(RemovesTeamMembers::class)->remove($this->owner, $this->team, $this->owner),
+        );
+
+        $this->assertSame('personal_team_cannot_leave', $refusal->response?->getData(true)['code']);
+        $this->assertSame('You may not leave your personal team.', $refusal->getMessage());
+        $this->assertSame(
+            'Kişisel takımınızdan ayrılamazsınız.',
+            __('magic-starter::teams.members.personal_team_cannot_leave', [], 'tr'),
+        );
+        $this->assertSame('owner', $this->roleOf($this->owner));
+    }
+
+    public function test_removing_the_owner_of_a_personal_team_keeps_its_own_sentence(): void
+    {
+        $this->team->forceFill(['personal_team' => true])->save();
+
+        $refusal = $this->refusalOf(
+            fn () => app(RemovesTeamMembers::class)->remove($this->staff, $this->team, $this->owner),
+        );
+
+        $this->assertSame('owner_not_removable', $refusal->response?->getData(true)['code']);
+    }
+
     public function test_a_member_who_is_not_the_owner_is_removed(): void
     {
         app(RemovesTeamMembers::class)->remove($this->owner, $this->team, $this->staff);
