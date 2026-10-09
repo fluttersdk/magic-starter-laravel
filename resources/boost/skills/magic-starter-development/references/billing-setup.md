@@ -130,7 +130,7 @@ Then ask the owner to set each price id in the env variable the manifest names a
 php artisan billing:doctor --json --remote
 ```
 
-`ok: true` and exit 0 mean no `error`. Fix each `error` by its check id, which is stable (`stripe.remote.price.pro_monthly`, `revenuecat.package.pro_monthly`, `revenuecat.webhook`). Re-run until it passes. An `agent_check` is vendor state the package cannot read: run its `command` yourself and compare the output with the manifest section it names (`asc subscriptions groups list --app <app-id>`, `gplay subscriptions list --package <package-name>`). Report the remaining `warning` entries to the owner.
+`ok: true` and exit 0 mean no `error`. Fix each `error` by its check id, which is stable (`stripe.remote.price.pro_monthly`, `revenuecat.package.pro_monthly`, `revenuecat.webhook`). Re-run until it passes. An `agent_check` is vendor state the package cannot read. When it carries a `command`, run it yourself and compare the output with the manifest section it names (`asc subscriptions groups list --app <app-id>`, `gplay subscriptions list --package <package-name>`). When it carries none, it is a dashboard step only a person can confirm (`revenuecat.webhook.hmac`: the RevenueCat API returns the signing secret only on rotation, so never rotate it to check): ask the owner. Report the remaining `warning` entries to the owner.
 
 ## What to Watch For
 
