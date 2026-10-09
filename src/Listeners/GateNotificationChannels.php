@@ -2,6 +2,7 @@
 
 namespace FlutterSdk\MagicStarter\Listeners;
 
+use FlutterSdk\MagicStarter\Contracts\BypassesNotificationPreferences;
 use FlutterSdk\MagicStarter\NotificationPreferenceRegistry;
 use Illuminate\Notifications\Events\NotificationSending;
 
@@ -11,6 +12,9 @@ use Illuminate\Notifications\Events\NotificationSending;
  *
  * Listens to NotificationSending events (fired per-channel, per-notifiable)
  * and returns false to cancel delivery when the user has disabled that channel.
+ *
+ * A notification implementing BypassesNotificationPreferences can ask for a channel to be delivered
+ * to a notifiable despite that preference; locked channels are always delivered.
  */
 class GateNotificationChannels
 {
@@ -59,7 +63,15 @@ class GateNotificationChannels
             return true;
         }
 
-        // 8. Check user preferences — this is the gate.
+        // 8. If the notification asks to bypass the preference for this channel and notifiable, allow delivery.
+        if (
+            $event->notification instanceof BypassesNotificationPreferences
+            && $event->notification->bypassesPreference($event->notifiable, $logicalChannel)
+        ) {
+            return true;
+        }
+
+        // 9. Check user preferences: this is the gate.
         return $event->notifiable->prefers(
             $slug,
             $logicalChannel,
