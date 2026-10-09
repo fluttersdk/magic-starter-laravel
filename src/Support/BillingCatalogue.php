@@ -69,6 +69,21 @@ final class BillingCatalogue
     private const DEFAULT_COMMISSION_RATE = 0.15;
 
     /**
+     * The last configured products and what they normalised to.
+     *
+     * Keyed by the raw config array itself rather than by time or request,
+     * because normalising is a pure function of that array: an equal input
+     * can only give the same products, so no config change, test rewrite or
+     * Octane request can be served a stale catalogue. The comparison is cheap
+     * where it matters, since PHP answers `===` on two copies of one array
+     * from its identity before comparing a single element, and an unchanged
+     * config hands back the same array every time.
+     *
+     * @var array{configured: array<array-key, mixed>, products: array<string, Product>}|null
+     */
+    private static ?array $normalised = null;
+
+    /**
      * Refuse a catalogue that would sell the wrong thing, naming the problem.
      *
      * A throw rather than a log, because every rule here guards money moving the
@@ -201,16 +216,30 @@ final class BillingCatalogue
     /**
      * Every product, normalised, keyed by its catalogue key in config order.
      *
+     * Normalised once per distinct config (see {@see self::$normalised}),
+     * since every reverse lookup below walks the whole list.
+     *
      * @return array<string, Product>
      */
     public static function products(): array
     {
+        $configured = self::configuredProducts();
+
+        if (self::$normalised !== null && self::$normalised['configured'] === $configured) {
+            return self::$normalised['products'];
+        }
+
         $products = [];
 
-        foreach (self::configuredProducts() as $key => $product) {
+        foreach ($configured as $key => $product) {
             $key = (string) $key;
             $products[$key] = self::normalise($key, $product);
         }
+
+        self::$normalised = [
+            'configured' => $configured,
+            'products' => $products,
+        ];
 
         return $products;
     }

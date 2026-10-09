@@ -516,6 +516,58 @@ class BillingCatalogueTest extends TestCase
         );
     }
 
+    /**
+     * Every webhook, entitlement read and plans response asks for the products
+     * more than once, so an unchanged catalogue is read once. Measured by what
+     * the second read allocates: normalising two thousand products builds
+     * every product array again, while a reused result allocates next to
+     * nothing.
+     */
+    public function test_a_second_read_of_an_unchanged_catalogue_builds_nothing_new(): void
+    {
+        $products = [];
+
+        for ($index = 0; $index < 2000; $index++) {
+            $products["pro_monthly_{$index}"] = [
+                'type' => 'subscription',
+                'tier' => 'pro',
+                'cycle' => 'monthly',
+                'sellable' => false,
+                'refs' => ['stripe_price' => "price_{$index}"],
+            ];
+        }
+
+        config(['magic-starter.billing.products' => $products]);
+
+        $first = BillingCatalogue::products();
+        $before = memory_get_usage();
+        $second = BillingCatalogue::products();
+        $allocated = memory_get_usage() - $before;
+
+        $this->assertSame($first, $second);
+        $this->assertLessThan(16 * 1024, $allocated);
+    }
+
+    /**
+     * The reuse must never outlive the config it was built from: tests rewrite
+     * it between reads, and under Octane one worker serves many requests.
+     */
+    public function test_a_changed_catalogue_is_read_afresh(): void
+    {
+        $this->assertSame('pro', BillingCatalogue::product('pro_monthly')['tier'] ?? null);
+
+        config(['magic-starter.billing.products.pro_monthly.tier' => 'business']);
+
+        $this->assertSame('business', BillingCatalogue::product('pro_monthly')['tier'] ?? null);
+
+        config(['magic-starter.billing.products' => [
+            'credits_100' => ['type' => 'consumable', 'credits' => 100],
+        ]]);
+
+        $this->assertSame(['credits_100'], array_keys(BillingCatalogue::products()));
+        $this->assertNull(BillingCatalogue::productForStripePrice('price_pro_monthly'));
+    }
+
     public function test_pricing_reads_the_currency_and_commission(): void
     {
         $this->assertSame(
