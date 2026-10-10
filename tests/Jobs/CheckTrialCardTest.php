@@ -2,6 +2,7 @@
 
 namespace FlutterSdk\MagicStarter\Tests\Jobs;
 
+use FlutterSdk\MagicStarter\Enums\TrialRefusalReason;
 use FlutterSdk\MagicStarter\Features;
 use FlutterSdk\MagicStarter\Jobs\CheckTrialCard;
 use FlutterSdk\MagicStarter\MagicStarter;
@@ -153,6 +154,35 @@ class CheckTrialCardTest extends TestCase
                 === 'trial_card_never_attached');
     }
 
+    /**
+     * On the `sync` queue `attempts()` is always 1, so the attempt count alone
+     * never gives up and the sweep re-dispatches the row forever. A row older
+     * than six hours is given up on whatever the attempt, keeping the trial.
+     *
+     * The five-hour row is the control: it is still asked again.
+     */
+    public function test_a_row_older_than_six_hours_gives_up_on_its_first_attempt(): void
+    {
+        Log::spy();
+
+        $user = $this->makeUser();
+        $young = $this->trial($user, $user, 'sub_five_hours', minutesAgo: 5 * 60);
+        $old = $this->trial($user, $user, 'sub_seven_hours', minutesAgo: 7 * 60);
+
+        $this->runJob($young)->assertReleased(60);
+        $this->assertNull($young->refresh()->checked_at);
+
+        $this->runJob($old)->assertNotReleased();
+
+        $old->refresh();
+        $this->assertNotNull($old->checked_at);
+        $this->assertNull($old->refused_at);
+
+        Log::shouldHaveReceived('warning')
+            ->withArgs(fn (string $message, array $context): bool => ($context['reason'] ?? null)
+                === 'trial_card_never_attached' && ($context['billing_trial_id'] ?? null) === $old->getKey());
+    }
+
     public function test_a_payment_method_without_a_card_keeps_the_trial(): void
     {
         $user = $this->makeUser();
@@ -204,7 +234,7 @@ class CheckTrialCardTest extends TestCase
         $this->assertNotNull($earlier->checked_at);
 
         $this->assertNotNull($later->refused_at);
-        $this->assertSame('duplicate', $later->refusal_reason);
+        $this->assertSame(TrialRefusalReason::DUPLICATE, $later->refusal_reason);
         $this->assertNotNull($later->checked_at);
 
         $this->assertSame(['sub_later'], $this->gateway->cancelled);
@@ -260,7 +290,7 @@ class CheckTrialCardTest extends TestCase
         $this->assertNull($earlier->refused_at);
         $this->assertSame('fp_shared_card', $earlier->card_fingerprint);
         $this->assertNotNull($later->refused_at);
-        $this->assertSame('card_reused', $later->refusal_reason);
+        $this->assertSame(TrialRefusalReason::CARD_REUSED, $later->refusal_reason);
         $this->assertSame(['sub_second_person'], $this->gateway->cancelled);
 
         $this->assertNotNull(Subscription::query()->where('stripe_id', 'sub_second_person')->first());
@@ -289,7 +319,7 @@ class CheckTrialCardTest extends TestCase
         $this->runInOrder($earlierFirst, $earlier, $later);
 
         $this->assertNull($earlier->refresh()->refused_at);
-        $this->assertSame('card_reused', $later->refresh()->refusal_reason);
+        $this->assertSame(TrialRefusalReason::CARD_REUSED, $later->refresh()->refusal_reason);
         $this->assertSame(['sub_card_b'], $this->gateway->cancelled);
     }
 
@@ -383,13 +413,19 @@ class CheckTrialCardTest extends TestCase
     }
 
     /**
-     * A refusal whose cancel never landed, on a subscription that has since
-     * converted to paid, is withdrawn rather than cancelled: the check never
-     * cancels a customer, and a refusal left on record would make the webhook
-     * skip every later update of a subscription somebody is paying for.
+     * An owed refusal is cancelled only on Stripe's LIVE word, never on the
+     * local row's.
+     *
+     * The local row here still says `trialing`, which is exactly what it would
+     * say had a webhook been missed, while Stripe reports the subscription
+     * paying. The refusal is withdrawn rather than the customer cancelled, and
+     * said loudly, because it means a cancel failed for longer than the trial.
+     * Reading the local row would cancel a paying subscription.
      */
-    public function test_an_owed_cancel_on_a_subscription_that_converted_withdraws_the_refusal(): void
+    public function test_an_owed_refusal_stripe_reports_paying_is_withdrawn_whatever_the_local_row_says(): void
     {
+        Log::spy();
+
         $user = $this->makeUser();
         $this->trial($user, $user, 'sub_kept_paying', minutesAgo: 10);
         $later = $this->trial($user, $user, 'sub_converted', minutesAgo: 5);
@@ -398,16 +434,9 @@ class CheckTrialCardTest extends TestCase
             'sub_kept_paying' => 'fp_one',
             'sub_converted' => 'fp_two',
         ];
-        $this->gateway->failingCancels = 1;
+        $this->owe($later);
 
-        try {
-            $this->runJob($later);
-            $this->fail('The failed cancel was swallowed.');
-        } catch (RuntimeException) {
-            // The refusal is written and the cancel is owed.
-        }
-
-        Subscription::query()->where('stripe_id', 'sub_converted')->update(['stripe_status' => 'active']);
+        $this->gateway->statuses['sub_converted'] = 'active';
 
         $this->runJob($later);
 
@@ -416,7 +445,92 @@ class CheckTrialCardTest extends TestCase
         $this->assertNull($later->refusal_reason);
         $this->assertNotNull($later->checked_at);
         $this->assertSame([], $this->gateway->cancelled);
-        $this->assertNotNull(Subscription::query()->where('stripe_id', 'sub_converted')->first());
+        $this->assertSame(['sub_converted'], $this->gateway->statusAsked);
+        $this->assertSame(
+            'trialing',
+            Subscription::query()->where('stripe_id', 'sub_converted')->value('stripe_status'),
+            'The local row was meant to be the stale one.',
+        );
+
+        Log::shouldHaveReceived('error')
+            ->withArgs(fn (string $message, array $context): bool => ($context['reason'] ?? null)
+                === 'refused_trial_converted' && ($context['stripe_status'] ?? null) === 'active');
+    }
+
+    /**
+     * A subscription Stripe has already ended needs no cancel: the refusal is
+     * stamped finished as it stands, and nothing is sent to Stripe but the read.
+     */
+    #[DataProvider('endedStatuses')]
+    public function test_an_owed_refusal_stripe_already_ended_is_finished_without_a_cancel(string $status): void
+    {
+        $user = $this->makeUser();
+        $this->trial($user, $user, 'sub_first', minutesAgo: 10);
+        $later = $this->trial($user, $user, 'sub_ended', minutesAgo: 5);
+
+        $this->gateway->fingerprints = [
+            'sub_first' => 'fp_one',
+            'sub_ended' => 'fp_two',
+        ];
+        $this->owe($later);
+
+        $this->gateway->statuses['sub_ended'] = $status;
+
+        $this->runJob($later);
+
+        $later->refresh();
+        $this->assertNotNull($later->refused_at);
+        $this->assertSame(TrialRefusalReason::DUPLICATE, $later->refusal_reason);
+        $this->assertNotNull($later->checked_at);
+        $this->assertSame([], $this->gateway->cancelled);
+        $this->assertNull(Subscription::query()->where('stripe_id', 'sub_ended')->first());
+    }
+
+    /**
+     * A NEW refusal is gated the same way: the walk refuses on the local row,
+     * and the cancel still waits for Stripe to say `trialing`. A subscription
+     * whose conversion the local row has not caught up with is kept.
+     */
+    public function test_a_fresh_refusal_is_not_cancelled_while_stripe_says_it_is_paying(): void
+    {
+        $user = $this->makeUser();
+        $this->trial($user, $user, 'sub_first_trial', minutesAgo: 10);
+        $later = $this->trial($user, $user, 'sub_paid_in_stripe', minutesAgo: 5);
+
+        $this->gateway->fingerprints = [
+            'sub_first_trial' => 'fp_one',
+            'sub_paid_in_stripe' => 'fp_two',
+        ];
+        $this->gateway->statuses['sub_paid_in_stripe'] = 'past_due';
+
+        $this->runJob($later);
+
+        $later->refresh();
+        $this->assertNull($later->refused_at);
+        $this->assertNotNull($later->checked_at);
+        $this->assertSame([], $this->gateway->cancelled);
+        $this->assertNotNull(Subscription::query()->where('stripe_id', 'sub_paid_in_stripe')->first());
+    }
+
+    /**
+     * A retry after a lock timeout already holds the fingerprint, so it goes
+     * straight to the decision rather than paying for the same Stripe read.
+     */
+    public function test_a_stored_fingerprint_is_not_read_again(): void
+    {
+        $first = $this->makeUser();
+        $second = $this->makeUser();
+        $this->trial($first, $first, 'sub_read_a', minutesAgo: 10)
+            ->forceFill(['card_fingerprint' => 'fp_stored', 'checked_at' => Carbon::now()])
+            ->save();
+        $later = $this->trial($second, $second, 'sub_read_b', minutesAgo: 5);
+        $later->forceFill(['card_fingerprint' => 'fp_stored'])->save();
+
+        $this->runJob($later);
+
+        $this->assertSame([], $this->gateway->asked);
+        $this->assertSame(TrialRefusalReason::CARD_REUSED, $later->refresh()->refusal_reason);
+        $this->assertSame(['sub_read_b'], $this->gateway->cancelled);
     }
 
     // -------------------------------------------------------------------------
@@ -502,9 +616,42 @@ class CheckTrialCardTest extends TestCase
 
         $this->runInOrder(true, $earlier, $later);
 
-        $this->assertSame('card_reused', $later->refresh()->refusal_reason);
+        $this->assertSame(TrialRefusalReason::CARD_REUSED, $later->refresh()->refusal_reason);
 
         return $second;
+    }
+
+    /**
+     * @return array<string, array{0: string}>
+     */
+    public static function endedStatuses(): array
+    {
+        return [
+            'canceled' => ['canceled'],
+            'incomplete_expired' => ['incomplete_expired'],
+        ];
+    }
+
+    /**
+     * Leave [$later] refused with its cancel owed: the first cancel throws, as
+     * a Stripe outage on the job's last attempt would.
+     */
+    private function owe(BillingTrial $later): void
+    {
+        $this->gateway->failingCancels = 1;
+
+        try {
+            $this->runJob($later);
+            $this->fail('The failed cancel was swallowed.');
+        } catch (RuntimeException $failure) {
+            $this->assertSame('Stripe is down.', $failure->getMessage());
+        }
+
+        $later->refresh();
+        $this->assertNotNull($later->refused_at);
+        $this->assertNull($later->checked_at);
+
+        $this->gateway->statusAsked = [];
     }
 
     private function runInOrder(bool $earlierFirst, BillingTrial $earlier, BillingTrial $later): void
@@ -573,13 +720,18 @@ class CheckTrialCardTest extends TestCase
             'quantity' => 1,
         ]);
 
-        return BillingTrial::query()->create([
+        $trial = new BillingTrial;
+        $trial->forceFill([
             'user_id' => $user->getKey(),
             'billable_type' => $billable->getMorphClass(),
             'billable_id' => $billable->getKey(),
             'stripe_subscription_id' => $subscriptionId,
             'subscription_created_at' => $createdAt,
-        ]);
+            'created_at' => $createdAt,
+            'updated_at' => $createdAt,
+        ])->save();
+
+        return $trial;
     }
 
     private function createSchema(): void
@@ -587,6 +739,7 @@ class CheckTrialCardTest extends TestCase
         foreach ([
             'create_users_table.php',
             'add_cashier_customer_columns_to_billable_table.php',
+            'add_entitlement_provenance_to_billable_table.php',
             'create_subscriptions_table.php',
             'create_subscription_items_table.php',
             'create_billing_trials_table.php',
@@ -635,11 +788,28 @@ class FakeTrialCardGateway extends TrialCardGateway
 
     public int $failingCancels = 0;
 
+    /**
+     * Stripe's live status per subscription; an unlisted one is `trialing`.
+     *
+     * @var array<string, string>
+     */
+    public array $statuses = [];
+
+    /** @var list<string> */
+    public array $statusAsked = [];
+
     public function fingerprintFor(string $subscriptionId): string|false|null
     {
         $this->asked[] = $subscriptionId;
 
         return $this->fingerprints[$subscriptionId] ?? null;
+    }
+
+    public function status(string $subscriptionId): string
+    {
+        $this->statusAsked[] = $subscriptionId;
+
+        return $this->statuses[$subscriptionId] ?? 'trialing';
     }
 
     public function cancel(string $subscriptionId): void

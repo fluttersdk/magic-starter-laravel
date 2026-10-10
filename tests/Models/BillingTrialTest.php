@@ -2,6 +2,7 @@
 
 namespace FlutterSdk\MagicStarter\Tests\Models;
 
+use FlutterSdk\MagicStarter\Enums\TrialRefusalReason;
 use FlutterSdk\MagicStarter\Models\BillingTrial;
 use FlutterSdk\MagicStarter\Tests\Fixtures\ConcreteUser;
 use FlutterSdk\MagicStarter\Tests\TestCase;
@@ -146,6 +147,38 @@ class BillingTrialTest extends TestCase
         $this->assertInstanceOf(Carbon::class, $trial->checked_at);
         $this->assertNull($trial->refused_at);
         $this->assertTrue($trial->user->is($user));
+    }
+
+    /**
+     * The refusal reason reads back as its enum, so a caller comparing it
+     * against a misspelt string is a type error rather than a silent false.
+     */
+    public function test_the_refusal_reason_is_cast_to_its_enum(): void
+    {
+        $this->prepare(true);
+        $user = $this->makeUser();
+        $trial = $this->makeTrial($user, [
+            'refused_at' => now(),
+            'refusal_reason' => TrialRefusalReason::CARD_REUSED,
+        ]);
+
+        $trial = BillingTrial::query()->findOrFail($trial->getKey());
+
+        $this->assertSame(TrialRefusalReason::CARD_REUSED, $trial->refusal_reason);
+        $this->assertSame(
+            'card_reused',
+            DB::table('billing_trials')->where('id', $trial->getKey())->value('refusal_reason'),
+        );
+    }
+
+    /**
+     * The checkout tags a trial subscription with this key and the webhook
+     * reads it back from Stripe, so its value is a wire contract with every
+     * subscription already in flight.
+     */
+    public function test_the_trial_metadata_key_is_the_wire_value(): void
+    {
+        $this->assertSame('magic_starter_trial_user', BillingTrial::USER_METADATA_KEY);
     }
 
     public function test_the_migration_is_a_no_op_against_an_existing_table(): void

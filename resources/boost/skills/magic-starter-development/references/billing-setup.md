@@ -140,7 +140,7 @@ php artisan billing:doctor --json --remote
 - Checkout always sends `payment_method_collection=always`. The `customer.subscription.created` webhook records a `billing_trials` row and queues `CheckTrialCard`, which reads the card fingerprint and, among trials sharing a person, a subject or a card, keeps the earliest and cancels later ones still trialing (no proration, no invoice).
 - The table needs `create_billing_trials_table.php`: a fresh `magic-starter:install --features=billing` publishes it; for an existing application copy it from `vendor/fluttersdk/magic-starter-laravel/database/migrations/` into `database/migrations/` under a later timestamp and run `php artisan migrate`. `billing:doctor` reports a missing table as `schema.billing_trials`.
 - A refused trial whose card had already trialed mails `TrialRefusedNotification`; `magic-starter.billing.trial_refused_notification` (`MAGIC_STARTER_TRIAL_REFUSED_NOTIFICATION`, default `true`) switches it off.
-- `billing:reconcile` re-dispatches a trial check unchecked after 30 minutes, which a `sync` queue needs because the job cannot retry itself there.
+- `billing:reconcile` re-dispatches every trial check (and every refusal still owed its cancel) unchecked after 30 minutes, on its own cadence (`magic-starter.billing.reconcile.cadence`, default `daily`; set `hourly` when trials are on). A `sync` queue relies on it, because the job cannot retry itself there.
 - Tell the owner: the fingerprint of a refused person is retained after the account is deleted (`user_id` becomes null) as an anti-abuse record, so the privacy policy should say so; and a wallet card (Apple Pay, Google Pay) can carry a different fingerprint than the plain card, which is an accepted limitation.
 
 ## What to Watch For

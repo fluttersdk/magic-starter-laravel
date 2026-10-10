@@ -246,6 +246,37 @@ final class BillingCatalogue
     }
 
     /**
+     * Whether any product offers a trial.
+     *
+     * The gate every trial reader asks first (the plans endpoint, the
+     * reconciler's trial sweep, the doctor), because it is config alone: an
+     * adopter selling without trials answers false here and never touches the
+     * `billing_trials` table, which they need not have migrated.
+     */
+    public static function offersTrials(): bool
+    {
+        return self::trialProductKeys() !== [];
+    }
+
+    /**
+     * The keys of the products that offer a trial, in config order.
+     *
+     * @return list<string>
+     */
+    public static function trialProductKeys(): array
+    {
+        $keys = [];
+
+        foreach (self::products() as $product) {
+            if ($product['trial_days'] > 0) {
+                $keys[] = $product['key'];
+            }
+        }
+
+        return $keys;
+    }
+
+    /**
      * @return Product|null
      */
     public static function product(string $key): ?array

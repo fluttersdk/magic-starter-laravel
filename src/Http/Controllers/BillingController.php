@@ -10,6 +10,7 @@ use FlutterSdk\MagicStarter\Enums\BillingProvider;
 use FlutterSdk\MagicStarter\Enums\ProductType;
 use FlutterSdk\MagicStarter\Http\Resources\SubscriptionResource;
 use FlutterSdk\MagicStarter\MagicStarter;
+use FlutterSdk\MagicStarter\Models\BillingTrial;
 use FlutterSdk\MagicStarter\Policies\BillingPolicy;
 use FlutterSdk\MagicStarter\Support\BillingCatalogue;
 use FlutterSdk\MagicStarter\Support\JsonObject;
@@ -140,17 +141,6 @@ class BillingController
     public const INVOICES_PER_PAGE = 24;
 
     /**
-     * The subscription metadata key a trial checkout tags with the acting
-     * user's key.
-     *
-     * The trial webhook records the `billing_trials` row from it, and it is the
-     * only place the PERSON travels: under the team subject the Stripe customer
-     * is the team, so nothing else on the subscription says who started the
-     * trial.
-     */
-    public const TRIAL_USER_METADATA_KEY = 'magic_starter_trial_user';
-
-    /**
      * @param  TrialEligibility  $trialEligibility  Who may start a trial; a container
      *                                              binding, so an adopter can replace it.
      */
@@ -220,7 +210,7 @@ class BillingController
      */
     protected function trialOffered(Request $request): bool
     {
-        if (! $this->catalogueOffersTrials()) {
+        if (! BillingCatalogue::offersTrials()) {
             return false;
         }
 
@@ -231,20 +221,6 @@ class BillingController
         }
 
         return $this->trialEligibility->allows($request->user(), $billable);
-    }
-
-    /**
-     * Whether any catalogue product offers a trial.
-     */
-    protected function catalogueOffersTrials(): bool
-    {
-        foreach (BillingCatalogue::products() as $product) {
-            if ($product['trial_days'] > 0) {
-                return true;
-            }
-        }
-
-        return false;
     }
 
     /**
@@ -720,7 +696,7 @@ class BillingController
             $subscription
                 ->trialDays($trialDays)
                 ->withMetadata([
-                    self::TRIAL_USER_METADATA_KEY => (string) $user->getKey(),
+                    BillingTrial::USER_METADATA_KEY => (string) $user->getKey(),
                 ]);
         }
 

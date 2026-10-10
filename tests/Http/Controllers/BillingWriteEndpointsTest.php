@@ -19,6 +19,7 @@ use Illuminate\Foundation\Auth\Access\Authorizable;
 use Illuminate\Routing\RouteCollection;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Gate;
+use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Str;
 use Illuminate\Testing\TestResponse;
 use Laravel\Cashier\Checkout;
@@ -949,6 +950,34 @@ class BillingWriteEndpointsTest extends TestCase
         $this->assertNull(BillingWriteRail::$checkoutTrialDays);
         $this->assertNull(BillingWriteRail::$checkoutMetadata);
         $this->assertSame('always', BillingWriteRail::$checkoutSessionOptions['payment_method_collection'] ?? null);
+    }
+
+    /**
+     * A product offering a trial over an unmigrated `billing_trials` table is
+     * still SOLD, without the trial: the eligibility read finds no table and
+     * answers no, rather than the checkout answering 500.
+     */
+    public function test_checkout_sells_without_a_trial_while_the_trials_table_is_missing(): void
+    {
+        config(['magic-starter.billing.products.pro_monthly.trial_days' => 14]);
+
+        $this->bootBillingRoutes('user');
+
+        $user = $this->createUser('unmigrated-buyer@example.test');
+
+        app('db.schema')->drop('billing_trials');
+        Log::spy();
+
+        $this->buy($user, 'pro_monthly')->assertOk();
+
+        $this->assertSame(['price_pro' => 1], BillingWriteRail::$checkoutItems);
+        $this->assertNull(BillingWriteRail::$checkoutTrialDays);
+        $this->assertNull(BillingWriteRail::$checkoutMetadata);
+
+        Log::shouldHaveReceived('warning')
+            ->withArgs(fn (string $message, array $context): bool => ($context['reason'] ?? null)
+                === 'billing_trials_table_missing')
+            ->once();
     }
 
     /**

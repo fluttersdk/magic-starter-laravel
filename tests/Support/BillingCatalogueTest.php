@@ -679,6 +679,22 @@ class BillingCatalogueTest extends TestCase
     }
 
     /**
+     * The one answer to "does anything here offer a trial", which three readers
+     * used to compute each on their own: the plans endpoint, the reconciler's
+     * trial sweep and the doctor.
+     */
+    public function test_offers_trials_answers_whether_any_product_offers_one(): void
+    {
+        $this->assertFalse(BillingCatalogue::offersTrials());
+        $this->assertSame([], BillingCatalogue::trialProductKeys());
+
+        config(['magic-starter.billing.products.pro_monthly.trial_days' => 14]);
+
+        $this->assertTrue(BillingCatalogue::offersTrials());
+        $this->assertSame(['pro_monthly'], BillingCatalogue::trialProductKeys());
+    }
+
+    /**
      * A catalogue that passes every rule: one free floor, two sellable tiers and
      * a consumable, on all three channels.
      *

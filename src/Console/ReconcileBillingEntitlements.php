@@ -112,8 +112,9 @@ use RuntimeException;
  * ## It also retries the trial card checks nothing else will
  *
  * A full run (never a `--billable=` one) re-dispatches {@see CheckTrialCard}
- * for every live trial still unchecked half an hour after it was recorded:
- * see {@see self::redispatchUncheckedTrials()}.
+ * for every trial still unchecked half an hour after it was recorded, a
+ * refusal whose cancel is still owed included: see
+ * {@see self::redispatchUncheckedTrials()}.
  */
 class ReconcileBillingEntitlements extends Command
 {
@@ -267,15 +268,21 @@ class ReconcileBillingEntitlements extends Command
     }
 
     /**
-     * Re-dispatch the card check of every live trial still unchecked half an
-     * hour after the webhook recorded it.
+     * Re-dispatch the card check of every trial still unchecked half an hour
+     * after the webhook recorded it, refused or not.
      *
      * The webhook queues {@see CheckTrialCard} after its transaction commits,
      * and that dispatch can be lost after the row has committed (a process
      * killed between the two, a queue that refused the push). On the `sync`
-     * queue the job also cannot release itself for a retry. Either way the row
-     * stays unchecked, and this sweep is what retries it. Half an hour leaves a
-     * check still on its way (six attempts a minute apart) alone.
+     * queue the job also cannot release itself for a retry. A REFUSED row with
+     * no `checked_at` is a cancel the job wrote and could not finish (Stripe
+     * failed on its last attempt), and nothing but this sweep ever retries it;
+     * the retry asks Stripe's live status before it cancels anything. Either
+     * way the row stays unchecked, and this sweep is what retries it. Half an
+     * hour leaves a check still on its way (six attempts a minute apart) alone.
+     *
+     * It runs on this command's cadence, daily by default, which is why an
+     * application selling trials should schedule it `hourly`.
      *
      * Two guards, both before the first query, so an adopter who sells no
      * trial never touches the table: some catalogue product must offer
@@ -286,14 +293,13 @@ class ReconcileBillingEntitlements extends Command
      */
     protected function redispatchUncheckedTrials(): void
     {
-        if (! $this->catalogueOffersTrials() || ! Schema::hasTable('billing_trials')) {
+        if (! BillingCatalogue::offersTrials() || ! Schema::hasTable('billing_trials')) {
             return;
         }
 
         $dispatched = 0;
 
         BillingTrial::query()
-            ->live()
             ->whereNull('checked_at')
             ->where('created_at', '<=', CarbonImmutable::now()->subMinutes(self::TRIAL_CHECK_GRACE_MINUTES))
             ->lazyById(self::CHUNK_SIZE)
@@ -308,17 +314,20 @@ class ReconcileBillingEntitlements extends Command
     }
 
     /**
-     * Whether any catalogue product offers a trial.
+     * Re-project ONE subject's entitlement from its local `default` Cashier
+     * row, outside a sweep.
+     *
+     * The Stripe arm of {@see self::reconcile()} alone: no tallies, no store
+     * read, no trial sweep and no output, so it is safe to call from a job
+     * while a sweep runs in the same process. {@see CheckTrialCard} calls it
+     * after deleting a refused duplicate's local row on a subject a surviving
+     * trial bills: the duplicate's own created event wrote its tier and
+     * product, and no later event writes the survivor's back. Like the arm it
+     * wraps it is a local read and a projection, claimed only on disagreement.
      */
-    protected function catalogueOffersTrials(): bool
+    public function reconcileStripeSubject(Model $billable): void
     {
-        foreach (BillingCatalogue::products() as $product) {
-            if ($product['trial_days'] > 0) {
-                return true;
-            }
-        }
-
-        return false;
+        $this->reconcileStripeRail($billable);
     }
 
     /**

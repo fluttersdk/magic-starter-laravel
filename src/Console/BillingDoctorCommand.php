@@ -344,18 +344,16 @@ class BillingDoctorCommand extends Command
      * trial.
      *
      * Checkout and the plans endpoint read the table for every trial product,
-     * so a catalogue offering one over an unmigrated database fails both on a
-     * missing table. A catalogue offering none never reads it, so its absence
+     * and without it they offer nobody a trial: the catalogue promises one and
+     * every customer is charged on day one, with only a log line to say why.
+     * A catalogue offering none never reads it, so its absence
      * is not reported at all: nobody is asked to run a migration nothing uses.
      * An unreachable database is reported by exception class alone, for the
      * reason {@see self::checkSubscriptionKeys()} gives.
      */
     private function checkTrialsTable(): void
     {
-        $trialProducts = array_keys(array_filter(
-            BillingCatalogue::products(),
-            static fn (array $product): bool => $product['trial_days'] > 0,
-        ));
+        $trialProducts = BillingCatalogue::trialProductKeys();
 
         if ($trialProducts === []) {
             return;
@@ -378,8 +376,8 @@ class BillingDoctorCommand extends Command
         $exists
             ? $this->check('schema.billing_trials', self::OK, "The {$model->getTable()} table exists.")
             : $this->check('schema.billing_trials', self::ERROR, sprintf(
-                'The %s table is missing while [%s] offer a trial, so checkout and the plans endpoint fail '
-                . 'reading it; publish the package migration create_billing_trials_table.php and migrate.',
+                'The %s table is missing while [%s] offer a trial, so no trial is offered to anybody; '
+                . 'publish the package migration create_billing_trials_table.php and migrate.',
                 $model->getTable(),
                 implode(', ', $trialProducts),
             ));

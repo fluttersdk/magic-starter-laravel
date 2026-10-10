@@ -3,10 +3,10 @@
 namespace FlutterSdk\MagicStarter\Jobs;
 
 use FlutterSdk\MagicStarter\Console\ReconcileBillingEntitlements;
+use FlutterSdk\MagicStarter\Enums\TrialRefusalReason;
 use FlutterSdk\MagicStarter\Http\Controllers\StripeWebhookController;
 use FlutterSdk\MagicStarter\Models\BillingTrial;
 use FlutterSdk\MagicStarter\Notifications\TrialRefusedNotification;
-use FlutterSdk\MagicStarter\Support\StripeSubscriptionState;
 use FlutterSdk\MagicStarter\Support\TrialCardGateway;
 use Illuminate\Contracts\Queue\ShouldQueue;
 use Illuminate\Database\Eloquent\Builder;
@@ -19,6 +19,7 @@ use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Notification;
 use Laravel\Cashier\Cashier;
+use Stripe\Subscription as StripeSubscription;
 use Throwable;
 
 /**
@@ -28,8 +29,11 @@ use Throwable;
  * Queued by {@see StripeWebhookController} after the transaction that recorded
  * the `billing_trials` row commits, because the card read is a Stripe round
  * trip and the webhook transaction must make none. Re-dispatched by
- * {@see ReconcileBillingEntitlements} for a row still unchecked half an hour
- * later, which covers an after-commit dispatch that was lost.
+ * {@see ReconcileBillingEntitlements} for any row still unchecked half an hour
+ * later, refused or not, which covers an after-commit dispatch that was lost
+ * and a cancel that failed on the job's last attempt. That sweep runs on
+ * `billing:reconcile`'s own cadence (`magic-starter.billing.reconcile.cadence`,
+ * daily by default), so an application selling trials should set it `hourly`.
  *
  * ## Earliest wins
  *
@@ -43,24 +47,35 @@ use Throwable;
  * The decision runs under one cache lock for every trial
  * (`magic-starter:billing-trials`), so two jobs never decide overlapping sets
  * at once. The lock is only fleet-wide on a shared cache store; on `file` or
- * `array` every server locks for itself. The only Stripe call made while it is
- * held is the cancel of a row whose refusal is ALREADY written, so a Stripe
- * webhook racing the cancel always finds the refusal.
+ * `array` every server locks for itself. The only Stripe calls made while it is
+ * held are the live status read and the cancel of a row whose refusal is
+ * ALREADY written, so a Stripe webhook racing the cancel always finds the
+ * refusal.
+ *
+ * Known limitation: the set is one hop from this row. A chain (A shares a card
+ * with B, B a person with C) is settled by the jobs of the rows in it, each of
+ * which looks at its own neighbours, so C is compared with B and not with A.
  *
  * ## What a refusal does
  *
  * - The refusal (`refused_at`, `refusal_reason`) is written before the cancel.
  *   `checked_at` stays null until the cancel is confirmed, so a refused row
  *   with no `checked_at` is a cancel still owed, and a retry of any job whose
- *   set reaches it finishes it instead of skipping it.
+ *   set reaches it finishes it instead of skipping it. While it is owed the
+ *   webhook keeps applying the subscription's updates, so its local row stays
+ *   true.
  * - Only a subscription whose local Cashier row still says `trialing` is
- *   refused. A later duplicate that already converted to paid (or ended) is
- *   only stamped checked and kept: this check refuses trials, never customers.
+ *   refused, and it is only cancelled while Stripe's LIVE status says
+ *   `trialing` too. One that converted (paid, or in dunning) has its refusal
+ *   withdrawn, and one Stripe already ended is stamped without a cancel: this
+ *   check refuses trials, never customers.
  * - A refused subscription on the SAME subject as a surviving one loses its
  *   local Cashier row and items, as Cashier does itself on `incomplete_expired`.
  *   Left in place it would be the subject's newest `default` row, and
  *   `subscription('default')` would answer the cancelled one to every swap,
- *   cancel, trial date and reconciler read after it.
+ *   cancel, trial date and reconciler read after it. The subject's entitlement
+ *   is then re-projected from the survivor, because the refused duplicate's own
+ *   created event wrote its tier and product and nothing later writes them back.
  * - The person is mailed ({@see TrialRefusedNotification}) only for
  *   `card_reused`, only while `magic-starter.billing.trial_refused_notification`
  *   is on, and only after the cancel was confirmed and stamped, so a mail
@@ -74,9 +89,10 @@ use Throwable;
  * the job keeps the trial and logs instead of releasing into a failure.
  *
  * On the `sync` queue `release()` requeues nothing and `attempts()` is always
- * 1, so this job never retries itself there: the scheduled `billing:reconcile`
- * sweep, which re-dispatches every live row still unchecked after 30 minutes,
- * is what retries it.
+ * 1, so this job never retries itself there and the attempt count never runs
+ * out: the `billing:reconcile` sweep is what retries it, and a row recorded
+ * more than six hours ago is given up on whatever the attempt, keeping the
+ * trial, so the sweep does not re-dispatch it forever.
  */
 class CheckTrialCard implements ShouldQueue
 {
@@ -86,6 +102,26 @@ class CheckTrialCard implements ShouldQueue
      * The one lock every trial decision is taken under.
      */
     public const LOCK = 'magic-starter:billing-trials';
+
+    /**
+     * Seconds the lock is held at most: long enough for a set's status reads
+     * and cancels, each a Stripe round trip, to finish under it.
+     */
+    public const LOCK_SECONDS = 120;
+
+    /**
+     * Hours after the row was recorded past which a missing payment method is
+     * given up on, whatever the attempt.
+     */
+    public const GIVE_UP_AFTER_HOURS = 6;
+
+    /**
+     * Stripe statuses that need no cancel: the subscription is already over.
+     */
+    protected const ENDED_STATUSES = [
+        StripeSubscription::STATUS_CANCELED,
+        StripeSubscription::STATUS_INCOMPLETE_EXPIRED,
+    ];
 
     /**
      * Attempts before the queue gives up, the last of which keeps the trial
@@ -109,10 +145,13 @@ class CheckTrialCard implements ShouldQueue
     /**
      * Read the trial's card and settle every conflict it is part of.
      *
+     * @param  ReconcileBillingEntitlements  $reconciler  Whose Stripe arm re-projects a subject
+     *                                                    that lost a refused duplicate.
+     *
      * @throws \Illuminate\Contracts\Cache\LockTimeoutException When another decision holds the
      *                                                          lock past ten seconds; the retry takes it again.
      */
-    public function handle(TrialCardGateway $gateway): void
+    public function handle(TrialCardGateway $gateway, ReconcileBillingEntitlements $reconciler): void
     {
         // 1. Re-read the row. A checked row was decided; a deleted one is moot.
         $trial = BillingTrial::query()->find($this->trialId);
@@ -121,25 +160,33 @@ class CheckTrialCard implements ShouldQueue
             return;
         }
 
-        // 2. A live row needs its card first, read outside the lock. A refused
+        // 2. A live row needs its card first, read outside the lock, unless a
+        //    run that then timed out on the lock already stored it. A refused
         //    row with no `checked_at` is a cancel still owed and goes straight
         //    to the decision, which finishes it.
-        if ($trial->refused_at === null && ! $this->readCard($trial, $gateway)) {
+        $needsCard = $trial->refused_at === null && $trial->card_fingerprint === null;
+
+        if ($needsCard && ! $this->readCard($trial, $gateway)) {
             return;
         }
 
-        // 3. Decide under the lock; cancels of refused rows happen in here.
-        /** @var list<BillingTrial> $cardReused */
-        $cardReused = Cache::lock(self::LOCK, 30)->block(10, fn (): array => $this->decide($trial, $gateway));
+        // 3. Decide under the lock; status reads and cancels happen in here.
+        /** @var array{card_reused: list<BillingTrial>, reproject: list<BillingTrial>} $outcome */
+        $outcome = Cache::lock(self::LOCK, self::LOCK_SECONDS)
+            ->block(10, fn (): array => $this->decide($trial, $gateway));
 
-        // 4. Tell the people whose card had already trialed, outside the lock.
-        $this->notifyRefused($cardReused);
+        // 4. Hand each subject that lost a same-subject duplicate back to its
+        //    survivor, outside the lock: a local read and one write each.
+        $this->reproject($outcome['reproject'], $reconciler);
+
+        // 5. Tell the people whose card had already trialed, outside the lock.
+        $this->notifyRefused($outcome['card_reused']);
     }
 
     /**
      * Say loudly that a check gave up, because it may have given up owing a
      * cancel: a refused row whose `checked_at` never landed is a trial Stripe
-     * may still be running.
+     * may still be running, until the sweep re-dispatches it.
      */
     public function failed(?Throwable $exception): void
     {
@@ -155,8 +202,8 @@ class CheckTrialCard implements ShouldQueue
      * Ask the gateway for the card and store its fingerprint.
      *
      * Returns false when there is nothing to decide: no payment method yet (the
-     * job was released, or kept the trial on its last attempt), or a method
-     * with no card fingerprint (the trial is kept and stamped).
+     * job was released, or gave up keeping the trial), or a method with no card
+     * fingerprint (the trial is kept and stamped).
      */
     protected function readCard(BillingTrial $trial, TrialCardGateway $gateway): bool
     {
@@ -188,11 +235,17 @@ class CheckTrialCard implements ShouldQueue
     }
 
     /**
-     * Ask again in a minute, or keep the trial on the last attempt.
+     * Ask again in a minute, or keep the trial once the attempts ran out or
+     * the row is older than {@see self::GIVE_UP_AFTER_HOURS}.
+     *
+     * The age is what ends the wait on the `sync` queue, where `attempts()` is
+     * always 1 and the attempt count alone would never run out.
      */
     protected function awaitPaymentMethod(BillingTrial $trial): void
     {
-        if ($this->attempts() < $this->tries) {
+        $tooOld = $trial->created_at?->lte(Carbon::now()->subHours(self::GIVE_UP_AFTER_HOURS)) ?? false;
+
+        if ($this->attempts() < $this->tries && ! $tooOld) {
             $this->release($this->backoff);
 
             return;
@@ -212,18 +265,24 @@ class CheckTrialCard implements ShouldQueue
      * Settle every conflict this trial is part of. Runs under the lock.
      *
      * Returns the rows refused as `card_reused` whose cancel was confirmed in
-     * this run, which are the ones owed a mail.
+     * this run, which are the ones owed a mail, and the refused rows that
+     * shared a subject with a survivor, whose subject is re-projected.
      *
-     * @return list<BillingTrial>
+     * @return array{card_reused: list<BillingTrial>, reproject: list<BillingTrial>}
      */
     protected function decide(BillingTrial $trial, TrialCardGateway $gateway): array
     {
+        $outcome = [
+            'card_reused' => [],
+            'reproject' => [],
+        ];
+
         // 1. Re-read inside the lock: another job may have decided this row
         //    while its card was being read.
         $fresh = $trial->fresh();
 
         if (! $fresh instanceof BillingTrial || $fresh->checked_at !== null) {
-            return [];
+            return $outcome;
         }
 
         // 2. Walk the set earliest first. A row conflicting with nothing kept
@@ -261,13 +320,21 @@ class CheckTrialCard implements ShouldQueue
             $owed[] = $row;
         }
 
-        // 3. Cancel every refusal still owed, this run's and any an earlier
+        // 3. Finish every refusal still owed, this run's and any an earlier
         //    run wrote and could not finish.
-        $cardReused = [];
-
         foreach ($owed as $row) {
-            if ($this->finishRefusal($row, $kept, $gateway) && $row->refusal_reason === 'card_reused') {
-                $cardReused[] = $row;
+            $sharesSubject = $this->sharesSubjectWithAny($row, $kept);
+
+            if (! $this->finishRefusal($row, $sharesSubject, $gateway)) {
+                continue;
+            }
+
+            if ($sharesSubject) {
+                $outcome['reproject'][] = $row;
+            }
+
+            if ($row->refusal_reason === TrialRefusalReason::CARD_REUSED) {
+                $outcome['card_reused'][] = $row;
             }
         }
 
@@ -280,16 +347,15 @@ class CheckTrialCard implements ShouldQueue
             $this->stamp($fresh);
         }
 
-        return $cardReused;
+        return $outcome;
     }
 
     /**
      * This row, every live row sharing its person, subject or card, and every
      * refused row among those still owed a cancel, earliest first.
      *
-     * One hop from this row and no further. A chain (A shares a card with B,
-     * B a person with C) is settled by the jobs of the rows in it, each of
-     * which looks at its own neighbours.
+     * One hop from this row and no further; see the class docblock for the
+     * chain this leaves to the other rows' jobs.
      *
      * @return Collection<int, BillingTrial>
      */
@@ -340,15 +406,15 @@ class CheckTrialCard implements ShouldQueue
      *
      * @param  list<BillingTrial>  $conflicts  Kept rows this row conflicts with.
      */
-    protected function refusalReason(BillingTrial $row, array $conflicts): string
+    protected function refusalReason(BillingTrial $row, array $conflicts): TrialRefusalReason
     {
         foreach ($conflicts as $survivor) {
             if ($this->samePerson($row, $survivor) || $this->sameSubject($row, $survivor)) {
-                return 'duplicate';
+                return TrialRefusalReason::DUPLICATE;
             }
         }
 
-        return 'card_reused';
+        return TrialRefusalReason::CARD_REUSED;
     }
 
     protected function samePerson(BillingTrial $row, BillingTrial $other): bool
@@ -363,15 +429,33 @@ class CheckTrialCard implements ShouldQueue
     }
 
     /**
+     * Whether a row bills the same subject as any of the survivors.
+     *
+     * @param  list<BillingTrial>  $kept
+     */
+    protected function sharesSubjectWithAny(BillingTrial $row, array $kept): bool
+    {
+        foreach ($kept as $survivor) {
+            if ($this->sameSubject($row, $survivor)) {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    /**
      * Whether the subscription behind a row is still a trial, read from the
      * local Cashier row the webhooks keep in step.
      *
-     * No row is not a trial. Nothing that is not a trial is ever refused or
-     * cancelled here.
+     * Enough to decide whether to REFUSE, never whether to cancel: the cancel
+     * waits for Stripe's live word ({@see self::finishRefusal()}). No row is
+     * not a trial.
      */
     protected function stillTrialing(BillingTrial $row): bool
     {
-        return $this->localSubscription($row)?->getAttribute('stripe_status') === 'trialing';
+        return $this->localSubscription($row)?->getAttribute('stripe_status')
+            === StripeSubscription::STATUS_TRIALING;
     }
 
     /**
@@ -381,7 +465,7 @@ class CheckTrialCard implements ShouldQueue
      * stamped, and until the cancel is confirmed this row is a cancel owed,
      * not a decided one.
      */
-    protected function refuse(BillingTrial $row, string $reason): void
+    protected function refuse(BillingTrial $row, TrialRefusalReason $reason): void
     {
         $row->forceFill([
             'refused_at' => Carbon::now(),
@@ -391,64 +475,53 @@ class CheckTrialCard implements ShouldQueue
 
         Log::warning('A trial was refused: an earlier trial shares its person, subject or card.', [
             'reason' => 'trial_refused',
-            'refusal_reason' => $reason,
+            'refusal_reason' => $reason->value,
             'billing_trial_id' => $row->getKey(),
             'subscription' => $row->stripe_subscription_id,
         ]);
     }
 
     /**
-     * Cancel a refused row's subscription, drop its local Cashier row when it
-     * shares a subject with a survivor, and stamp the row decided.
+     * Cancel a refused row's subscription while Stripe says it is a trial,
+     * drop its local Cashier row when it shares a subject with a survivor, and
+     * stamp the row decided.
      *
-     * A local row that converted to a granting status (paid, or in dunning)
-     * while the cancel was owed is NOT cancelled, because this check must never cancel a customer. Its refusal
-     * is withdrawn rather than left on record: a refused row makes the webhook
-     * skip every `customer.subscription.updated` for the subscription, which
-     * on a paying one would freeze its local row and its entitlement. The case
-     * is logged as an error, since it means a cancel failed for longer than the
-     * trial lasted.
+     * Stripe's LIVE status decides, never the local row's, because the local
+     * row is only as fresh as the last webhook that landed and a cancel owed
+     * for longer than the trial may be owed on a subscription that is paying:
      *
-     * Returns whether the refusal stands (the subscription is cancelled).
+     * - `trialing`: cancelled, then finished.
+     * - already ended (`canceled`, `incomplete_expired`): finished, no cancel.
+     * - anything else (paid, in dunning, or a state this check never started):
+     *   the refusal is WITHDRAWN, never cancelled, and logged as an error,
+     *   since it means a cancel failed for longer than the trial lasted. A
+     *   refusal stamped finished instead would make the webhook skip every
+     *   later update of a subscription somebody is paying for.
      *
-     * @param  list<BillingTrial>  $kept  The survivors of this decision.
+     * Returns whether the refusal stands.
+     *
+     * @param  bool  $sharesSubject  Whether a survivor of this decision bills the same subject.
      */
-    protected function finishRefusal(BillingTrial $row, array $kept, TrialCardGateway $gateway): bool
+    protected function finishRefusal(BillingTrial $row, bool $sharesSubject, TrialCardGateway $gateway): bool
     {
-        $local = $this->localSubscription($row);
+        // 1. Stripe's word, read once under the lock.
+        $status = $gateway->status($row->stripe_subscription_id);
 
-        $status = $local?->getAttribute('stripe_status');
-
-        // 1. Cancel only what is still a trial. A missing local row was
-        //    deleted after a confirmed cancel by a run that stopped short of
-        //    the stamp, and an ended one needs no cancel, so neither calls
-        //    Stripe; a paying one withdraws the refusal instead.
-        if ($status === 'trialing') {
+        if ($status === StripeSubscription::STATUS_TRIALING) {
             $gateway->cancel($row->stripe_subscription_id);
-        } elseif (is_string($status) && StripeSubscriptionState::grants($status)) {
-            Log::error('A refused trial converted before its cancel landed; the refusal was withdrawn.', [
-                'reason' => 'refused_trial_converted',
-                'billing_trial_id' => $row->getKey(),
-                'subscription' => $row->stripe_subscription_id,
-                'stripe_status' => $status,
-            ]);
-
-            $row->forceFill([
-                'refused_at' => null,
-                'refusal_reason' => null,
-                'checked_at' => Carbon::now(),
-            ])->save();
+        } elseif (! in_array($status, self::ENDED_STATUSES, true)) {
+            $this->withdrawRefusal($row, $status);
 
             return false;
         }
 
-        $sharesSubject = array_filter(
-            $kept,
-            fn (BillingTrial $survivor): bool => $this->sameSubject($row, $survivor),
-        ) !== [];
+        // 2. Drop the local row and stamp the refusal finished in one
+        //    transaction, so a retry never sees one without the other. The
+        //    local row is read only for this delete; a missing one was never
+        //    synced or was already deleted by Cashier, and there is nothing to
+        //    drop.
+        $local = $this->localSubscription($row);
 
-        // 2. Drop the local row and stamp the refusal finished together, so a
-        //    retry never sees one without the other.
         DB::transaction(function () use ($row, $local, $sharesSubject): void {
             if ($local !== null && $sharesSubject) {
                 $local->items()->delete();
@@ -459,6 +532,60 @@ class CheckTrialCard implements ShouldQueue
         });
 
         return true;
+    }
+
+    /**
+     * Take a refusal back from a subscription Stripe no longer reports as a
+     * trial, and mark the row decided as kept.
+     */
+    protected function withdrawRefusal(BillingTrial $row, string $status): void
+    {
+        Log::error('A refused trial is no longer trialing in Stripe; the refusal was withdrawn, nothing cancelled.', [
+            'reason' => 'refused_trial_converted',
+            'billing_trial_id' => $row->getKey(),
+            'subscription' => $row->stripe_subscription_id,
+            'stripe_status' => $status,
+        ]);
+
+        $row->forceFill([
+            'refused_at' => null,
+            'refusal_reason' => null,
+            'checked_at' => Carbon::now(),
+        ])->save();
+    }
+
+    /**
+     * Re-project each subject that lost a same-subject duplicate from its
+     * surviving local Cashier row.
+     *
+     * Through the reconciler's own Stripe arm for one subject rather than a
+     * claim assembled here: it reads the subject's `default` row (now the
+     * survivor), maps the price through the catalogue, writes through
+     * {@see \FlutterSdk\MagicStarter\Contracts\WritesEntitlement} as a
+     * projection, and only on a disagreement, so the ordering rules that
+     * guard every other write guard this one too. It is a local read; nothing
+     * here calls Stripe.
+     *
+     * @param  list<BillingTrial>  $refused
+     */
+    protected function reproject(array $refused, ReconcileBillingEntitlements $reconciler): void
+    {
+        $done = [];
+
+        foreach ($refused as $row) {
+            $subject = $row->billable_type . '|' . $row->billable_id;
+
+            if (isset($done[$subject])) {
+                continue;
+            }
+
+            $done[$subject] = true;
+            $billable = $row->billable;
+
+            if ($billable instanceof Model) {
+                $reconciler->reconcileStripeSubject($billable);
+            }
+        }
     }
 
     /**

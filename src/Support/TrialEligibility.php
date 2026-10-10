@@ -2,11 +2,12 @@
 
 namespace FlutterSdk\MagicStarter\Support;
 
-use FlutterSdk\MagicStarter\Http\Controllers\BillingController;
 use FlutterSdk\MagicStarter\Models\BillingTrial;
 use Illuminate\Contracts\Auth\Authenticatable;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\Model;
+use Illuminate\Support\Facades\Log;
+use Illuminate\Support\Facades\Schema;
 
 /**
  * Whether the acting user may start a free trial on the billable they are
@@ -34,8 +35,7 @@ use Illuminate\Database\Eloquent\Model;
  * - A billable that holds or ever held this rail's `default` subscription, in
  *   ANY status. A returning paid customer is not a new one, and a current
  *   subscriber offered a trial would meet the checkout's `subscription_exists`
- *   refusal ({@see BillingController::REASON_SUBSCRIPTION_EXISTS}) straight
- *   after a "Start free trial" button.
+ *   refusal straight after a "Start free trial" button.
  *
  * A REFUSED row (`refused_at` set) still counts. The card check refuses a
  * trial whose card already trialed; letting that refusal reset eligibility
@@ -51,12 +51,26 @@ use Illuminate\Database\Eloquent\Model;
 class TrialEligibility
 {
     /**
+     * Whether the `billing_trials` table exists, once looked for; null until then.
+     *
+     * Memoised on the instance, which the container builds for its consumer
+     * (the billing controller), so the schema is read at most once per
+     * instance and its warning is said at most once with it.
+     */
+    protected ?bool $trialsTableExists = null;
+
+    /**
      * Whether [$user] may start a trial on [$billable].
      *
      * Reads the local database only, never the rail: it runs on the plans
      * endpoint, which is on the billing screen's hot path, and the rows it
      * reads are the ones Cashier's webhooks and this package's own trial
      * webhook keep in step.
+     *
+     * A missing `billing_trials` table answers no: an adopter who set a
+     * `trial_days` before running the migration sells at the full price, with
+     * a warning, instead of answering 500 from the plans endpoint and the
+     * checkout alike.
      *
      * @param  Authenticatable  $user  The request's user, never one read off the billable.
      * @param  Model  $billable  The subject the trial would bill: the user itself or their current team.
@@ -68,14 +82,47 @@ class TrialEligibility
             return false;
         }
 
-        // 2. A subscription relation the billable already carries, so a
+        // 2. No history table, no history to read and no trial to record.
+        if (! $this->trialsTableExists()) {
+            return false;
+        }
+
+        // 3. A subscription relation the billable already carries, so a
         //    checkout that ran the subscription guard pays no second query.
         if ($this->heldDefaultSubscription($billable)) {
             return false;
         }
 
-        // 3. One query for both histories, the person's and the subject's.
+        // 4. One query for both histories, the person's and the subject's.
         return ! $this->hasTrialed($user, $billable);
+    }
+
+    /**
+     * Whether the `billing_trials` table exists, warning the first time it
+     * does not.
+     *
+     * Asked on the model's own connection, which is where every read of the
+     * table goes.
+     */
+    protected function trialsTableExists(): bool
+    {
+        if ($this->trialsTableExists !== null) {
+            return $this->trialsTableExists;
+        }
+
+        $model = new BillingTrial;
+        $table = $model->getTable();
+
+        $this->trialsTableExists = Schema::connection($model->getConnectionName())->hasTable($table);
+
+        if (! $this->trialsTableExists) {
+            Log::warning('A product offers a trial but the billing_trials table is missing; no trial is offered.', [
+                'reason' => 'billing_trials_table_missing',
+                'table' => $table,
+            ]);
+        }
+
+        return $this->trialsTableExists;
     }
 
     /**

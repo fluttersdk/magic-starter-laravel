@@ -688,13 +688,16 @@ return [
     | and a queued job (CheckTrialCard) reads its card fingerprint once,
     | outside the webhook. Among trials sharing a person, a billed subject or a
     | card, the EARLIEST (Stripe's own `created`) survives; a later one still
-    | trialing is refused and cancelled with no proration and no invoice, and
-    | one that already converted to paid is left alone. The resolution runs
-    | under a cache lock, which like onOneServer() above is only fleet-wide on a
-    | shared cache store. On the `sync` queue the job cannot retry itself, so
-    | the sweep above re-dispatches any trial still unchecked after 30 minutes;
-    | it does so only while a product offers `trial_days` and the
-    | `billing_trials` table exists.
+    | trialing is refused and cancelled with no proration and no invoice, once
+    | Stripe's live status confirms it is a trial, and one that already
+    | converted to paid is left alone. The resolution runs under a cache lock,
+    | which like onOneServer() above is only fleet-wide on a shared cache
+    | store. On the `sync` queue the job cannot retry itself, and a cancel can
+    | fail on its last attempt, so the sweep above re-dispatches any trial
+    | still unchecked after 30 minutes, refused or not; it does so only while a
+    | product offers `trial_days` and the `billing_trials` table exists. It
+    | runs on THIS cadence, daily by default, not on one of its own: set
+    | 'cadence' to 'hourly' while a product offers a trial.
     |
     | 'trial_refused_notification' (default true) mails the person whose trial
     | was refused because the card had already taken one: no trial was opened,

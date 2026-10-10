@@ -13,6 +13,7 @@ use Illuminate\Contracts\Auth\Authenticatable as AuthenticatableContract;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Schema\Blueprint;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Schema;
 use Illuminate\Support\Str;
 use Laravel\Cashier\Billable;
@@ -174,6 +175,38 @@ class TrialEligibilityTest extends TestCase
         ]);
 
         $this->assertFalse($this->eligibility()->allows($user, $user));
+    }
+
+    /**
+     * Trials switched on over a database that never ran the `billing_trials`
+     * migration offer nobody a trial, and say so once, rather than raising a
+     * QueryException on the plans endpoint and the checkout.
+     *
+     * Asked twice on one instance, because both readers may ask within one
+     * request and the table is looked for only the first time.
+     */
+    public function test_a_missing_trials_table_allows_no_trial_and_warns_once(): void
+    {
+        $user = $this->createUser();
+
+        Schema::drop('billing_trials');
+        Log::spy();
+        DB::enableQueryLog();
+
+        $eligibility = $this->eligibility();
+
+        $this->assertFalse($eligibility->allows($user, $user));
+        $this->assertFalse($eligibility->allows($user, $user));
+
+        Log::shouldHaveReceived('warning')
+            ->withArgs(fn (string $message, array $context): bool => ($context['reason'] ?? null)
+                === 'billing_trials_table_missing')
+            ->once();
+
+        $this->assertSame([], array_filter(
+            array_column(DB::getQueryLog(), 'query'),
+            static fn (string $query): bool => str_contains($query, 'from "billing_trials"'),
+        ));
     }
 
     /**

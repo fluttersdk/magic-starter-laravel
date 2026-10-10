@@ -174,6 +174,23 @@ class TrialCardGatewayTest extends TestCase
         $this->gateway()->cancel('sub_trial');
     }
 
+    /**
+     * The live status the job gates every cancel on is one plain retrieve,
+     * with nothing expanded: the status is all it needs, and an expansion
+     * would cost a heavier answer inside the lock.
+     */
+    public function test_status_reads_the_live_subscription_status_in_one_retrieve(): void
+    {
+        $this->stripe->answer($this->subscription(paymentMethod: null, status: 'past_due'));
+
+        $this->assertSame('past_due', $this->gateway()->status('sub_trial'));
+
+        $retrieves = $this->stripe->requestsTo('get', '/v1/subscriptions/sub_trial');
+        $this->assertCount(1, $retrieves);
+        $this->assertArrayNotHasKey('expand', $retrieves[0]['params']);
+        $this->assertCount(1, $this->stripe->requests);
+    }
+
     private function gateway(): TrialCardGateway
     {
         return $this->app->make(TrialCardGateway::class);

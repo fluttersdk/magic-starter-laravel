@@ -358,7 +358,7 @@ A product with `trial_days` of 2 or more starts a free trial on the **web rail**
 | A billable with any `billing_trials` row | One trial per subject, so a team one member trialed is not trialed again by the next member. |
 | A billable holding a `default` Cashier subscription, in any status | A returning paid customer is not a new one, and a current subscriber would meet `subscription_exists` straight after a "Start free trial" button. |
 
-A row the card check refused still counts, so a refusal never resets eligibility. An application with its own rules (a domain allow-list, a sales-led exception) binds a subclass of `TrialEligibility` in the container.
+A row the card check refused still counts, so a refusal never resets eligibility. While the `billing_trials` table is missing, nobody is eligible: the plans show `trial_days: 0`, checkout sells at the full price, and a warning names the table, instead of both answering 500. An application with its own rules (a domain allow-list, a sales-led exception) binds a subclass of `TrialEligibility` in the container.
 
 ### Checkout
 
@@ -369,15 +369,19 @@ Every checkout, trial or not, sends `payment_method_collection=always`. A trial'
 ### The card check
 
 1. The `customer.subscription.created` webhook records a `billing_trials` row for a `trialing` `default` subscription carrying the metadata tag, in the same transaction as the entitlement write, and queues `CheckTrialCard` after that transaction commits. A trial started anywhere else (the Stripe dashboard, another integration) carries no tag and is not this package's to police.
-2. `CheckTrialCard` reads the card's fingerprint outside the webhook: the subscription's default payment method first, then the customer's invoice default. Checkout may not have attached the card yet, so the job asks again a minute later, for about six minutes (six attempts), and then keeps the trial. A payment method that is not a card, or a card Stripe reports without a fingerprint, also keeps the trial: there is nothing to compare.
-3. Under a cache lock (`magic-starter:billing-trials`), the job walks every trial that shares a person, a billed subject or a card with this one, **earliest first**, and keeps the trial Stripe created first (its `created`, then the row key), never the job that happened to run first. A later trial that is still `trialing` is refused and cancelled in Stripe with no proration and no invoice. One that already converted to paying is kept, because this check refuses trials and never customers.
-4. A refused trial on the same subject as the surviving one also loses its local Cashier row, so `subscription('default')` keeps answering the survivor.
+2. `CheckTrialCard` reads the card's fingerprint outside the webhook: the subscription's default payment method first, then the customer's invoice default. Checkout may not have attached the card yet, so the job asks again a minute later, for about six minutes (six attempts), and then keeps the trial; a trial recorded more than six hours ago is kept on its first attempt, which is what ends the wait on the `sync` queue. A payment method that is not a card, or a card Stripe reports without a fingerprint, also keeps the trial: there is nothing to compare.
+3. Under a cache lock (`magic-starter:billing-trials`), the job walks every trial that shares a person, a billed subject or a card with this one, **earliest first**, and keeps the trial Stripe created first (its `created`, then the row key), never the job that happened to run first. A later trial whose local Cashier row is still `trialing` is refused, and cancelled in Stripe with no proration and no invoice only while Stripe's **live** status also says `trialing`. One that already converted to paying is kept, and a refusal whose cancel was still owed when it converted is withdrawn, because this check refuses trials and never customers. One Stripe has already ended is marked done without a cancel.
+4. A refused trial on the same subject as the surviving one also loses its local Cashier row, so `subscription('default')` keeps answering the survivor, and the subject's entitlement is re-projected from the survivor's row: the refused trial's own `customer.subscription.created` had written its tier and product.
 
 The lock is fleet-wide only on a shared cache store (`redis`, `memcached`, `database`); on `file` or `array` each server locks for itself.
 
-The refusal reason is `card_reused` when the card is the only thing two trials share, and `duplicate` when they share a person or a subject. The refusal is written before the cancel, and a refused row with no `checked_at` is a cancel still owed that any later check of its set finishes.
+The refusal reason is `card_reused` when the card is the only thing two trials share, and `duplicate` when they share a person or a subject. The refusal is written before the cancel, and a refused row with no `checked_at` is a cancel still owed that any later check of its set finishes. While it is owed, the webhook keeps applying the subscription's `customer.subscription.updated` events, so its local status stays true; once the refusal is finished they are skipped.
 
-On the `sync` queue the job cannot release itself for a retry, so it never retries there. `billing:reconcile` covers that, and a dispatch lost after the commit: a full run re-dispatches the check of every live trial still unchecked after 30 minutes. It does so only while a product offers `trial_days` and the `billing_trials` table exists.
+On the `sync` queue the job cannot release itself for a retry, so it never retries there. `billing:reconcile` covers that, a dispatch lost after the commit, and a cancel that failed on the job's last attempt: a full run re-dispatches the check of every trial still unchecked after 30 minutes, refused or not. It does so only while a product offers `trial_days` and the `billing_trials` table exists.
+
+The sweep runs on `billing:reconcile`'s cadence (`magic-starter.billing.reconcile.cadence`, `daily` by default), not on a cadence of its own. While a product offers a trial, set `MAGIC_STARTER_BILLING_RECONCILE_CADENCE=hourly`, or a stranded check waits up to a day.
+
+A check settles the trials one hop from its own row. A chain (A shares a card with B, B a person with C) is settled by the checks of the rows in it, each against its own neighbours, so C is compared with B and not with A. This is a known limitation.
 
 ### The refusal mail
 

@@ -23,6 +23,7 @@ use Illuminate\Routing\RouteCollection;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Gate;
 use Illuminate\Support\Facades\Lang;
+use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Str;
 use Illuminate\Testing\TestResponse;
 use Laravel\Cashier\Invoice;
@@ -1352,6 +1353,36 @@ class BillingControllerTest extends TestCase
             array_column(DB::getQueryLog(), 'query'),
             static fn (string $query): bool => str_contains($query, 'billing_trials'),
         ));
+    }
+
+    /**
+     * A catalogue that offers a trial over a database that never ran the
+     * `billing_trials` migration still serves the plan grid: no trial on any
+     * row, and one warning naming the table, instead of a 500 on the billing
+     * screen.
+     */
+    public function test_plans_offer_no_trial_while_the_trials_table_is_missing(): void
+    {
+        $this->configureTrialCatalogue();
+        $this->bootBillingRoutes('user');
+
+        $user = $this->createUser('unmigrated-trial@example.test');
+
+        app('db.schema')->drop('billing_trials');
+        Log::spy();
+
+        $this->assertSame(
+            [
+                'pro_monthly' => 0,
+                'pro_annual' => 0,
+            ],
+            $this->trialDaysByProduct($user),
+        );
+
+        Log::shouldHaveReceived('warning')
+            ->withArgs(fn (string $message, array $context): bool => ($context['reason'] ?? null)
+                === 'billing_trials_table_missing')
+            ->once();
     }
 
     /**

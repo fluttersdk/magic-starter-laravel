@@ -50,15 +50,11 @@ return new class extends Migration
                 ->constrained('users')
                 ->nullOnDelete();
 
-            $table->string('billable_type', 255);
-            // The billable's key follows `use_uuids` like every other key, but
-            // carries no foreign key, so it is declared here rather than through
-            // MigrationHelper::foreignKey().
-            if (MigrationHelper::usesUuids()) {
-                $table->uuid('billable_id');
-            } else {
-                $table->unsignedBigInteger('billable_id');
-            }
+            // `billable_type` and `billable_id`, the key following `use_uuids`
+            // like every other key, with the composite index the eligibility
+            // read uses (has this billable already had a trial). Morph columns
+            // carry no foreign key, which is the point: see above.
+            MigrationHelper::morphColumns($table, 'billable');
 
             $table->string('stripe_subscription_id', 255)->unique();
             $table->timestamp('subscription_created_at');
@@ -69,11 +65,6 @@ return new class extends Migration
 
             $table->timestamps();
 
-            // The eligibility read: has this billable already had a trial.
-            $table->index([
-                'billable_type',
-                'billable_id',
-            ]);
             $table->index('user_id');
         });
     }

@@ -20,6 +20,7 @@ use Illuminate\Database\Eloquent\Model;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 use Laravel\Cashier\Http\Controllers\WebhookController as CashierWebhookController;
+use Stripe\Subscription as StripeSubscription;
 use Symfony\Component\HttpFoundation\Response;
 
 /**
@@ -107,11 +108,13 @@ use Symfony\Component\HttpFoundation\Response;
  * `customer.subscription.created` for a trial this package's checkout opened
  * writes a `billing_trials` row in the same transaction as the grant, and
  * queues {@see CheckTrialCard} to read the card after the commit; the same
- * no-Stripe rule holds for it. A trial that check refused is cancelled in
- * Stripe and, on a shared subject, deleted locally, so its later
- * `customer.subscription.updated` events are skipped whole (see
- * {@see self::handleCustomerSubscriptionUpdated()}). Its deletion event runs as
- * any other does and revokes nothing while the survivor still grants.
+ * no-Stripe rule holds for it. A trial that check refused AND finished
+ * (cancelled in Stripe and, on a shared subject, deleted locally) has its later
+ * `customer.subscription.updated` events skipped whole (see
+ * {@see self::handleCustomerSubscriptionUpdated()}); one whose cancel is still
+ * owed does not, so its local row keeps saying what Stripe says until the
+ * check finishes it. Its deletion event runs as any other does and revokes
+ * nothing while the survivor still grants.
  */
 class StripeWebhookController extends CashierWebhookController
 {
@@ -160,12 +163,14 @@ class StripeWebhookController extends CashierWebhookController
     protected function handleCustomerSubscriptionUpdated(array $payload): Response
     {
         return $this->processOnce($payload, function (array $payload): Response {
-            // A trial the card check refused is over as far as this package is
-            // concerned, and both halves below would undo that: Cashier's
-            // handler is `firstOrNew` on the Stripe id, so it recreates a local
-            // row the check deleted (as the subject's newest `default`), and
-            // the projection would write the cancelled subscription's status
-            // over the survivor's grant. The deletion event still runs.
+            // A trial the card check refused and finished is over as far as
+            // this package is concerned, and both halves below would undo
+            // that: Cashier's handler is `firstOrNew` on the Stripe id, so it
+            // recreates a local row the check deleted (as the subject's newest
+            // `default`), and the projection would write the cancelled
+            // subscription's status over the survivor's grant. The deletion
+            // event still runs. A refusal whose cancel is still OWED is not
+            // skipped: its local row must keep up with Stripe until then.
             if ($this->isRefusedTrial($payload)) {
                 return $this->successMethod();
             }
@@ -352,7 +357,7 @@ class StripeWebhookController extends CashierWebhookController
      *
      * Three conditions, all read from the payload: the subscription is
      * `trialing`, it is of type `default`, and it carries the checkout's
-     * {@see BillingController::TRIAL_USER_METADATA_KEY} tag. A trial started
+     * {@see BillingTrial::USER_METADATA_KEY} tag. A trial started
      * anywhere else (the dashboard, another integration) carries no tag and is
      * not this package's to police.
      *
@@ -381,7 +386,7 @@ class StripeWebhookController extends CashierWebhookController
 
         if ($userId === null
             || ! is_string($subscriptionId)
-            || ($object['status'] ?? null) !== 'trialing'
+            || ($object['status'] ?? null) !== StripeSubscription::STATUS_TRIALING
             || $this->subscriptionType($payload) !== StripeSubscriptionState::SUBSCRIPTION_TYPE
         ) {
             return;
@@ -414,7 +419,15 @@ class StripeWebhookController extends CashierWebhookController
     }
 
     /**
-     * Whether a subscription event is about a trial the card check refused.
+     * Whether a subscription event is about a trial the card check refused and
+     * FINISHED: `refused_at` and `checked_at` both set.
+     *
+     * A refused row with no `checked_at` is a cancel still owed, and its
+     * updates must land. Skipped, they froze the local row at `trialing`, and
+     * a subscription that converted while the cancel was owed read as a trial
+     * still to cancel. The job no longer cancels on the local row's word, but
+     * the row is still what `subscription('default')` and every reader after
+     * it answer from.
      *
      * Asked only for a subscription carrying the checkout's trial tag, so an
      * application that never sold a trial (and may never have migrated the
@@ -440,6 +453,7 @@ class StripeWebhookController extends CashierWebhookController
         return BillingTrial::query()
             ->where('stripe_subscription_id', $subscriptionId)
             ->whereNotNull('refused_at')
+            ->whereNotNull('checked_at')
             ->exists();
     }
 
@@ -451,7 +465,7 @@ class StripeWebhookController extends CashierWebhookController
     protected function trialUserTag(array $object): ?string
     {
         $metadata = $object['metadata'] ?? [];
-        $tag = is_array($metadata) ? ($metadata[BillingController::TRIAL_USER_METADATA_KEY] ?? null) : null;
+        $tag = is_array($metadata) ? ($metadata[BillingTrial::USER_METADATA_KEY] ?? null) : null;
 
         return is_string($tag) && $tag !== '' ? $tag : null;
     }
@@ -476,8 +490,9 @@ class StripeWebhookController extends CashierWebhookController
     }
 
     /**
-     * A paid subscription invoice re-affirms the active entitlement tier read
-     * from the billable's synced Cashier subscription price.
+     * A paid subscription invoice re-affirms the entitlement tier read from the
+     * billable's synced Cashier subscription price, as `active`, or as
+     * `trialing` while that row still is.
      *
      * @param  array<string, mixed>  $object
      */
@@ -527,13 +542,20 @@ class StripeWebhookController extends CashierWebhookController
         $stripeIsOnRecord = BillingProvider::fromWire($this->stringAttribute($billable, 'plan_provider'))
             === BillingProvider::STRIPE;
 
+        // A paid invoice says exactly one thing about the lifecycle: the money
+        // arrived, which is `active`. Except at the start of a trial: Checkout
+        // pays a $0 `subscription_create` invoice while the subscription is
+        // still `trialing`, and `active` there would take the trial off the
+        // screen until the next subscription event. So a local row that says
+        // `trialing` carries its own status, the word Cashier synced from
+        // Stripe's subscription events.
+        $trialing = $this->stringAttribute($subscription, 'stripe_status') === StripeSubscription::STATUS_TRIALING;
+        $providerStatus = $trialing ? StripeSubscription::STATUS_TRIALING : StripeSubscription::STATUS_ACTIVE;
+
         $this->claim(new EntitlementWrite(
             billable: $billable,
             plan: $plan,
-            // A paid invoice says exactly one thing about the lifecycle: the
-            // money arrived. Stripe reports the status itself on a subscription
-            // event, which is where it is read from.
-            status: PlanStatus::ACTIVE,
+            status: StripeSubscriptionState::planStatusFor($providerStatus),
             provider: BillingProvider::STRIPE,
             eventAt: $eventAt,
             // A PROJECTION, and the only one this controller makes: the tier
@@ -542,7 +564,7 @@ class StripeWebhookController extends CashierWebhookController
             // paid for. It may refresh the record; it may not decide that Stripe
             // is the rail billing this subject.
             authoritative: false,
-            providerStatus: 'active',
+            providerStatus: $providerStatus,
             productId: $priceId,
             // An invoice object carries no subscription items, so this path has
             // no period of its own to read and the local Cashier row has no

@@ -8,7 +8,6 @@ use FlutterSdk\MagicStarter\Contracts\WritesEntitlement;
 use FlutterSdk\MagicStarter\Enums\BillingProvider;
 use FlutterSdk\MagicStarter\Enums\PlanStatus;
 use FlutterSdk\MagicStarter\Features;
-use FlutterSdk\MagicStarter\Http\Controllers\BillingController;
 use FlutterSdk\MagicStarter\Http\Controllers\StripeWebhookController;
 use FlutterSdk\MagicStarter\Jobs\CheckTrialCard;
 use FlutterSdk\MagicStarter\MagicStarter;
@@ -1205,7 +1204,7 @@ class StripeWebhookTest extends TestCase
         Bus::fake([CheckTrialCard::class]);
 
         $billable = $this->createBillable();
-        $tag = [BillingController::TRIAL_USER_METADATA_KEY => (string) $billable->getKey()];
+        $tag = [BillingTrial::USER_METADATA_KEY => (string) $billable->getKey()];
 
         $this->postSignedWebhook($this->subscriptionEvent(
             'evt_not_trialing',
@@ -1282,12 +1281,13 @@ class StripeWebhookTest extends TestCase
             'canceled',
             created: static::EVENT_AT + 60,
             subscriptionId: 'sub_duplicate',
-            metadata: [BillingController::TRIAL_USER_METADATA_KEY => (string) $billable->getKey()],
+            metadata: [BillingTrial::USER_METADATA_KEY => (string) $billable->getKey()],
         ))->assertOk();
 
         $billable->refresh();
         $this->assertSame('pro', $billable->getAttribute('plan'));
         $this->assertSame(PlanStatus::TRIALING->value, $billable->getAttribute('plan_status'));
+        $provenance = $this->storedTimestamp($billable, 'plan_source_event_at');
 
         // 3. A late `updated` for the refused subscription recreates nothing
         //    and projects nothing.
@@ -1298,14 +1298,190 @@ class StripeWebhookTest extends TestCase
             'canceled',
             created: static::EVENT_AT + 90,
             subscriptionId: 'sub_duplicate',
-            metadata: [BillingController::TRIAL_USER_METADATA_KEY => (string) $billable->getKey()],
+            metadata: [BillingTrial::USER_METADATA_KEY => (string) $billable->getKey()],
         ))->assertOk();
 
         $this->assertSame(0, CashierSubscription::query()->where('stripe_id', 'sub_duplicate')->count());
         $this->assertSame('sub_webhook_test', $billable->refresh()->subscription('default')?->stripe_id);
         $this->assertSame('pro', $billable->getAttribute('plan'));
         $this->assertSame(PlanStatus::TRIALING->value, $billable->getAttribute('plan_status'));
-        $this->assertSame(static::EVENT_AT + 30, $this->storedTimestamp($billable, 'plan_source_event_at'));
+        $this->assertSame($provenance, $this->storedTimestamp($billable, 'plan_source_event_at'));
+    }
+
+    /**
+     * The stranded refusal, end to end: a refusal written, its cancel failed,
+     * and nothing else ever finishing it except the sweep.
+     *
+     * Each step pins one repair. The `updated` event of an OWED refusal is not
+     * skipped, so Cashier keeps the local row's status true while the cancel
+     * is pending (it was frozen at `trialing` before). The sweep re-dispatches
+     * the refused, unchecked row (it re-dispatched only live rows before). And
+     * the retry asks Stripe before cancelling, so a subscription that
+     * converted in the meantime is never cancelled: the refusal is withdrawn.
+     */
+    public function test_a_stranded_refusal_is_retried_by_the_sweep_and_never_cancels_a_conversion(): void
+    {
+        config(['magic-starter.billing.products.pro_monthly.trial_days' => 14]);
+
+        $gateway = $this->fakeTrialCardGateway([
+            'sub_webhook_test' => 'fp_survivor',
+            'sub_duplicate' => 'fp_duplicate',
+        ]);
+
+        $billable = $this->createBillable();
+        $tag = [BillingTrial::USER_METADATA_KEY => (string) $billable->getKey()];
+
+        // 1. The survivor, then a duplicate whose cancel fails: the refusal is
+        //    written and the cancel is owed.
+        $this->postSignedWebhook($this->trialEvent('evt_stranded_first', $billable->getKey()))->assertOk();
+
+        $gateway->failingCancels = 1;
+
+        $this->postSignedWebhook($this->trialEvent(
+            'evt_stranded_second',
+            $billable->getKey(),
+            subscriptionId: 'sub_duplicate',
+            created: static::EVENT_AT + 30,
+            subscriptionCreated: static::EVENT_AT - 60,
+        ));
+
+        $owed = BillingTrial::query()->where('stripe_subscription_id', 'sub_duplicate')->sole();
+        $this->assertNotNull($owed->refused_at);
+        $this->assertNull($owed->checked_at);
+        $this->assertSame([], $gateway->cancelled);
+
+        // 2. The trial converts while the cancel is owed. The update reaches
+        //    Cashier, so the local row says what Stripe says.
+        $this->postSignedWebhook($this->subscriptionEvent(
+            'evt_stranded_converted',
+            'customer.subscription.updated',
+            'price_pro',
+            'active',
+            created: static::EVENT_AT + 90,
+            subscriptionId: 'sub_duplicate',
+            metadata: $tag,
+        ))->assertOk();
+
+        $this->assertSame(
+            'active',
+            CashierSubscription::query()->where('stripe_id', 'sub_duplicate')->value('stripe_status'),
+        );
+
+        // 3. The sweep finds the owed row and the retry asks Stripe first.
+        $gateway->statuses['sub_duplicate'] = 'active';
+        $this->travel(31)->minutes();
+
+        $this->artisan('billing:reconcile')->assertExitCode(0)->run();
+
+        $owed->refresh();
+        $this->assertNull($owed->refused_at);
+        $this->assertNotNull($owed->checked_at);
+        $this->assertSame([], $gateway->cancelled);
+        $this->assertSame(1, CashierSubscription::query()->where('stripe_id', 'sub_duplicate')->count());
+    }
+
+    /**
+     * A finished refusal (refused and stamped) still has its `updated` events
+     * skipped; only an OWED one lets them through. The control on the test
+     * above, run against the same webhook.
+     */
+    public function test_a_finished_refusal_still_skips_its_updated_events(): void
+    {
+        $this->fakeTrialCardGateway([
+            'sub_webhook_test' => 'fp_survivor',
+            'sub_duplicate' => 'fp_duplicate',
+        ]);
+
+        $billable = $this->createBillable();
+
+        $this->postSignedWebhook($this->trialEvent('evt_finished_first', $billable->getKey()))->assertOk();
+        $this->postSignedWebhook($this->trialEvent(
+            'evt_finished_second',
+            $billable->getKey(),
+            subscriptionId: 'sub_duplicate',
+            created: static::EVENT_AT + 30,
+            subscriptionCreated: static::EVENT_AT - 60,
+        ))->assertOk();
+
+        $this->postSignedWebhook($this->subscriptionEvent(
+            'evt_finished_updated',
+            'customer.subscription.updated',
+            'price_pro',
+            'canceled',
+            created: static::EVENT_AT + 90,
+            subscriptionId: 'sub_duplicate',
+            metadata: [BillingTrial::USER_METADATA_KEY => (string) $billable->getKey()],
+        ))->assertOk();
+
+        $this->assertSame(0, CashierSubscription::query()->where('stripe_id', 'sub_duplicate')->count());
+    }
+
+    /**
+     * A trial Checkout's $0 `subscription_create` invoice is paid with the
+     * subscription still trialing, and must not report the trial as `active`:
+     * the screen would lose the trial until the next subscription event.
+     */
+    public function test_a_zero_invoice_at_trial_start_keeps_the_trial_status(): void
+    {
+        $billable = $this->createBillable();
+
+        $this->postSignedWebhook($this->subscriptionEvent(
+            'evt_trial_created',
+            'customer.subscription.created',
+            'price_pro',
+            'trialing',
+        ))->assertOk();
+
+        $this->postSignedWebhook($this->invoiceEvent('evt_trial_invoice', static::EVENT_AT + 5, [
+            'billing_reason' => 'subscription_create',
+            'amount_paid' => 0,
+            'subscription' => 'sub_webhook_test',
+        ]))->assertOk();
+
+        $billable->refresh();
+        $this->assertSame('pro', $billable->getAttribute('plan'));
+        $this->assertSame(PlanStatus::TRIALING->value, $billable->getAttribute('plan_status'));
+        $this->assertSame('trialing', $billable->getAttribute('plan_provider_status'));
+        $this->assertSame(static::EVENT_AT + 5, $this->storedTimestamp($billable, 'plan_source_event_at'));
+    }
+
+    /**
+     * A refused duplicate on the same subject wrote ITS tier, product and
+     * period when it was created, and nothing later puts the survivor's back:
+     * its local row is deleted and its deletion event revokes nothing while
+     * the survivor grants. The card check re-projects the survivor.
+     *
+     * Two different prices, so the tier on the entitlement says whose it is.
+     */
+    public function test_a_refused_same_subject_duplicate_hands_the_entitlement_back_to_the_survivor(): void
+    {
+        $this->fakeTrialCardGateway([
+            'sub_webhook_test' => 'fp_survivor',
+            'sub_business' => 'fp_business',
+        ]);
+
+        $billable = $this->createBillable();
+
+        $this->postSignedWebhook($this->trialEvent('evt_tier_first', $billable->getKey()))->assertOk();
+        $this->postSignedWebhook($this->trialEvent(
+            'evt_tier_second',
+            $billable->getKey(),
+            subscriptionId: 'sub_business',
+            created: static::EVENT_AT + 30,
+            subscriptionCreated: static::EVENT_AT - 60,
+            priceId: 'price_business',
+        ))->assertOk();
+
+        $this->assertNotNull(
+            BillingTrial::query()->where('stripe_subscription_id', 'sub_business')->value('checked_at'),
+        );
+        $this->assertSame(0, CashierSubscription::query()->where('stripe_id', 'sub_business')->count());
+
+        $billable->refresh();
+        $this->assertSame('pro', $billable->getAttribute('plan'));
+        $this->assertSame('price_pro', $billable->getAttribute('plan_product_id'));
+        $this->assertSame(PlanStatus::TRIALING->value, $billable->getAttribute('plan_status'));
+        $this->assertSame(BillingProvider::STRIPE->value, $billable->getAttribute('plan_provider'));
     }
 
     // -------------------------------------------------------------------------
@@ -1323,15 +1499,16 @@ class StripeWebhookTest extends TestCase
         string $subscriptionId = 'sub_webhook_test',
         int $created = self::EVENT_AT,
         int $subscriptionCreated = self::EVENT_AT - 120,
+        string $priceId = 'price_pro',
     ): array {
         return $this->subscriptionEvent(
             $eventId,
             'customer.subscription.created',
-            'price_pro',
+            $priceId,
             'trialing',
             created: $created,
             subscriptionId: $subscriptionId,
-            metadata: [BillingController::TRIAL_USER_METADATA_KEY => (string) $userId],
+            metadata: [BillingTrial::USER_METADATA_KEY => (string) $userId],
             subscriptionCreated: $subscriptionCreated,
         );
     }
@@ -1353,6 +1530,16 @@ class StripeWebhookTest extends TestCase
             public array $cancelled = [];
 
             /**
+             * Stripe's live status per subscription; an unlisted one is
+             * `trialing`.
+             *
+             * @var array<string, string>
+             */
+            public array $statuses = [];
+
+            public int $failingCancels = 0;
+
+            /**
              * @param  array<string, string>  $fingerprints
              */
             public function __construct(private array $fingerprints) {}
@@ -1364,8 +1551,19 @@ class StripeWebhookTest extends TestCase
                 return $this->fingerprints[$subscriptionId] ?? null;
             }
 
+            public function status(string $subscriptionId): string
+            {
+                return $this->statuses[$subscriptionId] ?? 'trialing';
+            }
+
             public function cancel(string $subscriptionId): void
             {
+                if ($this->failingCancels > 0) {
+                    $this->failingCancels--;
+
+                    throw new RuntimeException('Stripe is down.');
+                }
+
                 $this->cancelled[] = $subscriptionId;
             }
         };
@@ -1570,9 +1768,13 @@ class StripeWebhookTest extends TestCase
      * An invoice object carries no subscription items, which is why this builder
      * has no period parameters: the handler has no period to read here.
      *
+     * `$fields` is merged into the invoice object, which is how a trial's $0
+     * `subscription_create` invoice is told apart from a renewal.
+     *
+     * @param  array<string, mixed>  $fields
      * @return array<string, mixed>
      */
-    private function invoiceEvent(string $eventId, int $created = self::EVENT_AT): array
+    private function invoiceEvent(string $eventId, int $created = self::EVENT_AT, array $fields = []): array
     {
         return [
             'id' => $eventId,
@@ -1582,6 +1784,7 @@ class StripeWebhookTest extends TestCase
                 'object' => [
                     'id' => 'in_webhook_test',
                     'customer' => static::STRIPE_ID,
+                    ...$fields,
                 ],
             ],
         ];

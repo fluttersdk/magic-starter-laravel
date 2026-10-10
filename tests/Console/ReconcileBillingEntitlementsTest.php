@@ -7,6 +7,7 @@ use FlutterSdk\MagicStarter\Console\ReconcileBillingEntitlements;
 use FlutterSdk\MagicStarter\Contracts\WritesEntitlement;
 use FlutterSdk\MagicStarter\Enums\BillingProvider;
 use FlutterSdk\MagicStarter\Enums\PlanStatus;
+use FlutterSdk\MagicStarter\Enums\TrialRefusalReason;
 use FlutterSdk\MagicStarter\Features;
 use FlutterSdk\MagicStarter\Jobs\CheckTrialCard;
 use FlutterSdk\MagicStarter\MagicStarter;
@@ -693,12 +694,15 @@ class ReconcileBillingEntitlementsTest extends TestCase
     // -------------------------------------------------------------------------
 
     /**
-     * Only a LIVE trial still unchecked half an hour after it was recorded is
-     * re-dispatched. That is a check whose after-commit dispatch was lost (a
-     * worker that died, a `sync` queue that cannot retry itself); a younger row
-     * is a check still on its way, a checked or refused one was decided.
+     * Every trial still unchecked half an hour after it was recorded is
+     * re-dispatched, refused or not. A live one is a check whose after-commit
+     * dispatch was lost (a worker that died, a `sync` queue that cannot retry
+     * itself); a refused one is a cancel still owed, whose job gave up on a
+     * Stripe failure on its last attempt, and nothing else would ever finish
+     * it. A younger row is a check still on its way, and a checked one (kept,
+     * or refused and cancelled) was decided.
      */
-    public function test_the_sweep_redispatches_only_stale_unchecked_live_trials(): void
+    public function test_the_sweep_redispatches_every_stale_unchecked_trial_including_owed_refusals(): void
     {
         Bus::fake([CheckTrialCard::class]);
 
@@ -706,17 +710,29 @@ class ReconcileBillingEntitlementsTest extends TestCase
         $this->runPackageMigration('create_billing_trials_table.php');
 
         $stale = $this->recordedTrial('sub_stale', minutesAgo: 31);
+        $owed = $this->recordedTrial('sub_owed', minutesAgo: 31, refused: true);
         $this->recordedTrial('sub_fresh', minutesAgo: 10);
         $this->recordedTrial('sub_checked', minutesAgo: 31, checked: true);
-        $this->recordedTrial('sub_refused', minutesAgo: 31, refused: true);
+        $this->recordedTrial('sub_refused', minutesAgo: 31, checked: true, refused: true);
 
         $this->artisan(ReconcileBillingEntitlements::NAME)->assertExitCode(0)->run();
 
-        Bus::assertDispatchedTimes(CheckTrialCard::class, 1);
-        Bus::assertDispatched(
-            CheckTrialCard::class,
-            fn (CheckTrialCard $job): bool => (string) $job->trialId === (string) $stale->getKey(),
-        );
+        $dispatched = [];
+
+        Bus::assertDispatched(CheckTrialCard::class, function (CheckTrialCard $job) use (&$dispatched): bool {
+            $dispatched[] = (string) $job->trialId;
+
+            return true;
+        });
+
+        sort($dispatched);
+        $expected = [
+            (string) $stale->getKey(),
+            (string) $owed->getKey(),
+        ];
+        sort($expected);
+
+        $this->assertSame($expected, $dispatched);
     }
 
     /**
@@ -895,7 +911,7 @@ class ReconcileBillingEntitlementsTest extends TestCase
             'subscription_created_at' => $recordedAt,
             'checked_at' => $checked ? $recordedAt : null,
             'refused_at' => $refused ? $recordedAt : null,
-            'refusal_reason' => $refused ? 'duplicate' : null,
+            'refusal_reason' => $refused ? TrialRefusalReason::DUPLICATE : null,
             'created_at' => $recordedAt,
             'updated_at' => $recordedAt,
         ])->save();

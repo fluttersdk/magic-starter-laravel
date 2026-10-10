@@ -10,7 +10,8 @@ use Stripe\StripeClient;
 use Stripe\Subscription as StripeSubscription;
 
 /**
- * The two Stripe calls the trial card check makes, and nothing else.
+ * The Stripe calls the trial card check makes, and nothing else: the card read,
+ * the live status read and the cancel.
  *
  * A seam rather than inline calls in {@see CheckTrialCard}: the job's rules
  * (earliest wins, refuse before cancel, keep a converted subscription) are what
@@ -96,6 +97,24 @@ class TrialCardGateway
     }
 
     /**
+     * Stripe's live status word for a subscription, in one plain retrieve.
+     *
+     * What the job gates every cancel on, rather than the local Cashier row:
+     * the local row is only as fresh as the last webhook that landed, and a
+     * cancel decided on a stale `trialing` would cancel a subscription that is
+     * already paying.
+     *
+     * @param  string  $subscriptionId  Stripe's `sub_...` id.
+     *
+     * @throws \Stripe\Exception\ApiErrorException When Stripe cannot be read; the
+     *                                             job's retry is what answers it.
+     */
+    public function status(string $subscriptionId): string
+    {
+        return (string) $this->stripe()->subscriptions->retrieve($subscriptionId)->status;
+    }
+
+    /**
      * Cancel a subscription now, with no proration and no final invoice.
      *
      * Never Cashier's `cancelNow()`: it prorates by default, which on a trial
@@ -139,9 +158,14 @@ class TrialCardGateway
 
     /**
      * The customer's invoice default payment method, expanded, or null.
+     *
+     * Null as well for a default Stripe answered unexpanded (a bare id), which
+     * carries no card to read; the caller treats it as "no method yet".
      */
-    protected function customerDefaultPaymentMethod(StripeClient $stripe, StripeSubscription $subscription): mixed
-    {
+    protected function customerDefaultPaymentMethod(
+        StripeClient $stripe,
+        StripeSubscription $subscription,
+    ): ?PaymentMethod {
         $customer = $subscription->customer;
         $customerId = is_string($customer) ? $customer : $customer->id;
 
@@ -151,7 +175,9 @@ class TrialCardGateway
             ],
         ]);
 
-        return $customer->invoice_settings->default_payment_method ?? null;
+        $paymentMethod = $customer->invoice_settings->default_payment_method ?? null;
+
+        return $paymentMethod instanceof PaymentMethod ? $paymentMethod : null;
     }
 
     /**
