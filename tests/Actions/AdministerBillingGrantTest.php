@@ -22,12 +22,15 @@ use FlutterSdk\MagicStarter\Tests\Fixtures\ConcreteUser;
 use FlutterSdk\MagicStarter\Tests\TestCase;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Events\TransactionBeginning;
+use Illuminate\Database\QueryException;
 use Illuminate\Support\Facades\Event;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Str;
 use Laravel\Cashier\Billable;
 use Laravel\Cashier\Cashier;
 use Laravel\Cashier\Subscription as CashierSubscription;
+use PDOException;
+use Throwable;
 
 /**
  * Locks the operator side of billing: a manual grant, its revoke, and the
@@ -539,6 +542,174 @@ class AdministerBillingGrantTest extends TestCase
         $this->assertSame(BillingProvider::APP_STORE, $refused[0]->provider);
     }
 
+    /**
+     * An allowlisted key (the App Review account) has its sandbox purchases
+     * counted as production by the store job, which would re-project the
+     * record straight back; so it is the store's to end, not the operator's.
+     */
+    public function test_a_sandbox_store_record_of_an_allowlisted_key_is_refused_as_not_manual(): void
+    {
+        config(['magic-starter.billing.revenuecat.secret_api_key' => 'sk_test_revenuecat_secret']);
+
+        $billable = $this->makeBillable([
+            'plan' => 'business',
+            'plan_status' => PlanStatus::ACTIVE->value,
+            'plan_provider' => BillingProvider::APP_STORE->value,
+        ]);
+
+        config(['magic-starter.billing.revenuecat.sandbox_app_user_ids' => [(string) $billable->getKey()]]);
+
+        Http::fake([
+            '*' => Http::response($this->subscriber([
+                'starter_business_monthly' => $this->storeSubscription(['is_sandbox' => true]),
+            ])),
+        ]);
+
+        $this->assertRefused('not_manual', fn () => $this->administer()->revoke(
+            $this->operator(),
+            $billable,
+            'Sandbox tester',
+        ));
+
+        $this->assertSame([], CapturingEntitlementWriter::$writes);
+        $this->assertSame('business', $billable->refresh()->getAttribute('plan'));
+    }
+
+    public function test_a_sandbox_store_record_is_refused_as_not_manual_while_sandbox_is_accepted(): void
+    {
+        config([
+            'magic-starter.billing.revenuecat.secret_api_key' => 'sk_test_revenuecat_secret',
+            'magic-starter.billing.revenuecat.accept_sandbox' => true,
+        ]);
+
+        $billable = $this->makeBillable([
+            'plan' => 'business',
+            'plan_status' => PlanStatus::ACTIVE->value,
+            'plan_provider' => BillingProvider::APP_STORE->value,
+        ]);
+
+        Http::fake([
+            '*' => Http::response($this->subscriber([
+                'starter_business_monthly' => $this->storeSubscription(['is_sandbox' => true]),
+            ])),
+        ]);
+
+        $this->assertRefused('not_manual', fn () => $this->administer()->revoke(
+            $this->operator(),
+            $billable,
+            'Sandbox tester',
+        ));
+
+        $this->assertSame([], CapturingEntitlementWriter::$writes);
+    }
+
+    /**
+     * A database fault while the store rail is re-projected is a defect, not
+     * the rail failing, so it is not logged away as a failed read.
+     */
+    public function test_a_database_fault_in_the_store_reprojection_propagates(): void
+    {
+        config(['magic-starter.billing.revenuecat.secret_api_key' => 'sk_test_revenuecat_secret']);
+
+        $operator = $this->operator();
+        $billable = $this->makeBillable();
+        $this->administer()->grant($operator, $billable, 'pro', 'Comp', null);
+
+        Http::fake([
+            '*' => Http::response($this->subscriber([
+                'starter_business_monthly' => $this->storeSubscription(),
+            ])),
+        ]);
+
+        CapturingEntitlementWriter::$storeWriteFault = new QueryException(
+            'testing',
+            'update "users"',
+            [],
+            new PDOException('database is locked'),
+        );
+
+        $this->expectException(QueryException::class);
+
+        $this->administer()->revoke($operator, $billable, 'Comp ended');
+    }
+
+    // -------------------------------------------------------------------------
+    // Sync of a store payer behind a comp
+    // -------------------------------------------------------------------------
+
+    /**
+     * A store purchase made during a comp was dropped while the comp held the
+     * record, and the re-read when the comp expired failed: the record is left
+     * MANUAL, which the reconciler never walks. Sync is the operator's way back.
+     */
+    public function test_sync_reprojects_a_store_purchase_a_failed_read_left_behind_an_expired_grant(): void
+    {
+        config(['magic-starter.billing.revenuecat.secret_api_key' => 'sk_test_revenuecat_secret']);
+
+        $answering = false;
+        Http::fake(function () use (&$answering) {
+            return $answering
+                ? Http::response($this->subscriber([
+                    'starter_business_monthly' => $this->storeSubscription(),
+                ]))
+                : Http::response(['message' => 'unavailable'], 503);
+        });
+
+        $operator = $this->operator();
+        $billable = $this->makeBillable();
+        $grant = $this->administer()->grant($operator, $billable, 'pro', 'Comp', $this->now()->addDay());
+
+        $this->travelTo($this->now()->addDays(2));
+        $this->assertSame(GrantEndReason::EXPIRED, $this->app->make(AdministerBilling::class)->settleGrant($grant));
+
+        $billable->refresh();
+        $this->assertSame(BillingProvider::MANUAL->value, $billable->getAttribute('plan_provider'));
+        $this->assertNull($billable->getAttribute('plan'));
+
+        $answering = true;
+        $this->administer()->sync($operator, $billable);
+
+        $billable->refresh();
+        $this->assertSame('business', $billable->getAttribute('plan'));
+        $this->assertSame(BillingProvider::APP_STORE->value, $billable->getAttribute('plan_provider'));
+
+        $synced = $this->eventsOf(BillingEventType::ENTITLEMENT_SYNCED);
+        $this->assertCount(1, $synced);
+        $this->assertSame('store', $synced[0]->properties['rail']);
+        $this->assertSame(BillingProvider::APP_STORE, $synced[0]->provider);
+        $this->assertTrue($synced[0]->properties['changed']);
+    }
+
+    /**
+     * While a comp holds the record, a store read would be dropped by the
+     * write rules anyway, so there is nothing to sync.
+     */
+    public function test_sync_does_not_read_the_store_behind_an_open_grant(): void
+    {
+        config(['magic-starter.billing.revenuecat.secret_api_key' => 'sk_test_revenuecat_secret']);
+        Http::fake();
+
+        $operator = $this->operator();
+        $billable = $this->makeBillable();
+        $this->administer()->grant($operator, $billable, 'pro', 'Comp', null);
+
+        $this->assertRefused('nothing_to_sync', fn () => $this->administer()->sync($operator, $billable));
+
+        Http::assertNothingSent();
+    }
+
+    public function test_sync_of_a_record_of_nobody_needs_the_store_rail(): void
+    {
+        Http::fake();
+
+        $this->assertRefused('nothing_to_sync', fn () => $this->administer()->sync(
+            $this->operator(),
+            $this->makeBillable(),
+        ));
+
+        Http::assertNothingSent();
+    }
+
     // -------------------------------------------------------------------------
     // Helpers
     // -------------------------------------------------------------------------
@@ -675,17 +846,28 @@ class CapturingEntitlementWriter implements WritesEntitlement
 
     public static ?bool $answer = null;
 
+    /**
+     * Thrown for a write on a store rail, standing in for the database failing
+     * under the store job.
+     */
+    public static ?Throwable $storeWriteFault = null;
+
     public function __construct(private WritesEntitlement $inner) {}
 
     public static function reset(): void
     {
         self::$writes = [];
         self::$answer = null;
+        self::$storeWriteFault = null;
     }
 
     public function write(EntitlementWrite $write): bool
     {
         self::$writes[] = $write;
+
+        if (self::$storeWriteFault !== null && $write->provider->isStore()) {
+            throw self::$storeWriteFault;
+        }
 
         return self::$answer ?? $this->inner->write($write);
     }

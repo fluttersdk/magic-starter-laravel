@@ -25,7 +25,6 @@ use FlutterSdk\MagicStarter\Contracts\AdministersBilling;
 use FlutterSdk\MagicStarter\Enums\BillingProvider;
 use FlutterSdk\MagicStarter\Enums\PlanStatus;
 use FlutterSdk\MagicStarter\Filament\Resources\BillingEvents\BillingEventResource;
-use FlutterSdk\MagicStarter\Filament\Resources\Teams\TeamResource;
 use FlutterSdk\MagicStarter\Filament\Support\BillingAuthorization;
 use FlutterSdk\MagicStarter\Filament\Support\ContractAction;
 use FlutterSdk\MagicStarter\Models\BillingEvent;
@@ -33,7 +32,9 @@ use FlutterSdk\MagicStarter\Models\BillingGrant;
 use FlutterSdk\MagicStarter\Support\BillingCatalogue;
 use FlutterSdk\MagicStarter\Support\BillingLog;
 use FlutterSdk\MagicStarter\Support\ReadsBillableAttributes;
+use FlutterSdk\MagicStarter\Support\StoreRailConfiguration;
 use FlutterSdk\MagicStarter\Support\StripeBillingState;
+use Illuminate\Auth\AuthenticationException;
 use Illuminate\Contracts\Auth\Authenticatable;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\HasMany;
@@ -78,6 +79,13 @@ class BillingRelationManager extends RelationManager
      */
     #[Locked]
     public ?string $refundUnavailable = null;
+
+    /**
+     * The open grant as read for this request, or false until it is read: the
+     * summary and three actions ask for it on every render. Not a public
+     * property, so it never outlives the request that read it.
+     */
+    protected BillingGrant|false|null $loadedOpenGrant = false;
 
     /**
      * Fixed on, like the other tabs: the panel is the gate, the billing actions
@@ -134,11 +142,12 @@ class BillingRelationManager extends RelationManager
 
     /**
      * The history with the billing events resource's own columns, filters and
-     * newest-first order, and the billing actions in its header.
+     * newest-first order, and the billing actions in its header. The billable
+     * column is hidden: every row here is the owner's.
      */
     public function table(Table $table): Table
     {
-        return BillingEventResource::table($table)
+        $table = BillingEventResource::table($table)
             ->recordActions($this->rowActions())
             ->headerActions([
                 $this->grantAction(),
@@ -150,6 +159,10 @@ class BillingRelationManager extends RelationManager
                 $this->refundAction(),
                 $this->syncAction(),
             ]);
+
+        $table->getColumn('billable')?->hidden();
+
+        return $table;
     }
 
     protected function grantAction(): Action
@@ -166,7 +179,7 @@ class BillingRelationManager extends RelationManager
             ->action(function (Action $action, array $data): void {
                 $plan = (string) $data['plan'];
                 $reason = (string) $data['reason'];
-                $expiresAt = $this->day($data['expires_at'] ?? null);
+                $expiresAt = $this->endOfDay($data['expires_at'] ?? null);
 
                 $this->administer(
                     $action,
@@ -207,7 +220,7 @@ class BillingRelationManager extends RelationManager
                 DatePicker::make('until')
                     ->label(__('magic-starter::admin_billing.fields.until'))
                     ->required()
-                    ->after('today'),
+                    ->minDate(fn (): CarbonInterface => $this->earliestTrialExtension($this->getOwnerRecord())),
             ])
             ->action(function (Action $action, array $data): void {
                 $until = CarbonImmutable::parse((string) $data['until']);
@@ -217,7 +230,9 @@ class BillingRelationManager extends RelationManager
                     'billing.trial_extended',
                     static fn (AdministersBilling $billing, Authenticatable $actor, Model $owner) => $billing
                         ->extendTrial($actor, $owner, $until),
-                    ['until' => $until->toIso8601String()],
+                    [
+                        'until' => $until->toIso8601String(),
+                    ],
                 );
             });
     }
@@ -296,12 +311,19 @@ class BillingRelationManager extends RelationManager
             ->action(function (Action $action, array $data): void {
                 $reason = (string) ($data['reason'] ?? '');
 
+                // The invoice the modal showed. A modal that showed none offers
+                // no submit, and an empty id matches no invoice, so a crafted
+                // call cannot refund one the operator never saw.
+                $invoiceId = (string) ($this->refundablePayment['invoice_id'] ?? '');
+
                 $this->administer(
                     $action,
                     'billing.invoice_refunded',
                     static fn (AdministersBilling $billing, Authenticatable $actor, Model $owner): string => $billing
-                        ->refundLastInvoice($actor, $owner, $reason),
-                    ['reason' => $reason],
+                        ->refundLastInvoice($actor, $owner, $reason, $invoiceId),
+                    [
+                        'reason' => $reason,
+                    ],
                 );
             });
     }
@@ -329,19 +351,26 @@ class BillingRelationManager extends RelationManager
 
     /**
      * Whether a revoke is offered: an open grant the record is MANUAL on, or a
-     * store record, of which the contract revokes only a sandbox-only one.
+     * store record while the store rail is configured, of which the contract
+     * revokes only a sandbox-only one after reading the store.
      */
     protected function offersRevoke(Model $owner): bool
     {
         $provider = $this->provider($owner);
 
         return ($provider === BillingProvider::MANUAL && $this->openGrant($owner) !== null)
-            || $provider->isStore();
+            || ($provider->isStore() && StoreRailConfiguration::railIsConfigured());
     }
 
+    /**
+     * Whether the trial actions are offered: a trial that is not cancelled,
+     * since the contract refuses to move or end a cancelled one.
+     */
     protected function isTrialing(Model $owner): bool
     {
-        return $this->subscription($owner)?->onTrial() === true;
+        $subscription = $this->subscription($owner);
+
+        return $subscription !== null && $subscription->onTrial() && ! $subscription->onGracePeriod();
     }
 
     /**
@@ -371,12 +400,25 @@ class BillingRelationManager extends RelationManager
     }
 
     /**
-     * Whether a sync is offered: a record any rail or operator wrote, or a
-     * local subscription.
+     * Whether a sync is offered, mirroring what the contract reads: a local
+     * Stripe subscription, or the store rail for a store record or for a
+     * record of nobody or of an ended comp, behind which a store payer may sit.
      */
     protected function offersSync(Model $owner): bool
     {
-        return $this->provider($owner) !== BillingProvider::NONE || $this->subscription($owner) !== null;
+        if ($this->subscription($owner) !== null) {
+            return true;
+        }
+
+        if (! StoreRailConfiguration::railIsConfigured()) {
+            return false;
+        }
+
+        $provider = $this->provider($owner);
+
+        return $provider->isStore()
+            || (in_array($provider, [BillingProvider::MANUAL, BillingProvider::NONE], true)
+                && $this->openGrant($owner) === null);
     }
 
     /**
@@ -401,25 +443,30 @@ class BillingRelationManager extends RelationManager
     }
 
     /**
-     * Run one billing write through the contract, audited as `$event`, then
-     * re-read the owner so the summary and the actions show what it changed.
+     * Run one billing write through the contract as the signed-in panel user,
+     * audited as `$event`, then re-read the owner and its open grant so the
+     * summary and the actions show what it changed.
      *
      * @param  Closure(AdministersBilling, Authenticatable, Model): mixed  $call
      * @param  array<string, mixed>  $context
+     *
+     * @throws AuthenticationException when no panel user is signed in
      */
     protected function administer(Action $action, string $event, Closure $call, array $context = []): void
     {
         $owner = $this->getOwnerRecord();
+        $actor = Filament::auth()->user() ?? throw new AuthenticationException;
 
         ContractAction::run(
             $action,
-            static fn (): mixed => $call(app(AdministersBilling::class), TeamResource::actor(), $owner),
+            static fn (): mixed => $call(app(AdministersBilling::class), $actor, $owner),
             $event,
             $owner,
             $context,
         );
 
         $owner->refresh();
+        $this->loadedOpenGrant = false;
 
         $action->success();
     }
@@ -595,11 +642,25 @@ class BillingRelationManager extends RelationManager
     }
 
     /**
-     * A date picked in the form as the start of that day, or null when empty.
+     * A date picked in the form as the end of that day, or null when empty: a
+     * grant that "expires after" a day lasts through it.
      */
-    protected function day(mixed $date): ?CarbonImmutable
+    protected function endOfDay(mixed $date): ?CarbonImmutable
     {
-        return is_string($date) && $date !== '' ? CarbonImmutable::parse($date) : null;
+        return is_string($date) && $date !== '' ? CarbonImmutable::parse($date)->endOfDay() : null;
+    }
+
+    /**
+     * The first day a trial extension may pick: the day after the current
+     * trial end, since the contract refuses an end that is not later.
+     */
+    protected function earliestTrialExtension(Model $owner): CarbonInterface
+    {
+        $trialEndsAt = $this->trialEndsAt($owner);
+
+        return $trialEndsAt === null
+            ? CarbonImmutable::tomorrow()
+            : CarbonImmutable::instance($trialEndsAt)->addDay()->startOfDay();
     }
 
     protected function provider(Model $owner): BillingProvider
@@ -609,7 +670,11 @@ class BillingRelationManager extends RelationManager
 
     protected function openGrant(Model $owner): ?BillingGrant
     {
-        return BillingGrant::forBillable($owner)->open()->first();
+        if ($this->loadedOpenGrant === false) {
+            $this->loadedOpenGrant = BillingGrant::forBillable($owner)->open()->first();
+        }
+
+        return $this->loadedOpenGrant;
     }
 
     /**

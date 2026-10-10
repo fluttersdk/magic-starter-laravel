@@ -80,7 +80,7 @@ class TeamResource extends MagicStarterResource
         return array_values(array_filter([
             MembersRelationManager::class,
             InvitationsRelationManager::class,
-            Features::hasBillingFeatures() && config('magic-starter.billing.billable') === 'team'
+            Features::hasBillingFeatures() && config('magic-starter.billing.billable', 'user') === 'team'
                 ? BillingRelationManager::class
                 : null,
             Features::hasAuditFeatures() ? AuditsRelationManager::class : null,

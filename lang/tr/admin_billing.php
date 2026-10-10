@@ -20,8 +20,9 @@ return [
     'fields' => [
         'plan' => 'Plan',
         'reason' => 'Neden',
-        'expires_at' => 'Bitiş tarihi',
-        'expires_at_help' => 'Plan geri alınana kadar sürsün diye boş bırakın.',
+        'expires_at' => 'Son geçerli gün',
+        'expires_at_help' => 'Plan bu günün sonuna kadar geçerlidir. '
+            . 'Geri alınana kadar sürsün diye boş bırakın.',
         'until' => 'Deneme bitiş tarihi',
         'refund_reason' => 'İade nedeni',
     ],
@@ -71,7 +72,8 @@ return [
         'refund' => [
             'label' => 'Son faturayı iade et',
             'heading' => 'Son ödenmiş faturayı iade et',
-            'description' => 'Stripe :invoice faturası için :amount tutarının tamamını iade eder. Abonelik olduğu gibi kalır.',
+            'description' => 'Stripe :invoice faturası için :amount tutarının tamamını iade eder. '
+                . 'Abonelik olduğu gibi kalır.',
             'success' => 'Fatura iade edildi.',
         ],
         'sync' => [
@@ -93,16 +95,22 @@ return [
         'expiry_in_past' => 'Bitiş tarihi gelecekte olmalı.',
         'entitlement_refused' => 'Faturalama kuralları bu değişikliği reddetti; müşterinin planı değişmedi.',
         'not_manual' => 'Bu plan bir yönetici tarafından verilmedi; bunun yerine aboneliği iptal edin.',
-        'rail_error' => 'Ödeme sağlayıcısına ulaşılamadı; hiçbir şey değişmedi. Biraz sonra yeniden deneyin.',
+        'rail_error' => 'Ödeme sağlayıcısı bir hata döndürdü. '
+            . 'Yeniden denemeden önce aboneliği sağlayıcıda kontrol edin.',
         'no_subscription' => 'Bu müşterinin Stripe aboneliği yok.',
         'not_trialing' => 'Bu abonelik deneme sürecinde değil.',
         'date_in_past' => 'Yeni deneme bitiş tarihi gelecekte olmalı.',
+        'not_later' => 'Yeni deneme bitiş tarihi mevcut bitişten sonra olmalı.',
         'already_cancelled' => 'Bu abonelik zaten iptal edilmiş.',
         'not_on_grace_period' => 'Yalnızca iptal edilmiş ve henüz sona ermemiş bir abonelik sürdürülebilir.',
+        'scheduled_cancel' => 'Bu abonelik belirli bir tarihte iptal edilecek; sağlayıcıda sürdürün.',
         'invalid_reason' => 'İade nedenini seçin: müşteri talebi ya da mükerrer ödeme.',
         'nothing_refundable' => 'Bu müşterinin iade edilebilecek ödenmiş bir faturası yok.',
+        'stale_target' => 'İade açıldığından beri daha yeni bir fatura ödendi; '
+            . 'neyi iade edeceğini görmek için yeniden açın.',
         'nothing_to_sync' => 'Bu müşterinin eşitlenecek bir ödeme sağlayıcısı aboneliği yok.',
-        'unmapped_price' => 'Stripe bu müşteriyi faturalama kataloğunda bir plana eşlenmemiş bir fiyattan ücretlendiriyor; hiçbir şey değişmedi.',
+        'unmapped_price' => 'Stripe bu müşteriyi faturalama kataloğunda bir plana eşlenmemiş bir fiyattan '
+            . 'ücretlendiriyor; hiçbir şey değişmedi.',
     ],
 
 ];

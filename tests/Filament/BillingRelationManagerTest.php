@@ -32,6 +32,8 @@ use FlutterSdk\MagicStarter\Tests\Fixtures\ConcreteTeam;
 use FlutterSdk\MagicStarter\Tests\Support\StripeHttpStub;
 use Illuminate\Contracts\Auth\Authenticatable;
 use Illuminate\Database\Eloquent\Model;
+use Illuminate\Database\Events\QueryExecuted;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Event;
 use Illuminate\Support\Str;
 use Laravel\Cashier\Billable;
@@ -399,7 +401,12 @@ class BillingRelationManagerTest extends FilamentTestCase
         $this->grantRow($manual, null);
         $this->tab($manual)->assertTableActionVisible('revoke');
 
+        // The contract reads the store before it revokes, so without the rail
+        // there is nothing it could do.
         $store = $this->team('Store', ['plan_provider' => BillingProvider::APP_STORE->value]);
+        $this->tab($store)->assertTableActionHidden('revoke');
+
+        config()->set('magic-starter.billing.revenuecat.secret_api_key', 'sk_test_revenuecat_secret');
         $this->tab($store)->assertTableActionVisible('revoke');
 
         $stripe = $this->team('Stripe', ['plan_provider' => BillingProvider::STRIPE->value]);
@@ -424,6 +431,40 @@ class BillingRelationManagerTest extends FilamentTestCase
         $this->tab($team)
             ->assertTableActionVisible('extendTrial')
             ->assertTableActionVisible('endTrial');
+    }
+
+    public function test_the_trial_actions_are_hidden_on_a_cancelled_trial(): void
+    {
+        $team = $this->team();
+        $this->subscription(
+            $team,
+            'trialing',
+            trialEndsAt: CarbonImmutable::now()->addDays(3),
+            endsAt: CarbonImmutable::now()->addDays(3),
+        );
+
+        $this->tab($team)
+            ->assertTableActionHidden('extendTrial')
+            ->assertTableActionHidden('endTrial');
+    }
+
+    public function test_the_trial_extension_starts_the_day_after_the_current_trial_end(): void
+    {
+        $team = $this->team();
+        $trialEndsAt = CarbonImmutable::now()->addDays(3)->setTime(15, 0);
+        $this->subscription($team, 'trialing', trialEndsAt: $trialEndsAt);
+
+        $this->tab($team)
+            ->callTableAction('extendTrial', data: ['until' => $trialEndsAt->toDateString()])
+            ->assertHasTableActionErrors(['until']);
+
+        $this->assertSame([], $this->billing->writes());
+
+        $this->tab($team)
+            ->callTableAction('extendTrial', data: ['until' => $trialEndsAt->addDay()->toDateString()])
+            ->assertHasNoTableActionErrors();
+
+        $this->assertCount(1, $this->billing->writes());
     }
 
     public function test_cancel_and_resume_follow_the_grace_period(): void
@@ -495,17 +536,68 @@ class BillingRelationManagerTest extends FilamentTestCase
             ->assertMountedActionModalSee(__('magic-starter::admin_billing.refusals.rail_error'));
     }
 
-    public function test_sync_is_offered_for_any_rail_or_a_local_subscription(): void
+    /**
+     * Sync is offered where it can read something: a local Stripe
+     * subscription, or the store rail for a store record or for a record no
+     * open grant holds, behind which a store payer may sit.
+     */
+    public function test_sync_is_offered_where_a_rail_can_be_read(): void
     {
-        $nobody = $this->team();
-        $this->tab($nobody)->assertTableActionHidden('sync');
-
-        $this->tab($this->team('Manual', ['plan_provider' => BillingProvider::MANUAL->value]))
-            ->assertTableActionVisible('sync');
-
         $subscribed = $this->team('Subscribed');
         $this->subscription($subscribed, 'active');
         $this->tab($subscribed)->assertTableActionVisible('sync');
+
+        $comped = $this->team('Comped', ['plan_provider' => BillingProvider::MANUAL->value]);
+        $this->grantRow($comped, null);
+        $lapsed = $this->team('Lapsed', ['plan_provider' => BillingProvider::MANUAL->value]);
+        $nobody = $this->team();
+        $store = $this->team('Store', ['plan_provider' => BillingProvider::APP_STORE->value]);
+        $stripeRecord = $this->team('Stripe record', ['plan_provider' => BillingProvider::STRIPE->value]);
+
+        // 1. No store rail and no local subscription: nothing to read.
+        foreach ([$comped, $lapsed, $nobody, $store, $stripeRecord] as $team) {
+            $this->tab($team)->assertTableActionHidden('sync');
+        }
+
+        // 2. With the store rail, anybody no open grant holds may be a store payer.
+        config()->set('magic-starter.billing.revenuecat.secret_api_key', 'sk_test_revenuecat_secret');
+
+        foreach ([$lapsed, $nobody, $store] as $team) {
+            $this->tab($team)->assertTableActionVisible('sync');
+        }
+
+        $this->tab($comped)->assertTableActionHidden('sync');
+        $this->tab($stripeRecord)->assertTableActionHidden('sync');
+    }
+
+    public function test_the_history_hides_the_billable_column_it_already_belongs_to(): void
+    {
+        $this->tab($this->team())->assertTableColumnHidden('billable');
+    }
+
+    /**
+     * The open grant is read once per render, however many actions and
+     * summary entries ask for it.
+     */
+    public function test_the_open_grant_is_read_once_per_render(): void
+    {
+        $team = $this->team(attributes: ['plan_provider' => BillingProvider::MANUAL->value]);
+        $this->grantRow($team, CarbonImmutable::now()->addMonth());
+        $owner = $team->fresh();
+        $reads = 0;
+
+        DB::listen(static function (QueryExecuted $query) use (&$reads): void {
+            if (str_contains($query->sql, 'billing_grants')) {
+                $reads++;
+            }
+        });
+
+        Livewire::actingAs($this->admin())->test(BillingRelationManager::class, [
+            'ownerRecord' => $owner,
+            'pageClass' => EditTeam::class,
+        ]);
+
+        $this->assertSame(1, $reads);
     }
 
     // -------------------------------------------------------------------------
@@ -548,12 +640,12 @@ class BillingRelationManagerTest extends FilamentTestCase
         $this->useRealBilling();
         $this->stripe = StripeHttpStub::install();
         $team = $this->team(attributes: ['stripe_id' => 'cus_team']);
-        $this->subscription($team, 'active');
+        $subscription = $this->subscription($team, 'active');
 
         // Once for the modal, once more inside the refund, which re-reads.
         foreach (range(1, 2) as $read) {
             $this->stripe
-                ->answer($this->invoiceList())
+                ->answer($this->invoiceList($subscription->stripe_id))
                 ->answer($this->paymentList());
         }
 
@@ -576,6 +668,7 @@ class BillingRelationManagerTest extends FilamentTestCase
         $refunds = $this->stripe->requestsTo('post', '/v1/refunds');
         $this->assertCount(1, $refunds);
         $this->assertSame('requested_by_customer', $refunds[0]['params']['reason']);
+        $this->assertContains('Idempotency-Key: admin-refund:in_paid', $refunds[0]['headers']);
 
         $refunded = $this->eventsOf(BillingEventType::INVOICE_REFUNDED);
         $this->assertCount(1, $refunded);
@@ -651,7 +744,7 @@ class BillingRelationManagerTest extends FilamentTestCase
             'cancelSubscription' => $this->subscription($team, 'active'),
             'resumeSubscription' => $this->subscription($team, 'active', endsAt: CarbonImmutable::now()->addDays(5)),
             'refund' => $this->subscription($this->updated($team, ['stripe_id' => 'cus_team']), 'active'),
-            'sync' => $this->updated($team, ['plan_provider' => BillingProvider::STRIPE->value]),
+            'sync' => $this->subscription($team, 'active'),
         };
 
         return $team;
@@ -689,7 +782,10 @@ class BillingRelationManagerTest extends FilamentTestCase
                 CarbonImmutable::parse($data['until'])->toDateString(),
                 $arguments['until']->toDateString(),
             ),
-            'refund' => $this->assertSame(['reason' => 'duplicate'], $arguments),
+            'refund' => $this->assertSame([
+                'reason' => 'duplicate',
+                'expectedInvoiceId' => 'in_paid',
+            ], $arguments),
             default => $this->assertSame([], $arguments),
         };
     }
@@ -704,6 +800,7 @@ class BillingRelationManagerTest extends FilamentTestCase
         $this->assertSame('Partner comp', $arguments['reason']);
         $this->assertInstanceOf(CarbonInterface::class, $arguments['expiresAt']);
         $this->assertSame($data['expires_at'], $arguments['expiresAt']->toDateString());
+        $this->assertSame('23:59:59', $arguments['expiresAt']->format('H:i:s'));
     }
 
     private function useRealBilling(): void
@@ -822,7 +919,7 @@ class BillingRelationManagerTest extends FilamentTestCase
     /**
      * @return array<string, mixed>
      */
-    private function invoiceList(): array
+    private function invoiceList(string $subscriptionId): array
     {
         return [
             'object' => 'list',
@@ -837,6 +934,14 @@ class BillingRelationManagerTest extends FilamentTestCase
                     'amount_paid' => 2900,
                     'currency' => 'usd',
                     'created' => CarbonImmutable::now()->getTimestamp(),
+                    'parent' => [
+                        'type' => 'subscription_details',
+                        'quote_details' => null,
+                        'subscription_details' => [
+                            'metadata' => null,
+                            'subscription' => $subscriptionId,
+                        ],
+                    ],
                 ],
             ],
         ];
@@ -953,9 +1058,16 @@ class RecordingBillingAdministration implements AdministersBilling
         $this->write('resume', $actor, $billable);
     }
 
-    public function refundLastInvoice(Authenticatable $actor, Model $billable, string $reason): string
-    {
-        $this->write('refundLastInvoice', $actor, $billable, ['reason' => $reason]);
+    public function refundLastInvoice(
+        Authenticatable $actor,
+        Model $billable,
+        string $reason,
+        ?string $expectedInvoiceId = null,
+    ): string {
+        $this->write('refundLastInvoice', $actor, $billable, [
+            'reason' => $reason,
+            'expectedInvoiceId' => $expectedInvoiceId,
+        ]);
 
         return 're_fake';
     }

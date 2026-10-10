@@ -81,7 +81,7 @@ class UserResource extends MagicStarterResource
             Features::hasSocialLoginFeatures() ? SocialAccountsRelationManager::class : null,
             Features::hasOnesignalFeatures() ? PushDevicesRelationManager::class : null,
             Features::hasTeamFeatures() ? TeamsRelationManager::class : null,
-            Features::hasBillingFeatures() && config('magic-starter.billing.billable') === 'user'
+            Features::hasBillingFeatures() && config('magic-starter.billing.billable', 'user') === 'user'
                 ? BillingRelationManager::class
                 : null,
             Features::hasAuditFeatures() ? AuditsRelationManager::class : null,

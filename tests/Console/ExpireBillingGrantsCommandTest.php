@@ -3,6 +3,7 @@
 namespace FlutterSdk\MagicStarter\Tests\Console;
 
 use Carbon\CarbonImmutable;
+use Error;
 use FlutterSdk\MagicStarter\Console\ExpireBillingGrantsCommand;
 use FlutterSdk\MagicStarter\Contracts\AdministersBilling;
 use FlutterSdk\MagicStarter\Contracts\WritesEntitlement;
@@ -20,6 +21,7 @@ use FlutterSdk\MagicStarter\Support\EntitlementWrite;
 use FlutterSdk\MagicStarter\Tests\Fixtures\ConcreteUser;
 use FlutterSdk\MagicStarter\Tests\TestCase;
 use Illuminate\Database\Eloquent\Model;
+use Illuminate\Support\Facades\Exceptions;
 use Illuminate\Support\Str;
 use Laravel\Cashier\Billable;
 use Laravel\Cashier\Cashier;
@@ -229,6 +231,38 @@ class ExpireBillingGrantsCommandTest extends TestCase
         $this->artisan(ExpireBillingGrantsCommand::NAME)
             ->expectsOutputToContain('Expired 0 grant(s), superseded 0.')
             ->assertSuccessful();
+    }
+
+    /**
+     * One grant that cannot be settled (its billable's class is gone) is
+     * reported and counted, and the sweep goes on to the next; the run exits
+     * non-zero so the scheduler says something failed.
+     */
+    public function test_a_grant_that_fails_to_settle_does_not_stop_the_next(): void
+    {
+        Exceptions::fake();
+
+        $broken = BillingGrant::query()->create([
+            'billable_type' => 'App\\Models\\RemovedBillable',
+            'billable_id' => '404',
+            'plan' => 'pro',
+            'reason' => 'Orphaned comp',
+            'expires_at' => $this->now()->subHour(),
+        ]);
+
+        $billable = $this->makeBillable();
+        $grant = $this->grant($billable, 'pro', $this->now()->addDay());
+
+        $this->travelTo($this->now()->addDays(2));
+
+        $this->artisan(ExpireBillingGrantsCommand::NAME)
+            ->expectsOutputToContain('Expired 1 grant(s), superseded 0.')
+            ->expectsOutputToContain('1 grant(s) could not be settled')
+            ->assertFailed();
+
+        $this->assertSame(GrantEndReason::EXPIRED, $grant->refresh()->end_reason);
+        $this->assertNull($broken->refresh()->ended_at);
+        Exceptions::assertReported(Error::class);
     }
 
     private function grant(Model $billable, string $plan, ?CarbonImmutable $expiresAt): BillingGrant

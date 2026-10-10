@@ -4,6 +4,7 @@ namespace FlutterSdk\MagicStarter\Tests\Actions;
 
 use Carbon\CarbonImmutable;
 use FlutterSdk\MagicStarter\Contracts\AdministersBilling;
+use FlutterSdk\MagicStarter\Contracts\WritesEntitlement;
 use FlutterSdk\MagicStarter\Enums\BillingEventType;
 use FlutterSdk\MagicStarter\Enums\BillingProvider;
 use FlutterSdk\MagicStarter\Enums\BillingSource;
@@ -13,16 +14,19 @@ use FlutterSdk\MagicStarter\Models\BillingEvent;
 use FlutterSdk\MagicStarter\Models\Subscription;
 use FlutterSdk\MagicStarter\Models\SubscriptionItem;
 use FlutterSdk\MagicStarter\Support\BillingAdministrationRefused;
+use FlutterSdk\MagicStarter\Support\EntitlementWrite;
 use FlutterSdk\MagicStarter\Support\RevenueCatClient;
 use FlutterSdk\MagicStarter\Tests\Fixtures\ConcreteUser;
 use FlutterSdk\MagicStarter\Tests\Support\StripeHttpStub;
 use FlutterSdk\MagicStarter\Tests\TestCase;
+use Illuminate\Database\QueryException;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Str;
 use Laravel\Cashier\Billable;
 use Laravel\Cashier\Cashier;
 use Laravel\Cashier\Subscription as CashierSubscription;
 use Laravel\Cashier\SubscriptionItem as CashierSubscriptionItem;
+use PDOException;
 
 /**
  * Locks the Stripe side of the operator's billing actions: what each one sends
@@ -265,6 +269,67 @@ class AdministerBillingStripeTest extends TestCase
         );
     }
 
+    /**
+     * An extension that does not move the end later would shorten the trial
+     * or leave it as it is, neither of which is an extension.
+     */
+    public function test_extend_trial_to_a_date_not_after_the_current_trial_end_is_refused(): void
+    {
+        $billable = $this->makeBillable();
+        $this->makeSubscription($billable, 'trialing', trialEndsAt: $this->now()->addDays(10));
+
+        foreach ([
+            $this->now()->addDays(5),
+            $this->now()->addDays(10),
+        ] as $until) {
+            $this->assertRefused('not_later', fn () => $this->administer()->extendTrial(
+                $this->operator(),
+                $billable,
+                $until,
+            ));
+        }
+
+        $this->assertSame([], $this->stripe->requests);
+    }
+
+    /**
+     * A cancelled trial keeps the end it was cancelled at in `ends_at`, which
+     * a moved trial end would leave stale.
+     */
+    public function test_extend_trial_is_refused_while_the_trial_is_cancelled(): void
+    {
+        $billable = $this->makeBillable();
+        $this->makeSubscription(
+            $billable,
+            'trialing',
+            trialEndsAt: $this->now()->addDays(3),
+            endsAt: $this->now()->addDays(3),
+        );
+
+        $this->assertRefused('already_cancelled', fn () => $this->administer()->extendTrial(
+            $this->operator(),
+            $billable,
+            $this->now()->addDays(10),
+        ));
+
+        $this->assertSame([], $this->stripe->requests);
+    }
+
+    public function test_end_trial_is_refused_while_the_trial_is_cancelled(): void
+    {
+        $billable = $this->makeBillable();
+        $this->makeSubscription(
+            $billable,
+            'trialing',
+            trialEndsAt: $this->now()->addDays(3),
+            endsAt: $this->now()->addDays(3),
+        );
+
+        $this->assertRefused('already_cancelled', fn () => $this->administer()->endTrial($this->operator(), $billable));
+
+        $this->assertSame([], $this->stripe->requests);
+    }
+
     public function test_end_trial_ends_it_now_on_stripe_and_records_it(): void
     {
         $billable = $this->makeBillable();
@@ -361,9 +426,17 @@ class AdministerBillingStripeTest extends TestCase
         $billable = $this->makeBillable();
         $subscription = $this->makeSubscription($billable, endsAt: $this->now()->addDays(5));
 
-        $this->stripe->answer($this->stripeSubscription($subscription, ['status' => 'past_due']));
+        $this->stripe
+            ->answer($this->stripeSubscription($subscription, [
+                'status' => 'past_due',
+                'cancel_at_period_end' => true,
+                'cancel_at' => $this->now()->addDays(5)->getTimestamp(),
+            ]))
+            ->answer($this->stripeSubscription($subscription, ['status' => 'past_due']));
 
         $this->administer()->resume($this->operator(), $billable);
+
+        $this->assertCount(1, $this->stripe->requestsTo('get', '/v1/subscriptions/' . $subscription->stripe_id));
 
         $updates = $this->stripe->requestsTo('post', '/v1/subscriptions/' . $subscription->stripe_id);
         $this->assertCount(1, $updates);
@@ -378,6 +451,28 @@ class AdministerBillingStripeTest extends TestCase
         $this->assertCount(1, $resumed);
         $this->assertSame(BillingSource::ADMIN, $resumed[0]->source);
         $this->assertSame($subscription->stripe_id, $resumed[0]->external_id);
+    }
+
+    /**
+     * A cancellation on a fixed date is not lifted by `cancel_at_period_end`,
+     * so claiming a resume would leave the subscription ending all the same.
+     */
+    public function test_resume_is_refused_for_a_cancellation_on_a_fixed_date(): void
+    {
+        $billable = $this->makeBillable();
+        $endsAt = $this->now()->addDays(5);
+        $subscription = $this->makeSubscription($billable, endsAt: $endsAt);
+
+        $this->stripe->answer($this->stripeSubscription($subscription, [
+            'cancel_at_period_end' => false,
+            'cancel_at' => $endsAt->getTimestamp(),
+        ]));
+
+        $this->assertRefused('scheduled_cancel', fn () => $this->administer()->resume($this->operator(), $billable));
+
+        $this->assertSame([], $this->stripe->requestsTo('post', '/v1/subscriptions/' . $subscription->stripe_id));
+        $this->assertSame($endsAt->getTimestamp(), $subscription->refresh()->ends_at?->getTimestamp());
+        $this->assertSame([], $this->eventsOf(BillingEventType::SUBSCRIPTION_RESUMED));
     }
 
     public function test_resume_is_refused_off_grace_period(): void
@@ -407,9 +502,9 @@ class AdministerBillingStripeTest extends TestCase
 
         $this->stripe
             ->answer($this->invoiceList([
-                $this->invoice('in_trial', 0),
-                $this->invoice('in_paid', 2900),
-                $this->invoice('in_older', 2900),
+                $this->invoice('in_trial', 0, $subscription->stripe_id),
+                $this->invoice('in_paid', 2900, $subscription->stripe_id),
+                $this->invoice('in_older', 2900, $subscription->stripe_id),
             ]))
             ->answer($this->paymentList([$this->invoicePayment('pi_paid')]))
             ->answer([
@@ -480,12 +575,12 @@ class AdministerBillingStripeTest extends TestCase
     public function test_refund_is_refused_when_the_payment_is_not_a_payment_intent(): void
     {
         $billable = $this->makeBillable();
-        $this->makeSubscription($billable);
+        $subscription = $this->makeSubscription($billable);
 
         $this->stripe
             ->answer($this->invoiceList([
-                $this->invoice('in_paid', 2900),
-                $this->invoice('in_older', 2900),
+                $this->invoice('in_paid', 2900, $subscription->stripe_id),
+                $this->invoice('in_older', 2900, $subscription->stripe_id),
             ]))
             ->answer($this->paymentList([
                 $this->invoicePayment(null, ['payment' => ['type' => 'payment_record', 'payment_record' => 'pr_1']]),
@@ -504,9 +599,9 @@ class AdministerBillingStripeTest extends TestCase
     public function test_refund_is_refused_when_no_invoice_moved_money(): void
     {
         $billable = $this->makeBillable();
-        $this->makeSubscription($billable);
+        $subscription = $this->makeSubscription($billable);
 
-        $this->stripe->answer($this->invoiceList([$this->invoice('in_trial', 0)]));
+        $this->stripe->answer($this->invoiceList([$this->invoice('in_trial', 0, $subscription->stripe_id)]));
 
         $this->assertRefused('nothing_refundable', fn () => $this->administer()->refundLastInvoice(
             $this->operator(),
@@ -517,20 +612,177 @@ class AdministerBillingStripeTest extends TestCase
         $this->assertSame([], $this->stripe->requestsTo('post', '/v1/refunds'));
     }
 
+    /**
+     * The amount is the payment's own, not the invoice's: an invoice paid in
+     * two payments refunds only the one payment intent it names.
+     */
     public function test_the_refundable_payment_names_what_a_refund_would_take(): void
     {
         $billable = $this->makeBillable();
+        $subscription = $this->makeSubscription($billable);
 
         $this->stripe
-            ->answer($this->invoiceList([$this->invoice('in_paid', 2900)]))
-            ->answer($this->paymentList([$this->invoicePayment('pi_paid')]));
+            ->answer($this->invoiceList([$this->invoice('in_paid', 2900, $subscription->stripe_id)]))
+            ->answer($this->paymentList([
+                $this->invoicePayment('pi_paid', [
+                    'amount_paid' => 1900,
+                    'currency' => 'eur',
+                ]),
+            ]));
 
         $this->assertSame([
             'invoice_id' => 'in_paid',
             'payment_intent' => 'pi_paid',
-            'amount' => 2900,
-            'currency' => 'usd',
+            'amount' => 1900,
+            'currency' => 'eur',
         ], $this->administer()->refundablePayment($billable));
+
+        // The payment intent's latest charge is expanded on the one read already made.
+        $payments = $this->stripe->requestsTo('get', '/v1/invoice_payments');
+        $this->assertCount(1, $payments);
+        $this->assertSame(['data.payment.payment_intent.latest_charge'], $payments[0]['params']['expand']);
+    }
+
+    /**
+     * A one-off invoice is not the subscription's and is never "the last
+     * invoice" the operator refunds, however new it is.
+     */
+    public function test_refund_never_targets_an_invoice_outside_the_default_subscription(): void
+    {
+        $billable = $this->makeBillable();
+        $subscription = $this->makeSubscription($billable);
+
+        $this->stripe
+            ->answer($this->invoiceList([
+                $this->invoice('in_one_off', 9900),
+                $this->invoice('in_other_subscription', 4900, 'sub_elsewhere'),
+                $this->invoice('in_paid', 2900, $subscription->stripe_id),
+            ]))
+            ->answer($this->paymentList([$this->invoicePayment('pi_paid')]))
+            ->answer($this->refund('re_admin', 2900));
+
+        $this->administer()->refundLastInvoice($this->operator(), $billable, 'requested_by_customer');
+
+        $payments = $this->stripe->requestsTo('get', '/v1/invoice_payments');
+        $this->assertCount(1, $payments);
+        $this->assertSame('in_paid', $payments[0]['params']['invoice']);
+        $this->assertSame('pi_paid', $this->stripe->requestsTo('post', '/v1/refunds')[0]['params']['payment_intent']);
+    }
+
+    /**
+     * The operator confirmed one invoice; a newer one that landed while the
+     * modal was open is not what they confirmed, so nothing is refunded.
+     */
+    public function test_refund_is_refused_as_a_stale_target_when_a_newer_invoice_appeared(): void
+    {
+        $billable = $this->makeBillable();
+        $subscription = $this->makeSubscription($billable);
+
+        $this->stripe
+            ->answer($this->invoiceList([
+                $this->invoice('in_newer', 4900, $subscription->stripe_id),
+                $this->invoice('in_shown', 2900, $subscription->stripe_id),
+            ]))
+            ->answer($this->paymentList([$this->invoicePayment('pi_newer')]));
+
+        $this->assertRefused('stale_target', fn () => $this->administer()->refundLastInvoice(
+            $this->operator(),
+            $billable,
+            'requested_by_customer',
+            'in_shown',
+        ));
+
+        $this->assertSame([], $this->stripe->requestsTo('post', '/v1/refunds'));
+        $this->assertSame([], $this->eventsOf(BillingEventType::INVOICE_REFUNDED));
+        $this->assertSame('stale_target', $this->eventsOf(BillingEventType::REQUEST_REFUSED)[0]->reason);
+    }
+
+    public function test_refund_of_the_invoice_the_operator_confirmed_goes_through(): void
+    {
+        $billable = $this->makeBillable();
+        $subscription = $this->makeSubscription($billable);
+
+        $this->stripe
+            ->answer($this->invoiceList([$this->invoice('in_shown', 2900, $subscription->stripe_id)]))
+            ->answer($this->paymentList([$this->invoicePayment('pi_shown')]))
+            ->answer($this->refund('re_shown', 2900));
+
+        $this->assertSame('re_shown', $this->administer()->refundLastInvoice(
+            $this->operator(),
+            $billable,
+            'duplicate',
+            'in_shown',
+        ));
+    }
+
+    /**
+     * The row records what Stripe refunded, which is the refund's own amount
+     * and currency rather than what the invoice once said.
+     */
+    public function test_the_refunded_row_records_the_refunds_own_amount_and_currency(): void
+    {
+        $billable = $this->makeBillable();
+        $subscription = $this->makeSubscription($billable);
+
+        $this->stripe
+            ->answer($this->invoiceList([$this->invoice('in_paid', 2900, $subscription->stripe_id)]))
+            ->answer($this->paymentList([$this->invoicePayment('pi_paid')]))
+            ->answer($this->refund('re_partial', 1200, 'eur'));
+
+        $this->administer()->refundLastInvoice($this->operator(), $billable, 'requested_by_customer');
+
+        $refunded = $this->eventsOf(BillingEventType::INVOICE_REFUNDED);
+        $this->assertCount(1, $refunded);
+        $this->assertSame(1200, $refunded[0]->properties['amount']);
+        $this->assertSame('eur', $refunded[0]->properties['currency']);
+    }
+
+    /**
+     * A payment whose charge Stripe already refunded in full is skipped; the
+     * invoice's next payment is the target, and with none the invoice has
+     * nothing to refund.
+     */
+    public function test_a_payment_whose_charge_is_fully_refunded_is_skipped(): void
+    {
+        $billable = $this->makeBillable();
+        $subscription = $this->makeSubscription($billable);
+
+        $this->stripe
+            ->answer($this->invoiceList([$this->invoice('in_paid', 2900, $subscription->stripe_id)]))
+            ->answer($this->paymentList([
+                $this->invoicePayment($this->expandedIntent('pi_refunded', refunded: true)),
+                $this->invoicePayment($this->expandedIntent('pi_open', refunded: false)),
+            ]));
+
+        $this->assertSame('pi_open', $this->administer()->refundablePayment($billable)['payment_intent'] ?? null);
+
+        $this->stripe
+            ->answer($this->invoiceList([$this->invoice('in_paid', 2900, $subscription->stripe_id)]))
+            ->answer($this->paymentList([
+                $this->invoicePayment($this->expandedIntent('pi_refunded', refunded: true)),
+            ]));
+
+        $this->assertRefused('nothing_refundable', fn () => $this->administer()->refundLastInvoice(
+            $this->operator(),
+            $billable,
+            'requested_by_customer',
+        ));
+
+        $this->assertSame([], $this->stripe->requestsTo('post', '/v1/refunds'));
+    }
+
+    public function test_a_charge_refunded_to_its_full_amount_is_skipped_even_when_not_flagged(): void
+    {
+        $billable = $this->makeBillable();
+        $subscription = $this->makeSubscription($billable);
+
+        $this->stripe
+            ->answer($this->invoiceList([$this->invoice('in_paid', 2900, $subscription->stripe_id)]))
+            ->answer($this->paymentList([
+                $this->invoicePayment($this->expandedIntent('pi_refunded', refunded: false, amountRefunded: 2900)),
+            ]));
+
+        $this->assertNull($this->administer()->refundablePayment($billable));
     }
 
     public function test_there_is_no_refundable_payment_without_a_stripe_customer(): void
@@ -595,6 +847,117 @@ class AdministerBillingStripeTest extends TestCase
         $this->assertSame(BillingProvider::STRIPE, $synced[0]->provider);
         $this->assertSame('stripe', $synced[0]->properties['rail']);
         $this->assertTrue($synced[0]->properties['changed']);
+    }
+
+    /**
+     * The local items missed a swap as the row did: the live read replaces
+     * the stale item, as Cashier's update handler would have.
+     */
+    public function test_sync_replaces_a_subscription_item_the_local_row_missed_a_swap_for(): void
+    {
+        $billable = $this->makeBillable();
+        $subscription = $this->makeSubscription($billable, priceId: 'price_pro');
+
+        SubscriptionItem::query()->forceCreate([
+            'subscription_id' => $subscription->getKey(),
+            'stripe_id' => 'si_stale',
+            'stripe_product' => 'prod_pro',
+            'stripe_price' => 'price_pro',
+            'quantity' => 1,
+        ]);
+
+        $this->stripe->answer($this->stripeSubscription($subscription, [
+            'items' => $this->stripeItems('price_business', $this->now()->addMonth(), quantity: 3),
+        ]));
+
+        $this->administer()->sync($this->operator(), $billable);
+
+        $items = SubscriptionItem::query()->where('subscription_id', $subscription->getKey())->get();
+        $this->assertCount(1, $items);
+        $this->assertSame('si_price_business', $items[0]->stripe_id);
+        $this->assertSame('prod_price_business', $items[0]->stripe_product);
+        $this->assertSame('price_business', $items[0]->stripe_price);
+        $this->assertSame(3, $items[0]->quantity);
+    }
+
+    /**
+     * The claim is stamped when the read starts: a webhook that lands while
+     * the read is in flight carries a newer word than the object read, and
+     * has to win over it.
+     */
+    public function test_a_webhook_landing_during_the_live_read_wins_over_the_sync(): void
+    {
+        $billable = $this->makeBillable([
+            'plan' => 'pro',
+            'plan_status' => PlanStatus::ACTIVE->value,
+            'plan_provider' => BillingProvider::STRIPE->value,
+            'plan_product_id' => 'price_pro',
+            'plan_source_event_at' => $this->now()->subDay(),
+        ]);
+        $subscription = $this->makeSubscription($billable, priceId: 'price_pro');
+        $webhookAt = $this->now()->addSeconds(4);
+
+        $this->stripe->answer(
+            $this->stripeSubscription($subscription, [
+                'items' => $this->stripeItems('price_business', $this->now()->addMonth()),
+            ]),
+            during: function () use ($billable, $webhookAt): void {
+                $this->travel(5)->seconds();
+
+                StripePayer::query()->whereKey($billable->getKey())->update([
+                    'plan_source_event_at' => $webhookAt,
+                ]);
+            },
+        );
+
+        $this->administer()->sync($this->operator(), $billable);
+
+        $billable->refresh();
+        $this->assertSame('pro', $billable->getAttribute('plan'));
+        $this->assertSame(
+            $webhookAt->getTimestamp(),
+            CarbonImmutable::parse((string) $billable->getAttribute('plan_source_event_at'))->getTimestamp(),
+        );
+    }
+
+    /**
+     * A database fault is a defect to surface, not the store rail failing:
+     * it propagates rather than becoming a recorded `rail_error`.
+     */
+    public function test_a_database_fault_during_a_store_sync_propagates(): void
+    {
+        config(['magic-starter.billing.revenuecat.secret_api_key' => 'sk_test_revenuecat_secret']);
+
+        $billable = $this->makeBillable([
+            'stripe_id' => null,
+            'plan' => 'pro',
+            'plan_status' => PlanStatus::ACTIVE->value,
+            'plan_provider' => BillingProvider::APP_STORE->value,
+            'plan_source_event_at' => $this->now()->subDay(),
+        ]);
+
+        Http::fake([
+            '*' => Http::response($this->subscriber([
+                'starter_business_monthly' => $this->storeSubscription(),
+            ])),
+        ]);
+
+        $this->app->bind(WritesEntitlement::class, fn (): WritesEntitlement => new class implements WritesEntitlement
+        {
+            public function write(EntitlementWrite $write): bool
+            {
+                throw new QueryException('testing', 'update "users"', [], new PDOException('database is locked'));
+            }
+        });
+
+        try {
+            $this->administer()->sync($this->operator(), $billable);
+            $this->fail('The database fault was swallowed.');
+        } catch (QueryException $fault) {
+            $this->assertSame('database is locked', $fault->getPrevious()?->getMessage());
+        }
+
+        $this->assertSame([], $this->eventsOf(BillingEventType::REQUEST_REFUSED));
     }
 
     public function test_sync_mirrors_a_cancellation_scheduled_on_stripe(): void
@@ -904,9 +1267,13 @@ class AdministerBillingStripeTest extends TestCase
     }
 
     /**
+     * An invoice as API 2026-08-26.dahlia shapes it: the subscription that
+     * billed it sits under `parent.subscription_details`, and a one-off invoice
+     * has no parent.
+     *
      * @return array<string, mixed>
      */
-    private function invoice(string $id, int $amountPaid): array
+    private function invoice(string $id, int $amountPaid, ?string $subscriptionId = null): array
     {
         return [
             'id' => $id,
@@ -916,6 +1283,50 @@ class AdministerBillingStripeTest extends TestCase
             'amount_paid' => $amountPaid,
             'currency' => 'usd',
             'created' => $this->now()->getTimestamp(),
+            'parent' => $subscriptionId === null ? null : [
+                'type' => 'subscription_details',
+                'quote_details' => null,
+                'subscription_details' => [
+                    'metadata' => null,
+                    'subscription' => $subscriptionId,
+                ],
+            ],
+        ];
+    }
+
+    /**
+     * @return array<string, mixed>
+     */
+    private function refund(string $id, int $amount, string $currency = 'usd'): array
+    {
+        return [
+            'id' => $id,
+            'object' => 'refund',
+            'amount' => $amount,
+            'currency' => $currency,
+            'status' => 'succeeded',
+        ];
+    }
+
+    /**
+     * A payment intent as the expanded invoice payment list carries it, with
+     * its latest charge.
+     *
+     * @return array<string, mixed>
+     */
+    private function expandedIntent(string $id, bool $refunded, int $amountRefunded = 0): array
+    {
+        return [
+            'id' => $id,
+            'object' => 'payment_intent',
+            'amount' => 2900,
+            'latest_charge' => [
+                'id' => 'ch_' . $id,
+                'object' => 'charge',
+                'amount' => 2900,
+                'amount_refunded' => $refunded ? 2900 : $amountRefunded,
+                'refunded' => $refunded,
+            ],
         ];
     }
 
@@ -934,10 +1345,11 @@ class AdministerBillingStripeTest extends TestCase
     }
 
     /**
+     * @param  string|array<string, mixed>|null  $paymentIntent  an id, or the expanded object
      * @param  array<string, mixed>  $overrides
      * @return array<string, mixed>
      */
-    private function invoicePayment(?string $paymentIntent, array $overrides = []): array
+    private function invoicePayment(string|array|null $paymentIntent, array $overrides = []): array
     {
         return [
             'id' => 'inpay_' . Str::random(6),

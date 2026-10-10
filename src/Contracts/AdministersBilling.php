@@ -81,14 +81,24 @@ interface AdministersBilling
     public function resume(Authenticatable $actor, Model $billable): void;
 
     /**
-     * Refund the billable's newest paid invoice that moved money, in full.
+     * Refund, in full, the newest paid invoice of the billable's `default`
+     * Stripe subscription that moved money.
      *
      * @param  string  $reason  Stripe's refund reason: `requested_by_customer` or `duplicate`
+     * @param  string|null  $expectedInvoiceId  the invoice the operator confirmed, from
+     *                                          {@see self::refundablePayment()}; when the newest
+     *                                          refundable invoice is another one, nothing is refunded
+     *                                          and the refusal is `stale_target`
      * @return string the Stripe refund id
      *
      * @throws BillingAdministrationRefused
      */
-    public function refundLastInvoice(Authenticatable $actor, Model $billable, string $reason): string;
+    public function refundLastInvoice(
+        Authenticatable $actor,
+        Model $billable,
+        string $reason,
+        ?string $expectedInvoiceId = null,
+    ): string;
 
     /**
      * Re-read the billable's rail now and write what it says.

@@ -28,6 +28,8 @@ use FlutterSdk\MagicStarter\Support\StripeBillingState;
 use FlutterSdk\MagicStarter\Support\StripeSubscriptionState;
 use Illuminate\Contracts\Auth\Authenticatable;
 use Illuminate\Database\Eloquent\Model;
+use Illuminate\Database\Eloquent\ModelNotFoundException;
+use Illuminate\Database\QueryException;
 use Illuminate\Http\Client\ConnectionException;
 use Illuminate\Http\Client\RequestException;
 use Illuminate\Support\Facades\DB;
@@ -126,11 +128,13 @@ class AdministerBilling implements AdministersBilling
      * @param  WritesEntitlement  $entitlements  the only code path that writes the entitlement columns
      * @param  BillingEventRecorder  $recorder  leaves every `billing_events` row this action owes
      * @param  RevenueCatClient  $revenueCat  the store rail's authoritative read
+     * @param  ReconcileBillingEntitlements  $reconciler  the Stripe rail's local projection, re-run after a grant
      */
     public function __construct(
         protected WritesEntitlement $entitlements,
         protected BillingEventRecorder $recorder,
         protected RevenueCatClient $revenueCat,
+        protected ReconcileBillingEntitlements $reconciler,
     ) {}
 
     /**
@@ -205,7 +209,11 @@ class AdministerBilling implements AdministersBilling
     /**
      * {@inheritDoc}
      *
-     * @throws BillingAdministrationRefused `no_subscription`, `not_trialing`, `date_in_past` or `rail_error`
+     * A cancelled trial is refused: its `ends_at` holds the end it was
+     * cancelled at, which a moved trial end would leave stale.
+     *
+     * @throws BillingAdministrationRefused `no_subscription`, `not_trialing`, `already_cancelled`,
+     *                                      `date_in_past`, `not_later` or `rail_error`
      */
     public function extendTrial(Authenticatable $actor, Model $billable, CarbonInterface $until): void
     {
@@ -215,8 +223,18 @@ class AdministerBilling implements AdministersBilling
             $this->refuseOnStripe('not_trialing', $actor, $billable, 'extendTrial');
         }
 
+        if ($subscription->onGracePeriod()) {
+            $this->refuseOnStripe('already_cancelled', $actor, $billable, 'extendTrial');
+        }
+
         if (! $until->isFuture()) {
             $this->refuseOnStripe('date_in_past', $actor, $billable, 'extendTrial');
+        }
+
+        $trialEndsAt = $this->dateAttribute($subscription, 'trial_ends_at');
+
+        if ($trialEndsAt !== null && ! $until->greaterThan($trialEndsAt)) {
+            $this->refuseOnStripe('not_later', $actor, $billable, 'extendTrial');
         }
 
         $this->onStripe($actor, $billable, 'extendTrial', fn () => $subscription->extendTrial($until));
@@ -231,7 +249,7 @@ class AdministerBilling implements AdministersBilling
      *
      * Stripe invoices the subscription the moment the trial ends.
      *
-     * @throws BillingAdministrationRefused `no_subscription`, `not_trialing` or `rail_error`
+     * @throws BillingAdministrationRefused `no_subscription`, `not_trialing`, `already_cancelled` or `rail_error`
      */
     public function endTrial(Authenticatable $actor, Model $billable): void
     {
@@ -239,6 +257,10 @@ class AdministerBilling implements AdministersBilling
 
         if (! $subscription->onTrial()) {
             $this->refuseOnStripe('not_trialing', $actor, $billable, 'endTrial');
+        }
+
+        if ($subscription->onGracePeriod()) {
+            $this->refuseOnStripe('already_cancelled', $actor, $billable, 'endTrial');
         }
 
         $this->onStripe($actor, $billable, 'endTrial', fn () => $subscription->endTrial());
@@ -277,16 +299,35 @@ class AdministerBilling implements AdministersBilling
      * `cancel_at_period_end` is sent, and the local half of Cashier's resume
      * (the rail's status, no end) is mirrored onto the row.
      *
-     * @throws BillingAdministrationRefused `no_subscription`, `not_on_grace_period` or `rail_error`
+     * That flag only lifts a cancellation at the period's end. One on a fixed
+     * `cancel_at` date would survive it, so the live subscription is read first
+     * and such a cancellation is refused rather than reported as resumed.
+     *
+     * @throws BillingAdministrationRefused `no_subscription`, `not_on_grace_period`, `scheduled_cancel`
+     *                                      or `rail_error`
      */
     public function resume(Authenticatable $actor, Model $billable): void
     {
+        // 1. Only a cancelled subscription still inside its period resumes.
         $subscription = $this->actionableSubscription($actor, $billable, 'resume');
 
         if (! $subscription->onGracePeriod()) {
             $this->refuseOnStripe('not_on_grace_period', $actor, $billable, 'resume');
         }
 
+        // 2. A cancellation on a fixed date is the provider's to lift.
+        $current = $this->onStripe(
+            $actor,
+            $billable,
+            'resume',
+            fn (): StripeSubscription => $subscription->asStripeSubscription(),
+        );
+
+        if ($current->cancel_at !== null && $current->cancel_at_period_end !== true) {
+            $this->refuseOnStripe('scheduled_cancel', $actor, $billable, 'resume');
+        }
+
+        // 3. Lift the period-end cancellation, then mirror Cashier's local half.
         $live = $this->onStripe(
             $actor,
             $billable,
@@ -312,16 +353,23 @@ class AdministerBilling implements AdministersBilling
      * `$reason` is Stripe's refund reason, `requested_by_customer` or
      * `duplicate`, sent to Stripe and kept on the event row.
      *
-     * The target is {@see StripeBillingState::latestRefundablePayment()}, and
-     * the refund is created under the key `admin-refund:{invoice}`: a second
-     * click, or a retry after a timeout, is answered with the refund the first
-     * one created instead of refunding twice. That replay is also why the row
-     * is recorded once per refund id. The subscription is left alone.
+     * The target is {@see StripeBillingState::latestRefundablePayment()}, the
+     * newest paid invoice of the local `default` subscription, and the refund
+     * is created under the key `admin-refund:{invoice}`: a second click, or a
+     * retry after a timeout, is answered with the refund the first one created
+     * instead of refunding twice. That replay is also why the row is recorded
+     * once per refund id, with the refund's own amount and currency. The
+     * subscription is left alone.
      *
-     * @throws BillingAdministrationRefused `no_subscription`, `invalid_reason`, `nothing_refundable` or `rail_error`
+     * @throws BillingAdministrationRefused `no_subscription`, `invalid_reason`, `nothing_refundable`,
+     *                                      `stale_target` or `rail_error`
      */
-    public function refundLastInvoice(Authenticatable $actor, Model $billable, string $reason): string
-    {
+    public function refundLastInvoice(
+        Authenticatable $actor,
+        Model $billable,
+        string $reason,
+        ?string $expectedInvoiceId = null,
+    ): string {
         // 1. A Stripe subscription to stand behind the refund, and a reason
         //    Stripe takes.
         $this->actionableSubscription($actor, $billable, 'refundLastInvoice');
@@ -340,6 +388,11 @@ class AdministerBilling implements AdministersBilling
 
         if ($payment === null) {
             $this->refuseOnStripe('nothing_refundable', $actor, $billable, 'refundLastInvoice');
+        }
+
+        // An invoice paid since the operator confirmed is not what they confirmed.
+        if ($expectedInvoiceId !== null && $payment['invoice_id'] !== $expectedInvoiceId) {
+            $this->refuseOnStripe('stale_target', $actor, $billable, 'refundLastInvoice');
         }
 
         // 3. The refund, keyed on the invoice so it can happen once.
@@ -369,8 +422,8 @@ class AdministerBilling implements AdministersBilling
                 externalId: $refund->id,
                 properties: [
                     'invoice_id' => $payment['invoice_id'],
-                    'amount' => $payment['amount'],
-                    'currency' => $payment['currency'],
+                    'amount' => $refund->amount,
+                    'currency' => $refund->currency,
                     'reason' => $reason,
                 ],
                 actor: $actor,
@@ -384,9 +437,9 @@ class AdministerBilling implements AdministersBilling
      * {@inheritDoc}
      *
      * Stripe when the billable has a local `default` subscription, the store
-     * when the record names a store and that rail is configured, both when
-     * both hold. Each leaves an `entitlement_synced` row saying whether the
-     * entitlement now means something else.
+     * where {@see self::storeMayAnswer()} holds, both when both hold. Each
+     * leaves an `entitlement_synced` row saying whether the entitlement now
+     * means something else.
      *
      * @throws BillingAdministrationRefused `nothing_to_sync`, `unmapped_price` or `rail_error`
      */
@@ -395,9 +448,9 @@ class AdministerBilling implements AdministersBilling
         $current = $this->currentCopy($billable);
         $subscription = StripeBillingState::defaultSubscription($current);
         $provider = BillingProvider::fromWire($this->stringAttribute($current, 'plan_provider'));
-        $storeRecord = $provider->isStore() && StoreRailConfiguration::railIsConfigured();
+        $readsStore = $this->storeMayAnswer($current, $provider);
 
-        if (! $subscription instanceof CashierSubscription && ! $storeRecord) {
+        if (! $subscription instanceof CashierSubscription && ! $readsStore) {
             $this->refuse(new BillingAdministrationRefused('nothing_to_sync'), $actor, $billable, 'sync');
         }
 
@@ -405,9 +458,32 @@ class AdministerBilling implements AdministersBilling
             $this->syncStripe($actor, $billable, $subscription);
         }
 
-        if ($storeRecord) {
-            $this->syncStore($actor, $billable, $provider);
+        if ($readsStore) {
+            $this->syncStore($actor, $billable, $provider->isStore() ? $provider : null);
         }
+    }
+
+    /**
+     * Whether the store rail may have something to say about the billable: it
+     * is configured, and the record is a store's, or a record of nobody or of
+     * an ended comp. A store payer can sit behind the last two: a purchase made
+     * during a comp was dropped while the comp held the record, and when the
+     * re-read after the comp ended failed, the record was left MANUAL, which
+     * the reconciler never walks. While a comp is still open there is nothing
+     * to read, because the write rules would drop the store's word anyway.
+     */
+    protected function storeMayAnswer(Model $billable, BillingProvider $provider): bool
+    {
+        if (! StoreRailConfiguration::railIsConfigured()) {
+            return false;
+        }
+
+        if ($provider->isStore()) {
+            return true;
+        }
+
+        return in_array($provider, [BillingProvider::MANUAL, BillingProvider::NONE], true)
+            && ! BillingGrant::forBillable($billable)->open()->exists();
     }
 
     /**
@@ -668,8 +744,10 @@ class AdministerBilling implements AdministersBilling
             );
         }
 
-        // 2. A production subscription is the store's to end.
-        if ($this->holdsProductionSubscription($subscriber)) {
+        // 2. A production subscription is the store's to end, and so is a
+        //    sandbox one the store job counts for this billable: revoked here,
+        //    the next re-projection would put it straight back.
+        if ($this->holdsProductionSubscription($subscriber, $this->acceptsSandbox($billable))) {
             $this->refuse(new BillingAdministrationRefused('not_manual', $provider), $actor, $billable, 'revoke');
         }
 
@@ -729,10 +807,19 @@ class AdministerBilling implements AdministersBilling
      * like a webhook's and unlike the reconciler's projection of the local row:
      * Stripe speaking now may take the record over from a comp or a store. The
      * read runs before the transaction, so no network call holds the row lock.
+     *
+     * The claim is stamped when the read starts, not when it returns: a webhook
+     * that lands while the read is in flight speaks for a newer state than the
+     * object read, and rule 1 has to let it win.
      */
     protected function syncStripe(Authenticatable $actor, Model $billable, CashierSubscription $subscription): void
     {
-        // 1. The rail's word.
+        // 1. The stamp and the snapshot, as the record stands before the read.
+        $current = $this->currentCopy($billable);
+        $eventAt = $this->eventAtAfterRecord($current, BillingProvider::STRIPE);
+        $before = $this->entitlementSnapshot($current);
+
+        // 2. The rail's word.
         $object = $this->onStripe(
             $actor,
             $billable,
@@ -740,25 +827,27 @@ class AdministerBilling implements AdministersBilling
             fn (): StripeSubscription => $subscription->asStripeSubscription(),
         )->toArray();
 
-        $before = $this->entitlementSnapshot($this->currentCopy($billable));
-
-        // 2. The local row and the record, together or not at all.
-        $this->transaction($actor, $billable, 'sync', function () use ($billable, $subscription, $object): void {
+        // 3. The local row, its items and the record, together or not at all.
+        $this->transaction($actor, $billable, 'sync', function () use (
+            $billable,
+            $subscription,
+            $object,
+            $eventAt,
+        ): void {
             $fresh = $this->lockedCopy($billable);
 
             $this->mirrorLiveSubscription($subscription, $object);
 
-            $this->entitlements->write($this->liveSubscriptionClaim($fresh, $object));
+            $this->entitlements->write($this->liveSubscriptionClaim($fresh, $object, $eventAt));
         });
 
-        // 3. Readers of the caller's instance see the healed row.
+        // 4. Readers of the caller's instance see the healed row.
         $billable->unsetRelation('subscriptions');
 
         $this->recordSynced(
             $actor,
             $billable,
             BillingProvider::STRIPE,
-            'stripe',
             $before,
             $this->stringAttribute($subscription, 'stripe_id'),
         );
@@ -768,29 +857,40 @@ class AdministerBilling implements AdministersBilling
      * The store half of {@see self::sync()}: the store job's authoritative
      * re-read, filed under the operator. A read that fails is refused, since
      * here nothing has happened yet that the failure could leave half done.
+     *
+     * A database fault is not the rail failing: it propagates, as it would
+     * from anywhere else in this action.
+     *
+     * @param  BillingProvider|null  $store  the store on record, or null when the record names none
      */
-    protected function syncStore(Authenticatable $actor, Model $billable, BillingProvider $provider): void
+    protected function syncStore(Authenticatable $actor, Model $billable, ?BillingProvider $store): void
     {
         $before = $this->entitlementSnapshot($this->currentCopy($billable));
 
         try {
             (new SyncRevenueCatEntitlement($this->storeRereadEvent($billable), BillingSource::ADMIN))
                 ->handle($this->revenueCat, $this->entitlements);
+        } catch (QueryException|ModelNotFoundException $fault) {
+            throw $fault;
         } catch (ConnectionException|RequestException|RuntimeException $failure) {
             $this->refuse(
-                new BillingAdministrationRefused('rail_error', $provider, $failure),
+                new BillingAdministrationRefused('rail_error', $store, $failure),
                 $actor,
                 $billable,
                 'sync',
             );
         }
 
-        $this->recordSynced($actor, $billable, $provider, 'store', $before);
+        // A payer found behind a comp names their store once the read put it on record.
+        $onRecord = BillingProvider::fromWire($this->stringAttribute($this->currentCopy($billable), 'plan_provider'));
+
+        $this->recordSynced($actor, $billable, $onRecord->isStore() ? $onRecord : $store, $before);
     }
 
     /**
-     * Bring the local Cashier row in line with the live subscription, field for
-     * field as Cashier's own `customer.subscription.updated` handler does.
+     * Bring the local Cashier row and its items in line with the live
+     * subscription, field for field as Cashier's own
+     * `customer.subscription.updated` handler does.
      *
      * One divergence: a cancellation at period end takes the period end from
      * the live object's first item rather than through
@@ -801,6 +901,7 @@ class AdministerBilling implements AdministersBilling
      */
     protected function mirrorLiveSubscription(CashierSubscription $subscription, array $object): void
     {
+        // 1. Price and quantity live on the row only for a single-price subscription.
         $items = $object['items']['data'] ?? [];
         $first = $items[0] ?? null;
         $isSinglePrice = count($items) === 1;
@@ -808,12 +909,15 @@ class AdministerBilling implements AdministersBilling
         $subscription->stripe_price = $isSinglePrice ? $first['price']['id'] : null;
         $subscription->quantity = $isSinglePrice && isset($first['quantity']) ? $first['quantity'] : null;
 
+        // 2. The trial end, only when the object speaks about it.
         if (array_key_exists('trial_end', $object)) {
             $subscription->trial_ends_at = $object['trial_end']
                 ? CarbonImmutable::createFromTimestamp((int) $object['trial_end'])
                 : null;
         }
 
+        // 3. The end: the trial's or the period's for a period-end cancel, the
+        //    fixed date otherwise, none when nothing is cancelled.
         if ($object['cancel_at_period_end'] ?? false) {
             $subscription->ends_at = $subscription->onTrial()
                 ? $subscription->trial_ends_at
@@ -826,11 +930,34 @@ class AdministerBilling implements AdministersBilling
             $subscription->ends_at = null;
         }
 
+        // 4. The rail's status.
         if (isset($object['status'])) {
             $subscription->stripe_status = $object['status'];
         }
 
         $subscription->save();
+
+        // 5. The items, by their Stripe id, and none Stripe no longer lists: a
+        //    missed swap otherwise leaves the old price's item behind.
+        if (! isset($object['items'])) {
+            return;
+        }
+
+        $itemIds = [];
+
+        foreach ($items as $item) {
+            $itemIds[] = $item['id'];
+
+            $subscription->items()->updateOrCreate([
+                'stripe_id' => $item['id'],
+            ], [
+                'stripe_product' => $item['price']['product'],
+                'stripe_price' => $item['price']['id'],
+                'quantity' => $item['quantity'] ?? null,
+            ]);
+        }
+
+        $subscription->items()->whereNotIn('stripe_id', $itemIds)->delete();
     }
 
     /**
@@ -839,11 +966,12 @@ class AdministerBilling implements AdministersBilling
      * filed under the operator.
      *
      * @param  array<string, mixed>  $object  the live Stripe subscription, as an array
+     * @param  CarbonInterface  $eventAt  stamped before the live read, see {@see self::syncStripe()}
      *
      * @throws BillingAdministrationRefused `unmapped_price`, when a granting subscription's price names no
      *                                      tier: a config gap is never a downgrade, so nothing is written
      */
-    protected function liveSubscriptionClaim(Model $billable, array $object): EntitlementWrite
+    protected function liveSubscriptionClaim(Model $billable, array $object, CarbonInterface $eventAt): EntitlementWrite
     {
         $status = is_string($object['status'] ?? null) ? $object['status'] : 'incomplete';
         $priceId = $object['items']['data'][0]['price']['id'] ?? null;
@@ -870,7 +998,7 @@ class AdministerBilling implements AdministersBilling
             plan: $plan,
             status: StripeSubscriptionState::planStatusFor($status),
             provider: BillingProvider::STRIPE,
-            eventAt: $this->eventAtAfterRecord($billable, BillingProvider::STRIPE),
+            eventAt: $eventAt,
             authoritative: true,
             source: BillingSource::ADMIN,
             providerStatus: $status,
@@ -901,18 +1029,18 @@ class AdministerBilling implements AdministersBilling
      * Record one rail's sync, and whether the entitlement now means something
      * other than it did before the sync.
      *
-     * @param  string  $rail  `stripe` or `store`, the rail that was read
+     * @param  BillingProvider|null  $provider  Stripe, or the store that was read (null when it named none)
      * @param  array<string, mixed>  $before  {@see self::entitlementSnapshot()} from before the sync
      */
     protected function recordSynced(
         Authenticatable $actor,
         Model $billable,
-        BillingProvider $provider,
-        string $rail,
+        ?BillingProvider $provider,
         array $before,
         ?string $externalId = null,
     ): void {
         $after = $this->entitlementSnapshot($this->currentCopy($billable));
+        $rail = $provider === BillingProvider::STRIPE ? 'stripe' : 'store';
 
         $this->recorder->record(
             BillingEventType::ENTITLEMENT_SYNCED,
@@ -1036,11 +1164,11 @@ class AdministerBilling implements AdministersBilling
      * The store half is the store job's authoritative re-read, run only where
      * the rail is configured; a read that fails leaves the record as it is and
      * says so, because the grant has already ended and no answer is not a
-     * reason to undo that.
+     * reason to undo that. A database fault is not a failed read and propagates.
      */
     protected function reprojectPaidRails(Model $billable): void
     {
-        app(ReconcileBillingEntitlements::class)->reconcileStripeSubject($billable, BillingSource::ADMIN);
+        $this->reconciler->reconcileStripeSubject($billable, BillingSource::ADMIN);
 
         if (! StoreRailConfiguration::railIsConfigured()) {
             return;
@@ -1049,6 +1177,8 @@ class AdministerBilling implements AdministersBilling
         try {
             (new SyncRevenueCatEntitlement($this->storeRereadEvent($billable), BillingSource::ADMIN))
                 ->handle($this->revenueCat, $this->entitlements);
+        } catch (QueryException|ModelNotFoundException $fault) {
+            throw $fault;
         } catch (ConnectionException|RequestException|RuntimeException $failure) {
             BillingLog::warning('A store rail read failed after a manual grant ended; entitlement left as is.', [
                 'reason' => 'authoritative_read_failed',
@@ -1104,14 +1234,9 @@ class AdministerBilling implements AdministersBilling
      */
     protected function localStripeSubscriptionGrants(Model $billable): bool
     {
-        // Cashier's `Billable` is the consuming application's choice.
-        if (! method_exists($billable, 'subscription')) {
-            return false;
-        }
+        $subscription = StripeBillingState::defaultSubscription($billable);
 
-        $subscription = $billable->subscription(StripeSubscriptionState::SUBSCRIPTION_TYPE);
-
-        if (! $subscription instanceof Model) {
+        if ($subscription === null) {
             return false;
         }
 
@@ -1210,21 +1335,39 @@ class AdministerBilling implements AdministersBilling
     }
 
     /**
-     * Whether any subscription the subscriber holds is a production purchase.
+     * Whether any subscription the subscriber holds counts as a production
+     * purchase.
      *
      * @param  array<string, mixed>  $subscriber  the RevenueCat `subscriber` object
+     * @param  bool  $sandboxCounts  whether the store job treats this billable's sandbox purchases as production
      */
-    protected function holdsProductionSubscription(array $subscriber): bool
+    protected function holdsProductionSubscription(array $subscriber, bool $sandboxCounts): bool
     {
         $subscriptions = is_array($subscriber['subscriptions'] ?? null) ? $subscriber['subscriptions'] : [];
 
         foreach ($subscriptions as $subscription) {
-            if (! is_array($subscription) || ($subscription['is_sandbox'] ?? false) !== true) {
+            if ($sandboxCounts || ! is_array($subscription) || ($subscription['is_sandbox'] ?? false) !== true) {
                 return true;
             }
         }
 
         return false;
+    }
+
+    /**
+     * Whether the store job counts sandbox purchases for this billable, read
+     * from the same two keys it reads: `accept_sandbox` for everybody, or the
+     * billable's KEY in `sandbox_app_user_ids`.
+     */
+    protected function acceptsSandbox(Model $billable): bool
+    {
+        if ((bool) config('magic-starter.billing.revenuecat.accept_sandbox', false)) {
+            return true;
+        }
+
+        $allowlist = (array) config('magic-starter.billing.revenuecat.sandbox_app_user_ids', []);
+
+        return in_array((string) $billable->getKey(), array_filter($allowlist, 'is_string'), true);
     }
 
     /**

@@ -6,7 +6,9 @@ use Carbon\CarbonInterface;
 use FlutterSdk\MagicStarter\Contracts\AdministersBilling;
 use FlutterSdk\MagicStarter\Http\Controllers\BillingController;
 use Illuminate\Database\Eloquent\Model;
+use Laravel\Cashier\Cashier;
 use Laravel\Cashier\Invoice;
+use Stripe\Charge;
 use Stripe\Exception\ApiErrorException;
 use Stripe\PaymentIntent;
 
@@ -60,13 +62,22 @@ final class StripeBillingState
      * The payment a refund of the billable's last invoice would return, or null
      * when there is none.
      *
-     * The target is the NEWEST paid invoice that moved money, because a trial
-     * customer's newest paid invoice is the $0 one the trial opened with. It is
-     * that invoice or nothing: when its payment is not a paid payment intent (a
-     * payment recorded out of band has nothing a refund can be created against),
-     * an older invoice is not "the last one" and is never refunded instead.
-     * Only that one invoice's payments are read, since every read is a request.
-     * `amount` is the invoice's `amount_paid`, in the currency's minor unit.
+     * The target is the NEWEST paid invoice of the local `default` subscription
+     * that moved money: a one-off invoice, or one of another subscription, is
+     * never "the last invoice" of the plan the operator is looking at, and a
+     * trial customer's newest paid invoice is the $0 one the trial opened with.
+     * It is that invoice or nothing: when it holds no paid payment intent a
+     * refund can still be created against (a payment recorded out of band, or
+     * one whose charge is already refunded in full), an older invoice is not
+     * "the last one" and is never refunded instead. Only that one invoice's
+     * payments are read, since every read is a request.
+     *
+     * `amount` and `currency` are the chosen payment's own, in the currency's
+     * minor unit: an invoice paid in two payments refunds only the one named.
+     *
+     * The invoice's subscription is read from `parent.subscription_details`
+     * (Cashier's `Invoice::subscriptionId()`), where API 2026-08-26.dahlia
+     * puts it; the invoice object no longer carries a top-level `subscription`.
      *
      * @return array{invoice_id: string, payment_intent: string, amount: int, currency: string}|null
      *
@@ -81,24 +92,26 @@ final class StripeBillingState
             return null;
         }
 
+        $subscriptionId = self::defaultSubscription($billable)?->getAttribute('stripe_id');
+
+        if (! is_string($subscriptionId) || $subscriptionId === '') {
+            return null;
+        }
+
         foreach ($billable->invoices() as $invoice) {
-            if (! $invoice instanceof Invoice || $invoice->rawAmountPaid() <= 0) {
+            if (! $invoice instanceof Invoice
+                || $invoice->subscriptionId() !== $subscriptionId
+                || $invoice->rawAmountPaid() <= 0
+            ) {
                 continue;
             }
 
-            $paymentIntent = self::paidPaymentIntent($invoice);
+            $invoiceId = $invoice->asStripeInvoice()->id;
+            $payment = self::refundablePaymentOf($invoiceId);
 
-            if ($paymentIntent === null) {
-                return null;
-            }
-
-            $stripeInvoice = $invoice->asStripeInvoice();
-
-            return [
-                'invoice_id' => $stripeInvoice->id,
-                'payment_intent' => $paymentIntent,
-                'amount' => $stripeInvoice->amount_paid,
-                'currency' => $stripeInvoice->currency,
+            return $payment === null ? null : [
+                'invoice_id' => $invoiceId,
+                ...$payment,
             ];
         }
 
@@ -106,32 +119,62 @@ final class StripeBillingState
     }
 
     /**
-     * The id of the paid payment intent behind an invoice, or null.
+     * The first paid payment intent behind an invoice that a refund can still
+     * return money from, with that payment's own amount, or null.
+     *
+     * The payment intent's latest charge is expanded on this one list read, so
+     * a charge already refunded in full is skipped without another request.
+     *
+     * @return array{payment_intent: string, amount: int, currency: string}|null
      *
      * @throws ApiErrorException
      */
-    private static function paidPaymentIntent(Invoice $invoice): ?string
+    private static function refundablePaymentOf(string $invoiceId): ?array
     {
-        foreach ($invoice->payments() as $payment) {
-            if (! $payment->isCompleted()) {
+        $payments = Cashier::stripe()->invoicePayments->all([
+            'invoice' => $invoiceId,
+            'expand' => [
+                'data.payment.payment_intent.latest_charge',
+            ],
+        ]);
+
+        foreach ($payments->data as $payment) {
+            if ($payment->status !== 'paid' || $payment->payment->type !== 'payment_intent') {
                 continue;
             }
 
-            $method = $payment->asStripeInvoicePayment()->payment;
-
-            if ($method->type !== 'payment_intent') {
-                continue;
-            }
-
-            // Expanded to a PaymentIntent object when the caller asked for it.
-            $intent = $method->payment_intent ?? null;
+            // An id, or the PaymentIntent object the expansion asked for.
+            $intent = $payment->payment->payment_intent ?? null;
             $id = $intent instanceof PaymentIntent ? $intent->id : $intent;
 
-            if (is_string($id) && $id !== '') {
-                return $id;
+            if (! is_string($id) || $id === '' || self::isFullyRefunded($intent)) {
+                continue;
             }
+
+            return [
+                'payment_intent' => $id,
+                'amount' => (int) $payment->amount_paid,
+                'currency' => $payment->currency,
+            ];
         }
 
         return null;
+    }
+
+    /**
+     * Whether the payment intent's latest charge is refunded in full, as far as
+     * the expanded object says. An unexpanded intent says nothing, and Stripe
+     * refuses a refund of a refunded charge on its own.
+     */
+    private static function isFullyRefunded(mixed $intent): bool
+    {
+        $charge = $intent instanceof PaymentIntent ? ($intent->latest_charge ?? null) : null;
+
+        if (! $charge instanceof Charge) {
+            return false;
+        }
+
+        return ($charge->refunded ?? false) === true
+            || (int) ($charge->amount_refunded ?? 0) >= (int) ($charge->amount ?? PHP_INT_MAX);
     }
 }

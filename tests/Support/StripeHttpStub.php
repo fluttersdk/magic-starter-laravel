@@ -2,6 +2,7 @@
 
 namespace FlutterSdk\MagicStarter\Tests\Support;
 
+use Closure;
 use Stripe\ApiRequestor;
 use Stripe\HttpClient\ClientInterface;
 
@@ -45,6 +46,14 @@ final class StripeHttpStub implements ClientInterface
     private array $answers = [];
 
     /**
+     * What happens while each queued answer's request is in flight, by the
+     * answer's position in {@see self::$answers}.
+     *
+     * @var list<Closure(): void|null>
+     */
+    private array $during = [];
+
+    /**
      * Put a fresh stub in front of the SDK and answer it.
      */
     public static function install(): self
@@ -70,14 +79,17 @@ final class StripeHttpStub implements ClientInterface
      *
      * @param  array<string, mixed>  $body  Decoded JSON, as Stripe would send it.
      * @param  int  $status  The HTTP status; a 4xx or 5xx makes the SDK raise.
+     * @param  (Closure(): void)|null  $during  Run while the request is in flight, before it is
+     *                                          answered: the world moving under a read.
      */
-    public function answer(array $body, int $status = 200): self
+    public function answer(array $body, int $status = 200, ?Closure $during = null): self
     {
         $this->answers[] = [
             (string) json_encode($body),
             $status,
             [],
         ];
+        $this->during[] = $during;
 
         return $this;
     }
@@ -116,6 +128,12 @@ final class StripeHttpStub implements ClientInterface
             'params' => $params,
             'headers' => $headers,
         ];
+
+        $during = array_shift($this->during);
+
+        if ($during !== null) {
+            $during();
+        }
 
         return array_shift($this->answers) ?? [
             (string) json_encode([

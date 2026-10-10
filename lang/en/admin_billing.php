@@ -20,8 +20,8 @@ return [
     'fields' => [
         'plan' => 'Plan',
         'reason' => 'Reason',
-        'expires_at' => 'Expires on',
-        'expires_at_help' => 'Leave empty to keep the grant until it is revoked.',
+        'expires_at' => 'Expires after',
+        'expires_at_help' => 'The grant lasts through the end of this day. Leave empty to keep it until it is revoked.',
         'until' => 'Trial ends on',
         'refund_reason' => 'Refund reason',
     ],
@@ -71,7 +71,8 @@ return [
         'refund' => [
             'label' => 'Refund last invoice',
             'heading' => 'Refund the last paid invoice',
-            'description' => 'Stripe refunds :amount, in full, for invoice :invoice. The subscription is left as it is.',
+            'description' => 'Stripe refunds :amount, in full, for invoice :invoice. '
+                . 'The subscription is left as it is.',
             'success' => 'Invoice refunded.',
         ],
         'sync' => [
@@ -93,16 +94,22 @@ return [
         'expiry_in_past' => 'The expiry date must be in the future.',
         'entitlement_refused' => 'The billing rules refused this change; the customer\'s plan was left as it was.',
         'not_manual' => 'This plan was not granted by an operator; cancel the subscription instead.',
-        'rail_error' => 'The billing provider could not be reached; nothing was changed. Try again shortly.',
+        'rail_error' => 'The billing provider returned an error. '
+            . 'Check the subscription in the provider before retrying.',
         'no_subscription' => 'This customer has no Stripe subscription.',
         'not_trialing' => 'This subscription is not on a trial.',
         'date_in_past' => 'The new trial end must be in the future.',
+        'not_later' => 'The new trial end must be after the current one.',
         'already_cancelled' => 'This subscription is already cancelled.',
         'not_on_grace_period' => 'Only a cancelled subscription that has not ended yet can be resumed.',
+        'scheduled_cancel' => 'This subscription is cancelled on a fixed date; resume it in the provider.',
         'invalid_reason' => 'Choose why the invoice is refunded: requested by the customer or a duplicate.',
         'nothing_refundable' => 'This customer has no paid invoice that can be refunded.',
+        'stale_target' => 'A newer invoice was paid since this refund was opened; '
+            . 'open it again to see what it refunds.',
         'nothing_to_sync' => 'This customer has no subscription with a billing provider to sync.',
-        'unmapped_price' => 'Stripe bills this customer on a price the billing catalogue does not map to a plan; nothing was changed.',
+        'unmapped_price' => 'Stripe bills this customer on a price the billing catalogue does not map to a plan; '
+            . 'nothing was changed.',
     ],
 
 ];
