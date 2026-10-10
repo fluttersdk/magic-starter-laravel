@@ -13,6 +13,7 @@
 - [RevenueCat Webhook](#revenuecat-webhook)
 - [Agent Commands](#agent-commands)
 - [Audit Log](#audit-log)
+- [Admin Panel](#admin-panel)
 - [Account Deletion](#account-deletion)
 - [Upgrading](#upgrading)
 
@@ -435,6 +436,23 @@ A delivery is only a signal. The job it queues re-reads the subscriber from Reve
 
 The `billing:reconcile` schedule heals a dropped delivery. Its cadence is `daily` by default; an application selling mostly through the stores should set `MAGIC_STARTER_BILLING_RECONCILE_CADENCE=hourly`, because RevenueCat abandons a delivery after about three hours.
 
+<a name="sandbox-allowlist"></a>
+### Sandbox allowlist
+
+`REVENUECAT_ACCEPT_SANDBOX` is all or nothing, and production never sets it. App Review is the case it cannot serve: Apple tests with a sandbox purchase, and the reviewer's account has to reach the tier it bought. `REVENUECAT_SANDBOX_APP_USER_IDS` (`billing.revenuecat.sandbox_app_user_ids`) is the narrow form: a comma-separated list of **billable keys**, the user or team ids behind the review accounts (the same key as the RevenueCat `app_user_id`, see [Identity](#identity)).
+
+```bash
+REVENUECAT_ACCEPT_SANDBOX=false
+REVENUECAT_SANDBOX_APP_USER_IDS=2f6c1e0a-9d44-4b7e-8a53-0c1d5e7f9a21
+```
+
+- The webhook accepts a `SANDBOX` delivery when any identity the event carries (`app_user_id`, `original_app_user_id`, `aliases`, `transferred_from`, `transferred_to`) is a listed key. That only lets the re-read happen.
+- The job then counts sandbox subscriptions **per billable**, and only for a billable whose own key is listed. An event that named a listed key in an alias cannot carry that permission to the subscriber it resolved, and the reconciler, which runs the job once per billable, is bound by the same list.
+- Everybody else still reads sandbox purchases as no evidence in either direction.
+- With `REVENUECAT_ACCEPT_SANDBOX=true` the list is pointless. `billing:doctor` reports `revenuecat.sandbox_allowlist` as `ok` with the number of entries (the keys are never printed), as a `warning` when both are on, and says nothing while the list is empty.
+
+A store record that holds sandbox purchases only is never revoked by the store job. The panel's [Revoke grant](#admin-panel) action ends such a record by hand.
+
 ---
 
 <a name="agent-commands"></a>
@@ -468,7 +486,7 @@ php artisan billing:doctor --json
 php artisan billing:doctor --json --remote
 ```
 
-Without `--remote` it checks the configuration: the catalogue validates, the rail secrets that a sold product needs are set, `REVENUECAT_WEBHOOK_SECRET` exists while the store rail is on, every web-sold product has a Stripe price id, store ids are listed, billable keys are UUIDs, the subscription tables are keyed the way their models write them (`schema.subscription_keys`), the `billing_trials` table exists while a product offers a trial (`schema.billing_trials`), the `billing_events` table exists (`schema.billing_events`), and the reconcile cadence suits the store rail. With `--remote` it also reads Stripe and RevenueCat and diffs them against the manifest: a Stripe price per lookup key (id, interval, amounts), and the RevenueCat apps, products, entitlements, `default` offering, packages and webhook (that one delivers to this application's URL). RevenueCat returns a webhook's signing secret only when it is rotated, so whether HMAC signing is on cannot be read: the doctor reports it as an `agent_check` for a person to confirm in the dashboard.
+Without `--remote` it checks the configuration: the catalogue validates, the rail secrets that a sold product needs are set, `REVENUECAT_WEBHOOK_SECRET` exists while the store rail is on, every web-sold product has a Stripe price id, store ids are listed, billable keys are UUIDs, the subscription tables are keyed the way their models write them (`schema.subscription_keys`), the `billing_trials` table exists while a product offers a trial (`schema.billing_trials`), the `billing_events` table exists (`schema.billing_events`), the `billing_grants` table exists (`schema.billing_grants`), the sandbox allowlist is consistent (`revenuecat.sandbox_allowlist`), and the reconcile cadence suits the store rail. With `--remote` it also reads Stripe and RevenueCat and diffs them against the manifest: a Stripe price per lookup key (id, interval, amounts), and the RevenueCat apps, products, entitlements, `default` offering, packages and webhook (that one delivers to this application's URL). RevenueCat returns a webhook's signing secret only when it is rotated, so whether HMAC signing is on cannot be read: the doctor reports it as an `agent_check` for a person to confirm in the dashboard.
 
 `REVENUECAT_API_V2_KEY` is a separate secret key scoped to `project_configuration:{apps,products,entitlements,offerings,packages,integrations}:read`, and `REVENUECAT_PROJECT_ID` names the project. Neither is needed to sell.
 
@@ -484,7 +502,7 @@ Every billing outcome leaves one row in `billing_events` and dispatches one Lara
 | Column | Holds |
 |--------|-------|
 | `type` | What happened, one of the values below. Indexed. |
-| `source` | Which path acted: `webhook` (a Stripe or RevenueCat delivery), `reconcile` (`billing:reconcile`), `request` (an authenticated API call), `trial_check` (the queued card check). |
+| `source` | Which path acted: `webhook` (a Stripe or RevenueCat delivery), `reconcile` (`billing:reconcile`), `request` (an authenticated API call), `trial_check` (the queued card check), `admin` (an operator in the [admin panel](#admin-panel), or the hourly grant expiry). |
 | `provider` | The rail (`stripe`, `app_store`, `play_store`), or null. |
 | `billable_type`, `billable_id` | The subject, as `getMorphClass()` and its key. Plain nullable strings with no foreign key: a refusal may have no billable, and a raw store id must fit. |
 | `actor_user_id` | The signed-in user who caused it, or null for a rail-driven outcome. Nullable foreign key to `users`, set to null when the user is deleted. |
@@ -509,6 +527,17 @@ Every billing outcome leaves one row in `billing_events` and dispatches one Lara
 | `trial_refused` | `trial_check` | `card_reused`, `duplicate` | `billing_trial_id`, `user_id`. |
 | `trial_cancelled` | `trial_check` | none | `billing_trial_id`, `user_id`, `cancelled_by` (`this_check` when this run cancelled it, `already_ended` when Stripe had already ended it). |
 | `trial_refusal_withdrawn` | `trial_check` | `refused_trial_converted` | `stripe_status`. |
+| `grant_added` | `admin` | none | `grant_id`, `plan`, `reason`, `expires_at`. |
+| `grant_revoked` | `admin` | none | `grant_id`, `plan`, `reason`; a store record revoked by hand carries `reason` and `store_sandbox_only` instead. |
+| `grant_expired` | `admin` | none | `grant_id`, `plan`, `expires_at`, `entitlement_written`. No actor: the expiry command wrote it. |
+| `trial_extended` | `admin` | none | `until`. |
+| `trial_ended` | `admin` | none | `note` (`stripe_bills_now`). |
+| `subscription_resumed` | `admin` | none | `stripe_status`. |
+| `invoice_refunded` | `admin` | none | `invoice_id`, `amount`, `currency`, `reason`. One row per refund id. |
+| `entitlement_synced` | `admin` | none | `rail` (`stripe` or `store`), `changed`. |
+| `request_refused` | `admin` | The refusal keys of the [admin panel](#admin-panel). | `operation`, and `rail_message` on a `rail_error`. |
+
+An operator's cancel is a `subscription_cancelled` row with source `admin`, and every entitlement write an admin action makes is an `entitlement_applied` or `entitlement_dropped` row with source `admin`.
 
 An apply writes `entitlement_applied` only when what the entitlement **means** changed: `plan`, `plan_status`, `plan_provider`, `plan_current_period_end` or `plan_renews`. `changed` names those fields and `before` and `after` carry the five values. An apply that only refreshed provenance (a renewal, a reconcile read) writes no row, since that would be one row per delivery that says nothing. `direction` is `upgrade`, `same`, `downgrade`, `unknown`, `no-order` or `nothing-stored`, and `cross_rail` is true when a rail holding the record handed it to another.
 
@@ -532,7 +561,7 @@ Recording sits inside the Stripe webhook's own transaction, so the insert runs i
 
 ### Listening
 
-Each outcome is one class in `FlutterSdk\MagicStarter\Events\Billing` (`EntitlementApplied`, `EntitlementDropped`, `CheckoutStarted`, `SubscriptionSwapped`, `SubscriptionCancelled`, `PortalOpened`, `RequestRefused`, `DeliveryRefused`, `TrialRecorded`, `TrialRefused`, `TrialCancelled`, `TrialRefusalWithdrawn`), and all of them implement `BillingOutcome`. They are dispatched after the surrounding transaction commits, so an outcome that rolled back never fires. The package registers no listener of its own.
+Each outcome is one class in `FlutterSdk\MagicStarter\Events\Billing` (`EntitlementApplied`, `EntitlementDropped`, `CheckoutStarted`, `SubscriptionSwapped`, `SubscriptionCancelled`, `PortalOpened`, `RequestRefused`, `DeliveryRefused`, `TrialRecorded`, `TrialRefused`, `TrialCancelled`, `TrialRefusalWithdrawn`, `GrantAdded`, `GrantRevoked`, `GrantExpired`, `TrialExtended`, `TrialEnded`, `SubscriptionResumed`, `InvoiceRefunded`, `EntitlementSynced`), and all of them implement `BillingOutcome`. They are dispatched after the surrounding transaction commits, so an outcome that rolled back never fires. The package registers no listener of its own.
 
 A synchronous listener runs in the billing path, inside the webhook, request or job that produced the outcome. A listener that throws is reported through your exception handler and never propagated, so the delivery still answers 200 and the request still answers what it would have, but that listener's work is lost. Prefer a `ShouldQueue` listener for anything that can fail or take time.
 
@@ -569,6 +598,71 @@ A refused request still leaves a `request_refused` row, so put a throttle on the
 
 ---
 
+<a name="admin-panel"></a>
+## Admin Panel
+
+With the [admin panel](admin-panel.md) mounted, a **Billing** tab appears on the billable's edit page: the user's under `billing.billable` `'user'`, the team's under `'team'`. It shows what the billable holds (plan, status, provider, period end, the open grant and its expiry, the Stripe trial end), its `billing_events` history, and eight actions. Every action goes through `Contracts\AdministersBilling`, which writes the entitlement through `WritesEntitlement` and leaves a `billing_events` row with source `admin`; nothing in the tab calls Stripe, RevenueCat or the entitlement writer directly.
+
+An action is shown only to an admin [billing authorization](#billing-authorization) allows and only in the state it applies to. The contract re-checks the state and refuses on its own, so a crafted request meets the same answer.
+
+| Action | Shown when | Refused with |
+|--------|-----------|--------------|
+| Grant plan | No paid rail grants. | `paid_rail_active`, `unknown_plan`, `expiry_in_past`, `entitlement_refused` |
+| Revoke grant | An open manual grant is on record, or a store record. | `not_manual`, `rail_error`, `entitlement_refused` |
+| Extend trial | The Stripe subscription is trialing. | `no_subscription`, `not_trialing`, `date_in_past`, `rail_error` |
+| End trial | The Stripe subscription is trialing. | `no_subscription`, `not_trialing`, `rail_error` |
+| Cancel subscription | The subscription runs and is not cancelled. | `no_subscription`, `already_cancelled`, `rail_error` |
+| Resume subscription | Cancelled and still inside its paid period. | `no_subscription`, `not_on_grace_period`, `rail_error` |
+| Refund last invoice | A Stripe customer with a local subscription. | `no_subscription`, `invalid_reason`, `nothing_refundable`, `rail_error` |
+| Sync now | A record any rail or operator wrote, or a local subscription. | `nothing_to_sync`, `unmapped_price`, `rail_error` |
+
+The sentences are `magic-starter::admin_billing.refusals.*` in `en` and `tr`. A refusal is recorded as a `request_refused` row (source `admin`, the key as `reason`) **before** it is thrown, outside any transaction the action opened, and the panel halts the action without rolling its own transaction back, so the row survives. `rail_error` keeps the rail's own message on the row.
+
+### Manual grants
+
+A grant gives the billable a plan with no payment behind it, until an optional expiry or a revoke. The plan is a tier of `tier_order`, the expiry must be in the future, and the reason is kept on the grant.
+
+- A grant is refused while a paid rail grants: the record names Stripe or a store on a granting status, or the local Cashier `default` subscription grants and has not ended. The check runs again under a row lock inside the write, because a checkout can land in between, and the grant is written as a projection that yields to anybody paying.
+- There is **one open grant per billable**. A new grant closes the previous one as `superseded`. The grant's row id travels in `plan_product_id` as `grant:{id}`, which is how a revoke or an expiry knows the billable is still on it.
+- Revoke ends only a **manual grant**, or a **store record** whose RevenueCat subscriber holds no production subscription (sandbox purchases only), which the store job never revokes on its own. Anything else is `not_manual`: a paid rail's record is cancelled through that rail.
+- `magic-starter:billing:expire-grants` runs **hourly** while billing is on (`withoutOverlapping()` and `onOneServer()`, so the application's scheduler must run). It visits every open grant: an expired one the billable is still on is revoked and closed as `expired`, one the billable has moved off (a paid rail or a newer grant took the record) is closed as `superseded` with no write. A table not migrated yet is skipped with a line.
+- After a grant ends, by revoke or expiry, the paid rails are **re-projected**: the Stripe `default` subscription through the reconciler, and the store through the authoritative RevenueCat re-read where the rail is configured. A checkout made during the comp was dropped while the comp held the record, and the reconciler never walks a manual record to find it.
+
+`billing_grants` keeps one row per grant (`plan`, `reason`, `expires_at`, `granted_by`, `ended_at`, `end_reason` of `expired`, `revoked` or `superseded`) and outlives the operator and the billable: neither has a cascading foreign key. A fresh `magic-starter:install --features=billing` publishes `create_billing_grants_table.php`; an existing application copies it in, see [Upgrading](#upgrading). `billing:doctor` reports it missing as `schema.billing_grants`.
+
+### Stripe operations
+
+Trial, cancel, resume and refund act on the billable's **local `default` Cashier subscription**, whatever `plan_provider` says: a checkout over a comp leaves the record naming somebody else while Cashier bills the card. Without one they refuse `no_subscription`. They change Stripe and Cashier's row and leave the entitlement to the webhook that follows, as the customer's own billing endpoints do. A Stripe or Cashier failure is a recorded `rail_error`.
+
+- **Extend trial and End trial** work only while the subscription is trialing. Extend moves the trial end to a future date. End trial ends the trial now, so Stripe **bills the customer immediately**.
+- **Resume** sends `cancel_at_period_end=false` and nothing else. It is deliberately not Cashier's `resume()`, which off trial also sends `trial_end: now` and can invoice the customer and move their billing date when all the operator asked for was to lift a cancellation.
+- **Refund** returns the **newest invoice with `amount_paid` above zero** whose payment is a paid payment intent, **in full**, with the reason `requested_by_customer` or `duplicate` (`fraudulent` is not offered: it feeds Stripe's fraud signals and is not a support decision). That invoice or nothing: if its payment was recorded out of band, an older invoice is never refunded in its place (`nothing_refundable`). The refund is created under the idempotency key `admin-refund:{invoice}`, so a second click or a retry after a timeout is answered with the first refund instead of refunding twice, and the `invoice_refunded` row is written once per refund id. The subscription is left as it is. The modal reads Stripe once when it opens to name the amount and the invoice.
+- **Sync now** reads the rail **live**: for Stripe, the subscription from the API, which heals the local Cashier row (status, price, quantity, trial end, end date) and then writes the claim it makes as an **authoritative** write, like a webhook, so Stripe may take the record over from a comp or a store. A granting subscription on a price the catalogue does not map is refused `unmapped_price` and nothing is written. For a store record it runs the store job's authoritative re-read under the operator. Each rail leaves an `entitlement_synced` row saying whether the entitlement changed.
+
+<a name="billing-authorization"></a>
+### Billing authorization
+
+Billing actions are narrower than panel access: the panel gate has already admitted the admin, and billing authorization only takes actions away.
+
+- `MAGIC_STARTER_ADMIN_BILLING_EMAILS` (`admin.billing_emails`), a comma-separated list. Empty, the default, lets every panel admin run the actions. Otherwise only the listed addresses do, compared trimmed and lowercased.
+- `MagicStarterPlugin::authorizeBillingUsing(?Closure $callback)` replaces the list entirely. The callback receives the panel user and the panel, and only a literal `true` allows.
+
+```php
+MagicStarterPlugin::make()
+    ->authorizeBillingUsing(fn (Authenticatable $admin): bool => $admin->can('manage-billing'));
+```
+
+A hidden action cannot be mounted or called, so the check also holds against a crafted Livewire request. Reading the tab is not restricted by it.
+
+### Billing events and webhook deliveries
+
+The plugin registers two read-only resources while billing is on, under the keys `billing_events` and `webhook_deliveries`, which `MagicStarterPlugin::resource()` can replace like any other.
+
+- **Billing events** lists `billing_events` with its filters (type, source, provider, date range) and a view page with the properties. A row is a reading and is never edited or deleted from the panel; retention is the [prune command](#logs-and-retention)'s job.
+- **Webhook deliveries** lists the `processed_webhook_events` claims. The table has no provider column, so RevenueCat is derived from the claim prefix and everything else is Stripe. The view page lists the billing events recorded under the **delivery id**. That join has limits: a delivery that changed nothing has no rows, and rows keyed on a Checkout session or a Stripe subscription id (`checkout_started`, `trial_recorded`) never join.
+
+---
+
 <a name="account-deletion"></a>
 ## Account Deletion
 
@@ -584,6 +678,12 @@ The catalogue replaces `plans`, `prices` and `store_products`, and checkout and 
 An application that installed before trials existed and wants to sell one copies `vendor/fluttersdk/magic-starter-laravel/database/migrations/create_billing_trials_table.php` into `database/migrations/` under a timestamp later than your latest migration and runs `php artisan migrate`, before it sets a `trial_days`. Do not re-run `magic-starter:install` for this. An application that sets no `trial_days` never reads the table and needs neither.
 
 The audit log needs two migrations. Copy `create_billing_events_table.php` and `add_processed_at_index_to_processed_webhook_events_table.php` from `vendor/fluttersdk/magic-starter-laravel/database/migrations/` into `database/migrations/` under timestamps later than your latest migration (or re-run the install command's billing publish) and run `php artisan migrate`. Until you do, billing keeps working and each worker logs one warning that `billing_events` is missing; `billing:doctor` reports it as `schema.billing_events`.
+
+The admin panel's manual grants need one more migration. Copy `create_billing_grants_table.php` from `vendor/fluttersdk/magic-starter-laravel/database/migrations/` into `database/migrations/` under a timestamp later than your latest migration (or re-run the install command's billing publish) and run `php artisan migrate`. Until you do, a grant cannot be recorded and `magic-starter:billing:expire-grants` skips with a line; `billing:doctor` reports it as `schema.billing_grants`. The command is scheduled hourly by the package, so your scheduler has to be running.
+
+The operator side is overridable: `Contracts\AdministersBilling` is bound to `Actions\AdministerBilling` unconditionally, so an application binds its own class over the contract to change what the panel's billing actions do. The expiry command resolves `Actions\AdministerBilling` itself (settling a grant is the sweep's step, not an operator's act, and is not on the contract), so bind a subclass over that class as well when the sweep must use yours.
+
+`Filament\Support\ContractAction` now catches `BillingAdministrationRefused`: it shows the refusal as a danger notification and halts the action **without** rolling back the surrounding transaction, since the `request_refused` row is the only record of the refusal. A custom panel action that runs an `AdministersBilling` call through `ContractAction::run()` gets the notification instead of an exception.
 
 Code that builds on the package internals changes in these places:
 
