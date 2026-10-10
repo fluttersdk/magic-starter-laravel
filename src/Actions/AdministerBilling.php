@@ -359,9 +359,9 @@ class AdministerBilling implements AdministersBilling
      * click, or a retry after a timeout, is answered with the refund the first
      * one created instead of refunding twice. The reason is part of the key
      * because Stripe refuses a replayed key whose parameters differ; a second
-     * reason against an already refunded charge is refused by Stripe itself. That replay is also why the row is recorded
-     * once per refund id, with the refund's own amount and currency. The
-     * subscription is left alone.
+     * reason against an already refunded charge is refused by Stripe itself.
+     * That replay is also why the row is recorded once per refund id, with the
+     * refund's own amount and currency. The subscription is left alone.
      *
      * @throws BillingAdministrationRefused `no_subscription`, `invalid_reason`, `nothing_refundable`,
      *                                      `stale_target` or `rail_error`
