@@ -23,10 +23,12 @@ use GuzzleHttp\Promise\PromiseInterface;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Http\Client\Request;
 use Illuminate\Http\Client\RequestException;
+use Illuminate\Queue\Jobs\FakeJob;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Str;
+use RuntimeException;
 
 /**
  * The store rail's feeder, where entitlement is actually decided.
@@ -1425,6 +1427,150 @@ class SyncRevenueCatEntitlementTest extends TestCase
         $this->assertSame(1, ProcessedWebhookEvent::query()->count(), 'A retryable failure burnt the claim.');
         $this->assertSame(0, DB::table('failed_jobs')->count());
         $this->assertSame(1, $this->queuedJobs(), 'The job was not released for another attempt.');
+    }
+
+    // -------------------------------------------------------------------------
+    // The audit trail: which refusals leave a billing_events row
+    // -------------------------------------------------------------------------
+
+    /**
+     * A webhook-sourced refusal on the first attempt leaves its one row, with
+     * the raw App User ID in `properties` and no billable, because there is none.
+     */
+    public function test_a_webhook_sourced_refusal_leaves_one_delivery_refused_row(): void
+    {
+        $orphan = (string) Str::uuid();
+        $event = $this->event('RENEWAL', $this->makeBillable([]), ['app_user_id' => $orphan]);
+
+        $this->sync($event);
+
+        $row = BillingEvent::query()->sole();
+        $this->assertSame(BillingEventType::DELIVERY_REFUSED, $row->type);
+        $this->assertSame(BillingSource::WEBHOOK, $row->source);
+        $this->assertSame(BillingProvider::APP_STORE, $row->provider);
+        $this->assertSame('unknown_billable', $row->reason);
+        $this->assertSame($event['id'], $row->external_id);
+        $this->assertNull($row->billable_id);
+        $this->assertSame('RENEWAL', $row->properties['event_type']);
+        $this->assertSame($orphan, $row->properties['app_user_id']);
+    }
+
+    /**
+     * A call site that holds the billable names it on the row.
+     */
+    public function test_a_refusal_made_with_a_billable_in_hand_names_it(): void
+    {
+        $billable = $this->makeBillable([]);
+
+        $this->fakeAuthoritativeReads([
+            (string) $billable->getKey() => $this->subscriber([
+                self::APP_STORE_BUSINESS => $this->subscription(['is_sandbox' => true]),
+            ]),
+        ]);
+
+        $this->sync($this->event('INITIAL_PURCHASE', $billable));
+
+        $row = BillingEvent::query()->sole();
+        $this->assertSame(BillingEventType::DELIVERY_REFUSED, $row->type);
+        $this->assertSame('sandbox_only_subscriber', $row->reason);
+        $this->assertSame($billable->getMorphClass(), $row->billable_type);
+        $this->assertSame((string) $billable->getKey(), $row->billable_id);
+    }
+
+    /**
+     * The reconciler runs this job every sweep, so a row per refusal would flood
+     * the table with the same non-event each time.
+     */
+    public function test_a_reconcile_sourced_refusal_leaves_no_row(): void
+    {
+        $orphan = (string) Str::uuid();
+
+        dispatch_sync(new SyncRevenueCatEntitlement(
+            $this->event('RENEWAL', $this->makeBillable([]), ['app_user_id' => $orphan]),
+            source: BillingSource::RECONCILE,
+        ));
+
+        $this->assertSame(0, BillingEvent::query()->count());
+    }
+
+    /**
+     * A retry would record the same refusal again for one delivery.
+     */
+    public function test_a_refusal_on_a_later_attempt_leaves_no_row(): void
+    {
+        $orphan = (string) Str::uuid();
+        $job = new SyncRevenueCatEntitlement(
+            $this->event('RENEWAL', $this->makeBillable([]), ['app_user_id' => $orphan]),
+        );
+        $job->setJob($this->fakeQueueJob(attempts: 2));
+
+        $job->handle($this->app->make(RevenueCatClient::class), $this->app->make(WritesEntitlement::class));
+
+        $this->assertSame(0, BillingEvent::query()->count());
+    }
+
+    /**
+     * Logged for an operator and never recorded: the grant happened.
+     */
+    public function test_a_family_shared_entitlement_leaves_no_delivery_refused_row(): void
+    {
+        $billable = $this->makeBillable([]);
+
+        $this->fakeAuthoritativeReads([
+            (string) $billable->getKey() => $this->subscriber([
+                self::APP_STORE_BUSINESS => $this->subscription(['ownership_type' => 'FAMILY_SHARED']),
+            ]),
+        ]);
+
+        $this->sync($this->event('INITIAL_PURCHASE', $billable));
+
+        $this->assertSame(
+            0,
+            BillingEvent::query()->where('type', BillingEventType::DELIVERY_REFUSED->value)->count(),
+        );
+    }
+
+    /**
+     * `failed()` runs after the LAST attempt, so the attempt gate cannot apply
+     * to it: the release is recorded once whatever attempt number it reports.
+     */
+    public function test_a_permanent_failure_of_a_webhook_sourced_job_records_the_release_once(): void
+    {
+        $event = $this->event('INITIAL_PURCHASE', $this->makeBillable([]));
+        $job = new SyncRevenueCatEntitlement($event);
+        $job->setJob($this->fakeQueueJob(attempts: 3));
+
+        $job->failed(new RuntimeException('upstream is down'));
+
+        $row = BillingEvent::query()->sole();
+        $this->assertSame(BillingEventType::DELIVERY_REFUSED, $row->type);
+        $this->assertSame(BillingSource::WEBHOOK, $row->source);
+        $this->assertSame('released_burnt_event_id', $row->reason);
+        $this->assertSame($event['id'], $row->external_id);
+        $this->assertSame(RuntimeException::class, $row->properties['exception']);
+    }
+
+    public function test_a_permanent_failure_of_a_reconcile_sourced_job_records_nothing(): void
+    {
+        $job = new SyncRevenueCatEntitlement(
+            $this->event('INITIAL_PURCHASE', $this->makeBillable([])),
+            source: BillingSource::RECONCILE,
+        );
+
+        $job->failed(new RuntimeException('upstream is down'));
+
+        $this->assertSame(0, BillingEvent::query()->count());
+    }
+
+    /**
+     * A queue job that reports a fixed attempt number, the way a worker's does.
+     */
+    protected function fakeQueueJob(int $attempts): FakeJob
+    {
+        $job = new FakeJob;
+        $job->attempts = $attempts;
+
+        return $job;
     }
 
     // -------------------------------------------------------------------------

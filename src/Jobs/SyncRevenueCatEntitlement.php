@@ -6,6 +6,7 @@ use Carbon\CarbonImmutable;
 use Carbon\Exceptions\InvalidFormatException;
 use FlutterSdk\MagicStarter\Contracts\WritesEntitlement;
 use FlutterSdk\MagicStarter\Enums\BillingChannel;
+use FlutterSdk\MagicStarter\Enums\BillingEventType;
 use FlutterSdk\MagicStarter\Enums\BillingProvider;
 use FlutterSdk\MagicStarter\Enums\BillingSource;
 use FlutterSdk\MagicStarter\Enums\PlanStatus;
@@ -13,6 +14,7 @@ use FlutterSdk\MagicStarter\Enums\ProductType;
 use FlutterSdk\MagicStarter\MagicStarter;
 use FlutterSdk\MagicStarter\Models\ProcessedWebhookEvent;
 use FlutterSdk\MagicStarter\Support\BillingCatalogue;
+use FlutterSdk\MagicStarter\Support\BillingEventRecorder;
 use FlutterSdk\MagicStarter\Support\BillingLog;
 use FlutterSdk\MagicStarter\Support\EntitlementWrite;
 use FlutterSdk\MagicStarter\Support\ReadsBillableAttributes;
@@ -130,6 +132,29 @@ class SyncRevenueCatEntitlement implements ShouldQueue
      * controller may know its job, a job must not know its controller.
      */
     public const CLAIM_PREFIX = 'rc:';
+
+    /**
+     * The refusals that leave a `delivery_refused` row, as an allow-list rather
+     * than a deny-list: a reason added later stays log-only until somebody
+     * decides it deserves history, because a wrong inclusion writes a row on
+     * every delivery that reaches it.
+     *
+     * Left out on purpose: `family_shared_entitlement` (the tier WAS granted, so
+     * it is an operator note and not a refusal), `unfed_store` (another rail's
+     * subscription, ignored by design) and `released_burnt_event_id`, which is
+     * recorded by {@see self::failed()} under its own gate.
+     *
+     * @var list<string>
+     */
+    protected const RECORDED_REFUSALS = [
+        'malformed_app_user_id',
+        'unknown_billable',
+        'ambiguous_aliases',
+        'sandbox_only_subscriber',
+        'undated_subscriptions',
+        'unmapped_product',
+        'nothing_to_revoke',
+    ];
 
     /**
      * RevenueCat abandons a delivery after five attempts inside about three
@@ -467,6 +492,7 @@ class SyncRevenueCatEntitlement implements ShouldQueue
                 'sandbox_only_subscriber',
                 'Every RevenueCat subscription for this billable is a sandbox purchase; entitlement left untouched.',
                 ['billable_id' => $billable->getKey()],
+                $billable,
             );
 
             return null;
@@ -482,6 +508,7 @@ class SyncRevenueCatEntitlement implements ShouldQueue
                 'undated_subscriptions',
                 'RevenueCat returned subscriptions with no readable expiry; entitlement left untouched.',
                 ['billable_id' => $billable->getKey(), 'product_ids' => array_keys($production)],
+                $billable,
             );
 
             return null;
@@ -497,7 +524,7 @@ class SyncRevenueCatEntitlement implements ShouldQueue
         //    promotional grant with a later date sat in front of it.
         $owned = array_filter(
             $dated,
-            fn (mixed $subscription): bool => $this->providerFor(
+            fn (mixed $subscription): bool => self::providerFor(
                 is_array($subscription) ? ($subscription['store'] ?? null) : null,
             ) instanceof BillingProvider,
         );
@@ -554,7 +581,7 @@ class SyncRevenueCatEntitlement implements ShouldQueue
         // The store is known to be one this feeder owns: `claimFor` filters the
         // whole set before ranking it, so a foreign rail's subscription can no
         // longer reach this method at all, let alone mask the ones behind it.
-        $provider = $this->providerFor($subscription['store'] ?? null);
+        $provider = self::providerFor($subscription['store'] ?? null);
 
         if (! $provider instanceof BillingProvider) {
             throw new RuntimeException(
@@ -577,6 +604,7 @@ class SyncRevenueCatEntitlement implements ShouldQueue
                 'unmapped_product',
                 'A RevenueCat product id is not mapped to a plan; entitlement left untouched.',
                 ['billable_id' => $billable->getKey(), 'product_id' => $composedId],
+                $billable,
             );
 
             return null;
@@ -639,6 +667,7 @@ class SyncRevenueCatEntitlement implements ShouldQueue
                     'billable_id' => $billable->getKey(),
                     'stored_provider' => $this->stringAttribute($billable, 'plan_provider'),
                 ],
+                $billable,
             );
 
             return null;
@@ -686,7 +715,7 @@ class SyncRevenueCatEntitlement implements ShouldQueue
      */
     protected function revokingProvider(Model $billable, ?array $latest): ?BillingProvider
     {
-        $fromRead = $latest === null ? null : $this->providerFor($latest['store'] ?? null);
+        $fromRead = $latest === null ? null : self::providerFor($latest['store'] ?? null);
 
         if ($fromRead instanceof BillingProvider) {
             return $fromRead;
@@ -783,8 +812,11 @@ class SyncRevenueCatEntitlement implements ShouldQueue
      *
      * Compared case-insensitively on purpose: the API answers `app_store` and a
      * webhook says `APP_STORE`, for the same fact.
+     *
+     * Public and static so the webhook controller names the rail of an event it
+     * refuses with this one map rather than a second copy that could drift.
      */
-    protected function providerFor(mixed $store): ?BillingProvider
+    public static function providerFor(mixed $store): ?BillingProvider
     {
         return match (strtolower((string) (is_scalar($store) ? $store : ''))) {
             'app_store', 'mac_app_store' => BillingProvider::APP_STORE,
@@ -1071,9 +1103,15 @@ class SyncRevenueCatEntitlement implements ShouldQueue
      * `reason` field is what a test asserts on: it distinguishes the guard that
      * fired from every other guard that would also have left the row alone.
      *
+     * A refusal that passes {@see self::shouldRecord()} also leaves a
+     * `delivery_refused` row. The recorder is resolved here and not injected
+     * into {@see self::handle()}: the reconciler calls `handle()` directly, so
+     * its signature is a contract this job does not get to widen.
+     *
      * @param  array<string, mixed>  $context
+     * @param  Model|null  $billable  The subscriber the refusal is about, when the call site has resolved one.
      */
-    protected function warn(string $reason, string $message, array $context = []): void
+    protected function warn(string $reason, string $message, array $context = [], ?Model $billable = null): void
     {
         BillingLog::warning($message, [
             'reason' => $reason,
@@ -1081,5 +1119,45 @@ class SyncRevenueCatEntitlement implements ShouldQueue
             'event_type' => $this->eventType(),
             ...$context,
         ]);
+
+        if (! $this->shouldRecord($reason)) {
+            return;
+        }
+
+        app(BillingEventRecorder::class)->record(
+            type: BillingEventType::DELIVERY_REFUSED,
+            source: $this->source,
+            billable: $billable,
+            provider: self::providerFor($this->event['store'] ?? null),
+            reason: $reason,
+            externalId: $this->deliveryId(),
+            properties: ['event_type' => $this->eventType(), ...$context],
+        );
+    }
+
+    /**
+     * Whether a refusal earns a row, which is the one gate between this job and
+     * a table flooded by the reconciler.
+     *
+     * 1. WEBHOOK only. The reconciler re-runs this job for every subscriber on
+     *    every sweep and would write the same refusal each time; its own run
+     *    already reports a per-run summary.
+     * 2. `released_burnt_event_id` is exempt from the attempt gate: it is only
+     *    ever raised by {@see self::failed()}, after the LAST attempt, so
+     *    `attempts()` there is the retry budget and never 1.
+     * 3. Everything else is allow-listed and recorded on the first attempt
+     *    only, because a retry re-runs the same decision on the same delivery.
+     */
+    protected function shouldRecord(string $reason): bool
+    {
+        if ($this->source !== BillingSource::WEBHOOK) {
+            return false;
+        }
+
+        if ($reason === 'released_burnt_event_id') {
+            return true;
+        }
+
+        return in_array($reason, self::RECORDED_REFUSALS, true) && $this->attempts() <= 1;
     }
 }

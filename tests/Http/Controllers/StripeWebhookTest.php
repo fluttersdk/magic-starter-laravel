@@ -9,6 +9,8 @@ use FlutterSdk\MagicStarter\Enums\BillingEventType;
 use FlutterSdk\MagicStarter\Enums\BillingProvider;
 use FlutterSdk\MagicStarter\Enums\BillingSource;
 use FlutterSdk\MagicStarter\Enums\PlanStatus;
+use FlutterSdk\MagicStarter\Events\Billing\DeliveryRefused;
+use FlutterSdk\MagicStarter\Events\Billing\TrialRecorded;
 use FlutterSdk\MagicStarter\Features;
 use FlutterSdk\MagicStarter\Http\Controllers\StripeWebhookController;
 use FlutterSdk\MagicStarter\Jobs\CheckTrialCard;
@@ -17,6 +19,7 @@ use FlutterSdk\MagicStarter\MagicStarterServiceProvider;
 use FlutterSdk\MagicStarter\Models\BillingEvent;
 use FlutterSdk\MagicStarter\Models\BillingTrial;
 use FlutterSdk\MagicStarter\Models\ProcessedWebhookEvent;
+use FlutterSdk\MagicStarter\Support\BillingEventRecorder;
 use FlutterSdk\MagicStarter\Support\EntitlementWrite;
 use FlutterSdk\MagicStarter\Support\MigrationHelper;
 use FlutterSdk\MagicStarter\Support\TrialCardGateway;
@@ -30,6 +33,7 @@ use Illuminate\Routing\RouteCollection;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\Bus;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Event;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Schema;
 use Illuminate\Support\Str;
@@ -987,7 +991,7 @@ class StripeWebhookTest extends TestCase
      */
     public function test_the_subscription_type_defers_to_cashiers_extension_point(): void
     {
-        $controller = new class(app(WritesEntitlement::class)) extends StripeWebhookController
+        $controller = new class(app(WritesEntitlement::class), app(BillingEventRecorder::class)) extends StripeWebhookController
         {
             public function typeFor(array $payload): string
             {
@@ -1726,6 +1730,261 @@ class StripeWebhookTest extends TestCase
         $this->assertSame('price_pro', $billable->getAttribute('plan_product_id'));
         $this->assertSame(PlanStatus::TRIALING->value, $billable->getAttribute('plan_status'));
         $this->assertSame(BillingProvider::STRIPE->value, $billable->getAttribute('plan_provider'));
+    }
+
+    // -------------------------------------------------------------------------
+    // The audit trail: refusals and recorded trials
+    // -------------------------------------------------------------------------
+
+    /**
+     * A granting status whose price maps to no tier is a config gap an
+     * operator has to be able to find: it leaves one `delivery_refused` row
+     * with the price id and announces one `DeliveryRefused`, on top of the
+     * warning the call site already wrote.
+     */
+    public function test_an_unmapped_price_leaves_one_delivery_refused_row_and_event(): void
+    {
+        Event::fake([DeliveryRefused::class]);
+
+        $billable = $this->createBillable();
+
+        $this->seedActiveSubscription();
+
+        $this->postSignedWebhook(
+            $this->subscriptionEvent(
+                'evt_gap_row',
+                'customer.subscription.updated',
+                'price_nobody_mapped',
+                'active',
+                created: static::EVENT_AT + 60,
+            ),
+        )->assertOk();
+
+        $rows = BillingEvent::query()->where('type', BillingEventType::DELIVERY_REFUSED->value)->get();
+
+        $this->assertCount(1, $rows);
+        $this->assertSame(BillingSource::WEBHOOK, $rows[0]->source);
+        $this->assertSame(BillingProvider::STRIPE, $rows[0]->provider);
+        $this->assertSame('unmapped_price', $rows[0]->reason);
+        $this->assertSame('evt_gap_row', $rows[0]->external_id);
+        $this->assertSame($billable->getMorphClass(), $rows[0]->billable_type);
+        $this->assertSame((string) $billable->getKey(), $rows[0]->billable_id);
+        $this->assertSame(['price_id' => 'price_nobody_mapped'], $rows[0]->properties);
+
+        Event::assertDispatchedTimes(DeliveryRefused::class, 1);
+    }
+
+    /**
+     * A deletion that does not revoke because another subscription still
+     * grants is a refusal too: the delivery said "revoke" and the package
+     * declined, which is exactly the decision an operator audits.
+     */
+    public function test_a_skipped_revocation_leaves_one_delivery_refused_row(): void
+    {
+        Event::fake([DeliveryRefused::class]);
+
+        $billable = $this->createBillable();
+
+        $this->seedActiveSubscription();
+
+        $this->postSignedWebhook(
+            $this->subscriptionEvent(
+                'evt_second_row',
+                'customer.subscription.created',
+                'price_business',
+                'active',
+                created: static::EVENT_AT + 30,
+                subscriptionId: 'sub_second',
+            ),
+        )->assertOk();
+
+        $this->postSignedWebhook(
+            $this->subscriptionEvent(
+                'evt_deleted_row',
+                'customer.subscription.deleted',
+                'price_pro',
+                'canceled',
+                created: static::EVENT_AT + 60,
+                subscriptionId: 'sub_webhook_test',
+            ),
+        )->assertOk();
+
+        $rows = BillingEvent::query()->where('type', BillingEventType::DELIVERY_REFUSED->value)->get();
+
+        $this->assertCount(1, $rows);
+        $this->assertSame(BillingSource::WEBHOOK, $rows[0]->source);
+        $this->assertSame(BillingProvider::STRIPE, $rows[0]->provider);
+        $this->assertSame('revocation_skipped', $rows[0]->reason);
+        $this->assertSame('evt_deleted_row', $rows[0]->external_id);
+        $this->assertSame((string) $billable->getKey(), $rows[0]->billable_id);
+        $this->assertSame(['stripe_subscription_id' => 'sub_webhook_test'], $rows[0]->properties);
+
+        Event::assertDispatchedTimes(DeliveryRefused::class, 1);
+    }
+
+    /**
+     * A recorded trial leaves one `trial_recorded` row naming the person who
+     * started it as the actor (a webhook has no authenticated user, so the
+     * trial's own tag is the only answer), the subscription and, when the
+     * payload states one, when the trial ends.
+     */
+    public function test_a_tagged_trial_leaves_one_trial_recorded_row_and_event(): void
+    {
+        Bus::fake([CheckTrialCard::class]);
+        Event::fake([TrialRecorded::class]);
+
+        $billable = $this->createBillable();
+
+        $event = $this->trialEvent('evt_trial_row', $billable->getKey());
+        $event['data']['object']['trial_end'] = static::EVENT_AT + 86400;
+
+        $this->postSignedWebhook($event)->assertOk();
+
+        $rows = BillingEvent::query()->where('type', BillingEventType::TRIAL_RECORDED->value)->get();
+
+        $this->assertCount(1, $rows);
+        $this->assertSame(BillingSource::WEBHOOK, $rows[0]->source);
+        $this->assertSame(BillingProvider::STRIPE, $rows[0]->provider);
+        $this->assertSame('evt_trial_row', $rows[0]->external_id);
+        $this->assertSame($billable->getMorphClass(), $rows[0]->billable_type);
+        $this->assertSame((string) $billable->getKey(), $rows[0]->billable_id);
+        $this->assertSame((string) $billable->getKey(), (string) $rows[0]->actor_user_id);
+        $this->assertSame(
+            [
+                'stripe_subscription_id' => 'sub_webhook_test',
+                'trial_ends_at' => CarbonImmutable::createFromTimestamp(static::EVENT_AT + 86400)->toIso8601String(),
+            ],
+            $rows[0]->properties,
+        );
+
+        Event::assertDispatchedTimes(TrialRecorded::class, 1);
+    }
+
+    /**
+     * A tag naming a user who is gone still records the trial, with no actor
+     * and no end date when the payload carries none.
+     */
+    public function test_a_trial_tagged_with_a_deleted_user_is_recorded_without_an_actor(): void
+    {
+        Bus::fake([CheckTrialCard::class]);
+
+        $this->createBillable();
+
+        $this->postSignedWebhook($this->trialEvent('evt_trial_ghost', (string) Str::uuid()))->assertOk();
+
+        $row = BillingEvent::query()->where('type', BillingEventType::TRIAL_RECORDED->value)->sole();
+
+        $this->assertNull($row->actor_user_id);
+        $this->assertSame(['stripe_subscription_id' => 'sub_webhook_test'], $row->properties);
+    }
+
+    /**
+     * A second creation event for a subscription that already has its trial
+     * row (a replay under a new event id) records nothing new: one trial is
+     * one `trial_recorded` row.
+     */
+    public function test_a_replayed_trial_creation_does_not_add_a_second_trial_recorded_row(): void
+    {
+        Bus::fake([CheckTrialCard::class]);
+
+        $billable = $this->createBillable();
+
+        $this->postSignedWebhook($this->trialEvent('evt_trial_once', $billable->getKey()))->assertOk();
+        $this->postSignedWebhook($this->trialEvent(
+            'evt_trial_again',
+            $billable->getKey(),
+            created: static::EVENT_AT + 60,
+        ))->assertOk();
+
+        $this->assertSame(1, BillingTrial::query()->count());
+
+        $rows = BillingEvent::query()->where('type', BillingEventType::TRIAL_RECORDED->value)->get();
+
+        $this->assertCount(1, $rows);
+        $this->assertSame('evt_trial_once', $rows[0]->external_id);
+    }
+
+    /**
+     * A duplicate delivery is a total no-op, the audit trail included: the
+     * second post of the same event id adds no row.
+     */
+    public function test_a_duplicate_delivery_adds_no_refusal_row(): void
+    {
+        $this->createBillable();
+
+        $this->seedActiveSubscription();
+
+        $event = $this->subscriptionEvent(
+            'evt_gap_twice',
+            'customer.subscription.updated',
+            'price_nobody_mapped',
+            'active',
+            created: static::EVENT_AT + 60,
+        );
+
+        $this->postSignedWebhook($event)->assertOk();
+        $this->postSignedWebhook($event)->assertOk();
+
+        $this->assertSame(
+            1,
+            BillingEvent::query()->where('type', BillingEventType::DELIVERY_REFUSED->value)->count(),
+        );
+    }
+
+    /**
+     * A Stripe customer nothing here bills is a silent skip: no entitlement
+     * decision was made, so no row says one was.
+     */
+    public function test_an_unknown_customer_leaves_no_row(): void
+    {
+        Bus::fake([CheckTrialCard::class]);
+
+        $this->postSignedWebhook($this->trialEvent('evt_stranger_trial', (string) Str::uuid()))->assertOk();
+        $this->postSignedWebhook($this->subscriptionEvent(
+            'evt_stranger_gap',
+            'customer.subscription.updated',
+            'price_nobody_mapped',
+            'active',
+        ))->assertOk();
+        $this->postSignedWebhook($this->subscriptionEvent(
+            'evt_stranger_deleted',
+            'customer.subscription.deleted',
+            'price_pro',
+            'canceled',
+        ))->assertOk();
+
+        $this->assertSame(0, BillingEvent::query()->count());
+    }
+
+    /**
+     * A subscription of another type is not this package's to judge: neither
+     * its unmapped price nor its trial leaves a row.
+     */
+    public function test_a_non_default_subscription_type_leaves_no_row(): void
+    {
+        Bus::fake([CheckTrialCard::class]);
+
+        $billable = $this->createBillable();
+
+        $this->postSignedWebhook($this->subscriptionEvent(
+            'evt_seats_gap',
+            'customer.subscription.created',
+            'price_nobody_mapped',
+            'active',
+            subscriptionId: 'sub_seats_gap',
+            subscriptionType: 'seats',
+        ))->assertOk();
+        $this->postSignedWebhook($this->subscriptionEvent(
+            'evt_seats_trial_row',
+            'customer.subscription.created',
+            'price_pro',
+            'trialing',
+            subscriptionId: 'sub_seats_trial_row',
+            subscriptionType: 'seats',
+            metadata: [BillingTrial::USER_METADATA_KEY => (string) $billable->getKey()],
+        ))->assertOk();
+
+        $this->assertSame(0, BillingEvent::query()->count());
     }
 
     // -------------------------------------------------------------------------

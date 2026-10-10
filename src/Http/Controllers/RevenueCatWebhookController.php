@@ -3,12 +3,15 @@
 namespace FlutterSdk\MagicStarter\Http\Controllers;
 
 use Carbon\CarbonImmutable;
+use FlutterSdk\MagicStarter\Enums\BillingEventType;
+use FlutterSdk\MagicStarter\Enums\BillingSource;
 use FlutterSdk\MagicStarter\Jobs\SyncRevenueCatEntitlement;
 use FlutterSdk\MagicStarter\Models\ProcessedWebhookEvent;
+use FlutterSdk\MagicStarter\Support\BillingEventRecorder;
+use FlutterSdk\MagicStarter\Support\BillingLog;
 use FlutterSdk\MagicStarter\Support\StoreRailConfiguration;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
-use Illuminate\Support\Facades\Log;
 use Symfony\Component\HttpFoundation\Response;
 use Symfony\Component\HttpKernel\Exception\AccessDeniedHttpException;
 
@@ -328,10 +331,12 @@ class RevenueCatWebhookController
             && $this->isUsableString($event['type'] ?? null);
 
         if (! $readable) {
-            Log::warning('A verified RevenueCat delivery carried no readable event; acknowledged and ignored.', [
+            BillingLog::warning('A verified RevenueCat delivery carried no readable event; acknowledged and ignored.', [
                 'reason' => 'unreadable_event',
                 'bytes' => strlen($raw),
             ]);
+
+            $this->recordRefusal('unreadable_event', is_array($event) ? $event : []);
 
             return null;
         }
@@ -394,12 +399,56 @@ class RevenueCatWebhookController
      */
     protected function warn(string $reason, array $event): void
     {
-        Log::warning('A RevenueCat delivery was acknowledged without queueing a re-read.', [
+        BillingLog::warning('A RevenueCat delivery was acknowledged without queueing a re-read.', [
             'reason' => $reason,
             'event_id' => $event['id'] ?? null,
             'event_type' => $event['type'] ?? null,
             'environment' => $event['environment'] ?? null,
         ]);
+
+        $this->recordRefusal($reason, $event);
+    }
+
+    /**
+     * Leave the `billing_events` row for a refusal of an AUTHENTIC delivery.
+     *
+     * Only reached after {@see self::verifySignature()} passed: a signature
+     * failure goes through {@see self::refuse()}, which stays log-only because
+     * unauthenticated input must not be able to write rows. The event names an
+     * App User ID this endpoint never resolved, so there is no billable, and the
+     * raw ids live in `properties` where a store-minted string cannot be mistaken
+     * for a billable key. Every field is read as string-or-null: the sender is
+     * signed, not well-formed.
+     *
+     * @param  array<string, mixed>  $event
+     */
+    protected function recordRefusal(string $reason, array $event): void
+    {
+        app(BillingEventRecorder::class)->record(
+            type: BillingEventType::DELIVERY_REFUSED,
+            source: BillingSource::WEBHOOK,
+            billable: null,
+            provider: SyncRevenueCatEntitlement::providerFor($event['store'] ?? null),
+            reason: $reason,
+            externalId: $this->stringField($event, 'id'),
+            properties: [
+                'event_type' => $this->stringField($event, 'type'),
+                'environment' => $this->stringField($event, 'environment'),
+                'app_user_id' => $this->stringField($event, 'app_user_id'),
+            ],
+        );
+    }
+
+    /**
+     * One payload field as a string, or null when it is absent or not a string.
+     *
+     * @param  array<string, mixed>  $event
+     */
+    protected function stringField(array $event, string $key): ?string
+    {
+        $value = $event[$key] ?? null;
+
+        return is_string($value) && $value !== '' ? $value : null;
     }
 
     /**
@@ -413,7 +462,7 @@ class RevenueCatWebhookController
      */
     protected function refuse(string $reason): never
     {
-        Log::warning('A RevenueCat webhook delivery failed signature verification.', [
+        BillingLog::warning('A RevenueCat webhook delivery failed signature verification.', [
             'reason' => $reason,
         ]);
 
