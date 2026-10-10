@@ -236,11 +236,19 @@ class BillingEventTest extends TestCase
                 'trial_refused',
                 'trial_cancelled',
                 'trial_refusal_withdrawn',
+                'grant_added',
+                'grant_revoked',
+                'grant_expired',
+                'trial_extended',
+                'trial_ended',
+                'subscription_resumed',
+                'invoice_refunded',
+                'entitlement_synced',
             ],
             array_map(static fn (BillingEventType $type): string => $type->value, BillingEventType::cases()),
         );
         $this->assertSame(
-            ['webhook', 'reconcile', 'request', 'trial_check'],
+            ['webhook', 'reconcile', 'request', 'trial_check', 'admin'],
             array_map(static fn (BillingSource $source): string => $source->value, BillingSource::cases()),
         );
     }

@@ -4,6 +4,7 @@ namespace FlutterSdk\MagicStarter\Console;
 
 use FlutterSdk\MagicStarter\Enums\BillingChannel;
 use FlutterSdk\MagicStarter\Models\BillingEvent;
+use FlutterSdk\MagicStarter\Models\BillingGrant;
 use FlutterSdk\MagicStarter\Models\BillingTrial;
 use FlutterSdk\MagicStarter\Support\BillingCatalogue;
 use FlutterSdk\MagicStarter\Support\BillingManifest;
@@ -107,6 +108,8 @@ class BillingDoctorCommand extends Command
             $this->checkSubscriptionKeys();
             $this->checkTrialsTable();
             $this->checkBillingEventsTable();
+            $this->checkBillingGrantsTable();
+            $this->checkSandboxAllowlist();
             $this->checkReconcileCadence();
 
             // 3. What the vendors hold, read and never written.
@@ -419,6 +422,71 @@ class BillingDoctorCommand extends Command
                 . 'publish the package migration create_billing_events_table.php and migrate.',
                 $model->getTable(),
             ));
+    }
+
+    /**
+     * Whether the `billing_grants` table exists.
+     *
+     * The panel's manual grant writes a row there and the expiry command reads
+     * it, so a deployment that never published the migration cannot grant or
+     * release a plan. An unreachable database is reported by exception class
+     * alone, for the reason {@see self::checkSubscriptionKeys()} gives.
+     */
+    private function checkBillingGrantsTable(): void
+    {
+        $model = new BillingGrant;
+
+        try {
+            $exists = $model->getConnection()->getSchemaBuilder()->hasTable($model->getTable());
+        } catch (Throwable $failure) {
+            $this->check('schema.billing_grants', self::WARNING, sprintf(
+                'The %s table could not be looked for (%s), so manual grants were not checked.',
+                $model->getTable(),
+                class_basename($failure),
+            ));
+
+            return;
+        }
+
+        $exists
+            ? $this->check('schema.billing_grants', self::OK, "The {$model->getTable()} table exists.")
+            : $this->check('schema.billing_grants', self::ERROR, sprintf(
+                'The %s table is missing, so no manual grant can be recorded or released; '
+                . 'publish the package migration create_billing_grants_table.php and migrate.',
+                $model->getTable(),
+            ));
+    }
+
+    /**
+     * What the sandbox allowlist is doing, by count: the ids are billable keys
+     * and are never printed. Silent while the list is empty, since nobody is
+     * asked to act on a list that is not there.
+     */
+    private function checkSandboxAllowlist(): void
+    {
+        $ids = config('magic-starter.billing.revenuecat.sandbox_app_user_ids', []);
+        $count = is_array($ids) ? count($ids) : 0;
+
+        if ($count === 0) {
+            return;
+        }
+
+        if (config('magic-starter.billing.revenuecat.accept_sandbox') === true) {
+            $this->check(
+                'revenuecat.sandbox_allowlist',
+                self::WARNING,
+                "REVENUECAT_ACCEPT_SANDBOX is on while the sandbox allowlist is set (entries: {$count}), "
+                . 'so the allowlist widens nothing; turn accept_sandbox off to let it decide.',
+            );
+
+            return;
+        }
+
+        $this->check(
+            'revenuecat.sandbox_allowlist',
+            self::OK,
+            "Billable keys allowlisted for RevenueCat sandbox events: {$count}.",
+        );
     }
 
     private function checkReconcileCadence(): void

@@ -7,11 +7,19 @@ use FlutterSdk\MagicStarter\Events\Billing\CheckoutStarted;
 use FlutterSdk\MagicStarter\Events\Billing\DeliveryRefused;
 use FlutterSdk\MagicStarter\Events\Billing\EntitlementApplied;
 use FlutterSdk\MagicStarter\Events\Billing\EntitlementDropped;
+use FlutterSdk\MagicStarter\Events\Billing\EntitlementSynced;
+use FlutterSdk\MagicStarter\Events\Billing\GrantAdded;
+use FlutterSdk\MagicStarter\Events\Billing\GrantExpired;
+use FlutterSdk\MagicStarter\Events\Billing\GrantRevoked;
+use FlutterSdk\MagicStarter\Events\Billing\InvoiceRefunded;
 use FlutterSdk\MagicStarter\Events\Billing\PortalOpened;
 use FlutterSdk\MagicStarter\Events\Billing\RequestRefused;
 use FlutterSdk\MagicStarter\Events\Billing\SubscriptionCancelled;
+use FlutterSdk\MagicStarter\Events\Billing\SubscriptionResumed;
 use FlutterSdk\MagicStarter\Events\Billing\SubscriptionSwapped;
 use FlutterSdk\MagicStarter\Events\Billing\TrialCancelled;
+use FlutterSdk\MagicStarter\Events\Billing\TrialEnded;
+use FlutterSdk\MagicStarter\Events\Billing\TrialExtended;
 use FlutterSdk\MagicStarter\Events\Billing\TrialRecorded;
 use FlutterSdk\MagicStarter\Events\Billing\TrialRefusalWithdrawn;
 use FlutterSdk\MagicStarter\Events\Billing\TrialRefused;
@@ -54,6 +62,22 @@ enum BillingEventType: string
     /** A refusal was taken back: Stripe no longer reports the subscription as trialing, so nothing was cancelled. */
     case TRIAL_REFUSAL_WITHDRAWN = 'trial_refusal_withdrawn';
 
+    case GRANT_ADDED = 'grant_added';
+
+    case GRANT_REVOKED = 'grant_revoked';
+
+    case GRANT_EXPIRED = 'grant_expired';
+
+    case TRIAL_EXTENDED = 'trial_extended';
+
+    case TRIAL_ENDED = 'trial_ended';
+
+    case SUBSCRIPTION_RESUMED = 'subscription_resumed';
+
+    case INVOICE_REFUNDED = 'invoice_refunded';
+
+    case ENTITLEMENT_SYNCED = 'entitlement_synced';
+
     /**
      * True when the outcome is the package saying no, which is the subset an
      * operator alerts on.
@@ -69,7 +93,15 @@ enum BillingEventType: string
             self::PORTAL_OPENED,
             self::TRIAL_RECORDED,
             self::TRIAL_CANCELLED,
-            self::TRIAL_REFUSAL_WITHDRAWN => false,
+            self::TRIAL_REFUSAL_WITHDRAWN,
+            self::GRANT_ADDED,
+            self::GRANT_REVOKED,
+            self::GRANT_EXPIRED,
+            self::TRIAL_EXTENDED,
+            self::TRIAL_ENDED,
+            self::SUBSCRIPTION_RESUMED,
+            self::INVOICE_REFUNDED,
+            self::ENTITLEMENT_SYNCED => false,
         };
     }
 
@@ -93,6 +125,14 @@ enum BillingEventType: string
             self::TRIAL_REFUSED => TrialRefused::class,
             self::TRIAL_CANCELLED => TrialCancelled::class,
             self::TRIAL_REFUSAL_WITHDRAWN => TrialRefusalWithdrawn::class,
+            self::GRANT_ADDED => GrantAdded::class,
+            self::GRANT_REVOKED => GrantRevoked::class,
+            self::GRANT_EXPIRED => GrantExpired::class,
+            self::TRIAL_EXTENDED => TrialExtended::class,
+            self::TRIAL_ENDED => TrialEnded::class,
+            self::SUBSCRIPTION_RESUMED => SubscriptionResumed::class,
+            self::INVOICE_REFUNDED => InvoiceRefunded::class,
+            self::ENTITLEMENT_SYNCED => EntitlementSynced::class,
         };
     }
 }

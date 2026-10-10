@@ -23,4 +23,7 @@ enum BillingSource: string
 
     /** The queued trial card check. */
     case TRIAL_CHECK = 'trial_check';
+
+    /** An operator action in the admin panel. */
+    case ADMIN = 'admin';
 }

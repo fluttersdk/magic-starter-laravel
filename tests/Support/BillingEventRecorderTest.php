@@ -8,6 +8,14 @@ use FlutterSdk\MagicStarter\Enums\BillingSource;
 use FlutterSdk\MagicStarter\Events\Billing\BillingOutcome;
 use FlutterSdk\MagicStarter\Events\Billing\CheckoutStarted;
 use FlutterSdk\MagicStarter\Events\Billing\EntitlementApplied;
+use FlutterSdk\MagicStarter\Events\Billing\EntitlementSynced;
+use FlutterSdk\MagicStarter\Events\Billing\GrantAdded;
+use FlutterSdk\MagicStarter\Events\Billing\GrantExpired;
+use FlutterSdk\MagicStarter\Events\Billing\GrantRevoked;
+use FlutterSdk\MagicStarter\Events\Billing\InvoiceRefunded;
+use FlutterSdk\MagicStarter\Events\Billing\SubscriptionResumed;
+use FlutterSdk\MagicStarter\Events\Billing\TrialEnded;
+use FlutterSdk\MagicStarter\Events\Billing\TrialExtended;
 use FlutterSdk\MagicStarter\Models\BillingEvent;
 use FlutterSdk\MagicStarter\Support\BillingEventRecorder;
 use FlutterSdk\MagicStarter\Support\MigrationHelper;
@@ -325,6 +333,43 @@ class BillingEventRecorderTest extends TestCase
                 BillingEventType::cases(),
             )),
         );
+    }
+
+    /**
+     * The eight operator outcomes each own an event class, none is a refusal,
+     * and each leaves a success line, so an admin action is as visible in the
+     * log as a webhook one.
+     */
+    public function test_each_admin_outcome_dispatches_its_own_event_and_logs_a_success_line(): void
+    {
+        $this->migrate('create_billing_events_table.php');
+
+        $admin = [
+            [BillingEventType::GRANT_ADDED, GrantAdded::class],
+            [BillingEventType::GRANT_REVOKED, GrantRevoked::class],
+            [BillingEventType::GRANT_EXPIRED, GrantExpired::class],
+            [BillingEventType::TRIAL_EXTENDED, TrialExtended::class],
+            [BillingEventType::TRIAL_ENDED, TrialEnded::class],
+            [BillingEventType::SUBSCRIPTION_RESUMED, SubscriptionResumed::class],
+            [BillingEventType::INVOICE_REFUNDED, InvoiceRefunded::class],
+            [BillingEventType::ENTITLEMENT_SYNCED, EntitlementSynced::class],
+        ];
+
+        Log::spy();
+
+        foreach ($admin as [$type, $class]) {
+            $this->dispatched = [];
+
+            $this->recorder()->record($type, BillingSource::ADMIN, null);
+
+            $this->assertFalse($type->isRefusal(), $type->value);
+            $this->assertSame($class, $type->eventClass(), $type->value);
+            $this->assertCount(1, $this->dispatched, $type->value);
+            $this->assertInstanceOf($class, $this->dispatched[0], $type->value);
+        }
+
+        Log::shouldHaveReceived('info')->times(count($admin));
+        $this->assertSame(count($admin), BillingEvent::query()->where('source', 'admin')->count());
     }
 
     public function test_a_success_is_logged_once_after_the_caller_commits_and_a_refusal_adds_no_line(): void
