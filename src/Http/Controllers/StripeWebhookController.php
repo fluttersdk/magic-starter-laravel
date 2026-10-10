@@ -6,19 +6,23 @@ use Carbon\CarbonImmutable;
 use Carbon\CarbonInterface;
 use Closure;
 use FlutterSdk\MagicStarter\Contracts\WritesEntitlement;
+use FlutterSdk\MagicStarter\Enums\BillingEventType;
 use FlutterSdk\MagicStarter\Enums\BillingProvider;
+use FlutterSdk\MagicStarter\Enums\BillingSource;
 use FlutterSdk\MagicStarter\Enums\PlanStatus;
 use FlutterSdk\MagicStarter\Jobs\CheckTrialCard;
 use FlutterSdk\MagicStarter\MagicStarter;
 use FlutterSdk\MagicStarter\Models\BillingTrial;
 use FlutterSdk\MagicStarter\Models\ProcessedWebhookEvent;
+use FlutterSdk\MagicStarter\Support\BillingEventRecorder;
+use FlutterSdk\MagicStarter\Support\BillingLog;
 use FlutterSdk\MagicStarter\Support\EntitlementWrite;
 use FlutterSdk\MagicStarter\Support\ReadsBillableAttributes;
 use FlutterSdk\MagicStarter\Support\StripeSubscriptionState;
 use FlutterSdk\MagicStarter\Support\TeamKey;
+use Illuminate\Contracts\Auth\Authenticatable;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Support\Facades\DB;
-use Illuminate\Support\Facades\Log;
 use Laravel\Cashier\Http\Controllers\WebhookController as CashierWebhookController;
 use Stripe\Subscription as StripeSubscription;
 use Symfony\Component\HttpFoundation\Response;
@@ -131,9 +135,15 @@ class StripeWebhookController extends CashierWebhookController
     /**
      * @param  WritesEntitlement  $entitlements  the only code path allowed to
      *                                           write the entitlement columns
+     * @param  BillingEventRecorder  $recorder  leaves the audit row for a delivery
+     *                                          this feeder refuses and for a trial
+     *                                          it records; the entitlement writes
+     *                                          are recorded by the write path itself
      */
-    public function __construct(protected WritesEntitlement $entitlements)
-    {
+    public function __construct(
+        protected WritesEntitlement $entitlements,
+        protected BillingEventRecorder $recorder,
+    ) {
         // Cashier's own constructor attaches VerifyWebhookSignature when a
         // webhook secret is configured; skipping it would unsign this route.
         parent::__construct();
@@ -193,7 +203,7 @@ class StripeWebhookController extends CashierWebhookController
     {
         return $this->processOnce($payload, function (array $payload): Response {
             $response = parent::handleCustomerSubscriptionDeleted($payload);
-            $this->revokeEntitlement($payload['data']['object'], $this->eventAt($payload));
+            $this->revokeEntitlement($payload['data']['object'], $this->eventAt($payload), $payload['id']);
 
             return $response;
         });
@@ -208,7 +218,11 @@ class StripeWebhookController extends CashierWebhookController
     {
         return $this->processOnce($payload, function (array $payload): Response {
             $response = parent::handleInvoicePaymentSucceeded($payload);
-            $this->reaffirmEntitlementFromInvoice($payload['data']['object'], $this->eventAt($payload));
+            $this->reaffirmEntitlementFromInvoice(
+                $payload['data']['object'],
+                $this->eventAt($payload),
+                $payload['id'],
+            );
 
             return $response;
         });
@@ -299,7 +313,7 @@ class StripeWebhookController extends CashierWebhookController
         //    vocabulary would be a second definition of "granting" for the same
         //    outcome, free to disagree with the first one.
         if (! StripeSubscriptionState::grants($status)) {
-            $this->claim($this->subscriptionClaim($billable, null, $status, $object, $eventAt));
+            $this->claim($this->subscriptionClaim($billable, null, $status, $object, $eventAt, $payload['id']));
 
             return;
         }
@@ -310,12 +324,12 @@ class StripeWebhookController extends CashierWebhookController
         $plan = StripeSubscriptionState::planForPrice($priceId);
 
         if ($plan === null) {
-            $this->warnUnmappedPrice($priceId, $billable);
+            $this->warnUnmappedPrice($priceId, $billable, $payload['id']);
 
             return;
         }
 
-        $this->claim($this->subscriptionClaim($billable, $plan, $status, $object, $eventAt));
+        $this->claim($this->subscriptionClaim($billable, $plan, $status, $object, $eventAt, $payload['id']));
     }
 
     /**
@@ -399,12 +413,13 @@ class StripeWebhookController extends CashierWebhookController
         }
 
         // 3. One row per subscription, ordered by Stripe's own `created`.
+        $user = $this->existingUser($userId);
         $trial = BillingTrial::query()->firstOrCreate(
             [
                 'stripe_subscription_id' => $subscriptionId,
             ],
             [
-                'user_id' => $this->existingUserKey($userId),
+                'user_id' => $user?->getKey(),
                 'billable_type' => $billable->getMorphClass(),
                 'billable_id' => $billable->getKey(),
                 'subscription_created_at' => isset($object['created'])
@@ -413,7 +428,13 @@ class StripeWebhookController extends CashierWebhookController
             ],
         );
 
-        // 4. The card check, once this transaction has committed.
+        // 4. A replayed creation finds the row it already made, and a trial is
+        //    recorded once however many events announce it.
+        if ($trial->wasRecentlyCreated) {
+            $this->recordTrialRecorded($payload, $object, $billable, $user);
+        }
+
+        // 5. The card check, once this transaction has committed.
         CheckTrialCard::dispatch($trial->getKey())->afterCommit();
     }
 
@@ -470,13 +491,13 @@ class StripeWebhookController extends CashierWebhookController
     }
 
     /**
-     * [$userId] when that user still exists, otherwise null.
+     * The user [$userId] names when they still exist, otherwise null.
      *
      * The shape is checked before the lookup: on a UUID deployment the key
      * column is a PostgreSQL `uuid`, and a malformed value would raise inside
      * the webhook transaction instead of answering "nobody".
      */
-    protected function existingUserKey(string $userId): ?string
+    protected function existingUser(string $userId): ?Model
     {
         if (! TeamKey::looksLikeOne($userId)) {
             return null;
@@ -485,7 +506,39 @@ class StripeWebhookController extends CashierWebhookController
         /** @var class-string<Model> $userModel */
         $userModel = MagicStarter::userModel();
 
-        return $userModel::query()->whereKey($userId)->exists() ? $userId : null;
+        return $userModel::query()->whereKey($userId)->first();
+    }
+
+    /**
+     * Leave the `trial_recorded` row for a trial this delivery created.
+     *
+     * The actor is passed explicitly: a webhook has no authenticated user, and
+     * the person who started the trial is the tag's user, when they still exist.
+     * `trial_ends_at` is written only when the payload states it.
+     *
+     * @param  array<string, mixed>  $payload
+     * @param  array<string, mixed>  $object
+     */
+    protected function recordTrialRecorded(array $payload, array $object, Model $billable, ?Model $user): void
+    {
+        $properties = [
+            'stripe_subscription_id' => $object['id'],
+        ];
+
+        if (isset($object['trial_end'])) {
+            $properties['trial_ends_at'] = CarbonImmutable::createFromTimestamp((int) $object['trial_end'])
+                ->toIso8601String();
+        }
+
+        $this->recorder->record(
+            type: BillingEventType::TRIAL_RECORDED,
+            source: BillingSource::WEBHOOK,
+            billable: $billable,
+            provider: BillingProvider::STRIPE,
+            externalId: $payload['id'],
+            properties: $properties,
+            actor: $user instanceof Authenticatable ? $user : null,
+        );
     }
 
     /**
@@ -495,8 +548,10 @@ class StripeWebhookController extends CashierWebhookController
      * still says `trialing`.
      *
      * @param  array<string, mixed>  $object
+     * @param  string  $eventId  The delivery's Stripe event id, which the
+     *                           invoice object itself does not carry.
      */
-    protected function reaffirmEntitlementFromInvoice(array $object, CarbonInterface $eventAt): void
+    protected function reaffirmEntitlementFromInvoice(array $object, CarbonInterface $eventAt, string $eventId): void
     {
         $billable = $this->resolveBillable($object['customer'] ?? null);
 
@@ -530,7 +585,7 @@ class StripeWebhookController extends CashierWebhookController
         $plan = StripeSubscriptionState::planForPrice($priceId);
 
         if ($plan === null) {
-            $this->warnUnmappedPrice($priceId, $billable);
+            $this->warnUnmappedPrice($priceId, $billable, $eventId);
 
             return;
         }
@@ -571,6 +626,7 @@ class StripeWebhookController extends CashierWebhookController
             // paid for. It may refresh the record; it may not decide that Stripe
             // is the rail billing this subject.
             authoritative: false,
+            source: BillingSource::WEBHOOK,
             providerStatus: $providerStatus,
             productId: $priceId,
             // An invoice object carries no subscription items, so this path has
@@ -589,6 +645,7 @@ class StripeWebhookController extends CashierWebhookController
             renews: $stripeIsOnRecord
                 ? $this->booleanAttribute($billable, 'plan_renews')
                 : null,
+            eventId: $eventId,
         ));
     }
 
@@ -609,8 +666,10 @@ class StripeWebhookController extends CashierWebhookController
      * A deleted subscription revokes the entitlement: nothing is owed any more.
      *
      * @param  array<string, mixed>  $object
+     * @param  string  $eventId  The delivery's Stripe event id, which the
+     *                           subscription object itself does not carry.
      */
-    protected function revokeEntitlement(array $object, CarbonInterface $eventAt): void
+    protected function revokeEntitlement(array $object, CarbonInterface $eventAt, string $eventId): void
     {
         $billable = $this->resolveBillable($object['customer'] ?? null);
 
@@ -635,9 +694,12 @@ class StripeWebhookController extends CashierWebhookController
         // (see the caller) and has marked the deleted row canceled, so a
         // surviving granting row can only be a DIFFERENT subscription.
         if ($this->stillGrantedByAnotherSubscription($billable)) {
-            Log::warning('Skipped a Stripe revocation: another subscription still grants.', [
+            BillingLog::warning('Skipped a Stripe revocation: another subscription still grants.', [
                 'billable_id' => $billable->getKey(),
                 'deleted_subscription' => $object['id'] ?? null,
+            ]);
+            $this->recordRefusal('revocation_skipped', $billable, $eventId, [
+                'stripe_subscription_id' => $object['id'] ?? null,
             ]);
 
             return;
@@ -654,6 +716,7 @@ class StripeWebhookController extends CashierWebhookController
             eventAt: $eventAt,
             // Stripe telling us directly, on its own event.
             authoritative: true,
+            source: BillingSource::WEBHOOK,
             // Stripe does not put a status on the deletion itself; the deletion
             // IS the status, and `canceled` is the word Stripe uses for it.
             providerStatus: 'canceled',
@@ -661,6 +724,7 @@ class StripeWebhookController extends CashierWebhookController
             // Deliberately not carried forward: a deleted subscription has no
             // period left to run and nothing left to renew, so both fields are
             // now unknown rather than merely unread.
+            eventId: $eventId,
         ));
     }
 
@@ -714,6 +778,8 @@ class StripeWebhookController extends CashierWebhookController
      * be two definitions of the same word, free to disagree.
      *
      * @param  array<string, mixed>  $object
+     * @param  string  $eventId  The delivery's Stripe event id, which the
+     *                           subscription object itself does not carry.
      */
     protected function subscriptionClaim(
         Model $billable,
@@ -721,6 +787,7 @@ class StripeWebhookController extends CashierWebhookController
         string $status,
         array $object,
         CarbonInterface $eventAt,
+        string $eventId,
     ): EntitlementWrite {
         return new EntitlementWrite(
             billable: $billable,
@@ -731,6 +798,7 @@ class StripeWebhookController extends CashierWebhookController
             // Every field here is read out of the event payload Stripe signed,
             // so this is Stripe speaking rather than us remembering.
             authoritative: true,
+            source: BillingSource::WEBHOOK,
             providerStatus: $status,
             productId: $object['items']['data'][0]['price']['id'] ?? null,
             currentPeriodEnd: $this->periodEndFromPayload($object),
@@ -742,6 +810,7 @@ class StripeWebhookController extends CashierWebhookController
             // appears nowhere on a webhook payload. `plan_manage_url` holds
             // only durable values; the Stripe rail mints a short-lived portal
             // session per request through the billing portal endpoint instead.
+            eventId: $eventId,
         );
     }
 
@@ -846,11 +915,37 @@ class StripeWebhookController extends CashierWebhookController
      * production config gap is observable instead of silently downgrading a
      * paying customer.
      */
-    protected function warnUnmappedPrice(?string $priceId, Model $billable): void
+    protected function warnUnmappedPrice(?string $priceId, Model $billable, string $eventId): void
     {
-        Log::warning('Stripe price id is not mapped to a plan; entitlement left untouched.', [
+        BillingLog::warning('Stripe price id is not mapped to a plan; entitlement left untouched.', [
             'price_id' => $priceId,
             'billable_id' => $billable->getKey(),
         ]);
+        $this->recordRefusal('unmapped_price', $billable, $eventId, [
+            'price_id' => $priceId,
+        ]);
+    }
+
+    /**
+     * Leave the `delivery_refused` row for a delivery this feeder resolved a
+     * billable for and then declined to act on.
+     *
+     * Only decisions are recorded: the silent skips (a duplicate delivery, no
+     * billable, a non-default type, a refused trial's update) made none and stay
+     * row-free, so this is called from the two places a decision is made.
+     *
+     * @param  array<string, mixed>  $properties
+     */
+    protected function recordRefusal(string $reason, Model $billable, string $eventId, array $properties): void
+    {
+        $this->recorder->record(
+            type: BillingEventType::DELIVERY_REFUSED,
+            source: BillingSource::WEBHOOK,
+            billable: $billable,
+            provider: BillingProvider::STRIPE,
+            reason: $reason,
+            externalId: $eventId,
+            properties: $properties,
+        );
     }
 }

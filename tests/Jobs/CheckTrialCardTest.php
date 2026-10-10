@@ -5,14 +5,22 @@ namespace FlutterSdk\MagicStarter\Tests\Jobs;
 use Closure;
 use FlutterSdk\MagicStarter\Console\ReconcileBillingEntitlements;
 use FlutterSdk\MagicStarter\Contracts\WritesEntitlement;
+use FlutterSdk\MagicStarter\Enums\BillingEventType;
+use FlutterSdk\MagicStarter\Enums\BillingProvider;
+use FlutterSdk\MagicStarter\Enums\BillingSource;
 use FlutterSdk\MagicStarter\Enums\TrialRefusalReason;
+use FlutterSdk\MagicStarter\Events\Billing\TrialCancelled;
+use FlutterSdk\MagicStarter\Events\Billing\TrialRefusalWithdrawn;
+use FlutterSdk\MagicStarter\Events\Billing\TrialRefused;
 use FlutterSdk\MagicStarter\Features;
 use FlutterSdk\MagicStarter\Jobs\CheckTrialCard;
 use FlutterSdk\MagicStarter\MagicStarter;
+use FlutterSdk\MagicStarter\Models\BillingEvent;
 use FlutterSdk\MagicStarter\Models\BillingTrial;
 use FlutterSdk\MagicStarter\Models\Subscription;
 use FlutterSdk\MagicStarter\Models\SubscriptionItem;
 use FlutterSdk\MagicStarter\Notifications\TrialRefusedNotification;
+use FlutterSdk\MagicStarter\Support\BillingEventRecorder;
 use FlutterSdk\MagicStarter\Support\RevenueCatClient;
 use FlutterSdk\MagicStarter\Support\TrialCardGateway;
 use FlutterSdk\MagicStarter\Tests\Fixtures\ConcreteUser;
@@ -20,8 +28,10 @@ use FlutterSdk\MagicStarter\Tests\TestCase;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Notifications\Notifiable;
 use Illuminate\Support\Carbon;
+use Illuminate\Support\Facades\Event;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Notification;
+use Illuminate\Support\Facades\Schema;
 use Illuminate\Support\Str;
 use Laravel\Cashier\Billable;
 use Laravel\Cashier\Cashier;
@@ -582,11 +592,13 @@ class CheckTrialCardTest extends TestCase
             /** @var list<string> */
             public array $reconciled = [];
 
-            public function reconcileStripeSubject(Model $billable): void
-            {
+            public function reconcileStripeSubject(
+                Model $billable,
+                BillingSource $source = BillingSource::RECONCILE,
+            ): void {
                 $this->reconciled[] = (string) $billable->getKey();
 
-                parent::reconcileStripeSubject($billable);
+                parent::reconcileStripeSubject($billable, $source);
             }
         };
         $this->app->instance(ReconcileBillingEntitlements::class, $reconciler);
@@ -685,8 +697,240 @@ class CheckTrialCardTest extends TestCase
     }
 
     // -------------------------------------------------------------------------
+    // The audit rows
+    // -------------------------------------------------------------------------
+
+    /**
+     * A refused card reuse leaves one `trial_refused` and one `trial_cancelled`
+     * row, each with its one event, both filed under the trial check and keyed
+     * to the refused subscription. The kept trial leaves nothing.
+     */
+    public function test_a_card_reused_refusal_leaves_one_refused_and_one_cancelled_row(): void
+    {
+        Event::fake([TrialRefused::class, TrialCancelled::class]);
+
+        $first = $this->makeUser();
+        $second = $this->makeUser();
+        $earlier = $this->trial($first, $first, 'sub_audit_a', minutesAgo: 10);
+        $later = $this->trial($second, $second, 'sub_audit_b', minutesAgo: 5);
+
+        $this->gateway->fingerprints = [
+            'sub_audit_a' => 'fp_audit',
+            'sub_audit_b' => 'fp_audit',
+        ];
+
+        $this->runInOrder(true, $earlier, $later);
+
+        $refused = $this->eventRows(BillingEventType::TRIAL_REFUSED);
+        $this->assertCount(1, $refused);
+        $this->assertSame('card_reused', $refused[0]->reason);
+        $this->assertSame(BillingSource::TRIAL_CHECK, $refused[0]->source);
+        $this->assertSame(BillingProvider::STRIPE, $refused[0]->provider);
+        $this->assertSame('sub_audit_b', $refused[0]->external_id);
+        $this->assertSame($second->getMorphClass(), $refused[0]->billable_type);
+        $this->assertSame((string) $second->getKey(), $refused[0]->billable_id);
+        $this->assertEquals([
+            'billing_trial_id' => $later->getKey(),
+            'user_id' => $second->getKey(),
+        ], $refused[0]->properties);
+
+        $cancelled = $this->eventRows(BillingEventType::TRIAL_CANCELLED);
+        $this->assertCount(1, $cancelled);
+        $this->assertSame('sub_audit_b', $cancelled[0]->external_id);
+        $this->assertSame(BillingSource::TRIAL_CHECK, $cancelled[0]->source);
+        $this->assertSame('this_check', $cancelled[0]->properties['cancelled_by']);
+
+        $this->assertSame(2, BillingEvent::query()->count());
+
+        Event::assertDispatchedTimes(TrialRefused::class, 1);
+        Event::assertDispatchedTimes(TrialCancelled::class, 1);
+    }
+
+    /**
+     * A retry after the refusal was written and the cancel failed finishes the
+     * refusal without writing it twice: the refused row exists once from the
+     * first run, and the cancelled row only once the cancel landed.
+     */
+    public function test_a_retry_of_a_written_refusal_does_not_record_it_twice(): void
+    {
+        $user = $this->makeUser();
+        $this->trial($user, $user, 'sub_retry_kept', minutesAgo: 10);
+        $later = $this->trial($user, $user, 'sub_retry_refused', minutesAgo: 5);
+
+        $this->gateway->fingerprints = [
+            'sub_retry_kept' => 'fp_one',
+            'sub_retry_refused' => 'fp_two',
+        ];
+
+        $this->owe($later);
+
+        $this->assertCount(1, $this->eventRows(BillingEventType::TRIAL_REFUSED));
+        $this->assertCount(0, $this->eventRows(BillingEventType::TRIAL_CANCELLED));
+
+        $this->runJob($later);
+
+        $this->assertCount(1, $this->eventRows(BillingEventType::TRIAL_REFUSED));
+        $this->assertCount(1, $this->eventRows(BillingEventType::TRIAL_CANCELLED));
+    }
+
+    /**
+     * An owed refusal Stripe already ended was cancelled by an earlier run
+     * whose stamp then failed, or by the customer, and a cancel nobody
+     * recorded is recorded once; one that is on record already is not again.
+     */
+    public function test_an_owed_refusal_stripe_already_ended_records_its_cancel_once(): void
+    {
+        $user = $this->makeUser();
+        $this->trial($user, $user, 'sub_ended_kept', minutesAgo: 10);
+        $later = $this->trial($user, $user, 'sub_ended_audit', minutesAgo: 5);
+
+        $this->gateway->fingerprints = [
+            'sub_ended_kept' => 'fp_one',
+            'sub_ended_audit' => 'fp_two',
+        ];
+        $this->owe($later);
+
+        $this->gateway->statuses['sub_ended_audit'] = 'canceled';
+
+        $this->runJob($later);
+
+        $cancelled = $this->eventRows(BillingEventType::TRIAL_CANCELLED);
+        $this->assertCount(1, $cancelled);
+        $this->assertSame('sub_ended_audit', $cancelled[0]->external_id);
+        $this->assertSame('already_ended', $cancelled[0]->properties['cancelled_by']);
+
+        // The same run again, with the row owed once more: the cancel is on record.
+        $later->forceFill(['checked_at' => null])->save();
+
+        $this->runJob($later);
+
+        $this->assertCount(1, $this->eventRows(BillingEventType::TRIAL_CANCELLED));
+    }
+
+    /**
+     * An application that upgraded without migrating has no `billing_events`
+     * table: finishing an owed refusal Stripe already ended must still stamp
+     * the row rather than fail the job on the cancel lookup.
+     *
+     * The recorder remembers a table it has seen, so the worker here is a fresh
+     * one, as in the real case: a process that has never seen the table.
+     */
+    public function test_an_owed_refusal_stripe_already_ended_finishes_without_the_events_table(): void
+    {
+        $user = $this->makeUser();
+        $this->trial($user, $user, 'sub_tableless_kept', minutesAgo: 10);
+        $later = $this->trial($user, $user, 'sub_tableless_audit', minutesAgo: 5);
+
+        $this->gateway->fingerprints = [
+            'sub_tableless_kept' => 'fp_one',
+            'sub_tableless_audit' => 'fp_two',
+        ];
+        $this->owe($later);
+
+        $this->gateway->statuses['sub_tableless_audit'] = 'canceled';
+
+        Schema::drop('billing_events');
+        $this->app->forgetInstance(BillingEventRecorder::class);
+
+        $this->runJob($later);
+
+        $this->assertNotNull($later->fresh()?->checked_at);
+    }
+
+    /**
+     * A refusal Stripe reports paying is taken back: one withdrawn row with the
+     * live status, no cancel row.
+     */
+    public function test_a_converted_subscription_leaves_one_withdrawn_row(): void
+    {
+        Event::fake([TrialRefusalWithdrawn::class, TrialCancelled::class]);
+
+        $user = $this->makeUser();
+        $this->trial($user, $user, 'sub_withdraw_kept', minutesAgo: 10);
+        $later = $this->trial($user, $user, 'sub_withdraw_paid', minutesAgo: 5);
+
+        $this->gateway->fingerprints = [
+            'sub_withdraw_kept' => 'fp_one',
+            'sub_withdraw_paid' => 'fp_two',
+        ];
+        $this->owe($later);
+
+        $this->gateway->statuses['sub_withdraw_paid'] = 'active';
+
+        $this->runJob($later);
+
+        $withdrawn = $this->eventRows(BillingEventType::TRIAL_REFUSAL_WITHDRAWN);
+        $this->assertCount(1, $withdrawn);
+        $this->assertSame('refused_trial_converted', $withdrawn[0]->reason);
+        $this->assertSame('sub_withdraw_paid', $withdrawn[0]->external_id);
+        $this->assertSame(BillingSource::TRIAL_CHECK, $withdrawn[0]->source);
+        $this->assertEquals([
+            'billing_trial_id' => $later->getKey(),
+            'user_id' => $user->getKey(),
+            'stripe_status' => 'active',
+        ], $withdrawn[0]->properties);
+        $this->assertCount(0, $this->eventRows(BillingEventType::TRIAL_CANCELLED));
+
+        Event::assertDispatchedTimes(TrialRefusalWithdrawn::class, 1);
+        Event::assertNotDispatched(TrialCancelled::class);
+    }
+
+    /**
+     * Trials that were kept (a card with nothing to compare, a card nobody
+     * shares) leave no row: a kept trial is not an outcome.
+     */
+    public function test_kept_trials_leave_no_rows(): void
+    {
+        $user = $this->makeUser();
+        $other = $this->makeUser();
+        $noCard = $this->trial($user, $user, 'sub_kept_no_card', minutesAgo: 10);
+        $alone = $this->trial($other, $other, 'sub_kept_alone', minutesAgo: 5);
+
+        $this->gateway->fingerprints = [
+            'sub_kept_no_card' => TrialCardGateway::NO_CARD,
+            'sub_kept_alone' => 'fp_alone',
+        ];
+
+        $this->runJob($noCard);
+        $this->runJob($alone);
+
+        $this->assertSame(0, BillingEvent::query()->count());
+    }
+
+    /**
+     * The survivor re-projected onto a subject that lost a duplicate changes
+     * what the subject is entitled to, and the row says the trial check did it.
+     */
+    public function test_a_reprojected_survivor_records_an_applied_entitlement_under_the_trial_check(): void
+    {
+        $user = $this->makeUser();
+        $survivor = $this->trial($user, $user, 'sub_applied_a', minutesAgo: 10);
+        $this->trial($user, $user, 'sub_applied_b', minutesAgo: 5);
+
+        $this->gateway->fingerprints = [
+            'sub_applied_a' => 'fp_applied_a',
+            'sub_applied_b' => 'fp_applied_b',
+        ];
+
+        $this->runJob($survivor);
+
+        $applied = $this->eventRows(BillingEventType::ENTITLEMENT_APPLIED);
+        $this->assertCount(1, $applied);
+        $this->assertSame(BillingSource::TRIAL_CHECK, $applied[0]->source);
+        $this->assertSame((string) $user->getKey(), $applied[0]->billable_id);
+    }
+
+    // -------------------------------------------------------------------------
     // Harness
     // -------------------------------------------------------------------------
+
+    /**
+     * @return list<BillingEvent>
+     */
+    private function eventRows(BillingEventType $type): array
+    {
+        return BillingEvent::query()->where('type', $type->value)->orderBy('created_at')->get()->all();
+    }
 
     /**
      * @return array<string, array{0: bool}>
@@ -843,6 +1087,7 @@ class CheckTrialCardTest extends TestCase
             'create_subscriptions_table.php',
             'create_subscription_items_table.php',
             'create_billing_trials_table.php',
+            'create_billing_events_table.php',
         ] as $filename) {
             $migration = require __DIR__ . '/../../database/migrations/' . $filename;
 

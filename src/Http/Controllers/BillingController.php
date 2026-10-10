@@ -6,13 +6,17 @@ use Carbon\CarbonInterface;
 use FlutterSdk\MagicStarter\Actions\SubscriptionGuardedDeleteTeam;
 use FlutterSdk\MagicStarter\Contracts\ReportsUsage;
 use FlutterSdk\MagicStarter\Enums\BillingChannel;
+use FlutterSdk\MagicStarter\Enums\BillingEventType;
 use FlutterSdk\MagicStarter\Enums\BillingProvider;
+use FlutterSdk\MagicStarter\Enums\BillingSource;
 use FlutterSdk\MagicStarter\Enums\ProductType;
 use FlutterSdk\MagicStarter\Http\Resources\SubscriptionResource;
 use FlutterSdk\MagicStarter\MagicStarter;
 use FlutterSdk\MagicStarter\Models\BillingTrial;
 use FlutterSdk\MagicStarter\Policies\BillingPolicy;
 use FlutterSdk\MagicStarter\Support\BillingCatalogue;
+use FlutterSdk\MagicStarter\Support\BillingEventRecorder;
+use FlutterSdk\MagicStarter\Support\BillingLog;
 use FlutterSdk\MagicStarter\Support\JsonObject;
 use FlutterSdk\MagicStarter\Support\PriceTable;
 use FlutterSdk\MagicStarter\Support\ReadsBillableAttributes;
@@ -24,8 +28,8 @@ use Illuminate\Http\Exceptions\HttpResponseException;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Gate;
-use Illuminate\Support\Facades\Log;
 use Illuminate\Validation\ValidationException;
+use Laravel\Cashier\Exceptions\IncompletePayment;
 use Laravel\Cashier\Invoice;
 use Laravel\Cashier\PaymentMethod;
 use Stripe\Exception\ApiErrorException;
@@ -143,8 +147,13 @@ class BillingController
     /**
      * @param  TrialEligibility  $trialEligibility  Who may start a trial; a container
      *                                              binding, so an adopter can replace it.
+     * @param  BillingEventRecorder  $recorder  Where every write and every 409 refusal is
+     *                                          recorded, always AFTER the rail has answered.
      */
-    public function __construct(protected TrialEligibility $trialEligibility) {}
+    public function __construct(
+        protected TrialEligibility $trialEligibility,
+        protected BillingEventRecorder $recorder,
+    ) {}
 
     /**
      * Read the billable's current entitlement.
@@ -534,7 +543,7 @@ class BillingController
             // Stripe's ApiConnectionException extends this one, so a downed
             // network or a bad TLS certificate is caught here too; this is the
             // only outage shape this endpoint soft-fails on.
-            Log::warning('Failed to read the billable payment method from Stripe.', [
+            BillingLog::warning('Failed to read the billable payment method from Stripe.', [
                 'billable_id' => $billable->getKey(),
                 'exception' => $exception->getMessage(),
             ]);
@@ -574,6 +583,7 @@ class BillingController
 
         if (! method_exists($billable, 'billingPortalUrl') || ! $billable->hasStripeId()) {
             $this->abortWithBillingConflict(
+                $billable,
                 self::REASON_NO_BILLING_ACCOUNT,
                 BillingProvider::fromWire($this->stringAttribute($billable, 'plan_provider')),
                 __('magic-starter::billing.refusals.no_billing_account'),
@@ -581,9 +591,14 @@ class BillingController
         }
 
         $returnUrl = $request->query('return_url');
+        $portalUrl = $billable->billingPortalUrl(is_string($returnUrl) ? $returnUrl : null);
+
+        // Recorded once the rail has minted the URL: a session Stripe refused to
+        // open is not one the customer was given.
+        $this->recordRequest(BillingEventType::PORTAL_OPENED, $request, $billable);
 
         return response()->json([
-            'portal_url' => $billable->billingPortalUrl(is_string($returnUrl) ? $returnUrl : null),
+            'portal_url' => $portalUrl,
         ]);
     }
 
@@ -642,6 +657,7 @@ class BillingController
         //    Cashier method would answer a question this step is not asking.
         if (! method_exists($billable, 'newSubscription')) {
             $this->abortWithBillingConflict(
+                $billable,
                 self::REASON_NO_BILLING_ACCOUNT,
                 BillingProvider::fromWire($this->stringAttribute($billable, 'plan_provider')),
                 __('magic-starter::billing.refusals.no_billing_account'),
@@ -691,8 +707,11 @@ class BillingController
         //    customer is the team and the webhook needs the person.
         $trialDays = $this->trialDaysFor($validated['product']);
         $user = $request->user();
+        $offeredTrialDays = 0;
 
         if ($trialDays > 0 && $this->trialEligibility->allows($user, $billable)) {
+            $offeredTrialDays = $trialDays;
+
             $subscription
                 ->trialDays($trialDays)
                 ->withMetadata([
@@ -710,6 +729,22 @@ class BillingController
             'cancel_url' => $validated['cancel_url'],
             'payment_method_collection' => 'always',
         ]);
+
+        // 9. Recorded once the session exists, never before: a Stripe error above
+        //    leaves no row, and the row's external id is the session itself. The
+        //    trial is the days OFFERED to this caller, which is 0 for one the
+        //    product's advertised days were withheld from.
+        $this->recordRequest(
+            BillingEventType::CHECKOUT_STARTED,
+            $request,
+            $billable,
+            externalId: $checkout->id,
+            properties: [
+                'product' => $validated['product'],
+                'price_id' => $priceId,
+                'trial_days' => $offeredTrialDays,
+            ],
+        );
 
         return response()->json([
             'checkout_url' => $checkout->url,
@@ -759,7 +794,30 @@ class BillingController
         //    subscription really does mean there is nothing to swap.
         $subscription = $this->actionableSubscription($billable, 'swap');
 
-        $subscription->swap($priceId);
+        // 5. Recorded after the rail answers, and on BOTH of its two outcomes
+        //    that mean the plan moved. Cashier throws `IncompletePayment` from
+        //    the END of `swap()`, after Stripe has already updated the
+        //    subscription and the local row, so the swap happened and the
+        //    customer still owes an action: it is recorded flagged, and the
+        //    exception goes on to the caller as the same instance, so the answer
+        //    is exactly what it was. Every other failure records nothing, and
+        //    not every one of them means nothing moved: an incomplete
+        //    subscription refused up front, or a Stripe API error on the update
+        //    itself, leaves the plan where it was, but an API error AFTER the
+        //    update (the meter lookup for a metered item) leaves Stripe and the
+        //    local row on the new price with no request row. The webhook that
+        //    update triggers still records the outcome as `entitlement_applied`.
+        try {
+            $subscription->swap($priceId);
+        } catch (IncompletePayment $exception) {
+            $this->recordSwap($request, $billable, $subscription, $validated['product'], $priceId, [
+                'payment' => 'incomplete',
+            ]);
+
+            throw $exception;
+        }
+
+        $this->recordSwap($request, $billable, $subscription, $validated['product'], $priceId);
 
         return SubscriptionResource::make($billable);
     }
@@ -786,6 +844,19 @@ class BillingController
         $subscription = $this->actionableSubscription($billable, 'cancel');
 
         $subscription->cancel();
+
+        // 4. After the rail, so a Stripe error leaves no row. `ends_at` is read
+        //    back from the subscription because that is the period the customer
+        //    keeps, which is what a support question about it asks.
+        $this->recordRequest(
+            BillingEventType::SUBSCRIPTION_CANCELLED,
+            $request,
+            $billable,
+            externalId: $this->stringAttribute($subscription, 'stripe_id'),
+            properties: [
+                'ends_at' => $this->dateAttribute($subscription, 'ends_at')?->toIso8601String(),
+            ],
+        );
 
         return SubscriptionResource::make($billable);
     }
@@ -896,6 +967,7 @@ class BillingController
         }
 
         $this->abortWithBillingConflict(
+            $billable,
             self::REASON_MANAGED_BY_STORE,
             $provider,
             __('magic-starter::billing.refusals.managed_by_store'),
@@ -960,6 +1032,7 @@ class BillingController
 
             if (is_string($status) && StripeSubscriptionState::grants($status)) {
                 $this->abortWithBillingConflict(
+                    $billable,
                     self::REASON_SUBSCRIPTION_EXISTS,
                     BillingProvider::STRIPE,
                     __('magic-starter::billing.refusals.subscription_exists'),
@@ -1115,12 +1188,30 @@ class BillingController
      * `abort()` with a message would flatten it back to the prose-only shape
      * this exists to replace.
      *
+     * Recorded as a `request_refused` row before the throw, so a customer who
+     * was turned away is as visible in the history as one who was served. Only
+     * these 409s are: a 422 is the caller's own mistake and a 404 an honest
+     * absence, and neither is a billing outcome.
+     *
+     * @param  Model  $billable  The subject the request was refused for.
      * @param  string  $reason  One of the `REASON_*` constants on this class.
      * @param  BillingProvider  $provider  The rail the conflict concerns.
      * @param  string  $message  The localised sentence, rendered verbatim by the client.
      */
-    protected function abortWithBillingConflict(string $reason, BillingProvider $provider, string $message): never
-    {
+    protected function abortWithBillingConflict(
+        Model $billable,
+        string $reason,
+        BillingProvider $provider,
+        string $message,
+    ): never {
+        $this->recorder->record(
+            BillingEventType::REQUEST_REFUSED,
+            BillingSource::REQUEST,
+            $billable,
+            provider: $provider,
+            reason: $reason,
+        );
+
         throw new HttpResponseException(response()->json([
             'message' => $message,
             'billing' => [
@@ -1128,6 +1219,56 @@ class BillingController
                 'provider' => $provider->value,
             ],
         ], HttpResponse::HTTP_CONFLICT));
+    }
+
+    /**
+     * Record a swap, with whatever the rail's answer adds to the properties.
+     *
+     * @param  array<string, mixed>  $extra  Merged after the product and the price, e.g. `payment`.
+     */
+    protected function recordSwap(
+        Request $request,
+        Model $billable,
+        Model $subscription,
+        string $product,
+        string $priceId,
+        array $extra = [],
+    ): void {
+        $this->recordRequest(
+            BillingEventType::SUBSCRIPTION_SWAPPED,
+            $request,
+            $billable,
+            externalId: $this->stringAttribute($subscription, 'stripe_id'),
+            properties: [
+                'product' => $product,
+                'price_id' => $priceId,
+                ...$extra,
+            ],
+        );
+    }
+
+    /**
+     * Record a successful card-rail write: the acting user is the actor and the
+     * rail is Stripe, because every caller here has just spoken to it.
+     *
+     * @param  array<string, mixed>  $properties
+     */
+    protected function recordRequest(
+        BillingEventType $type,
+        Request $request,
+        Model $billable,
+        ?string $externalId = null,
+        array $properties = [],
+    ): void {
+        $this->recorder->record(
+            $type,
+            BillingSource::REQUEST,
+            $billable,
+            provider: BillingProvider::STRIPE,
+            externalId: $externalId,
+            properties: $properties,
+            actor: $request->user(),
+        );
     }
 
     /**

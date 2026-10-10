@@ -708,6 +708,22 @@ return [
     | Set it false to send your own message instead. A config published before
     | this key existed has no key at all and gets the default.
     |
+    | 'log_channel' names the log channel every billing line goes to (webhook
+    | outcomes, reconciler runs, refusals), so billing can be routed to its own
+    | file or alert sink. Null or blank, the default, uses the application's
+    | default channel.
+    |
+    | 'webhook_retention_days' (default 90) is how long processed_webhook_events
+    | keeps a delivery's dedup row before the prune command removes it. Never
+    | set it below 31: Stripe's CLI can resend events up to 30 days old, and a
+    | pruned row would let a resent event run twice. RevenueCat retries for
+    | about 3 hours, so it is never the constraint.
+    |
+    | 'events_retention_days' (default null) is how long billing_events keeps a
+    | row. Null keeps them forever, which is the default on purpose: the table
+    | is financial history; a blank or non-numeric value keeps them too. Set a
+    | number of days only when your retention policy demands it.
+    |
     */
 
     'billing' => [
@@ -767,6 +783,12 @@ return [
         ],
 
         'trial_refused_notification' => (bool) env('MAGIC_STARTER_TRIAL_REFUSED_NOTIFICATION', true),
+
+        'log_channel' => env('MAGIC_STARTER_BILLING_LOG_CHANNEL'),
+
+        'webhook_retention_days' => (int) env('MAGIC_STARTER_BILLING_WEBHOOK_RETENTION_DAYS', 90),
+
+        'events_retention_days' => env('MAGIC_STARTER_BILLING_EVENTS_RETENTION_DAYS'),
 
         'revenuecat' => [
             'path' => env('REVENUECAT_WEBHOOK_PATH', 'webhooks/revenuecat'),

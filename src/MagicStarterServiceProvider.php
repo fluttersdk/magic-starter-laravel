@@ -9,6 +9,7 @@ use FlutterSdk\MagicStarter\Console\FilamentEjectCommand;
 use FlutterSdk\MagicStarter\Console\FilamentInstallCommand;
 use FlutterSdk\MagicStarter\Console\InstallCommand;
 use FlutterSdk\MagicStarter\Console\PruneAuditsCommand;
+use FlutterSdk\MagicStarter\Console\PruneBillingRecordsCommand;
 use FlutterSdk\MagicStarter\Console\PurgeDeletedUsersCommand;
 use FlutterSdk\MagicStarter\Console\ReconcileBillingEntitlements;
 use FlutterSdk\MagicStarter\Support\FrontendUrl;
@@ -112,6 +113,11 @@ class MagicStarterServiceProvider extends ServiceProvider
         // with its own Stripe wrapper binds a subclass over it, and so a test
         // replaces the network without replacing the job's rules.
         $this->app->bind(Support\TrialCardGateway::class);
+
+        // Unconditional for the same reason as WritesEntitlement: every
+        // billing path records through it whatever the feature flags say. A
+        // singleton so the table check runs once per worker.
+        $this->app->singleton(Support\BillingEventRecorder::class);
 
         // Cashier is wired HERE and never in boot(), because boot() is already
         // too late: CashierServiceProvider::boot() registers the stripe/webhook
@@ -398,6 +404,16 @@ class MagicStarterServiceProvider extends ServiceProvider
                 ]);
             }
 
+            // Webhook claims accumulate whether or not a catalogue boots, so this
+            // is gated on the feature alone, unlike the reconciler (3.4c).
+            if (Features::hasBillingFeatures()) {
+                $this->commands([
+                    PruneBillingRecordsCommand::class,
+                ]);
+
+                $this->schedulePruneBillingRecords();
+            }
+
             // Filament is an optional dependency: its commands exist only where it
             // is installed, so the package boots without it.
             if (class_exists(Panel::class)) {
@@ -675,6 +691,29 @@ class MagicStarterServiceProvider extends ServiceProvider
                 ->name(PruneAuditsCommand::NAME)
                 ->daily()
                 ->withoutOverlapping();
+        });
+    }
+
+    /**
+     * Put `magic-starter:billing:prune` on the schedule, daily.
+     *
+     * Attached through `callAfterResolving()` for the reason
+     * {@see self::scheduleEntitlementReconciler()} gives, and mirroring
+     * {@see self::schedulePruneAudits()}: `withoutOverlapping()` keeps a run
+     * that outlasts its tick from racing its successor over the same rows. It
+     * also takes `onOneServer()`, with the cache-store caveat that method's
+     * docblock spells out: the sweep is idempotent, so a fleet that cannot
+     * share a lock only repeats a delete that finds nothing. The cadence is not
+     * configurable because retention is counted in days.
+     */
+    private function schedulePruneBillingRecords(): void
+    {
+        $this->callAfterResolving(Schedule::class, function (Schedule $schedule): void {
+            $schedule->command(PruneBillingRecordsCommand::NAME)
+                ->name(PruneBillingRecordsCommand::NAME)
+                ->daily()
+                ->withoutOverlapping()
+                ->onOneServer();
         });
     }
 

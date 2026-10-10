@@ -3,10 +3,14 @@
 namespace FlutterSdk\MagicStarter\Tests\Http\Controllers;
 
 use Carbon\CarbonImmutable;
+use FlutterSdk\MagicStarter\Enums\BillingEventType;
+use FlutterSdk\MagicStarter\Enums\BillingProvider;
+use FlutterSdk\MagicStarter\Enums\BillingSource;
 use FlutterSdk\MagicStarter\Features;
 use FlutterSdk\MagicStarter\Http\Controllers\RevenueCatWebhookController;
 use FlutterSdk\MagicStarter\Jobs\SyncRevenueCatEntitlement;
 use FlutterSdk\MagicStarter\MagicStarterServiceProvider;
+use FlutterSdk\MagicStarter\Models\BillingEvent;
 use FlutterSdk\MagicStarter\Models\ProcessedWebhookEvent;
 use FlutterSdk\MagicStarter\Support\StoreRailConfiguration;
 use FlutterSdk\MagicStarter\Tests\Fixtures\ConcreteUser;
@@ -724,6 +728,95 @@ class RevenueCatWebhookTest extends TestCase
         $this->assertNull($billable->refresh()->getAttribute('plan'));
     }
 
+    /**
+     * The refusal leaves its one row. Raw ids go in `properties`, never in
+     * `billable_id`: the delivery is authentic but names nobody this endpoint
+     * resolved, and a store id is not a billable key.
+     */
+    public function test_a_sandbox_event_without_the_opt_in_leaves_one_delivery_refused_row(): void
+    {
+        $appUserId = Str::uuid()->toString();
+        $event = $this->event('INITIAL_PURCHASE', $appUserId, ['environment' => 'SANDBOX']);
+
+        $this->deliver($event)->assertOk();
+
+        $row = BillingEvent::query()->sole();
+        $this->assertSame(BillingEventType::DELIVERY_REFUSED, $row->type);
+        $this->assertSame(BillingSource::WEBHOOK, $row->source);
+        $this->assertSame(BillingProvider::APP_STORE, $row->provider);
+        $this->assertSame('non_production_environment', $row->reason);
+        $this->assertSame($event['id'], $row->external_id);
+        $this->assertNull($row->billable_type);
+        $this->assertNull($row->billable_id);
+        $this->assertSame([
+            'event_type' => 'INITIAL_PURCHASE',
+            'environment' => 'SANDBOX',
+            'app_user_id' => $appUserId,
+        ], $row->properties);
+    }
+
+    /**
+     * The sandbox gate runs before the type gate, so a sandbox paywall
+     * impression reaches it on every app open. It keeps its warning line and
+     * leaves no row: only a type that could have moved an entitlement is a
+     * refusal worth recording.
+     */
+    public function test_a_sandbox_event_of_an_ignored_type_warns_and_leaves_no_row(): void
+    {
+        Log::spy();
+
+        $this->deliver($this->event('PAYWALL_IMPRESSION', Str::uuid()->toString(), ['environment' => 'SANDBOX']))
+            ->assertOk();
+
+        $this->assertSame(0, BillingEvent::query()->count());
+        Log::shouldHaveReceived('warning')
+            ->once()
+            ->withArgs(static fn (string $message, array $context): bool => $context['reason']
+                === 'non_production_environment'
+                && $context['event_type'] === 'PAYWALL_IMPRESSION');
+    }
+
+    /**
+     * A blank-but-present field is as absent as a missing one: the row never
+     * stores whitespace for an id the sender did not really give.
+     */
+    public function test_a_whitespace_field_is_recorded_as_null(): void
+    {
+        $this->deliver($this->event('INITIAL_PURCHASE', '   ', ['environment' => 'SANDBOX']))->assertOk();
+
+        $this->assertNull(BillingEvent::query()->sole()->properties['app_user_id']);
+    }
+
+    /**
+     * An unauthenticated caller must not be able to write rows.
+     */
+    public function test_a_signature_failure_leaves_no_row(): void
+    {
+        $this->deliver(
+            $this->event('RENEWAL', Str::uuid()->toString(), ['environment' => 'SANDBOX']),
+            $this->signedAt() - 80 * 60,
+        )->assertForbidden();
+
+        $this->assertSame(0, BillingEvent::query()->count());
+    }
+
+    public function test_an_ignored_type_leaves_no_row(): void
+    {
+        $this->deliver($this->event('PAYWALL_IMPRESSION', Str::uuid()->toString()))->assertOk();
+
+        $this->assertSame(0, BillingEvent::query()->count());
+    }
+
+    public function test_a_duplicate_delivery_leaves_no_row(): void
+    {
+        $event = $this->event('RENEWAL', Str::uuid()->toString());
+
+        $this->deliver($event)->assertOk();
+        $this->deliver($event)->assertOk();
+
+        $this->assertSame(0, BillingEvent::query()->count());
+    }
+
     public function test_a_sandbox_event_is_accepted_only_where_the_deployment_opted_in(): void
     {
         // The other half of the gate: the flag WIDENS what the event field is
@@ -776,6 +869,34 @@ class RevenueCatWebhookTest extends TestCase
 
         Queue::assertNothingPushed();
         $this->assertSame(0, ProcessedWebhookEvent::query()->count());
+    }
+
+    /**
+     * A body with a type and no id is unreadable and still names what it can.
+     */
+    public function test_an_unreadable_event_leaves_one_delivery_refused_row(): void
+    {
+        RawWebhookRequest::withPayload($this->payload([
+            'type' => 'RENEWAL',
+            'app_user_id' => 'anonymous-123',
+            'store' => 'PLAY_STORE',
+        ]))
+            ->signedWith(static::WEBHOOK_SECRET, $this->signedAt())
+            ->deliverTo($this, static::ROUTE)
+            ->assertOk();
+
+        $row = BillingEvent::query()->sole();
+        $this->assertSame(BillingEventType::DELIVERY_REFUSED, $row->type);
+        $this->assertSame(BillingSource::WEBHOOK, $row->source);
+        $this->assertSame(BillingProvider::PLAY_STORE, $row->provider);
+        $this->assertSame('unreadable_event', $row->reason);
+        $this->assertNull($row->external_id);
+        $this->assertNull($row->billable_id);
+        $this->assertSame([
+            'event_type' => 'RENEWAL',
+            'environment' => null,
+            'app_user_id' => 'anonymous-123',
+        ], $row->properties);
     }
 
     public function test_a_paywall_impression_is_ignored_outright(): void
@@ -916,6 +1037,7 @@ class RevenueCatWebhookTest extends TestCase
         $this->runMigration('create_users_table.php');
         $this->runMigration('add_entitlement_provenance_to_billable_table.php');
         $this->runMigration('create_processed_webhook_events_table.php');
+        $this->runMigration('create_billing_events_table.php');
 
         $this->assertTrue(Schema::hasColumn('users', 'plan_provider'));
     }

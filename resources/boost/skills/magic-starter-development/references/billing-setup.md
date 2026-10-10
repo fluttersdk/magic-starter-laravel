@@ -130,7 +130,7 @@ Then ask the owner to set each price id in the env variable the manifest names a
 php artisan billing:doctor --json --remote
 ```
 
-`ok: true` and exit 0 mean no `error`. Fix each `error` by its check id, which is stable (`stripe.remote.price.pro_monthly`, `revenuecat.package.pro_monthly`, `revenuecat.webhook`). Re-run until it passes. An `agent_check` is vendor state the package cannot read. When it carries a `command`, run it yourself and compare the output with the manifest section it names (`asc subscriptions groups list --app <app-id>`, `gplay subscriptions list --package <package-name>`). When it carries none, it is a dashboard step only a person can confirm (`revenuecat.webhook.hmac`: the RevenueCat API returns the signing secret only on rotation, so never rotate it to check): ask the owner. Report the remaining `warning` entries to the owner.
+`ok: true` and exit 0 mean no `error`. Fix each `error` by its check id, which is stable (`stripe.remote.price.pro_monthly`, `revenuecat.package.pro_monthly`, `revenuecat.webhook`). Re-run until it passes. An `agent_check` is vendor state the package cannot read. When it carries a `command`, run it yourself and compare the output with the manifest section it names (`asc subscriptions groups list --app <app-id>`, `gplay subscriptions list --package <package-name>`). When it carries none, it is a dashboard step only a person can confirm (`revenuecat.webhook.hmac`: the RevenueCat API returns the signing secret only on rotation, so never rotate it to check): ask the owner. Report the remaining `warning` entries to the owner. `schema.billing_events` is an `error` while the audit log table is missing: publish `create_billing_events_table.php` and migrate.
 
 ## Trials
 
@@ -142,6 +142,17 @@ php artisan billing:doctor --json --remote
 - A refused trial whose card had already trialed mails `TrialRefusedNotification`; `magic-starter.billing.trial_refused_notification` (`MAGIC_STARTER_TRIAL_REFUSED_NOTIFICATION`, default `true`) switches it off.
 - `billing:reconcile` re-dispatches every trial check (and every refusal still owed its cancel) unchecked after 30 minutes, on its own cadence (`magic-starter.billing.reconcile.cadence`, default `daily`; set `hourly` when trials are on). A `sync` queue relies on it, because the job cannot retry itself there.
 - Tell the owner: the fingerprint of a refused person is retained after the account is deleted (`user_id` becomes null) as an anti-abuse record, so the privacy policy should say so; and a wallet card (Apple Pay, Google Pay) can carry a different fingerprint than the plain card, which is an accepted limitation.
+
+## Audit log
+
+Every billing outcome leaves an append-only `billing_events` row (`type`, `source`, `provider`, `reason`, `external_id`, billable, actor, `properties`) and dispatches an event implementing `Events\Billing\BillingOutcome`; `Event::listen(BillingOutcome::class, ...)` receives all of them and `$event->record()` is the row. Not recorded: signature failures, reconcile skips, Stripe silent skips, 422 and 404, a sandbox RevenueCat delivery of a type that cannot change an entitlement, and a RevenueCat transfer side. A RevenueCat job refusal is one row per delivery and reason, de-duplicated across retries. `trial_cancelled` carries `cancelled_by` (`this_check` or `already_ended`).
+
+- A synchronous listener runs in the billing path; a failure is reported through the exception handler and never propagated, so the listener's work is lost. Prefer a `ShouldQueue` listener.
+
+- The table needs `create_billing_events_table.php`, and the prune needs `add_processed_at_index_to_processed_webhook_events_table.php`: a fresh install publishes both; for an existing application copy them from `vendor/fluttersdk/magic-starter-laravel/database/migrations/` under later timestamps and run `php artisan migrate`. Without the table billing still works and each worker logs one warning.
+- `magic-starter.billing.log_channel` (`MAGIC_STARTER_BILLING_LOG_CHANNEL`, default null; blank reads as null) routes billing log lines to a channel. `magic-starter:billing:prune` runs daily: `webhook_retention_days` (default `90`, never below 31) for dedup claims, `events_retention_days` (default null, keep forever; blank or non-numeric also keeps forever) for the history.
+- A refused request leaves a `request_refused` row: put a throttle on the billing routes through `magic-starter.route_middleware` or the app's route group.
+- An adopter-built `EntitlementWrite` needs `source:`; a custom `WritesEntitlement` records through `BillingEventRecorder`.
 
 ## What to Watch For
 

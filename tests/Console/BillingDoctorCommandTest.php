@@ -92,6 +92,10 @@ class BillingDoctorCommandTest extends TestCase
 
         Sleep::fake();
         $this->app->instance(StripePriceReader::class, $this->stripe($this->stripePrices()));
+
+        // The doctor reports a missing audit table as an error, so a run that is
+        // about something else starts from a schema that has it.
+        (require __DIR__ . '/../../database/migrations/create_billing_events_table.php')->up();
     }
 
     public function test_a_complete_configuration_passes_its_local_checks(): void
@@ -464,6 +468,57 @@ class BillingDoctorCommandTest extends TestCase
 
         $this->assertSame(0, $doctor['exit']);
         $this->assertSame('ok', $doctor['checks']['schema.billing_trials']['status']);
+    }
+
+    /**
+     * The history table is written by every billing outcome, and a recorder
+     * that finds it missing logs one warning and skips the row, so a deployment
+     * that never published the migration loses its audit trail without a
+     * failure anywhere. Reported as an error naming the migration, and as fine
+     * once the table exists.
+     */
+    public function test_a_missing_billing_events_table_is_an_error(): void
+    {
+        Schema::drop('billing_events');
+
+        $doctor = $this->doctor();
+
+        $this->assertSame(1, $doctor['exit']);
+        $this->assertSame('error', $doctor['checks']['schema.billing_events']['status']);
+        $this->assertStringContainsString(
+            'create_billing_events_table.php',
+            $doctor['checks']['schema.billing_events']['message'],
+        );
+
+        // The disarming limb: the same configuration with the table present.
+        (require __DIR__ . '/../../database/migrations/create_billing_events_table.php')->up();
+
+        $doctor = $this->doctor();
+
+        $this->assertSame(0, $doctor['exit']);
+        $this->assertSame('ok', $doctor['checks']['schema.billing_events']['status']);
+    }
+
+    public function test_an_unreadable_schema_leaves_the_billing_events_check_a_warning(): void
+    {
+        config([
+            'database.connections.unreachable' => [
+                'driver' => 'sqlite',
+                'database' => '/nonexistent/magic-starter-doctor.sqlite',
+                'prefix' => '',
+            ],
+            'database.default' => 'unreachable',
+        ]);
+
+        $doctor = $this->doctor();
+
+        $this->assertSame(0, $doctor['exit']);
+        $this->assertSame('warning', $doctor['checks']['schema.billing_events']['status']);
+        $this->assertStringContainsString(
+            'could not be looked for',
+            $doctor['checks']['schema.billing_events']['message'],
+        );
+        $this->assertStringNotContainsString('/nonexistent', $doctor['checks']['schema.billing_events']['message']);
     }
 
     /**

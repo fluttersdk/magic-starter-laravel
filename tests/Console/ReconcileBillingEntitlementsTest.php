@@ -5,12 +5,15 @@ namespace FlutterSdk\MagicStarter\Tests\Console;
 use Carbon\CarbonImmutable;
 use FlutterSdk\MagicStarter\Console\ReconcileBillingEntitlements;
 use FlutterSdk\MagicStarter\Contracts\WritesEntitlement;
+use FlutterSdk\MagicStarter\Enums\BillingEventType;
 use FlutterSdk\MagicStarter\Enums\BillingProvider;
+use FlutterSdk\MagicStarter\Enums\BillingSource;
 use FlutterSdk\MagicStarter\Enums\PlanStatus;
 use FlutterSdk\MagicStarter\Enums\TrialRefusalReason;
 use FlutterSdk\MagicStarter\Features;
 use FlutterSdk\MagicStarter\Jobs\CheckTrialCard;
 use FlutterSdk\MagicStarter\MagicStarter;
+use FlutterSdk\MagicStarter\Models\BillingEvent;
 use FlutterSdk\MagicStarter\Models\BillingTrial;
 use FlutterSdk\MagicStarter\Models\Subscription;
 use FlutterSdk\MagicStarter\Support\RevenueCatClient;
@@ -478,6 +481,92 @@ class ReconcileBillingEntitlementsTest extends TestCase
             );
             $this->assertSame(BillingProvider::APP_STORE, $billable->getAttribute('plan_provider'));
         }
+    }
+
+    // -------------------------------------------------------------------------
+    // The audit trail: a correction leaves a row, agreement leaves none
+    // -------------------------------------------------------------------------
+
+    /**
+     * A Stripe correction leaves one `entitlement_applied` row filed under the
+     * reconciler, with no external id: there was no delivery, which is the
+     * whole reason a correction was needed.
+     */
+    public function test_a_stripe_correction_leaves_one_applied_row_filed_under_reconcile(): void
+    {
+        $billable = $this->makeBillable([
+            'plan' => 'pro',
+            'plan_status' => PlanStatus::ACTIVE->value,
+            'plan_provider' => BillingProvider::STRIPE->value,
+            'plan_source_event_at' => $this->grantedAt()->subDay(),
+        ]);
+
+        $this->makeSubscription($billable, 'price_business');
+
+        $this->artisan(ReconcileBillingEntitlements::NAME)->assertExitCode(0)->run();
+
+        $row = BillingEvent::query()->sole();
+        $this->assertSame(BillingEventType::ENTITLEMENT_APPLIED, $row->type);
+        $this->assertSame(BillingSource::RECONCILE, $row->source);
+        $this->assertSame(BillingProvider::STRIPE, $row->provider);
+        $this->assertNull($row->external_id);
+        $this->assertSame((string) $billable->getKey(), $row->billable_id);
+        // The tier, and the renew flag the local row is the first to state.
+        $this->assertSame(['plan', 'plan_renews'], $row->properties['changed'] ?? null);
+    }
+
+    /**
+     * A subject that agrees with its rail leaves no row, on either run.
+     */
+    public function test_an_agreeing_run_leaves_no_row(): void
+    {
+        $billable = $this->makeBillable([
+            'plan' => 'pro',
+            'plan_status' => PlanStatus::ACTIVE->value,
+            'plan_provider' => BillingProvider::STRIPE->value,
+            'plan_source_event_at' => $this->grantedAt()->subDay(),
+            'plan_current_period_end' => $this->periodEnd(),
+            'plan_renews' => true,
+        ]);
+
+        $this->makeSubscription($billable, 'price_pro');
+
+        foreach ([1, 2] as $pass) {
+            $this->artisan(ReconcileBillingEntitlements::NAME)->assertExitCode(0)->run();
+
+            $this->assertSame(0, BillingEvent::query()->count(), "Pass {$pass} recorded an agreeing subject.");
+        }
+    }
+
+    /**
+     * The store rail re-applies its authoritative read on every run BY DESIGN,
+     * so its provenance moves every time; only the first run, which actually
+     * corrected the tier, may leave a row.
+     */
+    public function test_the_store_rail_run_twice_leaves_at_most_one_row(): void
+    {
+        $billable = $this->makeBillable([
+            'plan' => 'pro',
+            'plan_status' => PlanStatus::ACTIVE->value,
+            'plan_provider' => BillingProvider::APP_STORE->value,
+            'plan_source_event_at' => $this->grantedAt()->subDay(),
+        ]);
+
+        $this->fakeAuthoritativeReads([
+            (string) $billable->getKey() => $this->subscriber([
+                self::APP_STORE_BUSINESS => $this->subscription(),
+            ]),
+        ]);
+
+        foreach ([1, 2] as $pass) {
+            $this->artisan(ReconcileBillingEntitlements::NAME)->assertExitCode(0)->run();
+        }
+
+        $row = BillingEvent::query()->sole();
+        $this->assertSame(BillingEventType::ENTITLEMENT_APPLIED, $row->type);
+        $this->assertSame(BillingSource::RECONCILE, $row->source);
+        $this->assertSame(BillingProvider::APP_STORE, $row->provider);
+        $this->assertNull($row->external_id, 'A reconcile read has no delivery id; its synthetic event id is not one.');
     }
 
     // -------------------------------------------------------------------------
@@ -1108,6 +1197,7 @@ class ReconcileBillingEntitlementsTest extends TestCase
         // missing table is a query exception on the first local row this sweep
         // looks at.
         $this->runPackageMigration('create_subscription_items_table.php');
+        $this->runPackageMigration('create_billing_events_table.php');
     }
 
     private function runPackageMigration(string $filename): void

@@ -4,7 +4,10 @@ namespace FlutterSdk\MagicStarter\Tests\Audit;
 
 use FlutterSdk\MagicStarter\Audit\Audit;
 use FlutterSdk\MagicStarter\Audit\Auditor;
+use FlutterSdk\MagicStarter\Enums\BillingEventType;
+use FlutterSdk\MagicStarter\Enums\BillingSource;
 use FlutterSdk\MagicStarter\Features;
+use FlutterSdk\MagicStarter\Models\BillingEvent;
 use FlutterSdk\MagicStarter\Tests\Fixtures\ConcreteTeam;
 use FlutterSdk\MagicStarter\Tests\Fixtures\ConcreteTeamUser;
 use FlutterSdk\MagicStarter\Tests\Fixtures\ConcreteUser;
@@ -266,6 +269,27 @@ final class ModelAuditListenerTest extends TestCase
 
         $this->assertSame(0, Audit::query()->where('auditable_type', (new Audit)->getMorphClass())->count());
         $this->assertSame(1, Audit::query()->count());
+    }
+
+    public function test_a_billing_event_is_a_history_of_its_own_and_is_never_audited(): void
+    {
+        $this->migrate(true);
+        (require __DIR__ . '/../../database/migrations/create_billing_events_table.php')->up();
+
+        $user = $this->createUser('ada@example.com');
+        $event = BillingEvent::query()->create([
+            'type' => BillingEventType::CHECKOUT_STARTED,
+            'source' => BillingSource::REQUEST,
+            'billable_type' => $user->getMorphClass(),
+            'billable_id' => (string) $user->getKey(),
+        ]);
+
+        $this->assertNotNull($event->getKey());
+        $this->assertSame(1, Audit::query()->count(), 'Only the user insert is audited.');
+        $this->assertSame(
+            0,
+            Audit::query()->where('auditable_type', (new BillingEvent)->getMorphClass())->count(),
+        );
     }
 
     public function test_a_class_in_the_exclude_list_is_not_audited(): void

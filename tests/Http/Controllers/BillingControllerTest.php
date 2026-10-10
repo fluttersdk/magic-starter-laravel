@@ -4,10 +4,17 @@ namespace FlutterSdk\MagicStarter\Tests\Http\Controllers;
 
 use FlutterSdk\MagicStarter\Actions\SubscriptionGuardedDeleteTeam;
 use FlutterSdk\MagicStarter\Contracts\ReportsUsage;
+use FlutterSdk\MagicStarter\Enums\BillingEventType;
+use FlutterSdk\MagicStarter\Enums\BillingProvider;
+use FlutterSdk\MagicStarter\Enums\BillingSource;
+use FlutterSdk\MagicStarter\Events\Billing\BillingOutcome;
+use FlutterSdk\MagicStarter\Events\Billing\PortalOpened;
+use FlutterSdk\MagicStarter\Events\Billing\RequestRefused;
 use FlutterSdk\MagicStarter\Features;
 use FlutterSdk\MagicStarter\Http\Controllers\BillingController;
 use FlutterSdk\MagicStarter\MagicStarter;
 use FlutterSdk\MagicStarter\MagicStarterServiceProvider;
+use FlutterSdk\MagicStarter\Models\BillingEvent;
 use FlutterSdk\MagicStarter\Models\BillingTrial;
 use FlutterSdk\MagicStarter\Models\Team;
 use FlutterSdk\MagicStarter\Support\ConditionallyUsesUuids;
@@ -21,6 +28,7 @@ use Illuminate\Foundation\Auth\Access\Authorizable;
 use Illuminate\Pagination\CursorPaginator;
 use Illuminate\Routing\RouteCollection;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Event;
 use Illuminate\Support\Facades\Gate;
 use Illuminate\Support\Facades\Lang;
 use Illuminate\Support\Facades\Log;
@@ -72,9 +80,22 @@ class BillingControllerTest extends TestCase
      */
     private const STRIPE_ID = 'cus_billing_test';
 
+    /**
+     * Every outcome event a listener on {@see BillingOutcome} received.
+     *
+     * @var list<BillingOutcome>
+     */
+    private array $dispatched = [];
+
     protected function setUp(): void
     {
         parent::setUp();
+
+        $this->dispatched = [];
+
+        Event::listen(BillingOutcome::class, function (BillingOutcome $event): void {
+            $this->dispatched[] = $event;
+        });
 
         MagicStarter::reset();
         BillingTestRail::reset();
@@ -177,6 +198,9 @@ class BillingControllerTest extends TestCase
             '--path' => __DIR__ . '/../../../database/migrations/create_billing_trials_table.php',
             '--realpath' => true,
         ]);
+
+        // The audit trail the portal reaches, from the shipped migration.
+        (require __DIR__ . '/../../../database/migrations/create_billing_events_table.php')->up();
     }
 
     protected function tearDown(): void
@@ -567,6 +591,86 @@ class BillingControllerTest extends TestCase
             BillingController::REASON_MANAGED_BY_STORE,
             BillingController::REASON_NO_BILLING_ACCOUNT,
         );
+    }
+
+    /**
+     * Opening the portal leaves one `portal_opened` row, about the subject and
+     * by the person who asked, and a refused open leaves none.
+     */
+    public function test_opening_the_portal_records_one_row_for_the_acting_user(): void
+    {
+        $this->bootBillingRoutes('team');
+
+        $owner = $this->createUser('portal-audit-owner@example.test');
+        $team = $this->createTeam($owner, [
+            'plan' => 'pro',
+            'plan_status' => 'active',
+            'plan_provider' => 'stripe',
+            'stripe_id' => self::STRIPE_ID,
+        ]);
+        $this->setCurrentTeam($owner, $team);
+
+        BillingTestRail::$hasStripeId = true;
+
+        $this->ask($owner, '/billing/portal')->assertOk();
+
+        $this->assertSame(1, BillingEvent::query()->count());
+
+        $row = BillingEvent::query()->firstOrFail();
+        $this->assertSame(BillingEventType::PORTAL_OPENED, $row->type);
+        $this->assertSame(BillingSource::REQUEST, $row->source);
+        $this->assertSame(BillingProvider::STRIPE, $row->provider);
+        $this->assertSame($team->getMorphClass(), $row->billable_type);
+        $this->assertSame((string) $team->getKey(), $row->billable_id);
+        $this->assertSame((string) $owner->getKey(), (string) $row->actor_user_id);
+        $this->assertCount(1, $this->dispatched);
+        $this->assertInstanceOf(PortalOpened::class, $this->dispatched[0]);
+
+        // A member is refused at the gate, before anything is recorded.
+        $member = $this->createUser('portal-audit-member@example.test');
+        $team->users()->attach($member->getKey(), ['role' => 'admin']);
+        $this->setCurrentTeam($member, $team);
+
+        $this->ask($member, '/billing/portal')->assertForbidden();
+
+        $this->assertSame(1, BillingEvent::query()->count());
+    }
+
+    /**
+     * Both portal 409s are recorded as refusals, each with its own reason and
+     * the rail it named.
+     */
+    public function test_a_refused_portal_records_the_reason_and_the_rail(): void
+    {
+        $this->bootBillingRoutes('user');
+
+        $store = $this->createUser('portal-audit-store@example.test', [
+            'plan_provider' => 'app_store',
+            'stripe_id' => self::STRIPE_ID,
+        ]);
+        BillingTestRail::$hasStripeId = true;
+
+        $this->ask($store, '/billing/portal')->assertStatus(409);
+
+        $row = BillingEvent::query()->firstOrFail();
+        $this->assertSame(BillingEventType::REQUEST_REFUSED, $row->type);
+        $this->assertSame(BillingSource::REQUEST, $row->source);
+        $this->assertSame(BillingProvider::APP_STORE, $row->provider);
+        $this->assertSame(BillingController::REASON_MANAGED_BY_STORE, $row->reason);
+        $this->assertSame((string) $store->getKey(), $row->billable_id);
+        $this->assertSame((string) $store->getKey(), (string) $row->actor_user_id);
+        $this->assertInstanceOf(RequestRefused::class, $this->dispatched[0]);
+
+        BillingEvent::query()->delete();
+
+        $fresh = $this->createUser('portal-audit-fresh@example.test', ['plan_provider' => 'none']);
+        BillingTestRail::$hasStripeId = false;
+
+        $this->ask($fresh, '/billing/portal')->assertStatus(409);
+
+        $row = BillingEvent::query()->firstOrFail();
+        $this->assertSame(BillingController::REASON_NO_BILLING_ACCOUNT, $row->reason);
+        $this->assertSame(BillingProvider::NONE, $row->provider);
     }
 
     /**

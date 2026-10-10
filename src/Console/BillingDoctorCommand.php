@@ -3,6 +3,7 @@
 namespace FlutterSdk\MagicStarter\Console;
 
 use FlutterSdk\MagicStarter\Enums\BillingChannel;
+use FlutterSdk\MagicStarter\Models\BillingEvent;
 use FlutterSdk\MagicStarter\Models\BillingTrial;
 use FlutterSdk\MagicStarter\Support\BillingCatalogue;
 use FlutterSdk\MagicStarter\Support\BillingManifest;
@@ -105,6 +106,7 @@ class BillingDoctorCommand extends Command
             $this->checkBillableKeys();
             $this->checkSubscriptionKeys();
             $this->checkTrialsTable();
+            $this->checkBillingEventsTable();
             $this->checkReconcileCadence();
 
             // 3. What the vendors hold, read and never written.
@@ -380,6 +382,42 @@ class BillingDoctorCommand extends Command
                 . 'publish the package migration create_billing_trials_table.php and migrate.',
                 $model->getTable(),
                 implode(', ', $trialProducts),
+            ));
+    }
+
+    /**
+     * Whether the `billing_events` table exists.
+     *
+     * Every billing outcome records a row there, and a recorder that finds the
+     * table missing logs one warning and skips the row, so a deployment that
+     * never published the migration loses its audit trail with nothing failing.
+     * Unlike the trials table this is read whenever billing is on, so its
+     * absence is always reported. An unreachable database is reported by
+     * exception class alone, for the reason {@see self::checkSubscriptionKeys()}
+     * gives.
+     */
+    private function checkBillingEventsTable(): void
+    {
+        $model = new BillingEvent;
+
+        try {
+            $exists = $model->getConnection()->getSchemaBuilder()->hasTable($model->getTable());
+        } catch (Throwable $failure) {
+            $this->check('schema.billing_events', self::WARNING, sprintf(
+                'The %s table could not be looked for (%s), so the audit trail was not checked.',
+                $model->getTable(),
+                class_basename($failure),
+            ));
+
+            return;
+        }
+
+        $exists
+            ? $this->check('schema.billing_events', self::OK, "The {$model->getTable()} table exists.")
+            : $this->check('schema.billing_events', self::ERROR, sprintf(
+                'The %s table is missing, so no billing outcome leaves a row; '
+                . 'publish the package migration create_billing_events_table.php and migrate.',
+                $model->getTable(),
             ));
     }
 

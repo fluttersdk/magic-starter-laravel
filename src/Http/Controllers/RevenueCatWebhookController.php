@@ -3,12 +3,16 @@
 namespace FlutterSdk\MagicStarter\Http\Controllers;
 
 use Carbon\CarbonImmutable;
+use FlutterSdk\MagicStarter\Enums\BillingEventType;
+use FlutterSdk\MagicStarter\Enums\BillingProvider;
+use FlutterSdk\MagicStarter\Enums\BillingSource;
 use FlutterSdk\MagicStarter\Jobs\SyncRevenueCatEntitlement;
 use FlutterSdk\MagicStarter\Models\ProcessedWebhookEvent;
+use FlutterSdk\MagicStarter\Support\BillingEventRecorder;
+use FlutterSdk\MagicStarter\Support\BillingLog;
 use FlutterSdk\MagicStarter\Support\StoreRailConfiguration;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
-use Illuminate\Support\Facades\Log;
 use Symfony\Component\HttpFoundation\Response;
 use Symfony\Component\HttpKernel\Exception\AccessDeniedHttpException;
 
@@ -200,9 +204,15 @@ class RevenueCatWebhookController
         // 3. The sandbox gate, read off the EVENT. Refused before the claim: the
         //    event is not merely uninteresting, it is one this deployment must
         //    never act on, and leaving its id unclaimed keeps the decision
-        //    reversible if the deployment later opts in.
+        //    reversible if the deployment later opts in. Only a type that could
+        //    have moved an entitlement is a refusal worth a row; a sandbox
+        //    `PAYWALL_IMPRESSION` reaches this gate on every app open.
         if (! $this->isActionableEnvironment($event)) {
             $this->warn('non_production_environment', $event);
+
+            if ($this->isEntitlementEvent($event)) {
+                $this->recordRefusal('non_production_environment', $event);
+            }
 
             return $this->acknowledged();
         }
@@ -211,7 +221,7 @@ class RevenueCatWebhookController
         //    a dedup row exists to gate a SIDE EFFECT, an ignored type has none,
         //    and `PAYWALL_IMPRESSION` fires often enough that claiming one would
         //    grow the dedup table without bound for no benefit.
-        if (! in_array((string) $event['type'], self::ENTITLEMENT_EVENT_TYPES, true)) {
+        if (! $this->isEntitlementEvent($event)) {
             return $this->acknowledged();
         }
 
@@ -328,10 +338,12 @@ class RevenueCatWebhookController
             && $this->isUsableString($event['type'] ?? null);
 
         if (! $readable) {
-            Log::warning('A verified RevenueCat delivery carried no readable event; acknowledged and ignored.', [
+            BillingLog::warning('A verified RevenueCat delivery carried no readable event; acknowledged and ignored.', [
                 'reason' => 'unreadable_event',
                 'bytes' => strlen($raw),
             ]);
+
+            $this->recordRefusal('unreadable_event', is_array($event) ? $event : []);
 
             return null;
         }
@@ -375,7 +387,20 @@ class RevenueCatWebhookController
     }
 
     /**
+     * Whether the event's type is one that can change what a subscriber is
+     * entitled to ({@see self::ENTITLEMENT_EVENT_TYPES}).
+     *
+     * @param  array<string, mixed>  $event
+     */
+    protected function isEntitlementEvent(array $event): bool
+    {
+        return in_array((string) $event['type'], self::ENTITLEMENT_EVENT_TYPES, true);
+    }
+
+    /**
      * Whether a payload field is a string with something in it.
+     *
+     * @phpstan-assert-if-true string $value
      */
     protected function isUsableString(mixed $value): bool
     {
@@ -388,18 +413,61 @@ class RevenueCatWebhookController
      * Warning level: each one means a store said something about a subscriber and
      * this application deliberately did nothing with it. Ignored event TYPES are
      * not logged here on purpose, because `PAYWALL_*` alone would fill the log
-     * with one line per app open.
+     * with one line per app open; the row is the caller's decision.
      *
      * @param  array<string, mixed>  $event
      */
     protected function warn(string $reason, array $event): void
     {
-        Log::warning('A RevenueCat delivery was acknowledged without queueing a re-read.', [
+        BillingLog::warning('A RevenueCat delivery was acknowledged without queueing a re-read.', [
             'reason' => $reason,
             'event_id' => $event['id'] ?? null,
             'event_type' => $event['type'] ?? null,
             'environment' => $event['environment'] ?? null,
         ]);
+    }
+
+    /**
+     * Leave the `billing_events` row for a refusal of an AUTHENTIC delivery.
+     *
+     * Only reached after {@see self::verifySignature()} passed: a signature
+     * failure goes through {@see self::refuse()}, which stays log-only because
+     * unauthenticated input must not be able to write rows. The event names an
+     * App User ID this endpoint never resolved, so there is no billable, and the
+     * raw ids live in `properties` where a store-minted string cannot be mistaken
+     * for a billable key. Every field is read as string-or-null: the sender is
+     * signed, not well-formed.
+     *
+     * @param  array<string, mixed>  $event
+     */
+    protected function recordRefusal(string $reason, array $event): void
+    {
+        app(BillingEventRecorder::class)->record(
+            type: BillingEventType::DELIVERY_REFUSED,
+            source: BillingSource::WEBHOOK,
+            billable: null,
+            provider: BillingProvider::fromRevenueCatStore($event['store'] ?? null),
+            reason: $reason,
+            externalId: $this->stringField($event, 'id'),
+            properties: [
+                'event_type' => $this->stringField($event, 'type'),
+                'environment' => $this->stringField($event, 'environment'),
+                'app_user_id' => $this->stringField($event, 'app_user_id'),
+            ],
+        );
+    }
+
+    /**
+     * One payload field as a string, or null when it is absent, blank or not a
+     * string.
+     *
+     * @param  array<string, mixed>  $event
+     */
+    protected function stringField(array $event, string $key): ?string
+    {
+        $value = $event[$key] ?? null;
+
+        return $this->isUsableString($value) ? $value : null;
     }
 
     /**
@@ -413,7 +481,7 @@ class RevenueCatWebhookController
      */
     protected function refuse(string $reason): never
     {
-        Log::warning('A RevenueCat webhook delivery failed signature verification.', [
+        BillingLog::warning('A RevenueCat webhook delivery failed signature verification.', [
             'reason' => $reason,
         ]);
 

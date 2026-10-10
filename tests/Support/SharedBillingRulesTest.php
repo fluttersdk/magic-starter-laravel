@@ -8,6 +8,7 @@ use Carbon\Exceptions\InvalidFormatException;
 use FlutterSdk\MagicStarter\Actions\WriteEntitlement;
 use FlutterSdk\MagicStarter\Contracts\WritesEntitlement;
 use FlutterSdk\MagicStarter\Enums\BillingProvider;
+use FlutterSdk\MagicStarter\Enums\BillingSource;
 use FlutterSdk\MagicStarter\Enums\PlanStatus;
 use FlutterSdk\MagicStarter\Support\EntitlementWrite;
 use FlutterSdk\MagicStarter\Support\ReadsBillableAttributes;
@@ -73,6 +74,10 @@ class SharedBillingRulesTest extends TestCase
             'function planStatusFor(',
             'function planForPrice(',
             'function looksLikeOne(',
+            // The entitlement snapshot moved to ReadsBillableAttributes, where
+            // the write action compares through the same five fields.
+            'function snapshot(',
+            'function entitlementSnapshot(',
         ],
         'src/Jobs/SyncRevenueCatEntitlement.php' => [
             'function looksLikeOne(',
@@ -110,7 +115,8 @@ class SharedBillingRulesTest extends TestCase
                     $member,
                     (string) $source,
                     "{$path} declares [{$member}] itself. That rule is shared through "
-                    . 'StripeSubscriptionState or TeamKey, and a second copy is free to disagree with '
+                    . 'StripeSubscriptionState, TeamKey or ReadsBillableAttributes, and a second copy is '
+                    . 'free to disagree with '
                     . 'the first with every test on both sides still passing.',
                 );
             }
@@ -184,6 +190,7 @@ class SharedBillingRulesTest extends TestCase
             provider: BillingProvider::STRIPE,
             eventAt: CarbonImmutable::parse(self::STORED_AT),
             authoritative: true,
+            source: BillingSource::WEBHOOK,
         );
     }
 
@@ -374,6 +381,31 @@ class SharedBillingRulesTest extends TestCase
         $this->assertNull($reader->readBoolean($cast, 'plan_product_id'));
         $this->assertNull($reader->readDate($uncast, 'plan_grace_period_ends_at'));
         $this->assertNull($reader->readDate($cast, 'plan_grace_period_ends_at'));
+    }
+
+    /**
+     * The entitlement snapshot reads the same MEANING off a cast model and an
+     * uncast one.
+     *
+     * It is what both the write action and the reconciler compare to decide
+     * whether an entitlement changed, so a snapshot that answered differently
+     * per model would record a change on every write against an uncast row, or
+     * miss one against a cast row.
+     */
+    public function test_the_entitlement_snapshot_agrees_across_a_cast_and_an_uncast_model(): void
+    {
+        $reader = new BillableAttributeReader;
+
+        $expected = [
+            'plan' => 'pro',
+            'plan_status' => 'active',
+            'plan_provider' => 'stripe',
+            'plan_current_period_end' => '2026-08-20T10:00:00Z',
+            'plan_renews' => true,
+        ];
+
+        $this->assertSame($expected, $reader->readSnapshot($this->rawBillable(UncastBillable::class)));
+        $this->assertSame($expected, $reader->readSnapshot($this->rawBillable(CastingBillable::class)));
     }
 
     /**
@@ -579,6 +611,14 @@ class BillableAttributeReader
     public function readStoredEventAt(Model $billable): ?CarbonInterface
     {
         return $this->storedEventAt($billable);
+    }
+
+    /**
+     * @return array<string, mixed>
+     */
+    public function readSnapshot(Model $billable): array
+    {
+        return $this->entitlementSnapshot($billable);
     }
 }
 

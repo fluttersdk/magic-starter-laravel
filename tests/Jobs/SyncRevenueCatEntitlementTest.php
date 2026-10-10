@@ -5,11 +5,14 @@ namespace FlutterSdk\MagicStarter\Tests\Jobs;
 use Carbon\CarbonImmutable;
 use FlutterSdk\MagicStarter\Actions\WriteEntitlement;
 use FlutterSdk\MagicStarter\Contracts\WritesEntitlement;
+use FlutterSdk\MagicStarter\Enums\BillingEventType;
 use FlutterSdk\MagicStarter\Enums\BillingProvider;
+use FlutterSdk\MagicStarter\Enums\BillingSource;
 use FlutterSdk\MagicStarter\Enums\PlanStatus;
 use FlutterSdk\MagicStarter\Features;
 use FlutterSdk\MagicStarter\Jobs\SyncRevenueCatEntitlement;
 use FlutterSdk\MagicStarter\MagicStarter;
+use FlutterSdk\MagicStarter\Models\BillingEvent;
 use FlutterSdk\MagicStarter\Models\ProcessedWebhookEvent;
 use FlutterSdk\MagicStarter\Support\EntitlementWrite;
 use FlutterSdk\MagicStarter\Support\RevenueCatClient;
@@ -20,10 +23,12 @@ use GuzzleHttp\Promise\PromiseInterface;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Http\Client\Request;
 use Illuminate\Http\Client\RequestException;
+use Illuminate\Queue\Jobs\FakeJob;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Str;
+use RuntimeException;
 
 /**
  * The store rail's feeder, where entitlement is actually decided.
@@ -428,6 +433,31 @@ class SyncRevenueCatEntitlementTest extends TestCase
         $billable->refresh();
         $this->assertSame('pro', $billable->getAttribute('plan'));
         $this->assertSame(self::PLAY_PRO, $billable->getAttribute('plan_product_id'));
+    }
+
+    /**
+     * A webhook-sourced grant leaves its row carrying RevenueCat's own event id,
+     * as RevenueCat sent it rather than under the `rc:` claim prefix.
+     */
+    public function test_a_webhook_sourced_grant_row_carries_the_revenuecat_event_id(): void
+    {
+        $billable = $this->makeBillable([]);
+
+        $this->fakeAuthoritativeReads([
+            (string) $billable->getKey() => $this->subscriber([
+                self::PLAY_PRO => $this->subscription(['store' => 'play_store']),
+            ]),
+        ]);
+
+        $event = $this->event('INITIAL_PURCHASE', $billable);
+
+        $this->sync($event);
+
+        $row = BillingEvent::query()->sole();
+        $this->assertSame(BillingEventType::ENTITLEMENT_APPLIED, $row->type);
+        $this->assertSame(BillingSource::WEBHOOK, $row->source);
+        $this->assertSame(BillingProvider::PLAY_STORE, $row->provider);
+        $this->assertSame($event['id'], $row->external_id);
     }
 
     /**
@@ -1082,6 +1112,38 @@ class SyncRevenueCatEntitlementTest extends TestCase
     }
 
     /**
+     * An anonymous transfer SOURCE is logged and never recorded as a refusal:
+     * the delivery applied fine to its destination, and a `delivery_refused`
+     * row would tell the history it did not.
+     */
+    public function test_an_anonymous_transfer_source_leaves_no_delivery_refused_row(): void
+    {
+        $destination = $this->makeBillable(['email' => 'destination@example.test']);
+
+        $this->fakeAuthoritativeReads([
+            (string) $destination->getKey() => $this->subscriber([
+                self::APP_STORE_BUSINESS => $this->subscription(),
+            ]),
+        ]);
+
+        $this->sync($this->event('TRANSFER', $destination, [
+            'app_user_id' => (string) $destination->getKey(),
+            'transferred_from' => ['$RCAnonymousID:8f3a'],
+            'transferred_to' => [(string) $destination->getKey()],
+        ]));
+
+        $this->assertSame('business', $destination->refresh()->getAttribute('plan'));
+        $this->assertSame(
+            0,
+            BillingEvent::query()->where('type', BillingEventType::DELIVERY_REFUSED->value)->count(),
+        );
+        $this->assertSame(
+            1,
+            BillingEvent::query()->where('type', BillingEventType::ENTITLEMENT_APPLIED->value)->count(),
+        );
+    }
+
+    /**
      * A padded App User ID still finds its billable.
      *
      * The id is trimmed for the lookup and for the subscriber URL both, and the
@@ -1400,6 +1462,221 @@ class SyncRevenueCatEntitlementTest extends TestCase
     }
 
     // -------------------------------------------------------------------------
+    // The audit trail: which refusals leave a billing_events row
+    // -------------------------------------------------------------------------
+
+    /**
+     * A webhook-sourced refusal on the first attempt leaves its one row, with
+     * the raw App User ID in `properties` and no billable, because there is none.
+     */
+    public function test_a_webhook_sourced_refusal_leaves_one_delivery_refused_row(): void
+    {
+        $orphan = (string) Str::uuid();
+        $event = $this->event('RENEWAL', $this->makeBillable([]), ['app_user_id' => $orphan]);
+
+        $this->sync($event);
+
+        $row = BillingEvent::query()->sole();
+        $this->assertSame(BillingEventType::DELIVERY_REFUSED, $row->type);
+        $this->assertSame(BillingSource::WEBHOOK, $row->source);
+        $this->assertSame(BillingProvider::APP_STORE, $row->provider);
+        $this->assertSame('unknown_billable', $row->reason);
+        $this->assertSame($event['id'], $row->external_id);
+        $this->assertNull($row->billable_id);
+        $this->assertSame('RENEWAL', $row->properties['event_type']);
+        $this->assertSame($orphan, $row->properties['app_user_id']);
+    }
+
+    /**
+     * A call site that holds the billable names it on the row.
+     */
+    public function test_a_refusal_made_with_a_billable_in_hand_names_it(): void
+    {
+        $billable = $this->makeBillable([]);
+
+        $this->fakeAuthoritativeReads([
+            (string) $billable->getKey() => $this->subscriber([
+                self::APP_STORE_BUSINESS => $this->subscription(['is_sandbox' => true]),
+            ]),
+        ]);
+
+        $this->sync($this->event('INITIAL_PURCHASE', $billable));
+
+        $row = BillingEvent::query()->sole();
+        $this->assertSame(BillingEventType::DELIVERY_REFUSED, $row->type);
+        $this->assertSame('sandbox_only_subscriber', $row->reason);
+        $this->assertSame($billable->getMorphClass(), $row->billable_type);
+        $this->assertSame((string) $billable->getKey(), $row->billable_id);
+    }
+
+    /**
+     * The reconciler runs this job every sweep, so a row per refusal would flood
+     * the table with the same non-event each time.
+     */
+    public function test_a_reconcile_sourced_refusal_leaves_no_row(): void
+    {
+        $orphan = (string) Str::uuid();
+
+        dispatch_sync(new SyncRevenueCatEntitlement(
+            $this->event('RENEWAL', $this->makeBillable([]), ['app_user_id' => $orphan]),
+            source: BillingSource::RECONCILE,
+        ));
+
+        $this->assertSame(0, BillingEvent::query()->count());
+    }
+
+    /**
+     * A retry re-runs the same decision on the same delivery, so a refusal it
+     * repeats leaves no second row.
+     */
+    public function test_a_refusal_repeated_by_a_retry_leaves_one_row(): void
+    {
+        $orphan = (string) Str::uuid();
+        $event = $this->event('RENEWAL', $this->makeBillable([]), ['app_user_id' => $orphan]);
+
+        foreach ([1, 2, 3] as $attempt) {
+            $job = new SyncRevenueCatEntitlement($event);
+            $job->setJob($this->fakeQueueJob(attempts: $attempt));
+
+            $job->handle($this->app->make(RevenueCatClient::class), $this->app->make(WritesEntitlement::class));
+        }
+
+        $row = BillingEvent::query()->sole();
+        $this->assertSame('unknown_billable', $row->reason);
+        $this->assertSame($event['id'], $row->external_id);
+    }
+
+    /**
+     * A refusal decided only AFTER the authoritative read is first reached on
+     * a retry whenever attempt 1 failed on that read; it is recorded there, and
+     * a further retry does not duplicate it.
+     */
+    public function test_a_post_read_refusal_first_reached_on_a_retry_is_recorded_once(): void
+    {
+        $billable = $this->makeBillable([]);
+        $event = $this->event('INITIAL_PURCHASE', $billable);
+        $reads = 0;
+
+        Http::fake(function () use (&$reads): PromiseInterface {
+            $reads++;
+
+            // Every read the client makes inside attempt 1 fails.
+            if ($reads <= RevenueCatClient::MAXIMUM_ATTEMPTS) {
+                return Http::response(['message' => 'upstream is down'], 503);
+            }
+
+            return Http::response($this->subscriber([
+                self::APP_STORE_BUSINESS => $this->subscription(['is_sandbox' => true]),
+            ]), 200);
+        });
+
+        $first = new SyncRevenueCatEntitlement($event);
+        $first->setJob($this->fakeQueueJob(attempts: 1));
+
+        try {
+            $first->handle($this->app->make(RevenueCatClient::class), $this->app->make(WritesEntitlement::class));
+            $this->fail('The first attempt must fail on the read.');
+        } catch (RequestException) {
+            $this->assertSame(0, BillingEvent::query()->count());
+        }
+
+        foreach ([2, 3] as $attempt) {
+            $retry = new SyncRevenueCatEntitlement($event);
+            $retry->setJob($this->fakeQueueJob(attempts: $attempt));
+
+            $retry->handle($this->app->make(RevenueCatClient::class), $this->app->make(WritesEntitlement::class));
+        }
+
+        $row = BillingEvent::query()->sole();
+        $this->assertSame(BillingEventType::DELIVERY_REFUSED, $row->type);
+        $this->assertSame('sandbox_only_subscriber', $row->reason);
+        $this->assertSame($event['id'], $row->external_id);
+        $this->assertSame((string) $billable->getKey(), $row->billable_id);
+    }
+
+    /**
+     * A queue that retries `failed()` itself (a worker crash between the
+     * release and the ack) does not record the release twice.
+     */
+    public function test_a_repeated_permanent_failure_records_the_release_once(): void
+    {
+        $event = $this->event('INITIAL_PURCHASE', $this->makeBillable([]));
+
+        foreach ([3, 3] as $attempt) {
+            $job = new SyncRevenueCatEntitlement($event);
+            $job->setJob($this->fakeQueueJob(attempts: $attempt));
+
+            $job->failed(new RuntimeException('upstream is down'));
+        }
+
+        $this->assertSame('released_burnt_event_id', BillingEvent::query()->sole()->reason);
+    }
+
+    /**
+     * Logged for an operator and never recorded: the grant happened.
+     */
+    public function test_a_family_shared_entitlement_leaves_no_delivery_refused_row(): void
+    {
+        $billable = $this->makeBillable([]);
+
+        $this->fakeAuthoritativeReads([
+            (string) $billable->getKey() => $this->subscriber([
+                self::APP_STORE_BUSINESS => $this->subscription(['ownership_type' => 'FAMILY_SHARED']),
+            ]),
+        ]);
+
+        $this->sync($this->event('INITIAL_PURCHASE', $billable));
+
+        $this->assertSame(
+            0,
+            BillingEvent::query()->where('type', BillingEventType::DELIVERY_REFUSED->value)->count(),
+        );
+    }
+
+    /**
+     * `failed()` runs after the LAST attempt, so the attempt gate cannot apply
+     * to it: the release is recorded once whatever attempt number it reports.
+     */
+    public function test_a_permanent_failure_of_a_webhook_sourced_job_records_the_release_once(): void
+    {
+        $event = $this->event('INITIAL_PURCHASE', $this->makeBillable([]));
+        $job = new SyncRevenueCatEntitlement($event);
+        $job->setJob($this->fakeQueueJob(attempts: 3));
+
+        $job->failed(new RuntimeException('upstream is down'));
+
+        $row = BillingEvent::query()->sole();
+        $this->assertSame(BillingEventType::DELIVERY_REFUSED, $row->type);
+        $this->assertSame(BillingSource::WEBHOOK, $row->source);
+        $this->assertSame('released_burnt_event_id', $row->reason);
+        $this->assertSame($event['id'], $row->external_id);
+        $this->assertSame(RuntimeException::class, $row->properties['exception']);
+    }
+
+    public function test_a_permanent_failure_of_a_reconcile_sourced_job_records_nothing(): void
+    {
+        $job = new SyncRevenueCatEntitlement(
+            $this->event('INITIAL_PURCHASE', $this->makeBillable([])),
+            source: BillingSource::RECONCILE,
+        );
+
+        $job->failed(new RuntimeException('upstream is down'));
+
+        $this->assertSame(0, BillingEvent::query()->count());
+    }
+
+    /**
+     * A queue job that reports a fixed attempt number, the way a worker's does.
+     */
+    protected function fakeQueueJob(int $attempts): FakeJob
+    {
+        $job = new FakeJob;
+        $job->attempts = $attempts;
+
+        return $job;
+    }
+
+    // -------------------------------------------------------------------------
     // Fixtures
     // -------------------------------------------------------------------------
 
@@ -1423,7 +1700,7 @@ class SyncRevenueCatEntitlementTest extends TestCase
 
         $this->app->bind(
             WritesEntitlement::class,
-            fn (): WritesEntitlement => new RecordingEntitlementWriter(new WriteEntitlement),
+            fn (): WritesEntitlement => new RecordingEntitlementWriter($this->app->make(WriteEntitlement::class)),
         );
     }
 
@@ -1650,6 +1927,7 @@ class SyncRevenueCatEntitlementTest extends TestCase
         $this->runPackageMigration('create_users_table.php');
         $this->runPackageMigration('add_entitlement_provenance_to_billable_table.php');
         $this->runPackageMigration('create_processed_webhook_events_table.php');
+        $this->runPackageMigration('create_billing_events_table.php');
 
         $queueTables = require __DIR__ . '/../../vendor/orchestra/testbench-core/laravel/migrations/'
             . '0001_01_01_000002_testbench_create_jobs_table.php';

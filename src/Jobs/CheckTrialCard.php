@@ -3,10 +3,15 @@
 namespace FlutterSdk\MagicStarter\Jobs;
 
 use FlutterSdk\MagicStarter\Console\ReconcileBillingEntitlements;
+use FlutterSdk\MagicStarter\Enums\BillingEventType;
+use FlutterSdk\MagicStarter\Enums\BillingProvider;
+use FlutterSdk\MagicStarter\Enums\BillingSource;
 use FlutterSdk\MagicStarter\Enums\TrialRefusalReason;
 use FlutterSdk\MagicStarter\Http\Controllers\StripeWebhookController;
 use FlutterSdk\MagicStarter\Models\BillingTrial;
 use FlutterSdk\MagicStarter\Notifications\TrialRefusedNotification;
+use FlutterSdk\MagicStarter\Support\BillingEventRecorder;
+use FlutterSdk\MagicStarter\Support\BillingLog;
 use FlutterSdk\MagicStarter\Support\TrialCardGateway;
 use Illuminate\Contracts\Queue\ShouldQueue;
 use Illuminate\Database\Eloquent\Builder;
@@ -16,7 +21,6 @@ use Illuminate\Foundation\Queue\Queueable;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\DB;
-use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Notification;
 use Laravel\Cashier\Cashier;
 use Stripe\Subscription as StripeSubscription;
@@ -81,6 +85,17 @@ use Throwable;
  *   is on, and only after the cancel was confirmed and stamped, so a mail
  *   failure can never cause a second cancel.
  *
+ * ## What is recorded
+ *
+ * Every outcome of a refusal leaves one `billing_events` row, filed under
+ * {@see BillingSource::TRIAL_CHECK} and keyed to the subscription: `trial_refused`
+ * when the refusal is written, `trial_cancelled` once the cancel is confirmed
+ * and the row stamped, and `trial_refusal_withdrawn` when Stripe says the
+ * subscription converted. A kept trial is not an outcome and leaves nothing. The
+ * rows are recorded after the write they describe and outside every Stripe call,
+ * and the refusal is recorded only by the run that wrote it, so a retry of an
+ * owed cancel never records it twice.
+ *
  * ## Retries, and the `sync` queue
  *
  * A subscription whose card Checkout has not attached yet is asked again a
@@ -135,6 +150,11 @@ class CheckTrialCard implements ShouldQueue
     public int $backoff = 60;
 
     /**
+     * Held for the protected methods; set by {@see self::handle()}, never serialised.
+     */
+    protected BillingEventRecorder $recorder;
+
+    /**
      * @param  int|string  $trialId  The `billing_trials` key; the row is re-read,
      *                               so a job that outlived its row does nothing.
      */
@@ -147,12 +167,18 @@ class CheckTrialCard implements ShouldQueue
      *
      * @param  ReconcileBillingEntitlements  $reconciler  Whose Stripe arm re-projects a subject
      *                                                    that lost a refused duplicate.
+     * @param  BillingEventRecorder  $recorder  Where the refusal, cancel and withdrawal are recorded.
      *
      * @throws \Illuminate\Contracts\Cache\LockTimeoutException When another decision holds the
      *                                                          lock past ten seconds; the retry takes it again.
      */
-    public function handle(TrialCardGateway $gateway, ReconcileBillingEntitlements $reconciler): void
-    {
+    public function handle(
+        TrialCardGateway $gateway,
+        ReconcileBillingEntitlements $reconciler,
+        BillingEventRecorder $recorder,
+    ): void {
+        $this->recorder = $recorder;
+
         // 1. Re-read the row. A checked row was decided; a deleted one is moot.
         $trial = BillingTrial::query()->find($this->trialId);
 
@@ -190,7 +216,7 @@ class CheckTrialCard implements ShouldQueue
      */
     public function failed(?Throwable $exception): void
     {
-        Log::error('A trial card check failed; a refused trial may still be live in Stripe.', [
+        BillingLog::error('A trial card check failed; a refused trial may still be live in Stripe.', [
             'reason' => 'trial_card_check_failed',
             'billing_trial_id' => $this->trialId,
             'exception' => $exception !== null ? $exception::class : null,
@@ -216,7 +242,7 @@ class CheckTrialCard implements ShouldQueue
         }
 
         if ($answer === TrialCardGateway::NO_CARD) {
-            Log::info('A trial has no card fingerprint to compare; the trial is kept.', [
+            BillingLog::info('A trial has no card fingerprint to compare; the trial is kept.', [
                 'reason' => 'trial_card_not_a_card',
                 'billing_trial_id' => $trial->getKey(),
                 'subscription' => $trial->stripe_subscription_id,
@@ -251,7 +277,7 @@ class CheckTrialCard implements ShouldQueue
             return;
         }
 
-        Log::warning('A trial never showed a payment method; the trial is kept unchecked by card.', [
+        BillingLog::warning('A trial never showed a payment method; the trial is kept unchecked by card.', [
             'reason' => 'trial_card_never_attached',
             'billing_trial_id' => $trial->getKey(),
             'subscription' => $trial->stripe_subscription_id,
@@ -473,12 +499,14 @@ class CheckTrialCard implements ShouldQueue
             'checked_at' => null,
         ])->save();
 
-        Log::warning('A trial was refused: an earlier trial shares its person, subject or card.', [
+        BillingLog::warning('A trial was refused: an earlier trial shares its person, subject or card.', [
             'reason' => 'trial_refused',
             'refusal_reason' => $reason->value,
             'billing_trial_id' => $row->getKey(),
             'subscription' => $row->stripe_subscription_id,
         ]);
+
+        $this->recordOutcome(BillingEventType::TRIAL_REFUSED, $row, $reason->value);
     }
 
     /**
@@ -506,8 +534,9 @@ class CheckTrialCard implements ShouldQueue
     {
         // 1. Stripe's word, read once under the lock.
         $status = $gateway->status($row->stripe_subscription_id);
+        $cancelledNow = $status === StripeSubscription::STATUS_TRIALING;
 
-        if ($status === StripeSubscription::STATUS_TRIALING) {
+        if ($cancelledNow) {
             $gateway->cancel($row->stripe_subscription_id);
         } elseif (! in_array($status, self::ENDED_STATUSES, true)) {
             $this->withdrawRefusal($row, $status);
@@ -531,7 +560,30 @@ class CheckTrialCard implements ShouldQueue
             $this->stamp($row);
         });
 
+        // 3. Record the cancel after the stamp, outside the transaction. A subscription Stripe
+        //    already ended is a cancel an earlier run landed and could not stamp, or one the
+        //    customer made, unless it is on record already; this run's own cancel never is.
+        //    `cancelled_by` keeps the two apart, since only one of them was this check's doing.
+        if ($cancelledNow || ! $this->cancelRecorded($row)) {
+            $this->recordOutcome(BillingEventType::TRIAL_CANCELLED, $row, properties: [
+                'cancelled_by' => $cancelledNow ? 'this_check' : 'already_ended',
+            ]);
+        }
+
         return true;
+    }
+
+    /**
+     * Whether a `trial_cancelled` row already exists for this subscription.
+     *
+     * An application that upgraded without migrating has no `billing_events`
+     * table, and a query against it would fail a job whose refusal is already
+     * stamped; the recorder answers that as "not recorded", and then skips the
+     * row with its own missing-table warning.
+     */
+    protected function cancelRecorded(BillingTrial $row): bool
+    {
+        return $this->recorder->recorded(BillingEventType::TRIAL_CANCELLED, $row->stripe_subscription_id, null);
     }
 
     /**
@@ -540,18 +592,25 @@ class CheckTrialCard implements ShouldQueue
      */
     protected function withdrawRefusal(BillingTrial $row, string $status): void
     {
-        Log::error('A refused trial is no longer trialing in Stripe; the refusal was withdrawn, nothing cancelled.', [
-            'reason' => 'refused_trial_converted',
-            'billing_trial_id' => $row->getKey(),
-            'subscription' => $row->stripe_subscription_id,
-            'stripe_status' => $status,
-        ]);
+        BillingLog::error(
+            'A refused trial is no longer trialing in Stripe; the refusal was withdrawn, nothing cancelled.',
+            [
+                'reason' => 'refused_trial_converted',
+                'billing_trial_id' => $row->getKey(),
+                'subscription' => $row->stripe_subscription_id,
+                'stripe_status' => $status,
+            ],
+        );
 
         $row->forceFill([
             'refused_at' => null,
             'refusal_reason' => null,
             'checked_at' => Carbon::now(),
         ])->save();
+
+        $this->recordOutcome(BillingEventType::TRIAL_REFUSAL_WITHDRAWN, $row, 'refused_trial_converted', [
+            'stripe_status' => $status,
+        ]);
     }
 
     /**
@@ -583,7 +642,7 @@ class CheckTrialCard implements ShouldQueue
             $billable = $row->billable;
 
             if ($billable instanceof Model) {
-                $reconciler->reconcileStripeSubject($billable);
+                $reconciler->reconcileStripeSubject($billable, BillingSource::TRIAL_CHECK);
             }
         }
     }
@@ -599,6 +658,32 @@ class CheckTrialCard implements ShouldQueue
         $model = Cashier::$subscriptionModel;
 
         return $model::query()->where('stripe_id', $row->stripe_subscription_id)->first();
+    }
+
+    /**
+     * Record one outcome of the trial check against the subscription's subject.
+     *
+     * @param  array<string, mixed>  $properties  Added to the trial's key and person.
+     */
+    protected function recordOutcome(
+        BillingEventType $type,
+        BillingTrial $row,
+        ?string $reason = null,
+        array $properties = [],
+    ): void {
+        $this->recorder->record(
+            type: $type,
+            source: BillingSource::TRIAL_CHECK,
+            billable: $row->billable,
+            provider: BillingProvider::STRIPE,
+            reason: $reason,
+            externalId: $row->stripe_subscription_id,
+            properties: [
+                'billing_trial_id' => $row->getKey(),
+                'user_id' => $row->user_id,
+                ...$properties,
+            ],
+        );
     }
 
     /**

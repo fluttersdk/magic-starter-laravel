@@ -3,13 +3,16 @@
 namespace FlutterSdk\MagicStarter\Actions;
 
 use Carbon\CarbonInterface;
+use Carbon\Exceptions\InvalidFormatException;
 use FlutterSdk\MagicStarter\Contracts\WritesEntitlement;
+use FlutterSdk\MagicStarter\Enums\BillingEventType;
 use FlutterSdk\MagicStarter\Enums\BillingProvider;
 use FlutterSdk\MagicStarter\Enums\PlanStatus;
+use FlutterSdk\MagicStarter\Support\BillingEventRecorder;
+use FlutterSdk\MagicStarter\Support\BillingLog;
 use FlutterSdk\MagicStarter\Support\EntitlementWrite;
 use FlutterSdk\MagicStarter\Support\ReadsBillableAttributes;
 use Illuminate\Database\Eloquent\Model;
-use Illuminate\Support\Facades\Log;
 
 /**
  * The single code path that writes a billable subject's entitlement columns.
@@ -76,8 +79,19 @@ use Illuminate\Support\Facades\Log;
  * leaves the order empty, which is the one state where being permissive costs a
  * payer the tier they are paying for.
  *
+ * Every write leaves one `billing_events` row through {@see BillingEventRecorder}:
+ * `entitlement_dropped` at every drop exit, naming the rule, and
+ * `entitlement_applied` when an apply changed what the entitlement MEANS (the
+ * five fields of {@see ReadsBillableAttributes::entitlementSnapshot()}). An
+ * apply that only refreshed provenance leaves no row, because a renewal or a
+ * reconcile read moves `plan_source_event_at` every time and a history that
+ * recorded those would be one row per delivery and say nothing.
+ *
  * This is the package default. A consumer that needs different arbitration
- * binds its own implementation of {@see WritesEntitlement} over this one.
+ * binds its own implementation of {@see WritesEntitlement} over this one, and
+ * that implementation records through {@see BillingEventRecorder} itself or
+ * the audit trail loses every write it makes: the recording lives here, in the
+ * implementation, and not in the contract or in the feeders.
  */
 class WriteEntitlement implements WritesEntitlement
 {
@@ -148,10 +162,19 @@ class WriteEntitlement implements WritesEntitlement
     protected const DIRECTION_NOTHING_STORED = 'nothing-stored';
 
     /**
+     * @param  BillingEventRecorder  $recorder  Leaves the row and dispatches the
+     *                                          event for every write, and never
+     *                                          lets a failed insert reach the
+     *                                          caller's transaction.
+     */
+    public function __construct(protected BillingEventRecorder $recorder) {}
+
+    /**
      * Apply one rail's claim to the billable's entitlement columns.
      *
      * Returns true when the columns were written, false when a rule dropped the
-     * write. Every false return has logged why.
+     * write. Every false return has logged why and left an `entitlement_dropped`
+     * row naming the rule.
      *
      * @param  EntitlementWrite  $write  One rail's complete claim. Every field
      *                                   it carries is documented on the value
@@ -186,6 +209,7 @@ class WriteEntitlement implements WritesEntitlement
         // record it would overwrite was written from a fresher truth.
         if ($storedProvider === $write->provider && $this->isOlderThanStored($write->eventAt, $storedEventAt)) {
             $this->logDrop('stale', $context);
+            $this->recordDrop($write, 'stale', $context);
 
             return false;
         }
@@ -211,6 +235,7 @@ class WriteEntitlement implements WritesEntitlement
             && $this->reducesAccess($direction, $write->status, $billable)
         ) {
             $this->logDrop('same-instant revocation', $context);
+            $this->recordDrop($write, 'same_instant_revocation', $context);
 
             return false;
         }
@@ -237,8 +262,10 @@ class WriteEntitlement implements WritesEntitlement
             // would send them looking for a rail problem that is not there.
             if ($direction === self::DIRECTION_NO_ORDER) {
                 $this->warnUndecidableTierOrder($context);
+                $this->recordDrop($write, 'undecidable_tier_order', $context);
             } else {
                 $this->logDrop('cross-rail revocation', $context);
+                $this->recordDrop($write, 'cross_rail_revocation', $context);
             }
 
             return false;
@@ -295,6 +322,7 @@ class WriteEntitlement implements WritesEntitlement
             && ! $write->authoritative
         ) {
             $this->logDrop('projected cross-rail takeover', $context);
+            $this->recordDrop($write, 'projected_cross_rail_takeover', $context);
 
             return false;
         }
@@ -309,11 +337,19 @@ class WriteEntitlement implements WritesEntitlement
         // unpublished order now REFUSES a cross-rail write against a held tier,
         // and the only writes that still reach this point with no order
         // published are the ones that had nothing to compare against anyway.
-        if ($storedProvider !== $write->provider && $storedProvider->grants()) {
+        $crossRail = $storedProvider !== $write->provider && $storedProvider->grants();
+
+        if ($crossRail) {
             $this->warnCrossRailGrant($context);
         }
 
         // 5. Persist the claim plus the provenance the next write reasons about.
+        //    The meaning is read on both sides of the save, through the shared
+        //    decoders, because `wasChanged()` cannot say whether anything a
+        //    customer would notice moved: provenance moves on every write, and
+        //    an uncast row compares `1` against `true`.
+        $before = $this->snapshotBeforeWrite($billable, $context);
+
         $billable->forceFill([
             'plan' => $write->plan,
             'plan_status' => $write->status->value,
@@ -326,6 +362,10 @@ class WriteEntitlement implements WritesEntitlement
             'plan_grace_period_ends_at' => $write->gracePeriodEndsAt,
             'plan_manage_url' => $write->manageUrl,
         ])->save();
+
+        // 6. A row only for a change in meaning; a refreshed provenance is not
+        //    an outcome anybody reads the history for.
+        $this->recordApplied($write, $before, $this->entitlementSnapshot($billable), $direction, $crossRail);
 
         return true;
     }
@@ -588,7 +628,7 @@ class WriteEntitlement implements WritesEntitlement
      */
     protected function logDrop(string $reason, array $context): void
     {
-        Log::warning('Entitlement write dropped; the stored entitlement stands.', [
+        BillingLog::warning('Entitlement write dropped; the stored entitlement stands.', [
             'reason' => $reason,
             ...$context,
         ]);
@@ -608,7 +648,7 @@ class WriteEntitlement implements WritesEntitlement
      */
     protected function warnCrossRailGrant(array $context): void
     {
-        Log::warning(
+        BillingLog::warning(
             'Entitlement claimed by a second billing rail; the incoming claim applied.',
             $context,
         );
@@ -630,11 +670,105 @@ class WriteEntitlement implements WritesEntitlement
      */
     protected function warnUndecidableTierOrder(array $context): void
     {
-        Log::warning(
+        BillingLog::warning(
             'Entitlement claimed by a second billing rail and the tiers could not be compared; '
             . 'the write was dropped. Publish magic-starter.billing.tier_order so a cross-rail '
             . 'claim can be ranked rather than refused.',
             $context,
+        );
+    }
+
+    /**
+     * Leave the `entitlement_dropped` row for a write a rule refused.
+     *
+     * The reason is the rule's stable snake_case name, which is what a
+     * dashboard filters on; the log line beside it keeps its own wording.
+     *
+     * @param  string  $reason  `stale`, `same_instant_revocation`,
+     *                          `undecidable_tier_order`, `cross_rail_revocation`
+     *                          or `projected_cross_rail_takeover`.
+     * @param  array<string, mixed>  $context  The same facts the log line carries.
+     */
+    protected function recordDrop(EntitlementWrite $write, string $reason, array $context): void
+    {
+        $this->recorder->record(
+            BillingEventType::ENTITLEMENT_DROPPED,
+            $write->source,
+            $write->billable,
+            provider: $write->provider,
+            reason: $reason,
+            externalId: $write->eventId,
+            properties: [
+                ...$context,
+                'incoming_status' => $write->status->value,
+            ],
+        );
+    }
+
+    /**
+     * The meaning ahead of the save, or null when the stored row cannot be read.
+     *
+     * A malformed stored `plan_current_period_end` makes the date decoder raise,
+     * and the write about to land overwrites exactly that column: refusing the
+     * snapshot must not refuse the write, or a corrupt row that used to heal on
+     * its next write would throw on every write forever. Only this read is
+     * guarded; the snapshot after the save reads what this write stored.
+     *
+     * @param  array<string, mixed>  $context
+     * @return array<string, mixed>|null
+     */
+    protected function snapshotBeforeWrite(Model $billable, array $context): ?array
+    {
+        try {
+            return $this->entitlementSnapshot($billable);
+        } catch (InvalidFormatException $exception) {
+            BillingLog::warning('A stored entitlement could not be read before a write; the write overwrites it.', [
+                ...$context,
+                'reason' => 'unreadable_stored_entitlement',
+                'exception' => $exception->getMessage(),
+            ]);
+
+            return null;
+        }
+    }
+
+    /**
+     * Leave the `entitlement_applied` row, when the apply changed what the
+     * entitlement means.
+     *
+     * @param  array<string, mixed>|null  $before  {@see self::entitlementSnapshot()} ahead of the save, or
+     *                                             null when the stored row could not be read: every field
+     *                                             then counts as changed.
+     * @param  array<string, mixed>  $after  The same five fields once the save landed.
+     * @param  self::DIRECTION_*  $direction  Where the write moved the tier.
+     * @param  bool  $crossRail  Whether a rail that still holds the record handed it to another.
+     */
+    protected function recordApplied(
+        EntitlementWrite $write,
+        ?array $before,
+        array $after,
+        string $direction,
+        bool $crossRail,
+    ): void {
+        $changed = $before === null ? array_keys($after) : $this->entitlementChanges($before, $after);
+
+        if ($changed === []) {
+            return;
+        }
+
+        $this->recorder->record(
+            BillingEventType::ENTITLEMENT_APPLIED,
+            $write->source,
+            $write->billable,
+            provider: $write->provider,
+            externalId: $write->eventId,
+            properties: [
+                'before' => $before,
+                'after' => $after,
+                'changed' => $changed,
+                'direction' => $direction,
+                'cross_rail' => $crossRail,
+            ],
         );
     }
 }

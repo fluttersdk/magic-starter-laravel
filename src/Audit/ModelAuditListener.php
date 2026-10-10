@@ -3,6 +3,7 @@
 namespace FlutterSdk\MagicStarter\Audit;
 
 use FlutterSdk\MagicStarter\MagicStarter;
+use FlutterSdk\MagicStarter\Models\BillingEvent;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\Pivot;
 use Illuminate\Support\Facades\DB;
@@ -119,6 +120,9 @@ class ModelAuditListener
     /**
      * Models the trail never records.
      *
+     * The audit model and the billing history are histories already: auditing
+     * either would copy every row into the trail.
+     *
      * Pivots and the membership model are skipped because a pivot has no key of
      * its own in integer mode (`Pivot::$incrementing` is false), so its row
      * could not be addressed. The membership model is named on its own because
@@ -130,7 +134,7 @@ class ModelAuditListener
             return true;
         }
 
-        if ($model instanceof Audit || $model instanceof Pivot) {
+        if ($model instanceof Audit || $model instanceof BillingEvent || $model instanceof Pivot) {
             return true;
         }
 
