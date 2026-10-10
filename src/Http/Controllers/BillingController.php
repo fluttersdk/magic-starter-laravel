@@ -174,6 +174,15 @@ class BillingController
     public const CUSTOMER_CURRENCY_CACHE_SECONDS = 600;
 
     /**
+     * How long a FAILED read of a Stripe customer is remembered, in seconds.
+     *
+     * Shorter than a successful one so an outage ends quickly, yet long enough
+     * that a customer deleted in Stripe, or a client timeout during an outage,
+     * costs one call and one log line a minute instead of one per load.
+     */
+    public const CUSTOMER_CURRENCY_FAILURE_CACHE_SECONDS = 60;
+
+    /**
      * @param  TrialEligibility  $trialEligibility  Who may start a trial; a container
      *                                              binding, so an adopter can replace it.
      * @param  BillingEventRecorder  $recorder  Where every write and every 409 refusal is
@@ -1334,8 +1343,9 @@ class BillingController
 
     /**
      * {@see self::fixedCurrency()} as the plans screen asks it: the Stripe
-     * customer is remembered for a few minutes, and a Stripe failure leaves the
-     * caller not fixed instead of failing a screen that is otherwise config.
+     * customer is remembered for a few minutes, and a Stripe failure, remembered
+     * for a minute, leaves the caller not fixed instead of failing a screen that
+     * is otherwise config.
      *
      * The checkout and the swap, which cannot proceed on a guess, still ask
      * {@see self::fixedCurrency()} fresh and let a failure surface.
@@ -1366,6 +1376,8 @@ class BillingController
                 'billable_id' => $billable->getKey(),
                 'exception' => $exception->getMessage(),
             ]);
+
+            Cache::put($key, '', self::CUSTOMER_CURRENCY_FAILURE_CACHE_SECONDS);
 
             return null;
         }

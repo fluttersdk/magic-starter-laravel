@@ -1687,6 +1687,35 @@ class BillingWriteEndpointsTest extends TestCase
     }
 
     /**
+     * A failed read is remembered too, briefly: a customer deleted in Stripe
+     * stays unreadable for good and an outage makes every load wait for the
+     * client's timeout, so neither may cost a Stripe call and a log line per load.
+     */
+    public function test_the_plans_screen_does_not_retry_a_failed_stripe_read_on_every_load(): void
+    {
+        $this->configureCurrencyCatalogue();
+        $this->bootBillingRoutes('user');
+
+        $user = $this->createUser('plans-retry@example.test', ['stripe_id' => self::STRIPE_ID]);
+        BillingWriteRail::$hasStripeId = true;
+        BillingWriteRail::$customerFailure = new ApiConnectionException('No such customer');
+        Log::spy();
+
+        $this->plansFrom($user, 'TR');
+        $this->plansFrom($user, 'TR');
+
+        $this->assertSame(1, BillingWriteRail::$customerReads);
+        Log::shouldHaveReceived('warning')->once();
+
+        $this->travel(BillingController::CUSTOMER_CURRENCY_FAILURE_CACHE_SECONDS + 1)->seconds();
+        BillingWriteRail::$customerFailure = null;
+        BillingWriteRail::$customerCurrency = 'usd';
+
+        $this->assertSame('USD', $this->plansFrom($user, 'TR')['pro_monthly']['currency']);
+        $this->assertSame(2, BillingWriteRail::$customerReads);
+    }
+
+    /**
      * The plans screen's products by key, as [$user] sees them from [$country].
      *
      * @return array<string, array<string, mixed>>
