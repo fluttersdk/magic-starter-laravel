@@ -411,8 +411,9 @@ return [
     |             is configured in App Store Connect or Play Console and this key
     |             never reaches either. Stripe Checkout (through Cashier)
     |             enforces a minimum of 48 hours, so 1 would silently become 2
-    |             and is refused, as are a negative or non-integer value and
-    |             any non-zero value on a product that is not a subscription.
+    |             and is refused, as is anything above 730 (the longest trial
+    |             Stripe accepts), a negative or non-integer value and any
+    |             non-zero value on a product that is not a subscription.
     |             Whether a given customer still gets the trial is decided per
     |             user and billable at checkout, never by this key alone: it is
     |             the length offered, not a promise made to everybody.

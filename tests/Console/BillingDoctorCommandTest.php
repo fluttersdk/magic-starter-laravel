@@ -507,6 +507,38 @@ class BillingDoctorCommandTest extends TestCase
     }
 
     /**
+     * With a trial product configured, an unreachable database leaves the
+     * trials table unknowable: a warning naming what was not checked, by
+     * exception class alone, never the connection's path.
+     */
+    public function test_an_unreadable_schema_leaves_the_trials_check_a_warning(): void
+    {
+        config([
+            'magic-starter.billing.products.pro_monthly.trial_days' => 14,
+            'database.connections.unreachable' => [
+                'driver' => 'sqlite',
+                'database' => '/nonexistent/magic-starter-doctor.sqlite',
+                'prefix' => '',
+            ],
+            'database.default' => 'unreachable',
+        ]);
+
+        $doctor = $this->doctor();
+
+        $this->assertSame(0, $doctor['exit']);
+        $this->assertSame('warning', $doctor['checks']['schema.billing_trials']['status']);
+        $this->assertStringContainsString(
+            'could not be looked for',
+            $doctor['checks']['schema.billing_trials']['message'],
+        );
+        $this->assertStringContainsString(
+            'trial eligibility was not checked',
+            $doctor['checks']['schema.billing_trials']['message'],
+        );
+        $this->assertStringNotContainsString('/nonexistent', $doctor['checks']['schema.billing_trials']['message']);
+    }
+
+    /**
      * A rate the catalogue accepts can still leave the store less than one
      * part per million to divide by. The doctor has to name that as a finding
      * an agent can parse, and read nothing that depends on the manifest.

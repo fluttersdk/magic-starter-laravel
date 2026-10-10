@@ -374,11 +374,10 @@ class StripeWebhookController extends CashierWebhookController
      */
     protected function recordTrial(array $payload): void
     {
-        $object = $payload['data']['object'] ?? [];
-
-        if (! is_array($object)) {
-            return;
-        }
+        // Cashier's created handler has already read this object as an array
+        // by the time this runs (see the caller), so its shape is settled.
+        /** @var array<string, mixed> $object */
+        $object = $payload['data']['object'];
 
         // 1. Only a trialing `default` subscription the checkout tagged.
         $userId = $this->trialUserTag($object);
@@ -492,7 +491,8 @@ class StripeWebhookController extends CashierWebhookController
     /**
      * A paid subscription invoice re-affirms the entitlement tier read from the
      * billable's synced Cashier subscription price, as `active`, or as
-     * `trialing` while that row still is.
+     * `trialing` for a trial's $0 `subscription_create` invoice while that row
+     * still says `trialing`.
      *
      * @param  array<string, mixed>  $object
      */
@@ -546,10 +546,17 @@ class StripeWebhookController extends CashierWebhookController
         // arrived, which is `active`. Except at the start of a trial: Checkout
         // pays a $0 `subscription_create` invoice while the subscription is
         // still `trialing`, and `active` there would take the trial off the
-        // screen until the next subscription event. So a local row that says
-        // `trialing` carries its own status, the word Cashier synced from
-        // Stripe's subscription events.
-        $trialing = $this->stringAttribute($subscription, 'stripe_status') === StripeSubscription::STATUS_TRIALING;
+        // screen until the next subscription event.
+        //
+        // The exception is decided by the INVOICE, not by the local row alone.
+        // The first paid invoice after a trial can land before the conversion's
+        // `updated` event, which Stripe stamped earlier: the row still says
+        // `trialing` then, and a `trialing` projection stamped later would get
+        // that delayed event dropped as stale, leaving the entitlement trialing
+        // for the whole first paid period. The row is still asked, so a $0
+        // first invoice with no trial behind it (a full discount) stays active.
+        $trialing = $this->isTrialStartInvoice($object)
+            && $this->stringAttribute($subscription, 'stripe_status') === StripeSubscription::STATUS_TRIALING;
         $providerStatus = $trialing ? StripeSubscription::STATUS_TRIALING : StripeSubscription::STATUS_ACTIVE;
 
         $this->claim(new EntitlementWrite(
@@ -583,6 +590,19 @@ class StripeWebhookController extends CashierWebhookController
                 ? $this->booleanAttribute($billable, 'plan_renews')
                 : null,
         ));
+    }
+
+    /**
+     * Whether an invoice is the one a trial starts with: Checkout's
+     * `subscription_create` invoice, paid at zero. Every other paid invoice is
+     * money arriving.
+     *
+     * @param  array<string, mixed>  $object
+     */
+    protected function isTrialStartInvoice(array $object): bool
+    {
+        return ($object['billing_reason'] ?? null) === 'subscription_create'
+            && ($object['amount_paid'] ?? null) === 0;
     }
 
     /**

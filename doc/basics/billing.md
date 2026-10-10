@@ -102,7 +102,7 @@ A product entry:
 | `credits` | Optional integer a one-off purchase grants. |
 | `prices` | `channel => currency => amount in minor units`. See [Prices](#prices). |
 | `refs` | Each rail's id for the product: `stripe_price`, `app_store`, `play`. See [Store Ids](#store-ids). |
-| `trial_days` | Optional whole number of free days a subscription starts with, default `0` (no trial). `0` or `2` and above: Stripe Checkout enforces a minimum of 48 hours, so `1` stops boot, as does a negative or non-integer value and any non-zero value on a product that is not a subscription. Only the web (Stripe) rail honours it, and it is the length offered, not a promise to everybody. See [Trials](#trials). |
+| `trial_days` | Optional whole number of free days a subscription starts with, default `0` (no trial). `0`, or `2` to `730`: Stripe Checkout enforces a minimum of 48 hours, so `1` stops boot, as does anything above `730` (the longest trial Stripe accepts), a negative or non-integer value and any non-zero value on a product that is not a subscription. Only the web (Stripe) rail honours it, and it is the length offered, not a promise to everybody. See [Trials](#trials). |
 | `sellable` | Boolean, default `true`. `false` keeps the product mapped for webhooks, reconciliation and entitlement reads (a grandfathered price still bills people). `billing/plans` lists it with `sellable: false` so a client can place what a subscriber holds; a client must offer only sellable products. It cannot be checked out or swapped to (422 `product_not_sellable`), and is left out of `billing:manifest` and `billing:doctor`. Anything but a boolean stops boot. |
 
 ### What boot refuses
@@ -110,7 +110,7 @@ A product entry:
 - A leftover `plans`, `prices` or `store_products` key, even empty. The message names where its content moved: `tiers` and `tier_order`, `refs.stripe_price`, and `refs.app_store` and `refs.play`. There is no alias.
 - An empty `tier_order`.
 - A product with an unknown `type` or a `sellable` that is not a boolean, or a subscription with no tier, a tier outside `tier_order`, or a `cycle` that is not `monthly` or `annual`.
-- A `trial_days` that is not a whole number of 0 or more, is `1`, or is non-zero on a product that is not a subscription.
+- A `trial_days` that is not a whole number of 0 or more, is `1`, is above `730` (Stripe's longest trial), or is non-zero on a product that is not a subscription.
 - A `prices` entry that is not a known channel (`web`, `app_store`, `play`) mapping a three-letter currency code to a whole amount of 0 or more.
 - A `refs.play` that is not exactly `<subscription_id>:<base_plan_id>`, or a `refs.app_store` containing `:`.
 - A `pricing.commission.mode` other than `absorb` or `gross_up`, or a `rate` that is not a number of at least 0 and below 1.

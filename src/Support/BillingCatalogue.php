@@ -70,6 +70,12 @@ final class BillingCatalogue
     private const DEFAULT_COMMISSION_RATE = 0.15;
 
     /**
+     * The longest trial Stripe accepts, in days; a longer one is refused at
+     * checkout.
+     */
+    private const MAX_TRIAL_DAYS = 730;
+
+    /**
      * The last configured products and what they normalised to.
      *
      * Keyed by the raw config array itself rather than by time or request,
@@ -445,7 +451,9 @@ final class BillingCatalogue
      * A string, a float or a negative number would read as no trial and a
      * customer would be charged on day one against what the screen promised;
      * one day would be silently stretched to two, because Stripe Checkout (and
-     * so Cashier) enforces a minimum of 48 hours. A trial on a product that is
+     * so Cashier) enforces a minimum of 48 hours. More than 730 days is a
+     * checkout Stripe refuses outright, found by the first customer to try
+     * rather than at boot. A trial on a product that is
      * not a subscription has nothing to defer, so it is a mistake, not a no-op.
      *
      * @param  array<array-key, mixed>  $product
@@ -473,6 +481,17 @@ final class BillingCatalogue
                 'Product [%s] has [trial_days] of [1]; Stripe Checkout enforces a minimum of 48 hours, '
                 . 'so use 0 for no trial or 2 or more days.',
                 $key,
+            ));
+        }
+
+        if ($days > self::MAX_TRIAL_DAYS) {
+            throw new LogicException(sprintf(
+                'Product [%s] has [trial_days] of [%d]; Stripe refuses a trial longer than %d days, '
+                . 'so use %d or fewer.',
+                $key,
+                $days,
+                self::MAX_TRIAL_DAYS,
+                self::MAX_TRIAL_DAYS,
             ));
         }
 

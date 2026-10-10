@@ -258,6 +258,25 @@ class TrialEligibilityTest extends TestCase
         $this->assertTrue($this->eligibility()->allows($user, $team));
     }
 
+    /**
+     * The billable is the application's model, and an attribute of its own
+     * named `subscriptions` (a counter column, say) shadows Cashier's relation
+     * on `getAttribute()`. That is not a list of subscriptions, so it says
+     * nothing held and the history decides, instead of a foreach over a number.
+     */
+    public function test_a_subscriptions_attribute_that_is_not_a_list_holds_nothing(): void
+    {
+        $user = $this->createUser();
+        $team = $this->createTeam($user);
+        $team->setAttribute('subscriptions', 3);
+
+        $this->assertTrue($this->eligibility()->allows($user, $team));
+
+        $this->recordTrial($user, $team);
+
+        $this->assertFalse($this->eligibility()->allows($user, $team));
+    }
+
     private function eligibility(): TrialEligibility
     {
         return $this->app->make(TrialEligibility::class);

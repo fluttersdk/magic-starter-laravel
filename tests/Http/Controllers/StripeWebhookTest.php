@@ -1192,6 +1192,26 @@ class StripeWebhookTest extends TestCase
         $this->assertNull($trial->user_id);
         $this->assertSame((string) $billable->getKey(), (string) $trial->billable_id);
         $this->assertSame('pro', $billable->refresh()->getAttribute('plan'));
+
+        // A tag that is not a key at all is answered the same way, without
+        // looking it up: on a `uuid` column the lookup itself would raise.
+        $lookups = [];
+        DB::listen(function ($query) use (&$lookups): void {
+            if (in_array('not-a-key', $query->bindings, true)) {
+                $lookups[] = $query->sql;
+            }
+        });
+
+        $this->postSignedWebhook($this->trialEvent(
+            'evt_trial_malformed',
+            'not-a-key',
+            subscriptionId: 'sub_malformed_tag',
+        ))->assertOk();
+
+        $this->assertSame([], $lookups);
+        $malformed = BillingTrial::query()->where('stripe_subscription_id', 'sub_malformed_tag')->sole();
+        $this->assertNull($malformed->user_id);
+        $this->assertSame((string) $billable->getKey(), (string) $malformed->billable_id);
     }
 
     /**
@@ -1443,6 +1463,142 @@ class StripeWebhookTest extends TestCase
         $this->assertSame(PlanStatus::TRIALING->value, $billable->getAttribute('plan_status'));
         $this->assertSame('trialing', $billable->getAttribute('plan_provider_status'));
         $this->assertSame(static::EVENT_AT + 5, $this->storedTimestamp($billable, 'plan_source_event_at'));
+    }
+
+    /**
+     * A $0 `subscription_create` invoice with no trial behind it (a fully
+     * discounted first period) is the start of a paid subscription, so it
+     * stays `active`: the local row is asked as well as the invoice.
+     */
+    public function test_a_zero_first_invoice_without_a_trial_stays_active(): void
+    {
+        $billable = $this->createBillable();
+
+        $this->seedActiveSubscription();
+
+        $this->postSignedWebhook($this->invoiceEvent('evt_discounted_invoice', static::EVENT_AT + 5, [
+            'billing_reason' => 'subscription_create',
+            'amount_paid' => 0,
+            'subscription' => 'sub_webhook_test',
+        ]))->assertOk();
+
+        $billable->refresh();
+        $this->assertSame(PlanStatus::ACTIVE->value, $billable->getAttribute('plan_status'));
+        $this->assertSame('active', $billable->getAttribute('plan_provider_status'));
+        $this->assertSame(static::EVENT_AT + 5, $this->storedTimestamp($billable, 'plan_source_event_at'));
+    }
+
+    /**
+     * A paid invoice that is not the trial-start one is money arriving, so it
+     * projects `active` even while the local Cashier row still says
+     * `trialing`: the conversion's `updated` delivery may simply not have
+     * landed yet.
+     */
+    public function test_a_paid_cycle_invoice_projects_active_while_the_local_row_still_says_trialing(): void
+    {
+        $billable = $this->createBillable();
+
+        $this->postSignedWebhook($this->subscriptionEvent(
+            'evt_trial_created',
+            'customer.subscription.created',
+            'price_pro',
+            'trialing',
+        ))->assertOk();
+
+        $this->postSignedWebhook($this->invoiceEvent('evt_first_paid_invoice', static::EVENT_AT + 60, [
+            'billing_reason' => 'subscription_cycle',
+            'amount_paid' => 1900,
+            'subscription' => 'sub_webhook_test',
+        ]))->assertOk();
+
+        $billable->refresh();
+        $this->assertSame('trialing', CashierSubscription::query()->sole()->stripe_status);
+        $this->assertSame(PlanStatus::ACTIVE->value, $billable->getAttribute('plan_status'));
+        $this->assertSame('active', $billable->getAttribute('plan_provider_status'));
+    }
+
+    /**
+     * The first paid invoice after a trial can arrive before the conversion's
+     * `customer.subscription.updated`, which Stripe stamped EARLIER. The
+     * invoice is the newest word on record, so the delayed update is dropped
+     * as stale; the entitlement must already say `active` from the invoice, or
+     * it says `trialing` for the whole first paid period.
+     */
+    public function test_a_first_paid_invoice_ahead_of_a_delayed_conversion_update_ends_active(): void
+    {
+        $billable = $this->createBillable();
+
+        $this->postSignedWebhook($this->subscriptionEvent(
+            'evt_trial_created',
+            'customer.subscription.created',
+            'price_pro',
+            'trialing',
+        ))->assertOk();
+
+        $this->postSignedWebhook($this->invoiceEvent('evt_first_paid_invoice', static::EVENT_AT + 7200, [
+            'billing_reason' => 'subscription_cycle',
+            'amount_paid' => 1900,
+            'subscription' => 'sub_webhook_test',
+        ]))->assertOk();
+
+        $this->postSignedWebhook($this->subscriptionEvent(
+            'evt_delayed_conversion',
+            'customer.subscription.updated',
+            'price_pro',
+            'active',
+            created: static::EVENT_AT + 3600,
+        ))->assertOk();
+
+        $billable->refresh();
+        $this->assertSame(PlanStatus::ACTIVE->value, $billable->getAttribute('plan_status'));
+        $this->assertSame('active', $billable->getAttribute('plan_provider_status'));
+        $this->assertSame(static::EVENT_AT + 7200, $this->storedTimestamp($billable, 'plan_source_event_at'));
+    }
+
+    /**
+     * A tagged trial for a Stripe customer nothing here bills has no subject
+     * to record it against, so it writes no row and queues no card check.
+     */
+    public function test_a_tagged_trial_for_an_unknown_customer_records_nothing(): void
+    {
+        Bus::fake([CheckTrialCard::class]);
+
+        $this->postSignedWebhook($this->trialEvent('evt_trial_stranger', (string) Str::uuid()))->assertOk();
+
+        $this->assertSame(0, BillingTrial::query()->count());
+        Bus::assertNotDispatched(CheckTrialCard::class);
+    }
+
+    /**
+     * A tagged update with no string subscription id has nothing to match a
+     * refused trial by, so it is not looked up at all and runs as any other
+     * update does.
+     */
+    public function test_a_tagged_update_without_a_string_id_is_not_looked_up_as_a_refused_trial(): void
+    {
+        $billable = $this->createBillable();
+
+        $event = $this->subscriptionEvent(
+            'evt_numeric_id',
+            'customer.subscription.updated',
+            'price_pro',
+            'active',
+            created: static::EVENT_AT + 60,
+            metadata: [BillingTrial::USER_METADATA_KEY => (string) $billable->getKey()],
+        );
+        $event['data']['object']['id'] = 98765;
+
+        $trialQueries = [];
+        DB::listen(function ($query) use (&$trialQueries): void {
+            if (str_contains($query->sql, 'billing_trials')) {
+                $trialQueries[] = $query->sql;
+            }
+        });
+
+        $this->postSignedWebhook($event)->assertOk();
+
+        $this->assertSame([], $trialQueries);
+        $this->assertSame(static::EVENT_AT + 60, $this->storedTimestamp($billable->refresh(), 'plan_source_event_at'));
     }
 
     /**

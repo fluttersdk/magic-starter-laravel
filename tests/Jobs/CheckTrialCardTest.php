@@ -2,6 +2,9 @@
 
 namespace FlutterSdk\MagicStarter\Tests\Jobs;
 
+use Closure;
+use FlutterSdk\MagicStarter\Console\ReconcileBillingEntitlements;
+use FlutterSdk\MagicStarter\Contracts\WritesEntitlement;
 use FlutterSdk\MagicStarter\Enums\TrialRefusalReason;
 use FlutterSdk\MagicStarter\Features;
 use FlutterSdk\MagicStarter\Jobs\CheckTrialCard;
@@ -10,6 +13,7 @@ use FlutterSdk\MagicStarter\Models\BillingTrial;
 use FlutterSdk\MagicStarter\Models\Subscription;
 use FlutterSdk\MagicStarter\Models\SubscriptionItem;
 use FlutterSdk\MagicStarter\Notifications\TrialRefusedNotification;
+use FlutterSdk\MagicStarter\Support\RevenueCatClient;
 use FlutterSdk\MagicStarter\Support\TrialCardGateway;
 use FlutterSdk\MagicStarter\Tests\Fixtures\ConcreteUser;
 use FlutterSdk\MagicStarter\Tests\TestCase;
@@ -533,6 +537,102 @@ class CheckTrialCardTest extends TestCase
         $this->assertSame(['sub_read_b'], $this->gateway->cancelled);
     }
 
+    /**
+     * Another job can decide a row while this one is reading its card, which
+     * happens outside the lock. The decision is re-read under the lock and
+     * left alone: a second walk would refuse a trial the first run kept.
+     */
+    public function test_a_row_decided_while_its_card_was_read_is_left_alone(): void
+    {
+        $first = $this->makeUser();
+        $second = $this->makeUser();
+        $this->trial($first, $first, 'sub_race_a', minutesAgo: 10)
+            ->forceFill(['card_fingerprint' => 'fp_race', 'checked_at' => Carbon::now()])
+            ->save();
+        $later = $this->trial($second, $second, 'sub_race_b', minutesAgo: 5);
+
+        $this->gateway->fingerprints['sub_race_b'] = 'fp_race';
+        $this->gateway->whileReading = function (string $subscriptionId): void {
+            BillingTrial::query()
+                ->where('stripe_subscription_id', $subscriptionId)
+                ->update(['checked_at' => Carbon::now()]);
+        };
+
+        $this->runJob($later);
+
+        $later->refresh();
+        $this->assertNull($later->refused_at);
+        $this->assertSame('fp_race', $later->card_fingerprint);
+        $this->assertSame([], $this->gateway->statusAsked);
+        $this->assertSame([], $this->gateway->cancelled);
+        Notification::assertNothingSent();
+    }
+
+    /**
+     * Two later duplicates on one subject both lose their local rows, and the
+     * subject is handed back to the survivor once, not once per duplicate.
+     */
+    public function test_two_duplicates_on_one_subject_reproject_it_once(): void
+    {
+        $revenueCat = $this->app->make(RevenueCatClient::class);
+        $writer = $this->app->make(WritesEntitlement::class);
+
+        $reconciler = new class($revenueCat, $writer) extends ReconcileBillingEntitlements
+        {
+            /** @var list<string> */
+            public array $reconciled = [];
+
+            public function reconcileStripeSubject(Model $billable): void
+            {
+                $this->reconciled[] = (string) $billable->getKey();
+
+                parent::reconcileStripeSubject($billable);
+            }
+        };
+        $this->app->instance(ReconcileBillingEntitlements::class, $reconciler);
+
+        $user = $this->makeUser();
+        $survivor = $this->trial($user, $user, 'sub_twice_a', minutesAgo: 10);
+        $this->trial($user, $user, 'sub_twice_b', minutesAgo: 5);
+        $this->trial($user, $user, 'sub_twice_c', minutesAgo: 3);
+
+        $this->gateway->fingerprints = [
+            'sub_twice_a' => 'fp_twice_a',
+            'sub_twice_b' => 'fp_twice_b',
+            'sub_twice_c' => 'fp_twice_c',
+        ];
+
+        $this->runJob($survivor);
+
+        $this->assertSame(['sub_twice_b', 'sub_twice_c'], $this->gateway->cancelled);
+        $this->assertSame([(string) $user->getKey()], $reconciler->reconciled);
+        $this->assertSame('sub_twice_a', $user->fresh()?->subscription('default')?->stripe_id);
+    }
+
+    /**
+     * A card-reused refusal whose person has since been deleted has nobody to
+     * mail, and is still refused and cancelled.
+     */
+    public function test_a_card_reused_refusal_without_a_person_mails_nobody(): void
+    {
+        $first = $this->makeUser();
+        $second = $this->makeUser();
+        $earlier = $this->trial($first, $first, 'sub_orphan_a', minutesAgo: 10);
+        $later = $this->trial($second, $second, 'sub_orphan_b', minutesAgo: 5);
+        $later->forceFill(['user_id' => null])->save();
+
+        $this->gateway->fingerprints = [
+            'sub_orphan_a' => 'fp_orphan',
+            'sub_orphan_b' => 'fp_orphan',
+        ];
+
+        $this->runInOrder(true, $earlier, $later);
+
+        $this->assertSame(TrialRefusalReason::CARD_REUSED, $later->refresh()->refusal_reason);
+        $this->assertSame(['sub_orphan_b'], $this->gateway->cancelled);
+        Notification::assertNothingSent();
+    }
+
     // -------------------------------------------------------------------------
     // The refusal mail
     // -------------------------------------------------------------------------
@@ -798,9 +898,21 @@ class FakeTrialCardGateway extends TrialCardGateway
     /** @var list<string> */
     public array $statusAsked = [];
 
+    /**
+     * Run while a card is being read, which is where a concurrent job can
+     * decide the row out from under this one.
+     *
+     * @var (Closure(string): void)|null
+     */
+    public ?Closure $whileReading = null;
+
     public function fingerprintFor(string $subscriptionId): string|false|null
     {
         $this->asked[] = $subscriptionId;
+
+        if ($this->whileReading !== null) {
+            ($this->whileReading)($subscriptionId);
+        }
 
         return $this->fingerprints[$subscriptionId] ?? null;
     }
