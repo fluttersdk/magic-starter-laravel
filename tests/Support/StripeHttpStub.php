@@ -28,10 +28,12 @@ final class StripeHttpStub implements ClientInterface
 {
     /**
      * Every request made, in order. `path` is the URL path alone (`/v1/customers`),
-     * and `params` is the nested array the SDK encodes onto the wire, so a nested
-     * field reads as `$params['subscription_data']['trial_end']`.
+     * `params` is the nested array the SDK encodes onto the wire, so a nested
+     * field reads as `$params['subscription_data']['trial_end']`, and `headers`
+     * are the raw `Name: value` lines, so a request option such as an
+     * idempotency key reads as `Idempotency-Key: <key>`.
      *
-     * @var list<array{method: string, path: string, params: array<string, mixed>}>
+     * @var list<array{method: string, path: string, params: array<string, mixed>, headers: array<int, string>}>
      */
     public array $requests = [];
 
@@ -84,7 +86,7 @@ final class StripeHttpStub implements ClientInterface
      * The requests made to one method and path, in order.
      *
      * @param  'delete'|'get'|'post'  $method
-     * @return list<array{method: string, path: string, params: array<string, mixed>}>
+     * @return list<array{method: string, path: string, params: array<string, mixed>, headers: array<int, string>}>
      */
     public function requestsTo(string $method, string $path): array
     {
@@ -112,6 +114,7 @@ final class StripeHttpStub implements ClientInterface
             'method' => $method,
             'path' => $path,
             'params' => $params,
+            'headers' => $headers,
         ];
 
         return array_shift($this->answers) ?? [

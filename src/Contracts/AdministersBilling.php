@@ -81,9 +81,9 @@ interface AdministersBilling
     public function resume(Authenticatable $actor, Model $billable): void;
 
     /**
-     * Refund the billable's newest paid invoice.
+     * Refund the billable's newest paid invoice that moved money, in full.
      *
-     * @param  string  $reason  the operator's own words, kept on the event row
+     * @param  string  $reason  Stripe's refund reason: `requested_by_customer` or `duplicate`
      * @return string the Stripe refund id
      *
      * @throws BillingAdministrationRefused

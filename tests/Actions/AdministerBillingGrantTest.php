@@ -28,7 +28,6 @@ use Illuminate\Support\Str;
 use Laravel\Cashier\Billable;
 use Laravel\Cashier\Cashier;
 use Laravel\Cashier\Subscription as CashierSubscription;
-use LogicException;
 
 /**
  * Locks the operator side of billing: a manual grant, its revoke, and the
@@ -119,13 +118,6 @@ class AdministerBillingGrantTest extends TestCase
     public function test_the_contract_resolves_to_the_package_action(): void
     {
         $this->assertInstanceOf(AdministerBilling::class, $this->app->make(AdministersBilling::class));
-    }
-
-    public function test_the_stripe_operations_are_not_implemented_yet(): void
-    {
-        $this->expectException(LogicException::class);
-
-        $this->administer()->cancel($this->operator(), $this->makeBillable());
     }
 
     // -------------------------------------------------------------------------
