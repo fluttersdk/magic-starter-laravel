@@ -259,6 +259,45 @@ final class InstallCommandTest extends TestCase
         );
     }
 
+    /**
+     * The billing history table follows the trials table, and the index on the
+     * dedup table's `processed_at` follows the dedup table, both ahead of the
+     * provenance migration that stays last.
+     */
+    public function test_billing_publishes_the_events_table_and_the_processed_at_index_in_order(): void
+    {
+        $this->artisan('magic-starter:install', [
+            '--features' => ['billing'],
+        ])->assertExitCode(0);
+
+        $published = static fn (string $name): array => glob(database_path("migrations/*_{$name}.php")) ?: [];
+
+        $dedup = $published('create_processed_webhook_events_table');
+        $index = $published('add_processed_at_index_to_processed_webhook_events_table');
+        $trials = $published('create_billing_trials_table');
+        $events = $published('create_billing_events_table');
+        $provenance = $published('add_entitlement_provenance_to_billable_table');
+
+        $this->assertCount(1, $index, 'Billing must publish the processed_at index migration once.');
+        $this->assertCount(1, $events, 'Billing must publish the billing events migration once.');
+        $this->assertTrue(basename($dedup[0]) < basename($index[0]), 'The index follows the dedup table.');
+        $this->assertTrue(basename($trials[0]) < basename($events[0]), 'The events table follows the trials table.');
+        $this->assertTrue(basename($index[0]) < basename($provenance[0]), 'Provenance stays last.');
+        $this->assertTrue(basename($events[0]) < basename($provenance[0]), 'Provenance stays last.');
+    }
+
+    public function test_without_billing_the_billing_events_table_is_not_published(): void
+    {
+        $this->artisan('magic-starter:install', [
+            '--features' => ['sessions'],
+        ])->assertExitCode(0);
+
+        $this->assertEmpty(glob(database_path('migrations/*_create_billing_events_table.php')) ?: []);
+        $this->assertEmpty(
+            glob(database_path('migrations/*_add_processed_at_index_to_processed_webhook_events_table.php')) ?: [],
+        );
+    }
+
     public function test_without_billing_the_trials_table_is_not_published(): void
     {
         $this->artisan('magic-starter:install', [
