@@ -184,14 +184,17 @@ class BillingController
      * Return the adopter's tier rows, floor first, each carrying the catalogue
      * products that sell it.
      *
-     * Served from config with no rail call, so it is safe on the hot path. Two
+     * Served from config with no rail call, bar one: a billable with a Stripe
+     * customer and no pin yet has that customer read once, for the currency
+     * Stripe has already fixed ({@see self::fixedCurrency()}). Two
      * facts are per caller. Each product row's `trial_days` is the trial THIS
      * caller would get ({@see self::trialOffered()}): read from the local
      * database once per request, and not at all while no product offers a
      * trial, so an adopter selling without trials pays no query and needs no
      * `billing_trials` table. And each row's `currency` is the one web
      * currency it is shown in, which is the one the checkout charges
-     * ({@see ResolvesBillingCurrency}). The rows come from
+     * ({@see ResolvesBillingCurrency}, asked only of a billable with no fixed
+     * currency). The rows come from
      * {@see ReadsBillableAttributes::planCatalogue()}, which is
      * {@see BillingCatalogue::tiers()}: the `tier_order` ranking decides which
      * tiers exist and in what order, and the `tiers` map only describes them.
@@ -216,12 +219,13 @@ class BillingController
     public function plans(Request $request): JsonResponse
     {
         $billable = $this->currentBillable($request);
+        $fixed = $billable === null ? null : $this->fixedCurrency($billable);
 
         return response()->json([
             'data' => $this->sellableCatalogue(
                 $this->trialOffered($request, $billable),
-                app(ResolvesBillingCurrency::class)->resolve($request, $billable),
-                $billable !== null && $this->pinnedCurrency($billable) !== null,
+                $fixed ?? app(ResolvesBillingCurrency::class)->resolve($request, $billable),
+                $fixed !== null,
             ),
         ]);
     }
@@ -286,13 +290,15 @@ class BillingController
      * Each product's `prices.web` holds ONE currency, named again as the row's
      * `currency`, so a client rendering the first web price it finds renders
      * the one the checkout charges. Which one is {@see self::productCurrency()}
-     * from [$currency]. For a PINNED caller a product not priced in the pin is
-     * one Stripe cannot bill them for, so it is flagged unsellable and its
-     * cycle is not offered; it keeps a price so the row can still be placed.
+     * from [$currency]. For a caller whose currency is FIXED a product not
+     * priced in it is one Stripe cannot bill them for, so it is flagged
+     * unsellable and its cycle is not offered; it keeps a price so the row can
+     * still be placed.
      *
      * @param  bool  $trialOffered  Whether the caller may start a trial ({@see self::trialOffered()}).
-     * @param  string  $currency  The caller's currency ({@see ResolvesBillingCurrency}).
-     * @param  bool  $pinned  Whether [$currency] is the billable's pin rather than a preference.
+     * @param  string  $currency  The caller's currency: the fixed one when there is one
+     *                            ({@see self::fixedCurrency()}), else {@see ResolvesBillingCurrency}.
+     * @param  bool  $pinned  Whether [$currency] is fixed by Stripe rather than a preference.
      * @return array<int, array<string, mixed>>
      */
     protected function sellableCatalogue(bool $trialOffered, string $currency, bool $pinned): array
@@ -1210,10 +1216,9 @@ class BillingController
      * when the product has no web price and so names none.
      *
      * A currency Stripe has already fixed for this subject wins and is a hard
-     * constraint: the pin, else the currency its Stripe customer carries,
-     * which is read only for a subject that has a customer and only for a
-     * product priced on the web, so the common first checkout makes no extra
-     * call. With neither, the caller's currency falls back per product exactly
+     * constraint ({@see self::fixedCurrency()}); it is read only for a product
+     * priced on the web, so the common first checkout makes no extra call.
+     * With none, the caller's currency falls back per product exactly
      * as {@see self::sellableCatalogue()} does, so the charge is the figure
      * the screen showed.
      *
@@ -1230,7 +1235,7 @@ class BillingController
             return null;
         }
 
-        $fixed = $this->pinnedCurrency($billable) ?? $this->customerCurrency($billable);
+        $fixed = $this->fixedCurrency($billable);
 
         if ($fixed !== null) {
             if (! in_array($fixed, $priced, true)) {
@@ -1249,15 +1254,16 @@ class BillingController
 
     /**
      * Refuse a swap onto catalogue product [$key] when it has web prices and
-     * none in the subscription's currency: the pin, or the base for a subject
-     * the webhook has not pinned yet.
+     * none in the subscription's currency: the fixed one
+     * ({@see self::fixedCurrency()}), or the base for a subject nothing has
+     * billed.
      *
      * @throws ValidationException When the product is not priced in that currency.
      */
     protected function guardSwapCurrency(Model $billable, string $key): void
     {
         $priced = $this->webCurrencies($key);
-        $currency = $this->pinnedCurrency($billable) ?? BillingCatalogue::pricing()['currency'];
+        $currency = $this->fixedCurrency($billable) ?? BillingCatalogue::pricing()['currency'];
 
         if ($priced !== [] && ! in_array($currency, $priced, true)) {
             $this->refuseUnpricedCurrency($billable, $key, $currency);
@@ -1297,6 +1303,20 @@ class BillingController
         }
 
         return array_keys(PriceTable::for($product, BillingChannel::WEB, BillingCatalogue::pricing()));
+    }
+
+    /**
+     * The currency Stripe has already fixed for [$billable], uppercase, or null
+     * while nothing has billed it: the pin, else the currency its Stripe
+     * customer carries (a subscriber from before the column existed, or one
+     * the webhook has not reached yet).
+     *
+     * The plans screen, the checkout and the swap all ask this one question, so
+     * what the screen shows is what the checkout charges and the swap keeps.
+     */
+    protected function fixedCurrency(Model $billable): ?string
+    {
+        return $this->pinnedCurrency($billable) ?? $this->customerCurrency($billable);
     }
 
     /**

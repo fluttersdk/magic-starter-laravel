@@ -589,6 +589,24 @@ class BillingDoctorCommandTest extends TestCase
         $this->assertStringNotContainsString('/nonexistent', $doctor['checks']['schema.billing_grants']['message']);
     }
 
+    public function test_an_unreadable_schema_leaves_the_billing_currency_check_a_warning(): void
+    {
+        config([
+            'magic-starter.billing.pricing.country_header' => 'CF-IPCountry',
+            'database.connections.unreachable' => [
+                'driver' => 'sqlite',
+                'database' => '/nonexistent/magic-starter-doctor.sqlite',
+                'prefix' => '',
+            ],
+            'database.default' => 'unreachable',
+        ]);
+
+        $doctor = $this->doctor();
+
+        $this->assertSame('warning', $doctor['checks']['schema.billing_currency']['status']);
+        $this->assertStringNotContainsString('/nonexistent', $doctor['checks']['schema.billing_currency']['message']);
+    }
+
     public function test_an_empty_sandbox_allowlist_is_not_reported(): void
     {
         $this->assertArrayNotHasKey('revenuecat.sandbox_allowlist', $this->doctor()['checks']);

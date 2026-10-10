@@ -2,6 +2,7 @@
 
 namespace FlutterSdk\MagicStarter\Tests\Http\Controllers;
 
+use FlutterSdk\MagicStarter\Contracts\ResolvesBillingCurrency;
 use FlutterSdk\MagicStarter\Enums\BillingEventType;
 use FlutterSdk\MagicStarter\Enums\BillingProvider;
 use FlutterSdk\MagicStarter\Enums\BillingSource;
@@ -25,6 +26,7 @@ use Illuminate\Contracts\Auth\Authenticatable as AuthenticatableContract;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Schema\Blueprint;
 use Illuminate\Foundation\Auth\Access\Authorizable;
+use Illuminate\Http\Request;
 use Illuminate\Routing\RouteCollection;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\DB;
@@ -1544,6 +1546,109 @@ class BillingWriteEndpointsTest extends TestCase
 
         $this->writeFrom($unpinned, '/billing/swap', ['product' => 'pro_annual'], 'TR')->assertOk();
         $this->assertSame('price_pro_annual', BillingWriteSubscription::$swappedTo);
+    }
+
+    /**
+     * A subscriber the webhook has not pinned yet (they subscribed before the
+     * column existed) is still fixed to the currency their Stripe customer
+     * carries, so the swap is judged against that, not against the base.
+     */
+    public function test_a_swap_is_judged_against_the_stripe_customers_currency_when_nothing_is_pinned(): void
+    {
+        $this->configureCurrencyCatalogue();
+        $this->bootBillingRoutes('user');
+
+        BillingWriteRail::$subscription = new BillingWriteSubscription;
+        BillingWriteRail::$hasStripeId = true;
+        BillingWriteRail::$customerCurrency = 'try';
+
+        $user = $this->createUser('swap-customer@example.test', ['stripe_id' => self::STRIPE_ID]);
+
+        $this->assertCurrencyUnpriced($this->write($user, '/billing/swap', ['product' => 'pro_annual']));
+        $this->assertNull(BillingWriteSubscription::$swappedTo);
+
+        $this->write($user, '/billing/swap', ['product' => 'pro_lira'])->assertOk();
+        $this->assertSame('price_pro_lira', BillingWriteSubscription::$swappedTo);
+    }
+
+    /**
+     * The plans screen shows what the checkout will charge: for an unpinned
+     * subscriber whose Stripe customer is already billed in dollars, that is
+     * dollars wherever their country maps, and a lira-only product is not for
+     * sale to them.
+     */
+    public function test_the_plans_screen_follows_the_stripe_customers_currency_when_nothing_is_pinned(): void
+    {
+        $this->configureCurrencyCatalogue();
+        $this->bootBillingRoutes('user');
+
+        $user = $this->createUser('plans-customer@example.test', ['stripe_id' => self::STRIPE_ID]);
+        BillingWriteRail::$hasStripeId = true;
+        BillingWriteRail::$customerCurrency = 'usd';
+
+        $products = $this->plansFrom($user, 'TR');
+
+        $this->assertSame('USD', $products['pro_monthly']['currency']);
+        $this->assertSame(['USD'], array_keys($products['pro_monthly']['prices']['web']));
+        $this->assertTrue($products['pro_monthly']['sellable']);
+        $this->assertFalse($products['pro_lira']['sellable']);
+
+        $this->buyFrom($user, 'pro_monthly', 'TR')->assertOk();
+        $this->assertSame('usd', BillingWriteRail::$checkoutSessionOptions['currency'] ?? null);
+    }
+
+    /**
+     * A pinned caller is shown the pin even when an adopter's resolver answers
+     * another currency, because the checkout charges the pin whatever the
+     * resolver says: a product the screen marked for sale must be one the
+     * checkout can sell.
+     */
+    public function test_the_plans_screen_ignores_a_resolver_answer_for_a_pinned_caller(): void
+    {
+        $this->configureCurrencyCatalogue();
+        $this->bootBillingRoutes('user');
+
+        $this->app->bind(ResolvesBillingCurrency::class, fn (): ResolvesBillingCurrency => new class implements ResolvesBillingCurrency
+        {
+            public function resolve(Request $request, ?Model $billable): string
+            {
+                return 'USD';
+            }
+        });
+
+        $user = $this->createUser('plans-pinned@example.test', ['billing_currency' => 'TRY']);
+
+        $products = $this->plansFrom($user, null);
+
+        $this->assertSame('TRY', $products['pro_monthly']['currency']);
+        $this->assertTrue($products['pro_monthly']['sellable']);
+        $this->assertFalse($products['pro_annual']['sellable']);
+        $this->assertCurrencyUnpriced($this->buyFrom($user, 'pro_annual', null));
+    }
+
+    /**
+     * The plans screen's products by key, as [$user] sees them from [$country].
+     *
+     * @return array<string, array<string, mixed>>
+     */
+    private function plansFrom(Model $user, ?string $country): array
+    {
+        $headers = $country === null ? [] : ['CF-IPCountry' => $country];
+
+        $rows = $this->actingAs($user->fresh(), 'sanctum')
+            ->getJson('/billing/plans', $headers)
+            ->assertOk()
+            ->json('data');
+
+        $products = [];
+
+        foreach ($rows as $row) {
+            foreach ($row['products'] as $product) {
+                $products[$product['key']] = $product;
+            }
+        }
+
+        return $products;
     }
 
     /**
