@@ -2,6 +2,86 @@
 
 return [
 
+    'title' => 'Billing',
+
+    'summary' => [
+        'heading' => 'Summary',
+        'plan' => 'Plan',
+        'status' => 'Status',
+        'provider' => 'Provider',
+        'period_end' => 'Period ends',
+        'grant' => 'Manual grant',
+        'grant_expires' => 'Grant expires',
+        'no_expiry' => 'Never',
+        'trial_ends' => 'Stripe trial ends',
+        'none' => '-',
+    ],
+
+    'fields' => [
+        'plan' => 'Plan',
+        'reason' => 'Reason',
+        'expires_at' => 'Expires on',
+        'expires_at_help' => 'Leave empty to keep the grant until it is revoked.',
+        'until' => 'Trial ends on',
+        'refund_reason' => 'Refund reason',
+    ],
+
+    'refund_reasons' => [
+        'requested_by_customer' => 'Requested by the customer',
+        'duplicate' => 'Duplicate payment',
+    ],
+
+    'actions' => [
+        'grant' => [
+            'label' => 'Grant plan',
+            'heading' => 'Grant a plan',
+            'description' => 'The customer gets the plan with no payment behind it, until the expiry or a revoke.',
+            'success' => 'Plan granted.',
+        ],
+        'revoke' => [
+            'label' => 'Revoke grant',
+            'heading' => 'Revoke the manual plan',
+            'description' => 'The customer loses the granted plan; any paid subscription is put back on record.',
+            'success' => 'Grant revoked.',
+        ],
+        'extend_trial' => [
+            'label' => 'Extend trial',
+            'heading' => 'Extend the Stripe trial',
+            'description' => 'Stripe moves the end of the trial; the customer is not charged until then.',
+            'success' => 'Trial extended.',
+        ],
+        'end_trial' => [
+            'label' => 'End trial',
+            'heading' => 'End the Stripe trial now',
+            'description' => 'Stripe ends the trial and invoices the customer immediately.',
+            'success' => 'Trial ended.',
+        ],
+        'cancel_subscription' => [
+            'label' => 'Cancel subscription',
+            'heading' => 'Cancel at the end of the period',
+            'description' => 'The subscription keeps its plan until the paid period ends, then stops renewing.',
+            'success' => 'Subscription cancelled at the end of the period.',
+        ],
+        'resume_subscription' => [
+            'label' => 'Resume subscription',
+            'heading' => 'Resume the subscription',
+            'description' => 'The cancellation is lifted and the subscription renews as before.',
+            'success' => 'Subscription resumed.',
+        ],
+        'refund' => [
+            'label' => 'Refund last invoice',
+            'heading' => 'Refund the last paid invoice',
+            'description' => 'Stripe refunds :amount, in full, for invoice :invoice. The subscription is left as it is.',
+            'success' => 'Invoice refunded.',
+        ],
+        'sync' => [
+            'label' => 'Sync now',
+            'heading' => 'Sync with the billing provider',
+            'description' => 'The provider is read now and the customer\'s plan is updated to what it says.',
+            'success' => 'Billing synced.',
+        ],
+    ],
+
     /*
      * Why an operator's billing action was refused. The key is the stable
      * reason `BillingAdministrationRefused::reason()` carries and the

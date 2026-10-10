@@ -57,6 +57,8 @@ class MagicStarterPlugin implements Plugin
 
     protected ?Closure $authorizeUsing = null;
 
+    protected ?Closure $authorizeBillingUsing = null;
+
     protected bool $horizon = false;
 
     protected bool $pulse = false;
@@ -164,6 +166,26 @@ class MagicStarterPlugin implements Plugin
     public function getAuthorizeUsing(): ?Closure
     {
         return $this->authorizeUsing;
+    }
+
+    /**
+     * Replace the `magic-starter.admin.billing_emails` list that decides who may
+     * run the billing actions with the given callback.
+     *
+     * The callback receives the panel user and the panel and must return `true`
+     * to allow; any other value denies. It narrows an admitted admin further and
+     * never opens the panel itself.
+     */
+    public function authorizeBillingUsing(?Closure $callback): static
+    {
+        $this->authorizeBillingUsing = $callback;
+
+        return $this;
+    }
+
+    public function getAuthorizeBillingUsing(): ?Closure
+    {
+        return $this->authorizeBillingUsing;
     }
 
     /**

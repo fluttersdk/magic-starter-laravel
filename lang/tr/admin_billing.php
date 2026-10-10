@@ -2,6 +2,86 @@
 
 return [
 
+    'title' => 'Faturalama',
+
+    'summary' => [
+        'heading' => 'Özet',
+        'plan' => 'Plan',
+        'status' => 'Durum',
+        'provider' => 'Sağlayıcı',
+        'period_end' => 'Dönem bitişi',
+        'grant' => 'Manuel plan',
+        'grant_expires' => 'Manuel plan bitişi',
+        'no_expiry' => 'Süresiz',
+        'trial_ends' => 'Stripe deneme bitişi',
+        'none' => '-',
+    ],
+
+    'fields' => [
+        'plan' => 'Plan',
+        'reason' => 'Neden',
+        'expires_at' => 'Bitiş tarihi',
+        'expires_at_help' => 'Plan geri alınana kadar sürsün diye boş bırakın.',
+        'until' => 'Deneme bitiş tarihi',
+        'refund_reason' => 'İade nedeni',
+    ],
+
+    'refund_reasons' => [
+        'requested_by_customer' => 'Müşteri talebi',
+        'duplicate' => 'Mükerrer ödeme',
+    ],
+
+    'actions' => [
+        'grant' => [
+            'label' => 'Plan ver',
+            'heading' => 'Plan ver',
+            'description' => 'Müşteri bu planı ödeme olmadan, bitiş tarihine ya da geri alınana kadar kullanır.',
+            'success' => 'Plan verildi.',
+        ],
+        'revoke' => [
+            'label' => 'Planı geri al',
+            'heading' => 'Manuel planı geri al',
+            'description' => 'Müşteri verilen planı kaybeder; varsa ücretli abonelik yeniden kayda geçer.',
+            'success' => 'Plan geri alındı.',
+        ],
+        'extend_trial' => [
+            'label' => 'Denemeyi uzat',
+            'heading' => 'Stripe denemesini uzat',
+            'description' => 'Stripe deneme bitişini ileri alır; müşteri o tarihe kadar ücretlendirilmez.',
+            'success' => 'Deneme uzatıldı.',
+        ],
+        'end_trial' => [
+            'label' => 'Denemeyi bitir',
+            'heading' => 'Stripe denemesini şimdi bitir',
+            'description' => 'Stripe denemeyi bitirir ve müşteriye hemen fatura keser.',
+            'success' => 'Deneme bitirildi.',
+        ],
+        'cancel_subscription' => [
+            'label' => 'Aboneliği iptal et',
+            'heading' => 'Dönem sonunda iptal et',
+            'description' => 'Abonelik ödenmiş dönem bitene kadar planını korur, sonra yenilenmez.',
+            'success' => 'Abonelik dönem sonunda iptal edilecek.',
+        ],
+        'resume_subscription' => [
+            'label' => 'Aboneliği sürdür',
+            'heading' => 'Aboneliği sürdür',
+            'description' => 'İptal kaldırılır ve abonelik eskisi gibi yenilenir.',
+            'success' => 'Abonelik sürdürüldü.',
+        ],
+        'refund' => [
+            'label' => 'Son faturayı iade et',
+            'heading' => 'Son ödenmiş faturayı iade et',
+            'description' => 'Stripe :invoice faturası için :amount tutarının tamamını iade eder. Abonelik olduğu gibi kalır.',
+            'success' => 'Fatura iade edildi.',
+        ],
+        'sync' => [
+            'label' => 'Şimdi eşitle',
+            'heading' => 'Ödeme sağlayıcısıyla eşitle',
+            'description' => 'Sağlayıcı şimdi okunur ve müşterinin planı onun söylediğine göre güncellenir.',
+            'success' => 'Faturalama eşitlendi.',
+        ],
+    ],
+
     /*
      * Why an operator's billing action was refused. The key is the stable
      * reason `BillingAdministrationRefused::reason()` carries and the

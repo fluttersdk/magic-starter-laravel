@@ -101,6 +101,19 @@ class PluginTest extends FilamentTestCase
         $this->assertNotContains('FlutterSdk\\MagicStarter\\Missing\\TeamResource', $panel->getResources());
     }
 
+    public function test_the_billing_authorization_callback_is_kept_on_the_plugin(): void
+    {
+        $plugin = MagicStarterPlugin::make();
+
+        $this->assertNull($plugin->getAuthorizeBillingUsing());
+
+        $callback = static fn (): bool => true;
+
+        $this->assertSame($plugin, $plugin->authorizeBillingUsing($callback));
+        $this->assertSame($callback, $plugin->getAuthorizeBillingUsing());
+        $this->assertNull($plugin->authorizeBillingUsing(null)->getAuthorizeBillingUsing());
+    }
+
     public function test_the_navigation_group_reaches_the_resources(): void
     {
         $resource = $this->plainResource();

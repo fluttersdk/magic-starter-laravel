@@ -11,6 +11,7 @@ use FlutterSdk\MagicStarter\Contracts\UpdatesTeams;
 use FlutterSdk\MagicStarter\Enums\Role;
 use FlutterSdk\MagicStarter\Features;
 use FlutterSdk\MagicStarter\Filament\Resources\Audits\RelationManagers\AuditsRelationManager;
+use FlutterSdk\MagicStarter\Filament\Resources\Billing\RelationManagers\BillingRelationManager;
 use FlutterSdk\MagicStarter\Filament\Resources\MagicStarterResource;
 use FlutterSdk\MagicStarter\Filament\Resources\Teams\Pages\EditTeam;
 use FlutterSdk\MagicStarter\Filament\Resources\Teams\Pages\ListTeams;
@@ -69,7 +70,8 @@ class TeamResource extends MagicStarterResource
     }
 
     /**
-     * The tabs under the edit form; the audit trail only with the audit feature.
+     * The tabs under the edit form: billing only when the application bills teams,
+     * the audit trail only with the audit feature.
      *
      * @return list<class-string>
      */
@@ -78,6 +80,9 @@ class TeamResource extends MagicStarterResource
         return array_values(array_filter([
             MembersRelationManager::class,
             InvitationsRelationManager::class,
+            Features::hasBillingFeatures() && config('magic-starter.billing.billable') === 'team'
+                ? BillingRelationManager::class
+                : null,
             Features::hasAuditFeatures() ? AuditsRelationManager::class : null,
         ]));
     }
