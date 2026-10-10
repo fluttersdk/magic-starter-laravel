@@ -534,7 +534,7 @@ class AdministerBillingStripeTest extends TestCase
             ['source' => 'magic-starter-admin', 'invoice' => 'in_paid'],
             $refunds[0]['params']['metadata'],
         );
-        $this->assertContains('Idempotency-Key: admin-refund:in_paid', $refunds[0]['headers']);
+        $this->assertContains('Idempotency-Key: admin-refund:in_paid:requested_by_customer', $refunds[0]['headers']);
 
         // 3. The subscription is not the refund's business.
         $this->assertSame([], $this->stripe->requestsTo('post', '/v1/subscriptions/' . $subscription->stripe_id));

@@ -355,9 +355,11 @@ class AdministerBilling implements AdministersBilling
      *
      * The target is {@see StripeBillingState::latestRefundablePayment()}, the
      * newest paid invoice of the local `default` subscription, and the refund
-     * is created under the key `admin-refund:{invoice}`: a second click, or a
-     * retry after a timeout, is answered with the refund the first one created
-     * instead of refunding twice. That replay is also why the row is recorded
+     * is created under the key `admin-refund:{invoice}:{reason}`: a second
+     * click, or a retry after a timeout, is answered with the refund the first
+     * one created instead of refunding twice. The reason is part of the key
+     * because Stripe refuses a replayed key whose parameters differ; a second
+     * reason against an already refunded charge is refused by Stripe itself. That replay is also why the row is recorded
      * once per refund id, with the refund's own amount and currency. The
      * subscription is left alone.
      *
@@ -408,7 +410,7 @@ class AdministerBilling implements AdministersBilling
                     'invoice' => $payment['invoice_id'],
                 ],
             ], [
-                'idempotency_key' => 'admin-refund:' . $payment['invoice_id'],
+                'idempotency_key' => 'admin-refund:' . $payment['invoice_id'] . ':' . $reason,
             ]),
         );
 

@@ -668,7 +668,7 @@ class BillingRelationManagerTest extends FilamentTestCase
         $refunds = $this->stripe->requestsTo('post', '/v1/refunds');
         $this->assertCount(1, $refunds);
         $this->assertSame('requested_by_customer', $refunds[0]['params']['reason']);
-        $this->assertContains('Idempotency-Key: admin-refund:in_paid', $refunds[0]['headers']);
+        $this->assertContains('Idempotency-Key: admin-refund:in_paid:requested_by_customer', $refunds[0]['headers']);
 
         $refunded = $this->eventsOf(BillingEventType::INVOICE_REFUNDED);
         $this->assertCount(1, $refunded);
