@@ -210,9 +210,24 @@ class WireFixturesTest extends TestCase
     }
 
     /**
-     * Render one endpoint for the fixture team's owner, as the raw body.
+     * GET billing/plans for a team Stripe already bills in lira: every product
+     * is shown in lira or, where it has no lira price, at its base price and
+     * not for sale, with that cycle dropped from the tier.
      */
-    private function fixtureBody(string $path): string
+    public function test_the_pinned_plans_wire_matches_the_committed_fixture(): void
+    {
+        $this->assertMatchesWireFixture(
+            'billing-plans-pinned.json',
+            $this->fixtureBody('/billing/plans', ['billing_currency' => 'TRY']),
+        );
+    }
+
+    /**
+     * Render one endpoint for the fixture team's owner, as the raw body.
+     *
+     * @param  array<string, mixed>  $attributes  Merged over the fixture team's own.
+     */
+    private function fixtureBody(string $path, array $attributes = []): string
     {
         $owner = WireFixtureUser::query()->create([
             'name' => 'Wire Owner',
@@ -232,6 +247,7 @@ class WireFixturesTest extends TestCase
             'plan_renews' => '1',
             'plan_current_period_end' => '2027-01-01 00:00:00',
             'plan_source_event_at' => '2026-01-01 00:00:00',
+            ...$attributes,
         ]);
         $team->users()->attach($owner->getKey(), ['role' => 'owner']);
         $owner->forceFill(['current_team_id' => $team->getKey()])->save();
@@ -293,6 +309,7 @@ class WireFixturesTest extends TestCase
             $table->string('name');
             $table->boolean('personal_team')->default(false);
             $table->string('stripe_id')->nullable();
+            $table->string('billing_currency', 3)->nullable();
             $table->string('plan')->nullable();
             $table->string('plan_status')->nullable();
             $table->string('plan_provider')->nullable();

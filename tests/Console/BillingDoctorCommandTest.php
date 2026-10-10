@@ -525,6 +525,53 @@ class BillingDoctorCommandTest extends TestCase
         $this->assertSame('ok', $doctor['checks']['schema.billing_grants']['status']);
     }
 
+    /**
+     * A country header resolves a currency the webhook then pins, and without
+     * the column every pin is skipped: the screen keeps following the country
+     * while Stripe has already fixed the customer's currency, so a pinned
+     * customer is shown prices they cannot be charged. An error naming the
+     * migration, and fine once the column exists.
+     */
+    public function test_a_country_header_without_the_billing_currency_column_is_an_error(): void
+    {
+        config(['magic-starter.billing.pricing.country_header' => 'CF-IPCountry']);
+
+        Schema::create('users', function (Blueprint $table): void {
+            $table->uuid('id')->primary();
+            $table->string('name');
+        });
+
+        $doctor = $this->doctor();
+
+        $this->assertSame(1, $doctor['exit']);
+        $this->assertSame('error', $doctor['checks']['schema.billing_currency']['status']);
+        $this->assertStringContainsString(
+            'add_billing_currency_to_billable_table.php',
+            $doctor['checks']['schema.billing_currency']['message'],
+        );
+
+        Schema::table('users', function (Blueprint $table): void {
+            $table->string('billing_currency', 3)->nullable();
+        });
+
+        $doctor = $this->doctor();
+
+        $this->assertSame(0, $doctor['exit']);
+        $this->assertSame('ok', $doctor['checks']['schema.billing_currency']['status']);
+    }
+
+    /**
+     * With no country header the column is never read, so nobody is asked to
+     * run a migration nothing uses.
+     */
+    public function test_no_country_header_is_silent_about_the_billing_currency_column(): void
+    {
+        $doctor = $this->doctor();
+
+        $this->assertSame(0, $doctor['exit']);
+        $this->assertArrayNotHasKey('schema.billing_currency', $doctor['checks']);
+    }
+
     public function test_an_unreadable_schema_leaves_the_billing_grants_check_a_warning(): void
     {
         config([
@@ -540,6 +587,24 @@ class BillingDoctorCommandTest extends TestCase
 
         $this->assertSame('warning', $doctor['checks']['schema.billing_grants']['status']);
         $this->assertStringNotContainsString('/nonexistent', $doctor['checks']['schema.billing_grants']['message']);
+    }
+
+    public function test_an_unreadable_schema_leaves_the_billing_currency_check_a_warning(): void
+    {
+        config([
+            'magic-starter.billing.pricing.country_header' => 'CF-IPCountry',
+            'database.connections.unreachable' => [
+                'driver' => 'sqlite',
+                'database' => '/nonexistent/magic-starter-doctor.sqlite',
+                'prefix' => '',
+            ],
+            'database.default' => 'unreachable',
+        ]);
+
+        $doctor = $this->doctor();
+
+        $this->assertSame('warning', $doctor['checks']['schema.billing_currency']['status']);
+        $this->assertStringNotContainsString('/nonexistent', $doctor['checks']['schema.billing_currency']['message']);
     }
 
     public function test_an_empty_sandbox_allowlist_is_not_reported(): void

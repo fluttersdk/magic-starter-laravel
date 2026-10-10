@@ -481,6 +481,12 @@ return [
     | after it is written. 'currency' is the base currency a screen falls back
     | to.
     |
+    | 'country_header' (null = off) names the request header carrying the
+    | caller's two-letter country ('CF-IPCountry' behind Cloudflare), and
+    | 'country_currencies' maps a country to the web currency it is shown and
+    | charged in. The billable's 'billing_currency' pin, written by the Stripe
+    | webhook, wins over both; see doc/basics/billing.md.
+    |
     | THE KEYS THIS REPLACED ARE REFUSED BY NAME. 'plans', 'prices' and
     | 'store_products' described the same products from three sides with
     | nothing keeping them in step. mergeConfigFrom is a SHALLOW merge, so a
@@ -788,6 +794,10 @@ return [
 
         'pricing' => [
             'currency' => 'USD',
+            'country_header' => null,
+            'country_currencies' => [
+                // 'TR' => 'TRY',
+            ],
             'commission' => [
                 'mode' => 'absorb',
                 'rate' => 0.15,

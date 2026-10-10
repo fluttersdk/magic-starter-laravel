@@ -115,6 +115,11 @@ class MagicStarterServiceProvider extends ServiceProvider
         // own before switching the panel's billing actions on.
         $this->app->bind(Contracts\AdministersBilling::class, Actions\AdministerBilling::class);
 
+        // Which web currency a caller is shown and charged in. Unconditional
+        // like the two above: an adopter replaces the rule before switching
+        // billing on, not after.
+        $this->app->bind(Contracts\ResolvesBillingCurrency::class, Actions\ResolveBillingCurrency::class);
+
         // The trial card check's two Stripe calls. Bound so an application
         // with its own Stripe wrapper binds a subclass over it, and so a test
         // replaces the network without replacing the job's rules.

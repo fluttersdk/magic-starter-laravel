@@ -21,11 +21,15 @@ class PriceTableTest extends TestCase
 {
     private const ABSORB = [
         'currency' => 'USD',
+        'country_header' => null,
+        'country_currencies' => [],
         'commission' => ['mode' => CommissionMode::ABSORB, 'rate' => 0.15],
     ];
 
     private const GROSS_UP = [
         'currency' => 'USD',
+        'country_header' => null,
+        'country_currencies' => [],
         'commission' => ['mode' => CommissionMode::GROSS_UP, 'rate' => 0.15],
     ];
 

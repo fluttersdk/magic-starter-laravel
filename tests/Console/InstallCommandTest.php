@@ -307,6 +307,28 @@ final class InstallCommandTest extends TestCase
         $this->assertTrue(basename($grants[0]) < basename($provenance[0]), 'Provenance stays last.');
     }
 
+    /**
+     * The billing currency column lands on the billable table, so it follows
+     * the grants table and stays ahead of the provenance migration that is
+     * declared last; without billing it is not published at all.
+     */
+    public function test_billing_publishes_the_billing_currency_column_before_the_provenance_migration(): void
+    {
+        $this->artisan('magic-starter:install', [
+            '--features' => ['billing'],
+        ])->assertExitCode(0);
+
+        $published = static fn (string $name): array => glob(database_path("migrations/*_{$name}.php")) ?: [];
+
+        $grants = $published('create_billing_grants_table');
+        $currency = $published('add_billing_currency_to_billable_table');
+        $provenance = $published('add_entitlement_provenance_to_billable_table');
+
+        $this->assertCount(1, $currency, 'Billing must publish the billing currency migration once.');
+        $this->assertTrue(basename($grants[0]) < basename($currency[0]), 'The currency column follows the grants.');
+        $this->assertTrue(basename($currency[0]) < basename($provenance[0]), 'Provenance stays last.');
+    }
+
     public function test_without_billing_the_billing_events_table_is_not_published(): void
     {
         $this->artisan('magic-starter:install', [
@@ -315,6 +337,7 @@ final class InstallCommandTest extends TestCase
 
         $this->assertEmpty(glob(database_path('migrations/*_create_billing_events_table.php')) ?: []);
         $this->assertEmpty(glob(database_path('migrations/*_create_billing_grants_table.php')) ?: []);
+        $this->assertEmpty(glob(database_path('migrations/*_add_billing_currency_to_billable_table.php')) ?: []);
         $this->assertEmpty(
             glob(database_path('migrations/*_add_processed_at_index_to_processed_webhook_events_table.php')) ?: [],
         );

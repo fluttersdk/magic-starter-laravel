@@ -571,9 +571,98 @@ class BillingCatalogueTest extends TestCase
     public function test_pricing_reads_the_currency_and_commission(): void
     {
         $this->assertSame(
-            ['currency' => 'USD', 'commission' => ['mode' => CommissionMode::GROSS_UP, 'rate' => 0.15]],
+            [
+                'currency' => 'USD',
+                'country_header' => null,
+                'country_currencies' => [],
+                'commission' => ['mode' => CommissionMode::GROSS_UP, 'rate' => 0.15],
+            ],
             BillingCatalogue::pricing(),
         );
+    }
+
+    /**
+     * Codes are uppercased and the header name trimmed, so a map written in
+     * lowercase matches the uppercase header Cloudflare sends and the
+     * uppercase currency keys every price table carries.
+     */
+    public function test_pricing_normalises_the_country_header_and_its_currencies(): void
+    {
+        config([
+            'magic-starter.billing.pricing.country_header' => ' CF-IPCountry ',
+            'magic-starter.billing.pricing.country_currencies' => ['tr' => 'try'],
+        ]);
+
+        $pricing = BillingCatalogue::pricing();
+
+        $this->assertSame('CF-IPCountry', $pricing['country_header']);
+        $this->assertSame(['TR' => 'TRY'], $pricing['country_currencies']);
+    }
+
+    /**
+     * An empty header name is the feature switched off, the shape an unset
+     * environment variable writes.
+     */
+    public function test_an_empty_country_header_reads_as_off(): void
+    {
+        config(['magic-starter.billing.pricing.country_header' => '']);
+
+        $this->assertNull(BillingCatalogue::pricing()['country_header']);
+
+        BillingCatalogue::validate();
+    }
+
+    /**
+     * @return array<string, array{0: string, 1: mixed, 2: string}>
+     */
+    public static function malformedCountryPricing(): array
+    {
+        return [
+            'header that is not a string' => ['country_header', 123, 'country_header'],
+            'map that is not an array' => ['country_currencies', 'TR=TRY', 'country_currencies'],
+            'alpha-3 country' => ['country_currencies', ['TUR' => 'TRY'], '[TUR]'],
+            'two-letter currency' => ['country_currencies', ['TR' => 'TL'], '[TL]'],
+            'currency that is not a string' => ['country_currencies', ['TR' => 949], '[949]'],
+        ];
+    }
+
+    #[DataProvider('malformedCountryPricing')]
+    public function test_a_malformed_country_pricing_is_refused_naming_its_key(
+        string $key,
+        mixed $value,
+        string $named,
+    ): void {
+        config(["magic-starter.billing.pricing.{$key}" => $value]);
+
+        $message = $this->refusal();
+
+        $this->assertStringContainsString("magic-starter.billing.pricing.{$key}", $message);
+        $this->assertStringContainsString($named, $message);
+    }
+
+    /**
+     * A country mapped to a currency no product prices on the web would show
+     * that country nothing it could buy, so boot refuses it by name.
+     */
+    public function test_a_mapped_currency_no_product_prices_on_the_web_is_refused(): void
+    {
+        config(['magic-starter.billing.pricing.country_currencies' => ['TR' => 'TRY']]);
+
+        $message = $this->refusal();
+
+        $this->assertStringContainsString('[TRY]', $message);
+        $this->assertStringContainsString('[TR]', $message);
+
+        // A store-only figure does not count: the map chooses a WEB currency.
+        config(['magic-starter.billing.products.pro_monthly.prices.app_store' => ['TRY' => 99900]]);
+
+        $this->assertStringContainsString('[TRY]', $this->refusal());
+
+        config(['magic-starter.billing.products.pro_monthly.prices.web.TRY' => 99900]);
+
+        BillingCatalogue::validate();
+
+        $this->addToAssertionCount(1);
     }
 
     public function test_pricing_defaults_to_absorbing_the_commission(): void

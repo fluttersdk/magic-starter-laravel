@@ -3,9 +3,11 @@
 namespace FlutterSdk\MagicStarter\Tests;
 
 use FlutterSdk\MagicStarter\Actions\AdministerBilling;
+use FlutterSdk\MagicStarter\Actions\ResolveBillingCurrency;
 use FlutterSdk\MagicStarter\Console\ExpireBillingGrantsCommand;
 use FlutterSdk\MagicStarter\Console\PruneBillingRecordsCommand;
 use FlutterSdk\MagicStarter\Contracts\AdministersBilling;
+use FlutterSdk\MagicStarter\Contracts\ResolvesBillingCurrency;
 use FlutterSdk\MagicStarter\Features;
 use FlutterSdk\MagicStarter\MagicStarterServiceProvider;
 use FlutterSdk\MagicStarter\Tests\Console\BillingManifestCommandTest;
@@ -104,6 +106,11 @@ class ServiceProviderTest extends TestCase
     public function test_the_billing_administration_contract_is_bound_to_the_package_action(): void
     {
         $this->assertInstanceOf(AdministerBilling::class, $this->app->make(AdministersBilling::class));
+    }
+
+    public function test_the_billing_currency_contract_is_bound_to_the_package_action(): void
+    {
+        $this->assertInstanceOf(ResolveBillingCurrency::class, $this->app->make(ResolvesBillingCurrency::class));
     }
 
     public function test_the_grant_expiry_is_scheduled_hourly_on_one_server_when_billing_is_on(): void

@@ -63,6 +63,7 @@ class TrialCheckoutPayloadTest extends TestCase
                     'tier' => 'pro',
                     'cycle' => 'monthly',
                     'trial_days' => 14,
+                    'prices' => ['web' => ['USD' => 2900, 'TRY' => 99900]],
                     'refs' => ['stripe_price' => 'price_pro'],
                 ],
             ],
@@ -185,6 +186,55 @@ class TrialCheckoutPayloadTest extends TestCase
         $this->assertArrayNotHasKey('magic_starter_trial_user', $params['subscription_data']['metadata']);
         $this->assertSame('default', $params['subscription_data']['metadata']['type']);
         $this->assertSame('always', $params['payment_method_collection']);
+    }
+
+    /**
+     * The currency survives Cashier merging the session options into its own
+     * payload, lowercase as Stripe writes it: an explicit `currency` is what
+     * overrides Stripe's own localisation, so the charge is in the currency
+     * the screen showed.
+     */
+    public function test_the_session_stripe_receives_names_the_currency(): void
+    {
+        $user = $this->createUser('payload-currency@example.test');
+
+        $this->buy($user)->assertOk();
+
+        $this->assertSame('usd', $this->sessionParams()['currency']);
+    }
+
+    /**
+     * A customer Stripe already bills in a currency is checked out in it, read
+     * from the customer itself before the session opens.
+     */
+    public function test_an_existing_customer_is_checked_out_in_its_own_currency(): void
+    {
+        $user = $this->createUser('payload-customer@example.test');
+        $user->forceFill(['stripe_id' => 'cus_existing'])->save();
+
+        $customer = [
+            'id' => 'cus_existing',
+            'object' => 'customer',
+            'currency' => 'try',
+        ];
+
+        $this->stripe
+            ->answer($customer)
+            ->answer($customer)
+            ->answer([
+                'id' => 'cs_test_customer',
+                'object' => 'checkout.session',
+                'url' => 'https://checkout.stripe.test/cs_test_customer',
+            ]);
+
+        $this->actingAs($user->fresh(), 'sanctum')->postJson('/billing/checkout', [
+            'product' => 'pro_monthly',
+            'success_url' => self::SUCCESS_URL,
+            'cancel_url' => self::CANCEL_URL,
+        ])->assertOk();
+
+        $this->assertSame('try', $this->sessionParams()['currency']);
+        $this->assertCount(0, $this->stripe->requestsTo('post', '/v1/customers'));
     }
 
     /**

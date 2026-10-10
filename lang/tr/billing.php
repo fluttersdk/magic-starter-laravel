@@ -73,6 +73,7 @@ return [
          */
         'no_published_catalogue' => 'Yayımlanmış bir plan yok, dolayısıyla henüz satın alınabilecek bir şey de yok. Katmanlarınızı en ucuzdan başlayarak magic-starter.billing.tier_order altında sıralayın, magic-starter.billing.tiers altında tanımlayın ve magic-starter.billing.products altında satışa sunun.',
         'product_not_sellable' => ':product ürünü burada satın alınamaz: bu kanalda yalnızca Stripe fiyatı olan ücretli bir abonelik satılır. Başka bir plan seçin veya magic-starter.billing.products altında bu ürüne refs.stripe_price tanımlayın.',
+        'currency_unpriced' => ':product ürününün bu hesabın faturalandırıldığı para birimi olan :currency cinsinden fiyatı yok. :currency cinsinden fiyatı olan bir plan seçin.',
         'no_subscription' => 'Değiştirilecek etkin bir abonelik yok.',
     ],
 
