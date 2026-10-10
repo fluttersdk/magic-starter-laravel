@@ -800,9 +800,13 @@ class BillingController
         //    subscription and the local row, so the swap happened and the
         //    customer still owes an action: it is recorded flagged, and the
         //    exception goes on to the caller as the same instance, so the answer
-        //    is exactly what it was. Every other failure (a Stripe API error,
-        //    an incomplete subscription refused up front) means nothing moved
-        //    and records nothing.
+        //    is exactly what it was. Every other failure records nothing, and
+        //    not every one of them means nothing moved: an incomplete
+        //    subscription refused up front, or a Stripe API error on the update
+        //    itself, leaves the plan where it was, but an API error AFTER the
+        //    update (the meter lookup for a metered item) leaves Stripe and the
+        //    local row on the new price with no request row. The webhook that
+        //    update triggers still records the outcome as `entitlement_applied`.
         try {
             $subscription->swap($priceId);
         } catch (IncompletePayment $exception) {

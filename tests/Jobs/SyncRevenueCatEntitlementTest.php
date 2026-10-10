@@ -1112,6 +1112,38 @@ class SyncRevenueCatEntitlementTest extends TestCase
     }
 
     /**
+     * An anonymous transfer SOURCE is logged and never recorded as a refusal:
+     * the delivery applied fine to its destination, and a `delivery_refused`
+     * row would tell the history it did not.
+     */
+    public function test_an_anonymous_transfer_source_leaves_no_delivery_refused_row(): void
+    {
+        $destination = $this->makeBillable(['email' => 'destination@example.test']);
+
+        $this->fakeAuthoritativeReads([
+            (string) $destination->getKey() => $this->subscriber([
+                self::APP_STORE_BUSINESS => $this->subscription(),
+            ]),
+        ]);
+
+        $this->sync($this->event('TRANSFER', $destination, [
+            'app_user_id' => (string) $destination->getKey(),
+            'transferred_from' => ['$RCAnonymousID:8f3a'],
+            'transferred_to' => [(string) $destination->getKey()],
+        ]));
+
+        $this->assertSame('business', $destination->refresh()->getAttribute('plan'));
+        $this->assertSame(
+            0,
+            BillingEvent::query()->where('type', BillingEventType::DELIVERY_REFUSED->value)->count(),
+        );
+        $this->assertSame(
+            1,
+            BillingEvent::query()->where('type', BillingEventType::ENTITLEMENT_APPLIED->value)->count(),
+        );
+    }
+
+    /**
      * A padded App User ID still finds its billable.
      *
      * The id is trimmed for the lookup and for the subscriber URL both, and the
@@ -1494,19 +1526,90 @@ class SyncRevenueCatEntitlementTest extends TestCase
     }
 
     /**
-     * A retry would record the same refusal again for one delivery.
+     * A retry re-runs the same decision on the same delivery, so a refusal it
+     * repeats leaves no second row.
      */
-    public function test_a_refusal_on_a_later_attempt_leaves_no_row(): void
+    public function test_a_refusal_repeated_by_a_retry_leaves_one_row(): void
     {
         $orphan = (string) Str::uuid();
-        $job = new SyncRevenueCatEntitlement(
-            $this->event('RENEWAL', $this->makeBillable([]), ['app_user_id' => $orphan]),
-        );
-        $job->setJob($this->fakeQueueJob(attempts: 2));
+        $event = $this->event('RENEWAL', $this->makeBillable([]), ['app_user_id' => $orphan]);
 
-        $job->handle($this->app->make(RevenueCatClient::class), $this->app->make(WritesEntitlement::class));
+        foreach ([1, 2, 3] as $attempt) {
+            $job = new SyncRevenueCatEntitlement($event);
+            $job->setJob($this->fakeQueueJob(attempts: $attempt));
 
-        $this->assertSame(0, BillingEvent::query()->count());
+            $job->handle($this->app->make(RevenueCatClient::class), $this->app->make(WritesEntitlement::class));
+        }
+
+        $row = BillingEvent::query()->sole();
+        $this->assertSame('unknown_billable', $row->reason);
+        $this->assertSame($event['id'], $row->external_id);
+    }
+
+    /**
+     * A refusal decided only AFTER the authoritative read is first reached on
+     * a retry whenever attempt 1 failed on that read; it is recorded there, and
+     * a further retry does not duplicate it.
+     */
+    public function test_a_post_read_refusal_first_reached_on_a_retry_is_recorded_once(): void
+    {
+        $billable = $this->makeBillable([]);
+        $event = $this->event('INITIAL_PURCHASE', $billable);
+        $reads = 0;
+
+        Http::fake(function () use (&$reads): PromiseInterface {
+            $reads++;
+
+            // Every read the client makes inside attempt 1 fails.
+            if ($reads <= RevenueCatClient::MAXIMUM_ATTEMPTS) {
+                return Http::response(['message' => 'upstream is down'], 503);
+            }
+
+            return Http::response($this->subscriber([
+                self::APP_STORE_BUSINESS => $this->subscription(['is_sandbox' => true]),
+            ]), 200);
+        });
+
+        $first = new SyncRevenueCatEntitlement($event);
+        $first->setJob($this->fakeQueueJob(attempts: 1));
+
+        try {
+            $first->handle($this->app->make(RevenueCatClient::class), $this->app->make(WritesEntitlement::class));
+            $this->fail('The first attempt must fail on the read.');
+        } catch (RequestException) {
+            $this->assertSame(0, BillingEvent::query()->count());
+        }
+
+        foreach ([2, 3] as $attempt) {
+            $retry = new SyncRevenueCatEntitlement($event);
+            $retry->setJob($this->fakeQueueJob(attempts: $attempt));
+
+            $retry->handle($this->app->make(RevenueCatClient::class), $this->app->make(WritesEntitlement::class));
+        }
+
+        $row = BillingEvent::query()->sole();
+        $this->assertSame(BillingEventType::DELIVERY_REFUSED, $row->type);
+        $this->assertSame('sandbox_only_subscriber', $row->reason);
+        $this->assertSame($event['id'], $row->external_id);
+        $this->assertSame((string) $billable->getKey(), $row->billable_id);
+    }
+
+    /**
+     * A queue that retries `failed()` itself (a worker crash between the
+     * release and the ack) does not record the release twice.
+     */
+    public function test_a_repeated_permanent_failure_records_the_release_once(): void
+    {
+        $event = $this->event('INITIAL_PURCHASE', $this->makeBillable([]));
+
+        foreach ([3, 3] as $attempt) {
+            $job = new SyncRevenueCatEntitlement($event);
+            $job->setJob($this->fakeQueueJob(attempts: $attempt));
+
+            $job->failed(new RuntimeException('upstream is down'));
+        }
+
+        $this->assertSame('released_burnt_event_id', BillingEvent::query()->sole()->reason);
     }
 
     /**

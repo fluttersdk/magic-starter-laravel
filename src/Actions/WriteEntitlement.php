@@ -3,6 +3,7 @@
 namespace FlutterSdk\MagicStarter\Actions;
 
 use Carbon\CarbonInterface;
+use Carbon\Exceptions\InvalidFormatException;
 use FlutterSdk\MagicStarter\Contracts\WritesEntitlement;
 use FlutterSdk\MagicStarter\Enums\BillingEventType;
 use FlutterSdk\MagicStarter\Enums\BillingProvider;
@@ -347,7 +348,7 @@ class WriteEntitlement implements WritesEntitlement
         //    decoders, because `wasChanged()` cannot say whether anything a
         //    customer would notice moved: provenance moves on every write, and
         //    an uncast row compares `1` against `true`.
-        $before = $this->entitlementSnapshot($billable);
+        $before = $this->snapshotBeforeWrite($billable, $context);
 
         $billable->forceFill([
             'plan' => $write->plan,
@@ -705,22 +706,51 @@ class WriteEntitlement implements WritesEntitlement
     }
 
     /**
+     * The meaning ahead of the save, or null when the stored row cannot be read.
+     *
+     * A malformed stored `plan_current_period_end` makes the date decoder raise,
+     * and the write about to land overwrites exactly that column: refusing the
+     * snapshot must not refuse the write, or a corrupt row that used to heal on
+     * its next write would throw on every write forever. Only this read is
+     * guarded; the snapshot after the save reads what this write stored.
+     *
+     * @param  array<string, mixed>  $context
+     * @return array<string, mixed>|null
+     */
+    protected function snapshotBeforeWrite(Model $billable, array $context): ?array
+    {
+        try {
+            return $this->entitlementSnapshot($billable);
+        } catch (InvalidFormatException $exception) {
+            BillingLog::warning('A stored entitlement could not be read before a write; the write overwrites it.', [
+                ...$context,
+                'reason' => 'unreadable_stored_entitlement',
+                'exception' => $exception->getMessage(),
+            ]);
+
+            return null;
+        }
+    }
+
+    /**
      * Leave the `entitlement_applied` row, when the apply changed what the
      * entitlement means.
      *
-     * @param  array<string, mixed>  $before  {@see self::entitlementSnapshot()} ahead of the save.
+     * @param  array<string, mixed>|null  $before  {@see self::entitlementSnapshot()} ahead of the save, or
+     *                                             null when the stored row could not be read: every field
+     *                                             then counts as changed.
      * @param  array<string, mixed>  $after  The same five fields once the save landed.
      * @param  self::DIRECTION_*  $direction  Where the write moved the tier.
      * @param  bool  $crossRail  Whether a rail that still holds the record handed it to another.
      */
     protected function recordApplied(
         EntitlementWrite $write,
-        array $before,
+        ?array $before,
         array $after,
         string $direction,
         bool $crossRail,
     ): void {
-        $changed = $this->entitlementChanges($before, $after);
+        $changed = $before === null ? array_keys($after) : $this->entitlementChanges($before, $after);
 
         if ($changed === []) {
             return;

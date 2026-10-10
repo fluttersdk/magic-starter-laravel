@@ -61,6 +61,24 @@ enum BillingProvider: string
     }
 
     /**
+     * The rail behind a RevenueCat `store` value, or null when the store rail
+     * does not own it.
+     *
+     * Compared case-insensitively on purpose: the API answers `app_store` and a
+     * webhook says `APP_STORE`, for the same fact. The one map both the
+     * RevenueCat webhook and its re-read job name a rail with, so the two
+     * cannot drift.
+     */
+    public static function fromRevenueCatStore(mixed $store): ?self
+    {
+        return match (strtolower((string) (is_scalar($store) ? $store : ''))) {
+            'app_store', 'mac_app_store' => self::APP_STORE,
+            'play_store' => self::PLAY_STORE,
+            default => null,
+        };
+    }
+
+    /**
      * True when a real rail stands behind the entitlement.
      *
      * `MANUAL` counts, because an operator-granted plan is as entitled as a

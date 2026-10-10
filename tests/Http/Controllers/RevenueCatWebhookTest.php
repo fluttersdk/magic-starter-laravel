@@ -756,6 +756,38 @@ class RevenueCatWebhookTest extends TestCase
     }
 
     /**
+     * The sandbox gate runs before the type gate, so a sandbox paywall
+     * impression reaches it on every app open. It keeps its warning line and
+     * leaves no row: only a type that could have moved an entitlement is a
+     * refusal worth recording.
+     */
+    public function test_a_sandbox_event_of_an_ignored_type_warns_and_leaves_no_row(): void
+    {
+        Log::spy();
+
+        $this->deliver($this->event('PAYWALL_IMPRESSION', Str::uuid()->toString(), ['environment' => 'SANDBOX']))
+            ->assertOk();
+
+        $this->assertSame(0, BillingEvent::query()->count());
+        Log::shouldHaveReceived('warning')
+            ->once()
+            ->withArgs(static fn (string $message, array $context): bool => $context['reason']
+                === 'non_production_environment'
+                && $context['event_type'] === 'PAYWALL_IMPRESSION');
+    }
+
+    /**
+     * A blank-but-present field is as absent as a missing one: the row never
+     * stores whitespace for an id the sender did not really give.
+     */
+    public function test_a_whitespace_field_is_recorded_as_null(): void
+    {
+        $this->deliver($this->event('INITIAL_PURCHASE', '   ', ['environment' => 'SANDBOX']))->assertOk();
+
+        $this->assertNull(BillingEvent::query()->sole()->properties['app_user_id']);
+    }
+
+    /**
      * An unauthenticated caller must not be able to write rows.
      */
     public function test_a_signature_failure_leaves_no_row(): void

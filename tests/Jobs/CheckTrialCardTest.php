@@ -20,6 +20,7 @@ use FlutterSdk\MagicStarter\Models\BillingTrial;
 use FlutterSdk\MagicStarter\Models\Subscription;
 use FlutterSdk\MagicStarter\Models\SubscriptionItem;
 use FlutterSdk\MagicStarter\Notifications\TrialRefusedNotification;
+use FlutterSdk\MagicStarter\Support\BillingEventRecorder;
 use FlutterSdk\MagicStarter\Support\RevenueCatClient;
 use FlutterSdk\MagicStarter\Support\TrialCardGateway;
 use FlutterSdk\MagicStarter\Tests\Fixtures\ConcreteUser;
@@ -737,6 +738,7 @@ class CheckTrialCardTest extends TestCase
         $this->assertCount(1, $cancelled);
         $this->assertSame('sub_audit_b', $cancelled[0]->external_id);
         $this->assertSame(BillingSource::TRIAL_CHECK, $cancelled[0]->source);
+        $this->assertSame('this_check', $cancelled[0]->properties['cancelled_by']);
 
         $this->assertSame(2, BillingEvent::query()->count());
 
@@ -795,6 +797,7 @@ class CheckTrialCardTest extends TestCase
         $cancelled = $this->eventRows(BillingEventType::TRIAL_CANCELLED);
         $this->assertCount(1, $cancelled);
         $this->assertSame('sub_ended_audit', $cancelled[0]->external_id);
+        $this->assertSame('already_ended', $cancelled[0]->properties['cancelled_by']);
 
         // The same run again, with the row owed once more: the cancel is on record.
         $later->forceFill(['checked_at' => null])->save();
@@ -808,6 +811,9 @@ class CheckTrialCardTest extends TestCase
      * An application that upgraded without migrating has no `billing_events`
      * table: finishing an owed refusal Stripe already ended must still stamp
      * the row rather than fail the job on the cancel lookup.
+     *
+     * The recorder remembers a table it has seen, so the worker here is a fresh
+     * one, as in the real case: a process that has never seen the table.
      */
     public function test_an_owed_refusal_stripe_already_ended_finishes_without_the_events_table(): void
     {
@@ -824,6 +830,7 @@ class CheckTrialCardTest extends TestCase
         $this->gateway->statuses['sub_tableless_audit'] = 'canceled';
 
         Schema::drop('billing_events');
+        $this->app->forgetInstance(BillingEventRecorder::class);
 
         $this->runJob($later);
 

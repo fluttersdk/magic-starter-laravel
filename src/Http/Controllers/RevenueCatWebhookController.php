@@ -4,6 +4,7 @@ namespace FlutterSdk\MagicStarter\Http\Controllers;
 
 use Carbon\CarbonImmutable;
 use FlutterSdk\MagicStarter\Enums\BillingEventType;
+use FlutterSdk\MagicStarter\Enums\BillingProvider;
 use FlutterSdk\MagicStarter\Enums\BillingSource;
 use FlutterSdk\MagicStarter\Jobs\SyncRevenueCatEntitlement;
 use FlutterSdk\MagicStarter\Models\ProcessedWebhookEvent;
@@ -203,9 +204,15 @@ class RevenueCatWebhookController
         // 3. The sandbox gate, read off the EVENT. Refused before the claim: the
         //    event is not merely uninteresting, it is one this deployment must
         //    never act on, and leaving its id unclaimed keeps the decision
-        //    reversible if the deployment later opts in.
+        //    reversible if the deployment later opts in. Only a type that could
+        //    have moved an entitlement is a refusal worth a row; a sandbox
+        //    `PAYWALL_IMPRESSION` reaches this gate on every app open.
         if (! $this->isActionableEnvironment($event)) {
             $this->warn('non_production_environment', $event);
+
+            if ($this->isEntitlementEvent($event)) {
+                $this->recordRefusal('non_production_environment', $event);
+            }
 
             return $this->acknowledged();
         }
@@ -214,7 +221,7 @@ class RevenueCatWebhookController
         //    a dedup row exists to gate a SIDE EFFECT, an ignored type has none,
         //    and `PAYWALL_IMPRESSION` fires often enough that claiming one would
         //    grow the dedup table without bound for no benefit.
-        if (! in_array((string) $event['type'], self::ENTITLEMENT_EVENT_TYPES, true)) {
+        if (! $this->isEntitlementEvent($event)) {
             return $this->acknowledged();
         }
 
@@ -380,7 +387,20 @@ class RevenueCatWebhookController
     }
 
     /**
+     * Whether the event's type is one that can change what a subscriber is
+     * entitled to ({@see self::ENTITLEMENT_EVENT_TYPES}).
+     *
+     * @param  array<string, mixed>  $event
+     */
+    protected function isEntitlementEvent(array $event): bool
+    {
+        return in_array((string) $event['type'], self::ENTITLEMENT_EVENT_TYPES, true);
+    }
+
+    /**
      * Whether a payload field is a string with something in it.
+     *
+     * @phpstan-assert-if-true string $value
      */
     protected function isUsableString(mixed $value): bool
     {
@@ -393,7 +413,7 @@ class RevenueCatWebhookController
      * Warning level: each one means a store said something about a subscriber and
      * this application deliberately did nothing with it. Ignored event TYPES are
      * not logged here on purpose, because `PAYWALL_*` alone would fill the log
-     * with one line per app open.
+     * with one line per app open; the row is the caller's decision.
      *
      * @param  array<string, mixed>  $event
      */
@@ -405,8 +425,6 @@ class RevenueCatWebhookController
             'event_type' => $event['type'] ?? null,
             'environment' => $event['environment'] ?? null,
         ]);
-
-        $this->recordRefusal($reason, $event);
     }
 
     /**
@@ -428,7 +446,7 @@ class RevenueCatWebhookController
             type: BillingEventType::DELIVERY_REFUSED,
             source: BillingSource::WEBHOOK,
             billable: null,
-            provider: SyncRevenueCatEntitlement::providerFor($event['store'] ?? null),
+            provider: BillingProvider::fromRevenueCatStore($event['store'] ?? null),
             reason: $reason,
             externalId: $this->stringField($event, 'id'),
             properties: [
@@ -440,7 +458,8 @@ class RevenueCatWebhookController
     }
 
     /**
-     * One payload field as a string, or null when it is absent or not a string.
+     * One payload field as a string, or null when it is absent, blank or not a
+     * string.
      *
      * @param  array<string, mixed>  $event
      */
@@ -448,7 +467,7 @@ class RevenueCatWebhookController
     {
         $value = $event[$key] ?? null;
 
-        return is_string($value) && $value !== '' ? $value : null;
+        return $this->isUsableString($value) ? $value : null;
     }
 
     /**

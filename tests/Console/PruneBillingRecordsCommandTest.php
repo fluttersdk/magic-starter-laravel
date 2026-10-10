@@ -106,6 +106,35 @@ final class PruneBillingRecordsCommandTest extends TestCase
     }
 
     /**
+     * `MAGIC_STARTER_BILLING_EVENTS_RETENTION_DAYS=` reads as '', which is not
+     * null; cast to int it would be a one-day retention and wipe the history.
+     */
+    public function test_a_blank_events_retention_keeps_the_billing_history(): void
+    {
+        config()->set('magic-starter.billing.events_retention_days', '');
+        $this->seedEvent('ancient', 4000);
+        $this->seedEvent('yesterday', 2);
+
+        $this->artisan(PruneBillingRecordsCommand::NAME)
+            ->expectsOutputToContain('Kept every billing event')
+            ->assertSuccessful();
+
+        $this->assertSame(['ancient', 'yesterday'], BillingEvent::query()->pluck('external_id')->all());
+    }
+
+    public function test_a_non_numeric_events_retention_keeps_the_billing_history(): void
+    {
+        config()->set('magic-starter.billing.events_retention_days', 'abc');
+        $this->seedEvent('ancient', 4000);
+
+        $this->artisan(PruneBillingRecordsCommand::NAME)
+            ->expectsOutputToContain('Kept every billing event')
+            ->assertSuccessful();
+
+        $this->assertSame(['ancient'], BillingEvent::query()->pluck('external_id')->all());
+    }
+
+    /**
      * The append-only guard throws from a model `deleting` event, so a prune that
      * went through a model instance would throw here instead of deleting.
      */

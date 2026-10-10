@@ -6,6 +6,7 @@ use FlutterSdk\MagicStarter\Enums\BillingEventType;
 use FlutterSdk\MagicStarter\Enums\BillingProvider;
 use FlutterSdk\MagicStarter\Enums\BillingSource;
 use FlutterSdk\MagicStarter\Events\Billing\BillingOutcome;
+use FlutterSdk\MagicStarter\Events\Billing\CheckoutStarted;
 use FlutterSdk\MagicStarter\Events\Billing\EntitlementApplied;
 use FlutterSdk\MagicStarter\Models\BillingEvent;
 use FlutterSdk\MagicStarter\Support\BillingEventRecorder;
@@ -16,6 +17,7 @@ use Illuminate\Auth\GenericUser;
 use Illuminate\Database\Schema\Blueprint;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Event;
+use Illuminate\Support\Facades\Exceptions;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Schema;
 use ReflectionProperty;
@@ -154,6 +156,36 @@ class BillingEventRecorderTest extends TestCase
         });
 
         $this->assertCount(1, $this->dispatched);
+    }
+
+    public function test_a_throwing_listener_is_reported_and_never_reaches_the_caller(): void
+    {
+        $this->migrate('create_billing_events_table.php');
+        $user = $this->makeUser();
+        Exceptions::fake();
+        Event::listen(CheckoutStarted::class, static function (): void {
+            throw new RuntimeException('The listener failed.');
+        });
+
+        $standalone = $this->recorder()->record(BillingEventType::CHECKOUT_STARTED, BillingSource::REQUEST, $user);
+
+        $afterRecording = [];
+        DB::transaction(function () use ($user, &$afterRecording): void {
+            $this->recorder()->record(BillingEventType::CHECKOUT_STARTED, BillingSource::REQUEST, $user);
+
+            // A later after-commit callback of the caller still runs.
+            DB::afterCommit(static function () use (&$afterRecording): void {
+                $afterRecording[] = 'ran';
+            });
+        });
+
+        $this->assertTrue($standalone->exists);
+        $this->assertSame(2, BillingEvent::query()->count());
+        $this->assertSame(['ran'], $afterRecording);
+        Exceptions::assertReportedCount(2);
+        Exceptions::assertReported(
+            static fn (RuntimeException $exception): bool => $exception->getMessage() === 'The listener failed.',
+        );
     }
 
     public function test_the_insert_runs_one_transaction_level_below_its_caller(): void

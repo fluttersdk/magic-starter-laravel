@@ -521,7 +521,9 @@ class StripeWebhookController extends CashierWebhookController
      */
     protected function recordTrialRecorded(array $payload, array $object, Model $billable, ?Model $user): void
     {
-        $properties = ['stripe_subscription_id' => $object['id']];
+        $properties = [
+            'stripe_subscription_id' => $object['id'],
+        ];
 
         if (isset($object['trial_end'])) {
             $properties['trial_ends_at'] = CarbonImmutable::createFromTimestamp((int) $object['trial_end'])
@@ -919,7 +921,9 @@ class StripeWebhookController extends CashierWebhookController
             'price_id' => $priceId,
             'billable_id' => $billable->getKey(),
         ]);
-        $this->recordRefusal('unmapped_price', $billable, $eventId, ['price_id' => $priceId]);
+        $this->recordRefusal('unmapped_price', $billable, $eventId, [
+            'price_id' => $priceId,
+        ]);
     }
 
     /**

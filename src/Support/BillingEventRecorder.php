@@ -8,7 +8,6 @@ use FlutterSdk\MagicStarter\Enums\BillingSource;
 use FlutterSdk\MagicStarter\MagicStarter;
 use FlutterSdk\MagicStarter\Models\BillingEvent;
 use Illuminate\Contracts\Auth\Authenticatable;
-use Illuminate\Contracts\Events\ShouldDispatchAfterCommit;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\QueryException;
 use Illuminate\Support\Facades\DB;
@@ -30,10 +29,17 @@ use Illuminate\Support\Facades\Schema;
  *   caller's transaction usable. Only a {@see QueryException} is caught, and it
  *   is logged at error level; anything else is a bug and propagates.
  * - The event is dispatched OUTSIDE that savepoint, whether the row was
- *   written, refused or skipped. A rolled-back savepoint discards the
- *   after-commit callbacks registered inside it, and the event is one
- *   ({@see ShouldDispatchAfterCommit}), so dispatching inside would lose it
- *   exactly when the row failed.
+ *   written, refused or skipped. It is handed to `DB::afterCommit()`, and a
+ *   rolled-back savepoint discards the after-commit callbacks registered
+ *   inside it, so dispatching inside would lose it exactly when the row
+ *   failed. Registered at the caller's level instead, it runs once the
+ *   caller commits, is discarded when the caller rolls back, and runs at
+ *   once outside any transaction.
+ * - A listener runs in the billing path, so its failure is reported through
+ *   `report()` and never propagated: a throwing synchronous listener would
+ *   otherwise turn a completed Stripe request into a 500 or, inside a
+ *   webhook's commit callbacks, skip the callbacks queued after it (the
+ *   trial's card check among them).
  * - A missing table (an application that upgraded without migrating) skips
  *   the row with one warning per process. Only a table that EXISTS is
  *   remembered: a queue or Octane worker started before the migration must
@@ -92,7 +98,9 @@ class BillingEventRecorder
         $this->persist($event);
 
         // 3. Outside the savepoint, so a failed insert still announces the outcome.
-        event(new ($type->eventClass())($event));
+        $outcome = new ($type->eventClass())($event);
+
+        DB::afterCommit(static fn () => rescue(static fn () => event($outcome), report: true));
 
         // 4. Refusals are logged by their call sites, which already carry a warning line.
         $line = $this->successLine($type);
@@ -112,6 +120,29 @@ class BillingEventRecorder
         }
 
         return $event;
+    }
+
+    /**
+     * Whether an outcome with this type, external id and reason is already on
+     * record, so a caller that re-runs one decision (a queue retry) records it
+     * once. A null id or reason matches only a null column.
+     *
+     * @return bool False when the table is missing: nothing is on record, and the
+     *              next {@see self::record()} skips the row with its warning anyway.
+     */
+    public function recorded(BillingEventType $type, ?string $externalId, ?string $reason): bool
+    {
+        $model = new BillingEvent;
+
+        if (! $this->tableExists($model->getTable())) {
+            return false;
+        }
+
+        return $model->newQuery()
+            ->where('type', $type->value)
+            ->where('external_id', $externalId)
+            ->where('reason', $reason)
+            ->exists();
     }
 
     private function persist(BillingEvent $event): void
@@ -176,7 +207,7 @@ class BillingEventRecorder
             BillingEventType::SUBSCRIPTION_CANCELLED => 'A subscription was cancelled.',
             BillingEventType::PORTAL_OPENED => 'A billing portal session was opened.',
             BillingEventType::TRIAL_RECORDED => 'A trial was recorded.',
-            BillingEventType::TRIAL_CANCELLED => 'A refused trial was cancelled.',
+            BillingEventType::TRIAL_CANCELLED => 'A refused trial ended.',
             BillingEventType::TRIAL_REFUSAL_WITHDRAWN => 'A trial refusal was withdrawn; nothing was cancelled.',
             BillingEventType::ENTITLEMENT_DROPPED,
             BillingEventType::REQUEST_REFUSED,

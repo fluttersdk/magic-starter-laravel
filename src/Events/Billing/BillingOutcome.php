@@ -12,6 +12,12 @@ use FlutterSdk\MagicStarter\Models\BillingEvent;
  *
  * The package registers no listener of its own; this is the seam an
  * application hooks alerts, metrics or notifications into.
+ *
+ * A synchronous listener runs in the billing path, after the outcome's
+ * transaction commits: inside the webhook or request that produced it. Its
+ * failure is reported through `report()` and never propagated, so billing
+ * carries on, but the listener's own work is lost. Prefer a `ShouldQueue`
+ * listener for anything that can fail or take time.
  */
 interface BillingOutcome
 {

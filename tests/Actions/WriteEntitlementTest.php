@@ -2083,6 +2083,51 @@ class WriteEntitlementTest extends TestCase
     }
 
     /**
+     * A malformed stored period end does not stop the write that overwrites
+     * it: the row heals as it always did, and the history records it with no
+     * readable `before` and every field counted as changed.
+     */
+    #[DataProvider('billableSubjects')]
+    public function test_a_malformed_stored_period_end_still_applies_and_records_one_row(string $subject): void
+    {
+        $billable = $this->makeBillable($subject, []);
+        $billable->getConnection()
+            ->table($billable->getTable())
+            ->where($billable->getKeyName(), $billable->getKey())
+            ->update(['plan_current_period_end' => 'not-a-date']);
+        $billable->refresh();
+
+        $periodEnd = Carbon::parse('2026-09-22 12:00:00');
+
+        $this->assertTrue($this->write(
+            billable: $billable,
+            plan: 'pro',
+            status: PlanStatus::ACTIVE,
+            provider: BillingProvider::STRIPE,
+            eventAt: Carbon::parse('2026-08-22 12:00:00'),
+            currentPeriodEnd: $periodEnd,
+            renews: true,
+            eventId: 'evt_heal',
+        ));
+
+        $this->assertSame('pro', $billable->refresh()->getAttribute('plan'));
+
+        $row = BillingEvent::query()->sole();
+        $this->assertSame(BillingEventType::ENTITLEMENT_APPLIED, $row->type);
+        $this->assertNull($row->properties['before']);
+        $this->assertSame(
+            [
+                'plan',
+                'plan_status',
+                'plan_provider',
+                'plan_current_period_end',
+                'plan_renews',
+            ],
+            $row->properties['changed'],
+        );
+    }
+
+    /**
      * A write that lands but changes nothing a customer would notice leaves no
      * row.
      *

@@ -507,7 +507,7 @@ Every billing outcome leaves one row in `billing_events` and dispatches one Lara
 | `delivery_refused` | `webhook` | See below. | Per reason. |
 | `trial_recorded` | `webhook` | none | `stripe_subscription_id`, `trial_ends_at`. |
 | `trial_refused` | `trial_check` | `card_reused`, `duplicate` | `billing_trial_id`, `user_id`. |
-| `trial_cancelled` | `trial_check` | none | `billing_trial_id`, `user_id`. |
+| `trial_cancelled` | `trial_check` | none | `billing_trial_id`, `user_id`, `cancelled_by` (`this_check` when this run cancelled it, `already_ended` when Stripe had already ended it). |
 | `trial_refusal_withdrawn` | `trial_check` | `refused_trial_converted` | `stripe_status`. |
 
 An apply writes `entitlement_applied` only when what the entitlement **means** changed: `plan`, `plan_status`, `plan_provider`, `plan_current_period_end` or `plan_renews`. `changed` names those fields and `before` and `after` carry the five values. An apply that only refreshed provenance (a renewal, a reconcile read) writes no row, since that would be one row per delivery that says nothing. `direction` is `upgrade`, `same`, `downgrade`, `unknown`, `no-order` or `nothing-stored`, and `cross_rail` is true when a rail holding the record handed it to another.
@@ -515,12 +515,12 @@ An apply writes `entitlement_applied` only when what the entitlement **means** c
 `delivery_refused` is a verified delivery the package decided not to act on:
 
 - Stripe: `unmapped_price` (a granting price with no tier mapping) and `revocation_skipped` (a deleted subscription while another still grants).
-- RevenueCat endpoint: `unreadable_event` and `non_production_environment`.
-- RevenueCat job, on the webhook source and its first attempt only: `malformed_app_user_id`, `unknown_billable`, `ambiguous_aliases`, `sandbox_only_subscriber`, `undated_subscriptions`, `unmapped_product` and `nothing_to_revoke`. `released_burnt_event_id` is also recorded when the job gives up after its last attempt and releases the dedup claim.
+- RevenueCat endpoint: `unreadable_event`, and `non_production_environment` for an event type that can change an entitlement (a sandbox `PAYWALL_IMPRESSION` is logged and leaves no row).
+- RevenueCat job, on the webhook source: `malformed_app_user_id` (for the event's own subscriber, never for a transfer side), `unknown_billable`, `ambiguous_aliases`, `sandbox_only_subscriber`, `undated_subscriptions`, `unmapped_product` and `nothing_to_revoke`. `released_burnt_event_id` is also recorded when the job gives up after its last attempt and releases the dedup claim. Each is one row per delivery and reason, de-duplicated across retries: a refusal first reached on a retry (the read failed on attempt 1) is still recorded, and a later retry does not write it again.
 
 `trial_cancelled` is written once per subscription: a re-run that finds Stripe already ended it does not write a second one.
 
-**Deliberately not recorded:** Stripe and RevenueCat signature failures (unauthenticated input must not write rows), the reconciler's per-run skips, Stripe's silent skips (a duplicate delivery, no billable, a non-default subscription type), a 422 or a 404 (the caller's own mistake, or an honest absence), the RevenueCat `family_shared_entitlement` (the tier was granted) and `unfed_store` (another rail's subscription), and a RevenueCat job refusal on the reconcile source or on a retry.
+**Deliberately not recorded:** Stripe and RevenueCat signature failures (unauthenticated input must not write rows), the reconciler's per-run skips, Stripe's silent skips (a duplicate delivery, no billable, a non-default subscription type), a 422 or a 404 (the caller's own mistake, or an honest absence), the RevenueCat `family_shared_entitlement` (the tier was granted) and `unfed_store` (another rail's subscription), and a RevenueCat job refusal on the reconcile source or a second time for the same delivery.
 
 ### Append-only, and recording never breaks billing
 
@@ -533,6 +533,8 @@ Recording sits inside the Stripe webhook's own transaction, so the insert runs i
 ### Listening
 
 Each outcome is one class in `FlutterSdk\MagicStarter\Events\Billing` (`EntitlementApplied`, `EntitlementDropped`, `CheckoutStarted`, `SubscriptionSwapped`, `SubscriptionCancelled`, `PortalOpened`, `RequestRefused`, `DeliveryRefused`, `TrialRecorded`, `TrialRefused`, `TrialCancelled`, `TrialRefusalWithdrawn`), and all of them implement `BillingOutcome`. They are dispatched after the surrounding transaction commits, so an outcome that rolled back never fires. The package registers no listener of its own.
+
+A synchronous listener runs in the billing path, inside the webhook, request or job that produced the outcome. A listener that throws is reported through your exception handler and never propagated, so the delivery still answers 200 and the request still answers what it would have, but that listener's work is lost. Prefer a `ShouldQueue` listener for anything that can fail or take time.
 
 ```php
 use FlutterSdk\MagicStarter\Events\Billing\BillingOutcome;
@@ -551,7 +553,7 @@ Event::listen(BillingOutcome::class, function (BillingOutcome $event): void {
 
 ### Logs and retention
 
-Billing log lines (webhook outcomes, reconciler runs, drops, refusals) go to the channel named by `magic-starter.billing.log_channel`, and successes are logged at info level. Null, the default, uses the application's default channel. Boot-time messages and the trial eligibility warning keep using the default channel.
+Billing log lines (webhook outcomes, reconciler runs, drops, refusals) go to the channel named by `magic-starter.billing.log_channel`, and successes are logged at info level. Null or blank, the default, uses the application's default channel. Boot-time messages and the trial eligibility warning keep using the default channel.
 
 | Config key | Env | Default |
 |------------|-----|---------|
@@ -559,9 +561,11 @@ Billing log lines (webhook outcomes, reconciler runs, drops, refusals) go to the
 | `magic-starter.billing.webhook_retention_days` | `MAGIC_STARTER_BILLING_WEBHOOK_RETENTION_DAYS` | `90` |
 | `magic-starter.billing.events_retention_days` | `MAGIC_STARTER_BILLING_EVENTS_RETENTION_DAYS` | `null` (keep forever) |
 
-`php artisan magic-starter:billing:prune` deletes `processed_webhook_events` rows older than `webhook_retention_days`, and `billing_events` rows older than `events_retention_days` when it is set. It runs daily while the billing feature is on. The webhook retention is never taken below 31 days: a dedup claim is the only thing that stops a resent event from running twice, and Stripe's CLI can resend an event up to 30 days old. The history is financial, so keep `events_retention_days` null unless your retention policy demands a number.
+`php artisan magic-starter:billing:prune` deletes `processed_webhook_events` rows older than `webhook_retention_days`, and `billing_events` rows older than `events_retention_days` when it is a number of days. A blank or non-numeric value keeps every row and says so in one line. It runs daily while the billing feature is on. The webhook retention is never taken below 31 days: a dedup claim is the only thing that stops a resent event from running twice, and Stripe's CLI can resend an event up to 30 days old. The history is financial, so keep `events_retention_days` null unless your retention policy demands a number.
 
 `billing:doctor` reports a missing `billing_events` table as an `error` with the id `schema.billing_events`.
+
+A refused request still leaves a `request_refused` row, so put a throttle on the billing routes: name it in `magic-starter.route_middleware` (which wraps every package API route) or in the route group your application loads them from.
 
 ---
 

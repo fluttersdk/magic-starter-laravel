@@ -22,8 +22,8 @@ use Illuminate\Support\Carbon;
  * {@see self::MINIMUM_WEBHOOK_RETENTION_DAYS} rather than trusted.
  *
  * THE BILLING HISTORY IS PRUNED ONLY ON REQUEST. `events_retention_days` is
- * null by default because the table is financial history; a null value leaves
- * it alone. Both deletes go through the query builder: `billing_events` refuses
+ * null by default because the table is financial history; a null, blank or
+ * non-numeric value leaves it alone. Both deletes go through the query builder: `billing_events` refuses
  * a model `deleting` event, and a query-builder delete fires none, which is how
  * this command is the one place a row is ever removed.
  *
@@ -62,12 +62,19 @@ class PruneBillingRecordsCommand extends Command
 
         $this->prune(new ProcessedWebhookEvent, 'processed_at', $webhookDays, 'webhook claim', 'webhook claims');
 
-        // 2. The history is kept unless the adopter set an age for it; the env
-        //    value arrives as a string, and at least one day keeps a zero from
-        //    wiping the table.
+        // 2. The history is kept unless the adopter set an age for it. The env
+        //    value arrives as a string: a blank one (`...RETENTION_DAYS=`) is ''
+        //    rather than null, and cast to int it would prune all but a day, so
+        //    only a number prunes. At least one day keeps a zero from wiping it.
         $eventsRetention = config('magic-starter.billing.events_retention_days');
 
         if ($eventsRetention === null) {
+            return self::SUCCESS;
+        }
+
+        if (! is_numeric($eventsRetention)) {
+            $this->components->info('Kept every billing event: events_retention_days is not a number of days.');
+
             return self::SUCCESS;
         }
 

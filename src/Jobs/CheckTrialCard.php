@@ -8,7 +8,6 @@ use FlutterSdk\MagicStarter\Enums\BillingProvider;
 use FlutterSdk\MagicStarter\Enums\BillingSource;
 use FlutterSdk\MagicStarter\Enums\TrialRefusalReason;
 use FlutterSdk\MagicStarter\Http\Controllers\StripeWebhookController;
-use FlutterSdk\MagicStarter\Models\BillingEvent;
 use FlutterSdk\MagicStarter\Models\BillingTrial;
 use FlutterSdk\MagicStarter\Notifications\TrialRefusedNotification;
 use FlutterSdk\MagicStarter\Support\BillingEventRecorder;
@@ -23,7 +22,6 @@ use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Notification;
-use Illuminate\Support\Facades\Schema;
 use Laravel\Cashier\Cashier;
 use Stripe\Subscription as StripeSubscription;
 use Throwable;
@@ -563,10 +561,13 @@ class CheckTrialCard implements ShouldQueue
         });
 
         // 3. Record the cancel after the stamp, outside the transaction. A subscription Stripe
-        //    already ended is a cancel an earlier run landed and could not stamp, unless it is
-        //    on record already; this run's own cancel never is.
+        //    already ended is a cancel an earlier run landed and could not stamp, or one the
+        //    customer made, unless it is on record already; this run's own cancel never is.
+        //    `cancelled_by` keeps the two apart, since only one of them was this check's doing.
         if ($cancelledNow || ! $this->cancelRecorded($row)) {
-            $this->recordOutcome(BillingEventType::TRIAL_CANCELLED, $row);
+            $this->recordOutcome(BillingEventType::TRIAL_CANCELLED, $row, properties: [
+                'cancelled_by' => $cancelledNow ? 'this_check' : 'already_ended',
+            ]);
         }
 
         return true;
@@ -577,15 +578,12 @@ class CheckTrialCard implements ShouldQueue
      *
      * An application that upgraded without migrating has no `billing_events`
      * table, and a query against it would fail a job whose refusal is already
-     * stamped; that reads as "not recorded", and the recorder then skips the
+     * stamped; the recorder answers that as "not recorded", and then skips the
      * row with its own missing-table warning.
      */
     protected function cancelRecorded(BillingTrial $row): bool
     {
-        return Schema::hasTable((new BillingEvent)->getTable()) && BillingEvent::query()
-            ->where('type', BillingEventType::TRIAL_CANCELLED->value)
-            ->where('external_id', $row->stripe_subscription_id)
-            ->exists();
+        return $this->recorder->recorded(BillingEventType::TRIAL_CANCELLED, $row->stripe_subscription_id, null);
     }
 
     /**

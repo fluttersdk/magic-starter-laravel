@@ -710,8 +710,8 @@ return [
     |
     | 'log_channel' names the log channel every billing line goes to (webhook
     | outcomes, reconciler runs, refusals), so billing can be routed to its own
-    | file or alert sink. Null, the default, uses the application's default
-    | channel.
+    | file or alert sink. Null or blank, the default, uses the application's
+    | default channel.
     |
     | 'webhook_retention_days' (default 90) is how long processed_webhook_events
     | keeps a delivery's dedup row before the prune command removes it. Never
@@ -721,8 +721,8 @@ return [
     |
     | 'events_retention_days' (default null) is how long billing_events keeps a
     | row. Null keeps them forever, which is the default on purpose: the table
-    | is financial history. Set a number of days only when your retention policy
-    | demands it.
+    | is financial history; a blank or non-numeric value keeps them too. Set a
+    | number of days only when your retention policy demands it.
     |
     */
 

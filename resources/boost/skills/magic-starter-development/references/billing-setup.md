@@ -145,10 +145,13 @@ php artisan billing:doctor --json --remote
 
 ## Audit log
 
-Every billing outcome leaves an append-only `billing_events` row (`type`, `source`, `provider`, `reason`, `external_id`, billable, actor, `properties`) and dispatches an event implementing `Events\Billing\BillingOutcome`; `Event::listen(BillingOutcome::class, ...)` receives all of them and `$event->record()` is the row. Not recorded: signature failures, reconcile skips, Stripe silent skips, 422 and 404.
+Every billing outcome leaves an append-only `billing_events` row (`type`, `source`, `provider`, `reason`, `external_id`, billable, actor, `properties`) and dispatches an event implementing `Events\Billing\BillingOutcome`; `Event::listen(BillingOutcome::class, ...)` receives all of them and `$event->record()` is the row. Not recorded: signature failures, reconcile skips, Stripe silent skips, 422 and 404, a sandbox RevenueCat delivery of a type that cannot change an entitlement, and a RevenueCat transfer side. A RevenueCat job refusal is one row per delivery and reason, de-duplicated across retries. `trial_cancelled` carries `cancelled_by` (`this_check` or `already_ended`).
+
+- A synchronous listener runs in the billing path; a failure is reported through the exception handler and never propagated, so the listener's work is lost. Prefer a `ShouldQueue` listener.
 
 - The table needs `create_billing_events_table.php`, and the prune needs `add_processed_at_index_to_processed_webhook_events_table.php`: a fresh install publishes both; for an existing application copy them from `vendor/fluttersdk/magic-starter-laravel/database/migrations/` under later timestamps and run `php artisan migrate`. Without the table billing still works and each worker logs one warning.
-- `magic-starter.billing.log_channel` (`MAGIC_STARTER_BILLING_LOG_CHANNEL`, default null) routes billing log lines to a channel. `magic-starter:billing:prune` runs daily: `webhook_retention_days` (default `90`, never below 31) for dedup claims, `events_retention_days` (default null, keep forever) for the history.
+- `magic-starter.billing.log_channel` (`MAGIC_STARTER_BILLING_LOG_CHANNEL`, default null; blank reads as null) routes billing log lines to a channel. `magic-starter:billing:prune` runs daily: `webhook_retention_days` (default `90`, never below 31) for dedup claims, `events_retention_days` (default null, keep forever; blank or non-numeric also keeps forever) for the history.
+- A refused request leaves a `request_refused` row: put a throttle on the billing routes through `magic-starter.route_middleware` or the app's route group.
 - An adopter-built `EntitlementWrite` needs `source:`; a custom `WritesEntitlement` records through `BillingEventRecorder`.
 
 ## What to Watch For

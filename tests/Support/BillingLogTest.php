@@ -30,6 +30,23 @@ class BillingLogTest extends TestCase
         Log::shouldNotHaveReceived('channel');
     }
 
+    public function test_a_blank_channel_goes_to_the_default_logger(): void
+    {
+        // `MAGIC_STARTER_BILLING_LOG_CHANNEL=` reads as '', and Log::channel('')
+        // would fall back to the emergency logger.
+        config()->set('magic-starter.billing.log_channel', '');
+        Log::spy();
+
+        BillingLog::info('Applied.', ['type' => 'a']);
+        BillingLog::warning('Refused.', ['type' => 'b']);
+        BillingLog::error('Failed.', ['type' => 'c']);
+
+        Log::shouldHaveReceived('info')->once()->with('Applied.', ['type' => 'a']);
+        Log::shouldHaveReceived('warning')->once()->with('Refused.', ['type' => 'b']);
+        Log::shouldHaveReceived('error')->once()->with('Failed.', ['type' => 'c']);
+        Log::shouldNotHaveReceived('channel');
+    }
+
     public function test_a_configured_channel_receives_each_level(): void
     {
         config()->set('magic-starter.billing.log_channel', 'billing');

@@ -49,8 +49,8 @@ return new class extends Migration
             $table->string('source', 32);
             $table->string('provider', 32)->nullable();
 
-            $table->string('billable_type')->nullable();
-            $table->string('billable_id')->nullable();
+            $table->string('billable_type', 255)->nullable();
+            $table->string('billable_id', 255)->nullable();
 
             MigrationHelper::foreignKey($table, 'actor_user_id')
                 ->nullable()
@@ -58,7 +58,7 @@ return new class extends Migration
                 ->nullOnDelete();
 
             $table->string('reason', 64)->nullable();
-            $table->string('external_id')->nullable()->index();
+            $table->string('external_id', 255)->nullable()->index();
             $table->json('properties')->nullable();
             $table->timestamp('created_at')->nullable();
 

@@ -362,8 +362,11 @@ class SyncRevenueCatEntitlement implements ShouldQueue
     protected function resolveBillable(string $appUserId, bool $allowAliasFallback = false): ?Model
     {
         if (! TeamKey::looksLikeOne($appUserId)) {
+            // Logged and never recorded: the other side of a transfer (an
+            // anonymous source, typically) is no refusal of this delivery,
+            // which can still apply in full to its own subscriber.
             if (! $allowAliasFallback) {
-                $this->warn(
+                $this->log(
                     'malformed_app_user_id',
                     'RevenueCat named a transferred app_user_id that cannot be a billable key; '
                     . 'entitlement left untouched. An alias cannot stand in for a transfer side, '
@@ -524,7 +527,7 @@ class SyncRevenueCatEntitlement implements ShouldQueue
         //    promotional grant with a later date sat in front of it.
         $owned = array_filter(
             $dated,
-            fn (mixed $subscription): bool => self::providerFor(
+            fn (mixed $subscription): bool => BillingProvider::fromRevenueCatStore(
                 is_array($subscription) ? ($subscription['store'] ?? null) : null,
             ) instanceof BillingProvider,
         );
@@ -581,7 +584,7 @@ class SyncRevenueCatEntitlement implements ShouldQueue
         // The store is known to be one this feeder owns: `claimFor` filters the
         // whole set before ranking it, so a foreign rail's subscription can no
         // longer reach this method at all, let alone mask the ones behind it.
-        $provider = self::providerFor($subscription['store'] ?? null);
+        $provider = BillingProvider::fromRevenueCatStore($subscription['store'] ?? null);
 
         if (! $provider instanceof BillingProvider) {
             throw new RuntimeException(
@@ -715,7 +718,7 @@ class SyncRevenueCatEntitlement implements ShouldQueue
      */
     protected function revokingProvider(Model $billable, ?array $latest): ?BillingProvider
     {
-        $fromRead = $latest === null ? null : self::providerFor($latest['store'] ?? null);
+        $fromRead = $latest === null ? null : BillingProvider::fromRevenueCatStore($latest['store'] ?? null);
 
         if ($fromRead instanceof BillingProvider) {
             return $fromRead;
@@ -804,25 +807,6 @@ class SyncRevenueCatEntitlement implements ShouldQueue
         $url = $subscriber['management_url'] ?? null;
 
         return is_string($url) && trim($url) !== '' ? $url : null;
-    }
-
-    /**
-     * The rail behind a RevenueCat `store` value, or null when this feeder does
-     * not own it.
-     *
-     * Compared case-insensitively on purpose: the API answers `app_store` and a
-     * webhook says `APP_STORE`, for the same fact.
-     *
-     * Public and static so the webhook controller names the rail of an event it
-     * refuses with this one map rather than a second copy that could drift.
-     */
-    public static function providerFor(mixed $store): ?BillingProvider
-    {
-        return match (strtolower((string) (is_scalar($store) ? $store : ''))) {
-            'app_store', 'mac_app_store' => BillingProvider::APP_STORE,
-            'play_store' => BillingProvider::PLAY_STORE,
-            default => null,
-        };
     }
 
     /**
@@ -1113,51 +1097,68 @@ class SyncRevenueCatEntitlement implements ShouldQueue
      */
     protected function warn(string $reason, string $message, array $context = [], ?Model $billable = null): void
     {
+        $this->log($reason, $message, $context);
+
+        $recorder = app(BillingEventRecorder::class);
+
+        if (! $this->shouldRecord($reason, $recorder)) {
+            return;
+        }
+
+        $recorder->record(
+            type: BillingEventType::DELIVERY_REFUSED,
+            source: $this->source,
+            billable: $billable,
+            provider: BillingProvider::fromRevenueCatStore($this->event['store'] ?? null),
+            reason: $reason,
+            externalId: $this->deliveryId(),
+            properties: [
+                'event_type' => $this->eventType(),
+                ...$context,
+            ],
+        );
+    }
+
+    /**
+     * The warning line alone, for a decision that is no refusal of this
+     * delivery and so must never leave a row.
+     *
+     * @param  array<string, mixed>  $context
+     */
+    protected function log(string $reason, string $message, array $context = []): void
+    {
         BillingLog::warning($message, [
             'reason' => $reason,
             'event_id' => $this->event['id'] ?? null,
             'event_type' => $this->eventType(),
             ...$context,
         ]);
-
-        if (! $this->shouldRecord($reason)) {
-            return;
-        }
-
-        app(BillingEventRecorder::class)->record(
-            type: BillingEventType::DELIVERY_REFUSED,
-            source: $this->source,
-            billable: $billable,
-            provider: self::providerFor($this->event['store'] ?? null),
-            reason: $reason,
-            externalId: $this->deliveryId(),
-            properties: ['event_type' => $this->eventType(), ...$context],
-        );
     }
 
     /**
      * Whether a refusal earns a row, which is the one gate between this job and
-     * a table flooded by the reconciler.
+     * a table flooded by the reconciler or by retries.
      *
      * 1. WEBHOOK only. The reconciler re-runs this job for every subscriber on
      *    every sweep and would write the same refusal each time; its own run
      *    already reports a per-run summary.
-     * 2. `released_burnt_event_id` is exempt from the attempt gate: it is only
-     *    ever raised by {@see self::failed()}, after the LAST attempt, so
-     *    `attempts()` there is the retry budget and never 1.
-     * 3. Everything else is allow-listed and recorded on the first attempt
-     *    only, because a retry re-runs the same decision on the same delivery.
+     * 2. Allow-listed, plus `released_burnt_event_id`, which only
+     *    {@see self::failed()} raises.
+     * 3. Once per delivery and reason, by what is on record rather than by
+     *    attempt number: a retry re-runs the same decision on the same delivery,
+     *    and an attempt gate lost every refusal decided after the authoritative
+     *    read whenever attempt 1 failed on that read.
      */
-    protected function shouldRecord(string $reason): bool
+    protected function shouldRecord(string $reason, BillingEventRecorder $recorder): bool
     {
         if ($this->source !== BillingSource::WEBHOOK) {
             return false;
         }
 
-        if ($reason === 'released_burnt_event_id') {
-            return true;
+        if ($reason !== 'released_burnt_event_id' && ! in_array($reason, self::RECORDED_REFUSALS, true)) {
+            return false;
         }
 
-        return in_array($reason, self::RECORDED_REFUSALS, true) && $this->attempts() <= 1;
+        return ! $recorder->recorded(BillingEventType::DELIVERY_REFUSED, $this->deliveryId(), $reason);
     }
 }

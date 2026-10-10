@@ -34,6 +34,7 @@ use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\Bus;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Event;
+use Illuminate\Support\Facades\Exceptions;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Schema;
 use Illuminate\Support\Str;
@@ -1264,6 +1265,33 @@ class StripeWebhookTest extends TestCase
 
         $this->assertSame([0], $gateway->transactionLevels);
         $this->assertSame('fp_outside', BillingTrial::query()->sole()->card_fingerprint);
+    }
+
+    /**
+     * A throwing synchronous TrialRecorded listener is reported, never
+     * propagated: the delivery still answers 200 and the card check queued
+     * after the same commit still runs. Run on the `sync` queue, because a
+     * queue fake records the push at once and could not see a skipped
+     * after-commit callback.
+     */
+    public function test_a_throwing_trial_listener_neither_fails_the_delivery_nor_skips_the_card_check(): void
+    {
+        Exceptions::fake();
+        Event::listen(TrialRecorded::class, static function (): void {
+            throw new RuntimeException('The trial listener failed.');
+        });
+        $gateway = $this->fakeTrialCardGateway(['sub_webhook_test' => 'fp_listener']);
+
+        $billable = $this->createBillable();
+
+        $this->postSignedWebhook($this->trialEvent('evt_trial_listener', $billable->getKey()))->assertOk();
+
+        $this->assertSame([0], $gateway->transactionLevels);
+        $this->assertSame('fp_listener', BillingTrial::query()->sole()->card_fingerprint);
+        $this->assertSame(1, BillingEvent::query()->where('type', BillingEventType::TRIAL_RECORDED)->count());
+        Exceptions::assertReported(
+            static fn (RuntimeException $exception): bool => $exception->getMessage() === 'The trial listener failed.',
+        );
     }
 
     /**
