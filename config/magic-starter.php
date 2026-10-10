@@ -405,6 +405,17 @@ return [
     |             names the product KEY so the customer is charged the figure
     |             the screen showed them.
     |   'credits' optional integer a one-off purchase grants
+    |   'trial_days' optional whole number of free days a subscription starts
+    |             with, default 0 (no trial). Only the WEB rail honours it: a
+    |             Stripe Checkout session starts the trial, while a store trial
+    |             is configured in App Store Connect or Play Console and this key
+    |             never reaches either. Stripe Checkout (through Cashier)
+    |             enforces a minimum of 48 hours, so 1 would silently become 2
+    |             and is refused, as are a negative or non-integer value and
+    |             any non-zero value on a product that is not a subscription.
+    |             Whether a given customer still gets the trial is decided per
+    |             user and billable at checkout, never by this key alone: it is
+    |             the length offered, not a promise made to everybody.
     |   'sellable' optional boolean, default true. false keeps a product MAPPED
     |             without selling it: a grandfathered Stripe price or a retired
     |             store product that existing subscribers still pay, so a webhook

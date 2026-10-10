@@ -166,11 +166,15 @@ class InstallCommand extends Command
         // created with, so `create_subscriptions_table` has to be stamped
         // earlier. The customer columns come before both because they land on
         // the billable table, which is created by a migration earlier still.
+        // The trial record follows them and stays ahead of the provenance one.
+        // It keeps no foreign key to the billable, only one to `users`, so its
+        // place is about keeping provenance last, not about a dependency.
         'billing' => [
             'create_processed_webhook_events_table.php',
             'add_cashier_customer_columns_to_billable_table.php',
             'create_subscriptions_table.php',
             'create_subscription_items_table.php',
+            'create_billing_trials_table.php',
             'add_entitlement_provenance_to_billable_table.php',
         ],
     ];

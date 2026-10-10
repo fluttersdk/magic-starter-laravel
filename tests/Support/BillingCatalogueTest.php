@@ -603,6 +603,81 @@ class BillingCatalogueTest extends TestCase
         $this->assertSame(ProductType::SUBSCRIPTION, BillingCatalogue::product('pro_monthly')['type'] ?? null);
     }
 
+    public function test_a_product_without_trial_days_reads_zero(): void
+    {
+        $this->assertSame(0, BillingCatalogue::product('pro_monthly')['trial_days'] ?? null);
+        $this->assertSame(0, BillingCatalogue::product('credits_100')['trial_days'] ?? null);
+    }
+
+    #[DataProvider('acceptedTrialDays')]
+    public function test_a_subscription_trial_length_is_read_and_accepted(int $days): void
+    {
+        config(['magic-starter.billing.products.pro_monthly.trial_days' => $days]);
+
+        BillingCatalogue::validate();
+
+        $this->assertSame($days, BillingCatalogue::product('pro_monthly')['trial_days'] ?? null);
+    }
+
+    /**
+     * @return array<string, array{0: int}>
+     */
+    public static function acceptedTrialDays(): array
+    {
+        return [
+            'none' => [0],
+            'two weeks' => [14],
+            'the 48 hour minimum' => [2],
+        ];
+    }
+
+    #[DataProvider('refusedTrialDays')]
+    public function test_a_trial_length_that_is_not_a_whole_number_of_days_is_refused_naming_the_product(
+        mixed $value,
+        string $expected,
+    ): void {
+        config(['magic-starter.billing.products.pro_monthly.trial_days' => $value]);
+
+        $message = $this->refusal();
+
+        $this->assertStringContainsString('[pro_monthly]', $message);
+        $this->assertStringContainsString('trial_days', $message);
+        $this->assertStringContainsString($expected, $message);
+    }
+
+    /**
+     * @return array<string, array{0: mixed, 1: string}>
+     */
+    public static function refusedTrialDays(): array
+    {
+        return [
+            // Stripe Checkout enforces 48 hours, so one day would silently become two.
+            'one day' => [1, '48 hours'],
+            'negative' => [-1, 'whole number'],
+            'numeric string' => ['14', 'string'],
+            'float' => [14.0, 'float'],
+            'null' => [null, 'null'],
+        ];
+    }
+
+    public function test_a_trial_on_a_product_that_is_not_a_subscription_is_refused_naming_the_product(): void
+    {
+        config(['magic-starter.billing.products.credits_100.trial_days' => 14]);
+
+        $message = $this->refusal();
+
+        $this->assertStringContainsString('[credits_100]', $message);
+        $this->assertStringContainsString('trial_days', $message);
+        $this->assertStringContainsString('subscription', $message);
+
+        // Zero is the absence of a trial, so it is legal on any type.
+        config(['magic-starter.billing.products.credits_100.trial_days' => 0]);
+
+        BillingCatalogue::validate();
+
+        $this->addToAssertionCount(1);
+    }
+
     /**
      * A catalogue that passes every rule: one free floor, two sellable tiers and
      * a consumable, on all three channels.
