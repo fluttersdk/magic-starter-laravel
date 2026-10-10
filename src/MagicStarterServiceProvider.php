@@ -113,6 +113,11 @@ class MagicStarterServiceProvider extends ServiceProvider
         // replaces the network without replacing the job's rules.
         $this->app->bind(Support\TrialCardGateway::class);
 
+        // Unconditional for the same reason as WritesEntitlement: every
+        // billing path records through it whatever the feature flags say. A
+        // singleton so the table check runs once per worker.
+        $this->app->singleton(Support\BillingEventRecorder::class);
+
         // Cashier is wired HERE and never in boot(), because boot() is already
         // too late: CashierServiceProvider::boot() registers the stripe/webhook
         // route under config('cashier.path') the moment it runs, and every

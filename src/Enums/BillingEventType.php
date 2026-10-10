@@ -2,6 +2,20 @@
 
 namespace FlutterSdk\MagicStarter\Enums;
 
+use FlutterSdk\MagicStarter\Events\Billing\BillingOutcomeEvent;
+use FlutterSdk\MagicStarter\Events\Billing\CheckoutStarted;
+use FlutterSdk\MagicStarter\Events\Billing\DeliveryRefused;
+use FlutterSdk\MagicStarter\Events\Billing\EntitlementApplied;
+use FlutterSdk\MagicStarter\Events\Billing\EntitlementDropped;
+use FlutterSdk\MagicStarter\Events\Billing\PortalOpened;
+use FlutterSdk\MagicStarter\Events\Billing\RequestRefused;
+use FlutterSdk\MagicStarter\Events\Billing\SubscriptionCancelled;
+use FlutterSdk\MagicStarter\Events\Billing\SubscriptionSwapped;
+use FlutterSdk\MagicStarter\Events\Billing\TrialCancelled;
+use FlutterSdk\MagicStarter\Events\Billing\TrialRecorded;
+use FlutterSdk\MagicStarter\Events\Billing\TrialRefusalWithdrawn;
+use FlutterSdk\MagicStarter\Events\Billing\TrialRefused;
+
 /**
  * What happened, as `billing_events.type` stores it.
  *
@@ -37,7 +51,7 @@ enum BillingEventType: string
 
     case TRIAL_CANCELLED = 'trial_cancelled';
 
-    /** A refusal was taken back because Stripe no longer reports the subscription as trialing; nothing was cancelled. */
+    /** A refusal was taken back: Stripe no longer reports the subscription as trialing, so nothing was cancelled. */
     case TRIAL_REFUSAL_WITHDRAWN = 'trial_refusal_withdrawn';
 
     /**
@@ -56,6 +70,29 @@ enum BillingEventType: string
             self::TRIAL_RECORDED,
             self::TRIAL_CANCELLED,
             self::TRIAL_REFUSAL_WITHDRAWN => false,
+        };
+    }
+
+    /**
+     * The event dispatched for this outcome.
+     *
+     * @return class-string<BillingOutcomeEvent>
+     */
+    public function eventClass(): string
+    {
+        return match ($this) {
+            self::ENTITLEMENT_APPLIED => EntitlementApplied::class,
+            self::ENTITLEMENT_DROPPED => EntitlementDropped::class,
+            self::CHECKOUT_STARTED => CheckoutStarted::class,
+            self::SUBSCRIPTION_SWAPPED => SubscriptionSwapped::class,
+            self::SUBSCRIPTION_CANCELLED => SubscriptionCancelled::class,
+            self::PORTAL_OPENED => PortalOpened::class,
+            self::REQUEST_REFUSED => RequestRefused::class,
+            self::DELIVERY_REFUSED => DeliveryRefused::class,
+            self::TRIAL_RECORDED => TrialRecorded::class,
+            self::TRIAL_REFUSED => TrialRefused::class,
+            self::TRIAL_CANCELLED => TrialCancelled::class,
+            self::TRIAL_REFUSAL_WITHDRAWN => TrialRefusalWithdrawn::class,
         };
     }
 }
