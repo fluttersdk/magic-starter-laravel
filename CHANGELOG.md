@@ -4,6 +4,8 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [0.0.23] - 2026-10-10
+
 ### Added
 
 - **`trial_days` on a catalogue product: a free trial on the web rail.** A whole number of days, default `0` (no trial); `0`, or `2` to `730`, since Stripe Checkout enforces a minimum of 48 hours and accepts no trial longer than 730 days (two years). Boot refuses `1`, anything above `730`, a negative or non-integer value, and any non-zero value on a product that is not a subscription. Only Stripe honours it: a store (intro offer) trial is configured in App Store Connect or Play Console and is separate. (`config/magic-starter.php`, `src/Support/BillingCatalogue.php`)
