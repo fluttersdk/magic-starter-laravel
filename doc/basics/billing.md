@@ -12,6 +12,7 @@
 - [Trials](#trials)
 - [RevenueCat Webhook](#revenuecat-webhook)
 - [Agent Commands](#agent-commands)
+- [Audit Log](#audit-log)
 - [Account Deletion](#account-deletion)
 - [Upgrading](#upgrading)
 
@@ -467,11 +468,100 @@ php artisan billing:doctor --json
 php artisan billing:doctor --json --remote
 ```
 
-Without `--remote` it checks the configuration: the catalogue validates, the rail secrets that a sold product needs are set, `REVENUECAT_WEBHOOK_SECRET` exists while the store rail is on, every web-sold product has a Stripe price id, store ids are listed, billable keys are UUIDs, the subscription tables are keyed the way their models write them (`schema.subscription_keys`), the `billing_trials` table exists while a product offers a trial (`schema.billing_trials`), and the reconcile cadence suits the store rail. With `--remote` it also reads Stripe and RevenueCat and diffs them against the manifest: a Stripe price per lookup key (id, interval, amounts), and the RevenueCat apps, products, entitlements, `default` offering, packages and webhook (that one delivers to this application's URL). RevenueCat returns a webhook's signing secret only when it is rotated, so whether HMAC signing is on cannot be read: the doctor reports it as an `agent_check` for a person to confirm in the dashboard.
+Without `--remote` it checks the configuration: the catalogue validates, the rail secrets that a sold product needs are set, `REVENUECAT_WEBHOOK_SECRET` exists while the store rail is on, every web-sold product has a Stripe price id, store ids are listed, billable keys are UUIDs, the subscription tables are keyed the way their models write them (`schema.subscription_keys`), the `billing_trials` table exists while a product offers a trial (`schema.billing_trials`), the `billing_events` table exists (`schema.billing_events`), and the reconcile cadence suits the store rail. With `--remote` it also reads Stripe and RevenueCat and diffs them against the manifest: a Stripe price per lookup key (id, interval, amounts), and the RevenueCat apps, products, entitlements, `default` offering, packages and webhook (that one delivers to this application's URL). RevenueCat returns a webhook's signing secret only when it is rotated, so whether HMAC signing is on cannot be read: the doctor reports it as an `agent_check` for a person to confirm in the dashboard.
 
 `REVENUECAT_API_V2_KEY` is a separate secret key scoped to `project_configuration:{apps,products,entitlements,offerings,packages,integrations}:read`, and `REVENUECAT_PROJECT_ID` names the project. Neither is needed to sell.
 
 The JSON is `{"schema_version": 1, "ok": true, "checks": [...]}`. Each check has a stable `id`, a `status` of `ok`, `warning`, `error` or `agent_check`, and a `message`. `agent_check` is vendor state this package cannot read (App Store Connect, Play Console) and names the command to run in `command`. Any `error` exits 1.
+
+---
+
+<a name="audit-log"></a>
+## Audit Log
+
+Every billing outcome leaves one row in `billing_events` and dispatches one Laravel event, so "why did this subscriber lose access" is answered after the webhook that did it is long gone. A new install publishes the migration with the other billing ones; an existing application copies it in, see [Upgrading](#upgrading).
+
+| Column | Holds |
+|--------|-------|
+| `type` | What happened, one of the values below. Indexed. |
+| `source` | Which path acted: `webhook` (a Stripe or RevenueCat delivery), `reconcile` (`billing:reconcile`), `request` (an authenticated API call), `trial_check` (the queued card check). |
+| `provider` | The rail (`stripe`, `app_store`, `play_store`), or null. |
+| `billable_type`, `billable_id` | The subject, as `getMorphClass()` and its key. Plain nullable strings with no foreign key: a refusal may have no billable, and a raw store id must fit. |
+| `actor_user_id` | The signed-in user who caused it, or null for a rail-driven outcome. Nullable foreign key to `users`, set to null when the user is deleted. |
+| `reason` | A stable snake_case rule name, never prose, or null. |
+| `external_id` | The rail's own id: a Stripe event id, a RevenueCat event id (without the `rc:` prefix the dedup table uses), a Checkout session or Stripe subscription id. Null on a reconcile write. Indexed. |
+| `properties` | JSON with whatever else the outcome needs, never a secret. |
+| `created_at` | There is no `updated_at`. |
+
+### What is recorded
+
+| `type` | Source | `reason` | Properties |
+|--------|--------|----------|------------|
+| `entitlement_applied` | `webhook`, `reconcile`, `trial_check` | none | `before`, `after`, `changed`, `direction`, `cross_rail`. |
+| `entitlement_dropped` | any feeder | `stale`, `same_instant_revocation`, `undecidable_tier_order`, `cross_rail_revocation`, `projected_cross_rail_takeover` | The log context and `incoming_status`. |
+| `checkout_started` | `request` | none | `product`, `price_id`, `trial_days`. |
+| `subscription_swapped` | `request` | none | `product`, `price_id`. |
+| `subscription_cancelled` | `request` | none | `ends_at`. |
+| `portal_opened` | `request` | none | none. |
+| `request_refused` | `request` | `managed_by_store`, `no_billing_account`, `subscription_exists` | none. The 409s of [Refusals](#refusals). |
+| `delivery_refused` | `webhook` | See below. | Per reason. |
+| `trial_recorded` | `webhook` | none | `stripe_subscription_id`, `trial_ends_at`. |
+| `trial_refused` | `trial_check` | `card_reused`, `duplicate` | `billing_trial_id`, `user_id`. |
+| `trial_cancelled` | `trial_check` | none | `billing_trial_id`, `user_id`. |
+| `trial_refusal_withdrawn` | `trial_check` | `refused_trial_converted` | `stripe_status`. |
+
+An apply writes `entitlement_applied` only when what the entitlement **means** changed: `plan`, `plan_status`, `plan_provider`, `plan_current_period_end` or `plan_renews`. `changed` names those fields and `before` and `after` carry the five values. An apply that only refreshed provenance (a renewal, a reconcile read) writes no row, since that would be one row per delivery that says nothing. `direction` is `upgrade`, `same`, `downgrade`, `unknown`, `no-order` or `nothing-stored`, and `cross_rail` is true when a rail holding the record handed it to another.
+
+`delivery_refused` is a verified delivery the package decided not to act on:
+
+- Stripe: `unmapped_price` (a granting price with no tier mapping) and `revocation_skipped` (a deleted subscription while another still grants).
+- RevenueCat endpoint: `unreadable_event` and `non_production_environment`.
+- RevenueCat job, on the webhook source and its first attempt only: `malformed_app_user_id`, `unknown_billable`, `ambiguous_aliases`, `sandbox_only_subscriber`, `undated_subscriptions`, `unmapped_product` and `nothing_to_revoke`. `released_burnt_event_id` is also recorded when the job gives up after its last attempt and releases the dedup claim.
+
+`trial_cancelled` is written once per subscription: a re-run that finds Stripe already ended it does not write a second one.
+
+**Deliberately not recorded:** Stripe and RevenueCat signature failures (unauthenticated input must not write rows), the reconciler's per-run skips, Stripe's silent skips (a duplicate delivery, no billable, a non-default subscription type), a 422 or a 404 (the caller's own mistake, or an honest absence), the RevenueCat `family_shared_entitlement` (the tier was granted) and `unfed_store` (another rail's subscription), and a RevenueCat job refusal on the reconcile source or on a retry.
+
+### Append-only, and recording never breaks billing
+
+A row is written once. `BillingEvent` throws a `LogicException` on `update()` and `delete()`, and the only code that removes rows is the prune command, which deletes by age through the query builder.
+
+Recording sits inside the Stripe webhook's own transaction, so the insert runs in a savepoint and only a `QueryException` is caught: it is logged at error level and the entitlement write goes on. A missing table logs one warning per process and skips the row. In both cases the event is still dispatched, with an unsaved model.
+
+`billing_events` survives deletion: deleting a user clears `actor_user_id`, and the billable has no foreign key, so deleting a user or team keeps its rows.
+
+### Listening
+
+Each outcome is one class in `FlutterSdk\MagicStarter\Events\Billing` (`EntitlementApplied`, `EntitlementDropped`, `CheckoutStarted`, `SubscriptionSwapped`, `SubscriptionCancelled`, `PortalOpened`, `RequestRefused`, `DeliveryRefused`, `TrialRecorded`, `TrialRefused`, `TrialCancelled`, `TrialRefusalWithdrawn`), and all of them implement `BillingOutcome`. They are dispatched after the surrounding transaction commits, so an outcome that rolled back never fires. The package registers no listener of its own.
+
+```php
+use FlutterSdk\MagicStarter\Events\Billing\BillingOutcome;
+use Illuminate\Support\Facades\Event;
+
+Event::listen(BillingOutcome::class, function (BillingOutcome $event): void {
+    $record = $event->record();
+
+    if ($record->type->isRefusal()) {
+        // alert, count, notify...
+    }
+});
+```
+
+`record()` is the `BillingEvent`, unsaved (`exists` false) when the row could not be written, so read its attributes and not its key. `type` and `source` cast to the `BillingEventType` and `BillingSource` enums, and `provider` to `BillingProvider`. Listen to one concrete class for a single outcome.
+
+### Logs and retention
+
+Billing log lines (webhook outcomes, reconciler runs, drops, refusals) go to the channel named by `magic-starter.billing.log_channel`, and successes are logged at info level. Null, the default, uses the application's default channel. Boot-time messages and the trial eligibility warning keep using the default channel.
+
+| Config key | Env | Default |
+|------------|-----|---------|
+| `magic-starter.billing.log_channel` | `MAGIC_STARTER_BILLING_LOG_CHANNEL` | `null` |
+| `magic-starter.billing.webhook_retention_days` | `MAGIC_STARTER_BILLING_WEBHOOK_RETENTION_DAYS` | `90` |
+| `magic-starter.billing.events_retention_days` | `MAGIC_STARTER_BILLING_EVENTS_RETENTION_DAYS` | `null` (keep forever) |
+
+`php artisan magic-starter:billing:prune` deletes `processed_webhook_events` rows older than `webhook_retention_days`, and `billing_events` rows older than `events_retention_days` when it is set. It runs daily while the billing feature is on. The webhook retention is never taken below 31 days: a dedup claim is the only thing that stops a resent event from running twice, and Stripe's CLI can resend an event up to 30 days old. The history is financial, so keep `events_retention_days` null unless your retention policy demands a number.
+
+`billing:doctor` reports a missing `billing_events` table as an `error` with the id `schema.billing_events`.
 
 ---
 
@@ -488,3 +578,12 @@ A user who owns a team that a rail is still billing, or who is billed directly u
 The catalogue replaces `plans`, `prices` and `store_products`, and checkout and swap take `product` instead of `plan` and `cycle`. The [changelog](../../CHANGELOG.md) carries the migration steps.
 
 An application that installed before trials existed and wants to sell one copies `vendor/fluttersdk/magic-starter-laravel/database/migrations/create_billing_trials_table.php` into `database/migrations/` under a timestamp later than your latest migration and runs `php artisan migrate`, before it sets a `trial_days`. Do not re-run `magic-starter:install` for this. An application that sets no `trial_days` never reads the table and needs neither.
+
+The audit log needs two migrations. Copy `create_billing_events_table.php` and `add_processed_at_index_to_processed_webhook_events_table.php` from `vendor/fluttersdk/magic-starter-laravel/database/migrations/` into `database/migrations/` under timestamps later than your latest migration (or re-run the install command's billing publish) and run `php artisan migrate`. Until you do, billing keeps working and each worker logs one warning that `billing_events` is missing; `billing:doctor` reports it as `schema.billing_events`.
+
+Code that builds on the package internals changes in these places:
+
+- `EntitlementWrite` now requires `source:` (a `BillingSource`), and `eventId:` is optional. An adopter-built `EntitlementWrite` without `source:` throws an `ArgumentCountError`.
+- A custom `WritesEntitlement` records through `BillingEventRecorder` itself, or the writes it makes leave no row.
+- A subclass of `StripeWebhookController` that overrides `subscriptionClaim`, `revokeEntitlement`, `reaffirmEntitlementFromInvoice` or `warnUnmappedPrice` adds the `string $eventId` parameter those methods gained. Its constructor, like `BillingController`'s, now takes a `BillingEventRecorder`.
+- `CheckTrialCard::handle` takes a `BillingEventRecorder` parameter, and `ReconcileBillingEntitlements::reconcileStripeSubject` takes an optional `BillingSource`.

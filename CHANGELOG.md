@@ -4,6 +4,31 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Added
+
+- **The `billing_events` table: an append-only audit log of every billing outcome.** One row per outcome, with `type`, `source` (`webhook`, `reconcile`, `request`, `trial_check`), `provider`, `reason`, `external_id`, the billable (`billable_type`, `billable_id`, no foreign key), `actor_user_id` (nullable foreign key, nulled when the user is deleted), `properties` and `created_at`. The model throws on `update()` and `delete()`; only the prune command removes rows. Rows survive the deletion of a user or a team. (`database/migrations/create_billing_events_table.php`, `src/Models/BillingEvent.php`, `src/Enums/BillingEventType.php`, `src/Enums/BillingSource.php`)
+- **`Support\BillingEventRecorder`, the one seam every outcome records through.** It inserts the row inside a savepoint, dispatches the event outside it and logs the success line. Only a `QueryException` is caught and logged at error level; a missing table logs one warning per process and skips the row, and the event is dispatched either way. Billing never fails because its history could not be written. (`src/Support/BillingEventRecorder.php`)
+- **Twelve outcome events implementing `Events\Billing\BillingOutcome`.** `EntitlementApplied`, `EntitlementDropped`, `CheckoutStarted`, `SubscriptionSwapped`, `SubscriptionCancelled`, `PortalOpened`, `RequestRefused`, `DeliveryRefused`, `TrialRecorded`, `TrialRefused`, `TrialCancelled` and `TrialRefusalWithdrawn`, dispatched after commit. `Event::listen(BillingOutcome::class, ...)` receives all of them and `$event->record()` is the row. The package registers no listener. (`src/Events/Billing/`)
+- **Entitlement writes are recorded.** `entitlement_applied` is written only when the plan, status, provider, period end or renewal flag changed, and a write that only refreshed provenance leaves no row. `entitlement_dropped` is written at every drop exit with the reason `stale`, `same_instant_revocation`, `undecidable_tier_order`, `cross_rail_revocation` or `projected_cross_rail_takeover`. (`src/Actions/WriteEntitlement.php`)
+- **Requests, refusals and trials are recorded.** `checkout_started`, `subscription_swapped`, `subscription_cancelled`, `portal_opened`, the 409 `request_refused` (`managed_by_store`, `no_billing_account`, `subscription_exists`), `delivery_refused` from the Stripe and RevenueCat webhooks and the RevenueCat job, and `trial_recorded`, `trial_refused`, `trial_cancelled` and `trial_refusal_withdrawn` from the trial flow. Not recorded: signature failures, the reconciler's per-run skips, Stripe's silent skips, 422 and 404 answers, and the RevenueCat `family_shared_entitlement` and `unfed_store` notes. (`src/Http/Controllers/`, `src/Jobs/`)
+- **`magic-starter:billing:prune`, scheduled daily while billing is on.** It deletes `processed_webhook_events` rows older than `billing.webhook_retention_days` (`MAGIC_STARTER_BILLING_WEBHOOK_RETENTION_DAYS`, default `90`, never applied below 31 days because Stripe can resend an event up to 30 days old) and `billing_events` rows older than `billing.events_retention_days` (`MAGIC_STARTER_BILLING_EVENTS_RETENTION_DAYS`, default `null`, which keeps them forever). (`src/Console/PruneBillingRecordsCommand.php`, `config/magic-starter.php`, `src/MagicStarterServiceProvider.php`)
+- **The migration `add_processed_at_index_to_processed_webhook_events_table.php`.** Indexes `processed_at` so the prune does not scan the dedup table. (`database/migrations/add_processed_at_index_to_processed_webhook_events_table.php`)
+- **`billing:doctor` reports a missing `billing_events` table as `schema.billing_events`.** (`src/Console/BillingDoctorCommand.php`)
+
+### Changed
+
+- **Billing log lines honour `billing.log_channel` (`MAGIC_STARTER_BILLING_LOG_CHANNEL`).** Webhook outcomes, drops, refusals and trial checks go to that channel through `Support\BillingLog`, and successes are logged at info level. With it null, the default, the lines go to the application's default channel as before. (`src/Support/BillingLog.php`, `config/magic-starter.php`)
+
+### Upgrading
+
+- **Copy two migrations and run `php artisan migrate`.** Copy `create_billing_events_table.php` and `add_processed_at_index_to_processed_webhook_events_table.php` from `vendor/fluttersdk/magic-starter-laravel/database/migrations/` into `database/migrations/` under timestamps later than your latest migration, or re-run the install command's billing publish. Until then each worker logs one warning and records no rows; `billing:doctor` reports `schema.billing_events`.
+- **`EntitlementWrite` requires `source:`**, a `BillingSource`. An adopter-built `EntitlementWrite` without it throws an `ArgumentCountError`. A custom `WritesEntitlement` records through `BillingEventRecorder`, or its writes leave no row.
+- **Protected signatures changed.** `StripeWebhookController::subscriptionClaim`, `revokeEntitlement`, `reaffirmEntitlementFromInvoice` and `warnUnmappedPrice` gained a `string $eventId`; `ReconcileBillingEntitlements::reconcileStripeSubject` gained an optional `BillingSource`; `CheckTrialCard::handle` gained a `BillingEventRecorder` parameter; the `BillingController` and `StripeWebhookController` constructors gained the recorder. A subclass that overrides any of these must be updated.
+
+### Documentation
+
+- `doc/basics/billing.md` documents the audit log: the table, every type with its reasons, what is not recorded, the events and a listener, the log channel, retention and the prune command; `resources/boost/skills/magic-starter-development/references/billing-setup.md` carries the same in brief.
+
 ## [0.0.23] - 2026-10-10
 
 ### Added
