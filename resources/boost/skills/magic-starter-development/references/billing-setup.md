@@ -132,6 +132,17 @@ php artisan billing:doctor --json --remote
 
 `ok: true` and exit 0 mean no `error`. Fix each `error` by its check id, which is stable (`stripe.remote.price.pro_monthly`, `revenuecat.package.pro_monthly`, `revenuecat.webhook`). Re-run until it passes. An `agent_check` is vendor state the package cannot read. When it carries a `command`, run it yourself and compare the output with the manifest section it names (`asc subscriptions groups list --app <app-id>`, `gplay subscriptions list --package <package-name>`). When it carries none, it is a dashboard step only a person can confirm (`revenuecat.webhook.hmac`: the RevenueCat API returns the signing secret only on rotation, so never rotate it to check): ask the owner. Report the remaining `warning` entries to the owner.
 
+## Trials
+
+`trial_days` on a subscription product (`0`, or `2` and above) starts a free trial on the web rail only. It never reaches App Store Connect, Play Console or RevenueCat: a store (intro offer) trial is configured there by a person, and is separate from the web one. Nothing in the manifest carries it.
+
+- Eligibility is `TrialEligibility::allows($user, $billable)`: not a guest, no `billing_trials` row for the user or the billable, and no `default` Cashier subscription on the billable in any status. An ineligible caller buys with no trial, and `GET billing/plans` shows them `trial_days: 0`.
+- Checkout always sends `payment_method_collection=always`. The `customer.subscription.created` webhook records a `billing_trials` row and queues `CheckTrialCard`, which reads the card fingerprint and, among trials sharing a person, a subject or a card, keeps the earliest and cancels later ones still trialing (no proration, no invoice).
+- The table needs `create_billing_trials_table.php`: a fresh `magic-starter:install --features=billing` publishes it; for an existing application copy it from `vendor/fluttersdk/magic-starter-laravel/database/migrations/` into `database/migrations/` under a later timestamp and run `php artisan migrate`. `billing:doctor` reports a missing table as `schema.billing_trials`.
+- A refused trial whose card had already trialed mails `TrialRefusedNotification`; `magic-starter.billing.trial_refused_notification` (`MAGIC_STARTER_TRIAL_REFUSED_NOTIFICATION`, default `true`) switches it off.
+- `billing:reconcile` re-dispatches every trial check (and every refusal still owed its cancel) unchecked after 30 minutes, on its own cadence (`magic-starter.billing.reconcile.cadence`, default `daily`; set `hourly` when trials are on). A `sync` queue relies on it, because the job cannot retry itself there.
+- Tell the owner: the fingerprint of a refused person is retained after the account is deleted (`user_id` becomes null) as an anti-abuse record, so the privacy policy should say so; and a wallet card (Apple Pay, Google Pay) can carry a different fingerprint than the plain card, which is an accepted limitation.
+
 ## What to Watch For
 
 - The product key is `<tier>_<cycle>` and is the Stripe lookup key and the RevenueCat package lookup key. Do not invent another.

@@ -7,8 +7,11 @@ use FlutterSdk\MagicStarter\Console\ReconcileBillingEntitlements;
 use FlutterSdk\MagicStarter\Contracts\WritesEntitlement;
 use FlutterSdk\MagicStarter\Enums\BillingProvider;
 use FlutterSdk\MagicStarter\Enums\PlanStatus;
+use FlutterSdk\MagicStarter\Enums\TrialRefusalReason;
 use FlutterSdk\MagicStarter\Features;
+use FlutterSdk\MagicStarter\Jobs\CheckTrialCard;
 use FlutterSdk\MagicStarter\MagicStarter;
+use FlutterSdk\MagicStarter\Models\BillingTrial;
 use FlutterSdk\MagicStarter\Models\Subscription;
 use FlutterSdk\MagicStarter\Support\RevenueCatClient;
 use FlutterSdk\MagicStarter\Tests\Fixtures\ConcreteUser;
@@ -21,8 +24,10 @@ use Illuminate\Database\Eloquent\Model;
 use Illuminate\Http\Client\Request;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\Artisan;
+use Illuminate\Support\Facades\Bus;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Log;
+use Illuminate\Support\Facades\Schema;
 use Illuminate\Support\Str;
 use Laravel\Cashier\Billable;
 use Laravel\Cashier\Cashier;
@@ -685,6 +690,112 @@ class ReconcileBillingEntitlementsTest extends TestCase
     }
 
     // -------------------------------------------------------------------------
+    // The trial card checks a lost dispatch left behind
+    // -------------------------------------------------------------------------
+
+    /**
+     * Every trial still unchecked half an hour after it was recorded is
+     * re-dispatched, refused or not. A live one is a check whose after-commit
+     * dispatch was lost (a worker that died, a `sync` queue that cannot retry
+     * itself); a refused one is a cancel still owed, whose job gave up on a
+     * Stripe failure on its last attempt, and nothing else would ever finish
+     * it. A younger row is a check still on its way, and a checked one (kept,
+     * or refused and cancelled) was decided.
+     */
+    public function test_the_sweep_redispatches_every_stale_unchecked_trial_including_owed_refusals(): void
+    {
+        Bus::fake([CheckTrialCard::class]);
+
+        $this->offerTrials();
+        $this->runPackageMigration('create_billing_trials_table.php');
+
+        $stale = $this->recordedTrial('sub_stale', minutesAgo: 31);
+        $owed = $this->recordedTrial('sub_owed', minutesAgo: 31, refused: true);
+        $this->recordedTrial('sub_fresh', minutesAgo: 10);
+        $this->recordedTrial('sub_checked', minutesAgo: 31, checked: true);
+        $this->recordedTrial('sub_refused', minutesAgo: 31, checked: true, refused: true);
+
+        $this->artisan(ReconcileBillingEntitlements::NAME)->assertExitCode(0)->run();
+
+        $dispatched = [];
+
+        Bus::assertDispatched(CheckTrialCard::class, function (CheckTrialCard $job) use (&$dispatched): bool {
+            $dispatched[] = (string) $job->trialId;
+
+            return true;
+        });
+
+        sort($dispatched);
+        $expected = [
+            (string) $stale->getKey(),
+            (string) $owed->getKey(),
+        ];
+        sort($expected);
+
+        $this->assertSame($expected, $dispatched);
+    }
+
+    /**
+     * A catalogue that offers no trial never reads the table at all, so an
+     * adopter who sells without trials pays nothing for this.
+     */
+    public function test_the_trial_sweep_does_nothing_while_no_product_offers_a_trial(): void
+    {
+        Bus::fake([CheckTrialCard::class]);
+
+        $this->runPackageMigration('create_billing_trials_table.php');
+        $this->recordedTrial('sub_stale', minutesAgo: 31);
+
+        $this->artisan(ReconcileBillingEntitlements::NAME)->assertExitCode(0)->run();
+
+        Bus::assertNotDispatched(CheckTrialCard::class);
+    }
+
+    /**
+     * An adopter who turned trials on and has not run the migration yet gets a
+     * sweep that still reconciles, not a QueryException from a scheduled run.
+     */
+    public function test_the_trial_sweep_does_nothing_while_the_table_is_absent(): void
+    {
+        Bus::fake([CheckTrialCard::class]);
+
+        $this->offerTrials();
+
+        $this->assertFalse(Schema::hasTable('billing_trials'));
+
+        $this->artisan(ReconcileBillingEntitlements::NAME)
+            ->expectsOutputToContain('Reconciled 0 billable(s): 0 corrected, 0 unreadable.')
+            ->assertExitCode(0)
+            ->run();
+
+        Bus::assertNotDispatched(CheckTrialCard::class);
+    }
+
+    /**
+     * A hand-run diagnosis of one customer does not sweep everybody's trials.
+     */
+    public function test_the_trial_sweep_is_skipped_for_a_single_billable_run(): void
+    {
+        Bus::fake([CheckTrialCard::class]);
+
+        $this->offerTrials();
+        $this->runPackageMigration('create_billing_trials_table.php');
+        $this->recordedTrial('sub_stale', minutesAgo: 31);
+
+        $billable = $this->makeBillable([
+            'plan' => 'pro',
+            'plan_status' => PlanStatus::ACTIVE->value,
+            'plan_provider' => BillingProvider::STRIPE->value,
+        ]);
+
+        $this->artisan(ReconcileBillingEntitlements::NAME, ['--billable' => (string) $billable->getKey()])
+            ->assertExitCode(0)
+            ->run();
+
+        Bus::assertNotDispatched(CheckTrialCard::class);
+    }
+
+    // -------------------------------------------------------------------------
     // The schedule
     // -------------------------------------------------------------------------
 
@@ -770,6 +881,43 @@ class ReconcileBillingEntitlementsTest extends TestCase
     // -------------------------------------------------------------------------
     // Fixtures
     // -------------------------------------------------------------------------
+
+    /**
+     * Put a trial on the monthly product, which is what arms the trial sweep.
+     */
+    private function offerTrials(): void
+    {
+        config(['magic-starter.billing.products.pro_monthly.trial_days' => 14]);
+    }
+
+    /**
+     * A `billing_trials` row as the webhook writes it, aged by its `created_at`.
+     */
+    private function recordedTrial(
+        string $subscriptionId,
+        int $minutesAgo,
+        bool $checked = false,
+        bool $refused = false,
+    ): BillingTrial {
+        $billable = $this->makeBillable([]);
+        $recordedAt = Carbon::now()->subMinutes($minutesAgo);
+
+        $trial = new BillingTrial;
+        $trial->forceFill([
+            'user_id' => $billable->getKey(),
+            'billable_type' => $billable->getMorphClass(),
+            'billable_id' => $billable->getKey(),
+            'stripe_subscription_id' => $subscriptionId,
+            'subscription_created_at' => $recordedAt,
+            'checked_at' => $checked ? $recordedAt : null,
+            'refused_at' => $refused ? $recordedAt : null,
+            'refusal_reason' => $refused ? TrialRefusalReason::DUPLICATE : null,
+            'created_at' => $recordedAt,
+            'updated_at' => $recordedAt,
+        ])->save();
+
+        return $trial;
+    }
 
     /**
      * The reconciler's own entry on the schedule, or null when it has none.

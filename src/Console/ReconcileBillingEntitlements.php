@@ -7,8 +7,11 @@ use Carbon\CarbonInterface;
 use FlutterSdk\MagicStarter\Contracts\WritesEntitlement;
 use FlutterSdk\MagicStarter\Enums\BillingProvider;
 use FlutterSdk\MagicStarter\Enums\PlanStatus;
+use FlutterSdk\MagicStarter\Jobs\CheckTrialCard;
 use FlutterSdk\MagicStarter\Jobs\SyncRevenueCatEntitlement;
 use FlutterSdk\MagicStarter\MagicStarter;
+use FlutterSdk\MagicStarter\Models\BillingTrial;
+use FlutterSdk\MagicStarter\Support\BillingCatalogue;
 use FlutterSdk\MagicStarter\Support\EntitlementWrite;
 use FlutterSdk\MagicStarter\Support\ReadsBillableAttributes;
 use FlutterSdk\MagicStarter\Support\RevenueCatClient;
@@ -21,6 +24,7 @@ use Illuminate\Http\Client\ConnectionException;
 use Illuminate\Http\Client\RequestException;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\Log;
+use Illuminate\Support\Facades\Schema;
 use RuntimeException;
 
 /**
@@ -104,6 +108,13 @@ use RuntimeException;
  * {@see MagicStarter::billableModel()}, and Cashier's `Billable` trait is the
  * consuming application's decision rather than this package's, so every read
  * that trait provides is guarded with `method_exists()` before it is made.
+ *
+ * ## It also retries the trial card checks nothing else will
+ *
+ * A full run (never a `--billable=` one) re-dispatches {@see CheckTrialCard}
+ * for every trial still unchecked half an hour after it was recorded, a
+ * refusal whose cancel is still owed included: see
+ * {@see self::redispatchUncheckedTrials()}.
  */
 class ReconcileBillingEntitlements extends Command
 {
@@ -168,6 +179,12 @@ class ReconcileBillingEntitlements extends Command
      * thing: this row was last written by the sweep, not by a delivery.
      */
     protected const RECONCILED = 'RECONCILIATION';
+
+    /**
+     * Minutes an unchecked trial is left to its own queued check before this
+     * sweep dispatches another one.
+     */
+    protected const TRIAL_CHECK_GRACE_MINUTES = 30;
 
     /**
      * How many subjects were walked, corrected, and skipped without a correction.
@@ -241,7 +258,76 @@ class ReconcileBillingEntitlements extends Command
             $this->unreadable,
         ));
 
+        // A hand-run diagnosis of ONE subject is about that subject, so it
+        // leaves everybody else's trials to the scheduled run.
+        if ($only === null) {
+            $this->redispatchUncheckedTrials();
+        }
+
         return $this->unreadable === 0 ? self::SUCCESS : self::FAILURE;
+    }
+
+    /**
+     * Re-dispatch the card check of every trial still unchecked half an hour
+     * after the webhook recorded it, refused or not.
+     *
+     * The webhook queues {@see CheckTrialCard} after its transaction commits,
+     * and that dispatch can be lost after the row has committed (a process
+     * killed between the two, a queue that refused the push). On the `sync`
+     * queue the job also cannot release itself for a retry. A REFUSED row with
+     * no `checked_at` is a cancel the job wrote and could not finish (Stripe
+     * failed on its last attempt), and nothing but this sweep ever retries it;
+     * the retry asks Stripe's live status before it cancels anything. Either
+     * way the row stays unchecked, and this sweep is what retries it. Half an
+     * hour leaves a check still on its way (six attempts a minute apart) alone.
+     *
+     * It runs on this command's cadence, daily by default, which is why an
+     * application selling trials should schedule it `hourly`.
+     *
+     * Two guards, both before the first query, so an adopter who sells no
+     * trial never touches the table: some catalogue product must offer
+     * `trial_days`, and the `billing_trials` table must exist. The second is
+     * an adopter who turned trials on and has not migrated yet; a scheduled
+     * run raising a QueryException there would also cost every subject the
+     * reconciliation above it.
+     */
+    protected function redispatchUncheckedTrials(): void
+    {
+        if (! BillingCatalogue::offersTrials() || ! Schema::hasTable('billing_trials')) {
+            return;
+        }
+
+        $dispatched = 0;
+
+        BillingTrial::query()
+            ->whereNull('checked_at')
+            ->where('created_at', '<=', CarbonImmutable::now()->subMinutes(self::TRIAL_CHECK_GRACE_MINUTES))
+            ->lazyById(self::CHUNK_SIZE)
+            ->each(function (BillingTrial $trial) use (&$dispatched): void {
+                CheckTrialCard::dispatch($trial->getKey());
+                $dispatched++;
+            });
+
+        if ($dispatched > 0) {
+            $this->info(sprintf('Re-dispatched %d unchecked trial card check(s).', $dispatched));
+        }
+    }
+
+    /**
+     * Re-project ONE subject's entitlement from its local `default` Cashier
+     * row, outside a sweep.
+     *
+     * The Stripe arm of {@see self::reconcile()} alone: no tallies, no store
+     * read, no trial sweep and no output, so it is safe to call from a job
+     * while a sweep runs in the same process. {@see CheckTrialCard} calls it
+     * after deleting a refused duplicate's local row on a subject a surviving
+     * trial bills: the duplicate's own created event wrote its tier and
+     * product, and no later event writes the survivor's back. Like the arm it
+     * wraps it is a local read and a projection, claimed only on disagreement.
+     */
+    public function reconcileStripeSubject(Model $billable): void
+    {
+        $this->reconcileStripeRail($billable);
     }
 
     /**

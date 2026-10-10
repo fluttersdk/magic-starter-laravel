@@ -3,6 +3,7 @@
 namespace FlutterSdk\MagicStarter\Console;
 
 use FlutterSdk\MagicStarter\Enums\BillingChannel;
+use FlutterSdk\MagicStarter\Models\BillingTrial;
 use FlutterSdk\MagicStarter\Support\BillingCatalogue;
 use FlutterSdk\MagicStarter\Support\BillingManifest;
 use FlutterSdk\MagicStarter\Support\PriceTable;
@@ -103,6 +104,7 @@ class BillingDoctorCommand extends Command
             $this->checkStoreIds();
             $this->checkBillableKeys();
             $this->checkSubscriptionKeys();
+            $this->checkTrialsTable();
             $this->checkReconcileCadence();
 
             // 3. What the vendors hold, read and never written.
@@ -335,6 +337,50 @@ class BillingDoctorCommand extends Command
             : "{$column} is a [{$type}] column and its model expects an auto-incrementing integer, so every "
                 . 'subscription write fails; the table came from the package\'s UUID migrations, so turn '
                 . 'magic-starter.use_uuids on and leave MAGIC_STARTER_PACKAGE_SUBSCRIPTION_MODELS true.';
+    }
+
+    /**
+     * Whether the `billing_trials` table exists while some product offers a
+     * trial.
+     *
+     * Checkout and the plans endpoint read the table for every trial product,
+     * and without it they offer nobody a trial: the catalogue promises one and
+     * every customer is charged on day one, with only a log line to say why.
+     * A catalogue offering none never reads it, so its absence
+     * is not reported at all: nobody is asked to run a migration nothing uses.
+     * An unreachable database is reported by exception class alone, for the
+     * reason {@see self::checkSubscriptionKeys()} gives.
+     */
+    private function checkTrialsTable(): void
+    {
+        $trialProducts = BillingCatalogue::trialProductKeys();
+
+        if ($trialProducts === []) {
+            return;
+        }
+
+        $model = new BillingTrial;
+
+        try {
+            $exists = $model->getConnection()->getSchemaBuilder()->hasTable($model->getTable());
+        } catch (Throwable $failure) {
+            $this->check('schema.billing_trials', self::WARNING, sprintf(
+                'The %s table could not be looked for (%s), so trial eligibility was not checked.',
+                $model->getTable(),
+                class_basename($failure),
+            ));
+
+            return;
+        }
+
+        $exists
+            ? $this->check('schema.billing_trials', self::OK, "The {$model->getTable()} table exists.")
+            : $this->check('schema.billing_trials', self::ERROR, sprintf(
+                'The %s table is missing while [%s] offer a trial, so no trial is offered to anybody; '
+                . 'publish the package migration create_billing_trials_table.php and migrate.',
+                $model->getTable(),
+                implode(', ', $trialProducts),
+            ));
     }
 
     private function checkReconcileCadence(): void

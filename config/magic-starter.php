@@ -405,6 +405,18 @@ return [
     |             names the product KEY so the customer is charged the figure
     |             the screen showed them.
     |   'credits' optional integer a one-off purchase grants
+    |   'trial_days' optional whole number of free days a subscription starts
+    |             with, default 0 (no trial). Only the WEB rail honours it: a
+    |             Stripe Checkout session starts the trial, while a store trial
+    |             is configured in App Store Connect or Play Console and this key
+    |             never reaches either. Stripe Checkout (through Cashier)
+    |             enforces a minimum of 48 hours, so 1 would silently become 2
+    |             and is refused, as is anything above 730 (the longest trial
+    |             Stripe accepts), a negative or non-integer value and any
+    |             non-zero value on a product that is not a subscription.
+    |             Whether a given customer still gets the trial is decided per
+    |             user and billable at checkout, never by this key alone: it is
+    |             the length offered, not a promise made to everybody.
     |   'sellable' optional boolean, default true. false keeps a product MAPPED
     |             without selling it: a grandfathered Stripe price or a retired
     |             store product that existing subscribers still pay, so a webhook
@@ -672,6 +684,30 @@ return [
     | at a shared store (redis, memcached, database, dynamodb) if one sweep per
     | fleet is what you need; otherwise expect one per server.
     |
+    | THE TRIAL CARD CHECK. Every trialing `default` subscription a package
+    | checkout opened is recorded in `billing_trials` by the Stripe webhook,
+    | and a queued job (CheckTrialCard) reads its card fingerprint once,
+    | outside the webhook. Among trials sharing a person, a billed subject or a
+    | card, the EARLIEST (Stripe's own `created`) survives; a later one still
+    | trialing is refused and cancelled with no proration and no invoice, once
+    | Stripe's live status confirms it is a trial, and one that already
+    | converted to paid is left alone. The resolution runs under a cache lock,
+    | which like onOneServer() above is only fleet-wide on a shared cache
+    | store. On the `sync` queue the job cannot retry itself, and a cancel can
+    | fail on its last attempt, so the sweep above re-dispatches any trial
+    | still unchecked after 30 minutes, refused or not; it does so only while a
+    | product offers `trial_days` and the `billing_trials` table exists. It
+    | runs on THIS cadence, daily by default, not on one of its own: set
+    | 'cadence' to 'hourly' while a product offers a trial.
+    |
+    | 'trial_refused_notification' (default true) mails the person whose trial
+    | was refused because the card had already taken one: no trial was opened,
+    | nothing was charged, and they can subscribe without a trial from the
+    | billing screen. A refusal of the same person's or the same subject's
+    | second trial sends nothing, since their first trial is still running.
+    | Set it false to send your own message instead. A config published before
+    | this key existed has no key at all and gets the default.
+    |
     */
 
     'billing' => [
@@ -729,6 +765,8 @@ return [
         'reconcile' => [
             'cadence' => env('MAGIC_STARTER_BILLING_RECONCILE_CADENCE', 'daily'),
         ],
+
+        'trial_refused_notification' => (bool) env('MAGIC_STARTER_TRIAL_REFUSED_NOTIFICATION', true),
 
         'revenuecat' => [
             'path' => env('REVENUECAT_WEBHOOK_PATH', 'webhooks/revenuecat'),

@@ -33,6 +33,7 @@ use LogicException;
  *     tier: ?string,
  *     cycle: ?BillingCycle,
  *     credits: ?int,
+ *     trial_days: int,
  *     sellable: bool,
  *     prices: array<string, mixed>,
  *     refs: Refs,
@@ -67,6 +68,12 @@ final class BillingCatalogue
     private const DEFAULT_COMMISSION_MODE = CommissionMode::ABSORB;
 
     private const DEFAULT_COMMISSION_RATE = 0.15;
+
+    /**
+     * The longest trial Stripe accepts, in days; a longer one is refused at
+     * checkout.
+     */
+    private const MAX_TRIAL_DAYS = 730;
 
     /**
      * The last configured products and what they normalised to.
@@ -245,6 +252,37 @@ final class BillingCatalogue
     }
 
     /**
+     * Whether any product offers a trial.
+     *
+     * The gate every trial reader asks first (the plans endpoint, the
+     * reconciler's trial sweep, the doctor), because it is config alone: an
+     * adopter selling without trials answers false here and never touches the
+     * `billing_trials` table, which they need not have migrated.
+     */
+    public static function offersTrials(): bool
+    {
+        return self::trialProductKeys() !== [];
+    }
+
+    /**
+     * The keys of the products that offer a trial, in config order.
+     *
+     * @return list<string>
+     */
+    public static function trialProductKeys(): array
+    {
+        $keys = [];
+
+        foreach (self::products() as $product) {
+            if ($product['trial_days'] > 0) {
+                $keys[] = $product['key'];
+            }
+        }
+
+        return $keys;
+    }
+
+    /**
      * @return Product|null
      */
     public static function product(string $key): ?array
@@ -338,9 +376,9 @@ final class BillingCatalogue
     }
 
     /**
-     * Refuse a product whose type is unknown or whose `sellable` is not a
-     * boolean, or a subscription that does not name a ranked tier and a known
-     * cycle.
+     * Refuse a product whose type is unknown, whose `sellable` is not a
+     * boolean or whose `trial_days` is not one Stripe honours, or a
+     * subscription that does not name a ranked tier and a known cycle.
      *
      * @param  list<string>  $tierOrder
      *
@@ -372,6 +410,7 @@ final class BillingCatalogue
 
         self::validateRefs($key, $product);
         self::validatePrices($key, $product);
+        self::validateTrialDays($key, $product, $productType);
 
         if ($productType !== ProductType::SUBSCRIPTION) {
             return;
@@ -402,6 +441,67 @@ final class BillingCatalogue
                 $key,
                 is_string($cycle) ? $cycle : get_debug_type($cycle),
                 implode(', ', array_column(BillingCycle::cases(), 'value')),
+            ));
+        }
+    }
+
+    /**
+     * Refuse a trial length Stripe would not honour as written.
+     *
+     * A string, a float or a negative number would read as no trial and a
+     * customer would be charged on day one against what the screen promised;
+     * one day would be silently stretched to two, because Stripe Checkout (and
+     * so Cashier) enforces a minimum of 48 hours. More than 730 days is a
+     * checkout Stripe refuses outright, found by the first customer to try
+     * rather than at boot. A trial on a product that is
+     * not a subscription has nothing to defer, so it is a mistake, not a no-op.
+     *
+     * @param  array<array-key, mixed>  $product
+     *
+     * @throws LogicException
+     */
+    private static function validateTrialDays(string $key, array $product, ProductType $type): void
+    {
+        if (! array_key_exists('trial_days', $product)) {
+            return;
+        }
+
+        $days = $product['trial_days'];
+
+        if (! is_int($days) || $days < 0) {
+            throw new LogicException(sprintf(
+                'Product [%s] has [trial_days] of [%s]; use a whole number of days, 0 or more.',
+                $key,
+                is_int($days) ? $days : get_debug_type($days),
+            ));
+        }
+
+        if ($days === 1) {
+            throw new LogicException(sprintf(
+                'Product [%s] has [trial_days] of [1]; Stripe Checkout enforces a minimum of 48 hours, '
+                . 'so use 0 for no trial or 2 or more days.',
+                $key,
+            ));
+        }
+
+        if ($days > self::MAX_TRIAL_DAYS) {
+            throw new LogicException(sprintf(
+                'Product [%s] has [trial_days] of [%d]; Stripe refuses a trial longer than %d days, '
+                . 'so use %d or fewer.',
+                $key,
+                $days,
+                self::MAX_TRIAL_DAYS,
+                self::MAX_TRIAL_DAYS,
+            ));
+        }
+
+        if ($days > 0 && $type !== ProductType::SUBSCRIPTION) {
+            throw new LogicException(sprintf(
+                'Product [%s] is a [%s] with [trial_days] of [%d]; only a subscription can trial, '
+                . 'so remove the key or set it to 0.',
+                $key,
+                $type->value,
+                $days,
             ));
         }
     }
@@ -726,6 +826,7 @@ final class BillingCatalogue
             'tier' => self::stringOrNull($product['tier'] ?? null),
             'cycle' => self::enumOrNull(BillingCycle::class, $product['cycle'] ?? null),
             'credits' => is_int($product['credits'] ?? null) ? $product['credits'] : null,
+            'trial_days' => is_int($product['trial_days'] ?? null) ? max(0, $product['trial_days']) : 0,
             'sellable' => ($product['sellable'] ?? true) === true,
             'prices' => is_array($product['prices'] ?? null) ? $product['prices'] : [],
             'refs' => [

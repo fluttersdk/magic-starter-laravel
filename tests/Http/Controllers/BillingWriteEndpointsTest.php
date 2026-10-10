@@ -6,6 +6,7 @@ use FlutterSdk\MagicStarter\Features;
 use FlutterSdk\MagicStarter\Http\Controllers\BillingController;
 use FlutterSdk\MagicStarter\MagicStarter;
 use FlutterSdk\MagicStarter\MagicStarterServiceProvider;
+use FlutterSdk\MagicStarter\Models\BillingTrial;
 use FlutterSdk\MagicStarter\Models\Team;
 use FlutterSdk\MagicStarter\Support\ConditionallyUsesUuids;
 use FlutterSdk\MagicStarter\Tests\TestCase;
@@ -16,7 +17,10 @@ use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Schema\Blueprint;
 use Illuminate\Foundation\Auth\Access\Authorizable;
 use Illuminate\Routing\RouteCollection;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Gate;
+use Illuminate\Support\Facades\Log;
+use Illuminate\Support\Str;
 use Illuminate\Testing\TestResponse;
 use Laravel\Cashier\Checkout;
 use LogicException;
@@ -122,6 +126,7 @@ class BillingWriteEndpointsTest extends TestCase
             $table->string('name');
             $table->string('email')->unique();
             $table->uuid('current_team_id')->nullable();
+            $table->boolean('is_guest')->default(false);
             $table->string('stripe_id')->nullable();
             $this->addProvenanceColumns($table);
             $table->timestamps();
@@ -144,6 +149,13 @@ class BillingWriteEndpointsTest extends TestCase
             $table->string('role')->nullable();
             $table->timestamps();
         });
+
+        // The trial history eligibility reads, from the package's own migration
+        // so the columns under test are the shipped ones.
+        $this->artisan('migrate', [
+            '--path' => __DIR__ . '/../../../database/migrations/create_billing_trials_table.php',
+            '--realpath' => true,
+        ]);
     }
 
     protected function tearDown(): void
@@ -886,6 +898,172 @@ class BillingWriteEndpointsTest extends TestCase
     }
 
     /**
+     * An eligible caller buying a product that offers a trial gets it: the
+     * builder is asked for the configured days and tagged with the acting user,
+     * which is how the trial webhook knows whose history the trial belongs to.
+     *
+     * The card is collected whatever the total, asked for explicitly, because
+     * a trial's first invoice is zero and the trial ends on that card.
+     */
+    public function test_an_eligible_checkout_starts_the_configured_trial_and_collects_a_card(): void
+    {
+        config(['magic-starter.billing.products.pro_monthly.trial_days' => 14]);
+
+        $this->bootBillingRoutes('user');
+
+        $user = $this->createUser('trial@example.test');
+
+        $this->buy($user, 'pro_monthly')->assertOk();
+
+        $this->assertSame(['price_pro' => 1], BillingWriteRail::$checkoutItems);
+        $this->assertSame(14, BillingWriteRail::$checkoutTrialDays);
+        $this->assertSame(
+            ['magic_starter_trial_user' => (string) $user->getKey()],
+            BillingWriteRail::$checkoutMetadata,
+        );
+        $this->assertSame('always', BillingWriteRail::$checkoutSessionOptions['payment_method_collection'] ?? null);
+        $this->assertSame(self::SUCCESS_URL, BillingWriteRail::$checkoutSessionOptions['success_url'] ?? null);
+        $this->assertSame(self::CANCEL_URL, BillingWriteRail::$checkoutSessionOptions['cancel_url'] ?? null);
+    }
+
+    /**
+     * A product that offers no trial starts none, still collects a card, and
+     * never reads the trial history: an adopter who has not run the
+     * `billing_trials` migration must keep selling.
+     */
+    public function test_a_product_without_trial_days_sends_no_trial_and_reads_no_trial_history(): void
+    {
+        $this->bootBillingRoutes('user');
+
+        $user = $this->createUser('no-trial@example.test');
+
+        app('db.schema')->drop('billing_trials');
+        DB::enableQueryLog();
+
+        $this->buy($user, 'pro_monthly')->assertOk();
+
+        $this->assertSame([], array_filter(
+            array_column(DB::getQueryLog(), 'query'),
+            static fn (string $query): bool => str_contains($query, 'billing_trials'),
+        ));
+        $this->assertSame(['price_pro' => 1], BillingWriteRail::$checkoutItems);
+        $this->assertNull(BillingWriteRail::$checkoutTrialDays);
+        $this->assertNull(BillingWriteRail::$checkoutMetadata);
+        $this->assertSame('always', BillingWriteRail::$checkoutSessionOptions['payment_method_collection'] ?? null);
+    }
+
+    /**
+     * A product offering a trial over an unmigrated `billing_trials` table is
+     * still SOLD, without the trial: the eligibility read finds no table and
+     * answers no, rather than the checkout answering 500.
+     */
+    public function test_checkout_sells_without_a_trial_while_the_trials_table_is_missing(): void
+    {
+        config(['magic-starter.billing.products.pro_monthly.trial_days' => 14]);
+
+        $this->bootBillingRoutes('user');
+
+        $user = $this->createUser('unmigrated-buyer@example.test');
+
+        app('db.schema')->drop('billing_trials');
+        Log::spy();
+
+        $this->buy($user, 'pro_monthly')->assertOk();
+
+        $this->assertSame(['price_pro' => 1], BillingWriteRail::$checkoutItems);
+        $this->assertNull(BillingWriteRail::$checkoutTrialDays);
+        $this->assertNull(BillingWriteRail::$checkoutMetadata);
+
+        Log::shouldHaveReceived('warning')
+            ->withArgs(fn (string $message, array $context): bool => ($context['reason'] ?? null)
+                === 'billing_trials_table_missing')
+            ->once();
+    }
+
+    /**
+     * An ineligible caller still BUYS, without the trial: a guest, a person who
+     * already trialed, and a subject that has held this rail's subscription
+     * before. Each is a sale at the full price, never a refusal.
+     *
+     * The eligible test above is the disarming limb: the same product and the
+     * same endpoint start a trial for a caller with none of these facts.
+     */
+    public function test_an_ineligible_caller_buys_without_a_trial(): void
+    {
+        config(['magic-starter.billing.products.pro_monthly.trial_days' => 14]);
+
+        $this->bootBillingRoutes('user');
+
+        $guest = $this->createUser('guest-buyer@example.test', ['is_guest' => true]);
+        $trialed = $this->createUser('trialed@example.test');
+        $returning = $this->createUser('returning@example.test');
+
+        $this->recordTrial($trialed, $trialed);
+
+        foreach ([$guest, $trialed] as $caller) {
+            BillingWriteRail::reset();
+
+            $this->buy($caller, 'pro_monthly')->assertOk();
+
+            $this->assertSame(['price_pro' => 1], BillingWriteRail::$checkoutItems);
+            $this->assertNull(BillingWriteRail::$checkoutTrialDays);
+            $this->assertNull(BillingWriteRail::$checkoutMetadata);
+            $this->assertSame('always', BillingWriteRail::$checkoutSessionOptions['payment_method_collection'] ?? null);
+        }
+
+        // A subscription that ended passes the checkout guard, and it is still
+        // a returning customer rather than a new one.
+        BillingWriteRail::reset();
+        BillingWriteRail::$subscriptions = [
+            (object) ['type' => 'default', 'stripe_status' => 'canceled'],
+        ];
+
+        $this->buy($returning, 'pro_monthly')->assertOk();
+
+        $this->assertSame(['price_pro' => 1], BillingWriteRail::$checkoutItems);
+        $this->assertNull(BillingWriteRail::$checkoutTrialDays);
+    }
+
+    /**
+     * A team one member already trialed is not trialed again by its owner, who
+     * never trialed anything: the trial belongs to the subject as well as to
+     * the person.
+     */
+    public function test_a_team_another_member_trialed_is_bought_without_a_trial(): void
+    {
+        config(['magic-starter.billing.products.pro_monthly.trial_days' => 14]);
+
+        $this->bootBillingRoutes('team');
+
+        $owner = $this->createUser('team-trial-owner@example.test');
+        $member = $this->createUser('team-trial-member@example.test');
+        $team = $this->createTeam($owner);
+        $team->users()->attach($member->getKey(), ['role' => 'admin']);
+        $owner->forceFill(['current_team_id' => $team->getKey()])->save();
+
+        $this->recordTrial($member, $team);
+
+        $this->buy($owner, 'pro_monthly')->assertOk();
+
+        $this->assertSame(['price_pro' => 1], BillingWriteRail::$checkoutItems);
+        $this->assertNull(BillingWriteRail::$checkoutTrialDays);
+
+        // The disarming limb: a team nobody trialed, same owner, gets the trial,
+        // and it is tagged with the OWNER who bought it, not read off the team.
+        $fresh = $this->createTeam($owner, ['name' => 'Fresh Team']);
+        $owner->forceFill(['current_team_id' => $fresh->getKey()])->save();
+        BillingWriteRail::reset();
+
+        $this->buy($owner, 'pro_monthly')->assertOk();
+
+        $this->assertSame(14, BillingWriteRail::$checkoutTrialDays);
+        $this->assertSame(
+            ['magic_starter_trial_user' => (string) $owner->getKey()],
+            BillingWriteRail::$checkoutMetadata,
+        );
+    }
+
+    /**
      * Open a checkout for one catalogue product, as the given caller.
      */
     private function buy(Model $user, string $product): TestResponse
@@ -1006,6 +1184,21 @@ class BillingWriteEndpointsTest extends TestCase
     }
 
     /**
+     * Record that [$user] started a trial on [$billable], as the trial webhook
+     * would.
+     */
+    private function recordTrial(Model $user, Model $billable): void
+    {
+        BillingTrial::query()->create([
+            'user_id' => $user->getKey(),
+            'billable_type' => $billable->getMorphClass(),
+            'billable_id' => $billable->getKey(),
+            'stripe_subscription_id' => 'sub_' . Str::random(12),
+            'subscription_created_at' => now(),
+        ]);
+    }
+
+    /**
      * @param  array<string, mixed>  $attributes
      */
     private function createTeam(BillingWriteUser $owner, array $attributes = []): BillingWriteTeam
@@ -1058,6 +1251,25 @@ final class BillingWriteRail
      */
     public static array $subscriptions = [];
 
+    /**
+     * The trial length a checkout was asked for, or null when none was.
+     */
+    public static ?int $checkoutTrialDays = null;
+
+    /**
+     * The subscription metadata a checkout was given, or null when none was.
+     *
+     * @var array<string, mixed>|null
+     */
+    public static ?array $checkoutMetadata = null;
+
+    /**
+     * The session options a checkout was opened with, or null when none was.
+     *
+     * @var array<string, mixed>|null
+     */
+    public static ?array $checkoutSessionOptions = null;
+
     public static function reset(): void
     {
         self::$hasStripeId = false;
@@ -1065,6 +1277,9 @@ final class BillingWriteRail
         self::$checkoutItems = null;
         self::$checkoutSubscriptionType = null;
         self::$subscriptions = [];
+        self::$checkoutTrialDays = null;
+        self::$checkoutMetadata = null;
+        self::$checkoutSessionOptions = null;
 
         BillingWriteSubscription::reset();
     }
@@ -1168,6 +1383,23 @@ final class BillingWriteSubscriptionBuilder
         protected array|string $prices,
     ) {}
 
+    public function trialDays(int $trialDays): self
+    {
+        BillingWriteRail::$checkoutTrialDays = $trialDays;
+
+        return $this;
+    }
+
+    /**
+     * @param  array<string, mixed>  $metadata
+     */
+    public function withMetadata(array $metadata): self
+    {
+        BillingWriteRail::$checkoutMetadata = $metadata;
+
+        return $this;
+    }
+
     /**
      * @param  array<string, mixed>  $sessionOptions
      * @param  array<string, mixed>  $customerOptions
@@ -1182,6 +1414,7 @@ final class BillingWriteSubscriptionBuilder
 
         BillingWriteRail::$checkoutItems = $items;
         BillingWriteRail::$checkoutSubscriptionType = $this->type;
+        BillingWriteRail::$checkoutSessionOptions = $sessionOptions;
 
         return new Checkout($this->billable, StripeCheckoutSession::constructFrom([
             'id' => 'cs_test_write',
@@ -1198,6 +1431,7 @@ class BillingWriteUser extends Model implements AuthenticatableContract
     use Authorizable;
     use BillingWriteBillable;
     use ConditionallyUsesUuids;
+    use \FlutterSdk\MagicStarter\Traits\HasGuestSupport;
     use \FlutterSdk\MagicStarter\Traits\HasTeams;
 
     protected $table = 'users';

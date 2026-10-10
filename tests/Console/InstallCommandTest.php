@@ -232,6 +232,45 @@ final class InstallCommandTest extends TestCase
         );
     }
 
+    /**
+     * The trial record ships with billing and is stamped before the provenance
+     * migration, which is declared last on purpose.
+     */
+    public function test_billing_publishes_the_trials_table_before_the_provenance_migration(): void
+    {
+        $this->artisan('magic-starter:install', [
+            '--features' => ['billing'],
+        ])->assertExitCode(0);
+
+        $trials = glob(database_path('migrations/*_create_billing_trials_table.php')) ?: [];
+        $provenance = glob(
+            database_path('migrations/*_add_entitlement_provenance_to_billable_table.php'),
+        ) ?: [];
+
+        $this->assertCount(1, $trials, 'Billing must publish the trials migration once.');
+        $this->assertNotEmpty($provenance);
+        $this->assertTrue(
+            basename($trials[0]) < basename($provenance[0]),
+            sprintf(
+                'The trials migration [%s] must sort before the provenance migration [%s].',
+                basename($trials[0]),
+                basename($provenance[0]),
+            ),
+        );
+    }
+
+    public function test_without_billing_the_trials_table_is_not_published(): void
+    {
+        $this->artisan('magic-starter:install', [
+            '--features' => ['sessions'],
+        ])->assertExitCode(0);
+
+        $this->assertEmpty(
+            glob(database_path('migrations/*_create_billing_trials_table.php')) ?: [],
+            'The trials migration belongs to the billing feature only.',
+        );
+    }
+
     public function test_without_teams_skips_team_migrations(): void
     {
         $this->artisan('magic-starter:install', [

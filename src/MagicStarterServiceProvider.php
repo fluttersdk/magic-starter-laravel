@@ -108,6 +108,11 @@ class MagicStarterServiceProvider extends ServiceProvider
         // writer before it decides to switch billing on.
         $this->app->bind(Contracts\WritesEntitlement::class, Actions\WriteEntitlement::class);
 
+        // The trial card check's two Stripe calls. Bound so an application
+        // with its own Stripe wrapper binds a subclass over it, and so a test
+        // replaces the network without replacing the job's rules.
+        $this->app->bind(Support\TrialCardGateway::class);
+
         // Cashier is wired HERE and never in boot(), because boot() is already
         // too late: CashierServiceProvider::boot() registers the stripe/webhook
         // route under config('cashier.path') the moment it runs, and every

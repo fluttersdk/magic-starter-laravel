@@ -76,4 +76,16 @@ return [
         'no_subscription' => 'Değiştirilecek etkin bir abonelik yok.',
     ],
 
+    /*
+     * The mail TrialRefusedNotification sends when the card check refuses a
+     * trial because the card on file already took one: why there is no trial,
+     * that nothing was charged, and that buying without a trial is still open.
+     */
+    'trial_refused' => [
+        'subject' => 'Ücretsiz deneme süreniz başlatılmadı',
+        'card_used' => 'Kayıtlı kart daha önce bir ücretsiz deneme için kullanıldığından bu abonelik için deneme süresi açılmadı.',
+        'nothing_charged' => 'Abonelik hemen sonlandırıldı ve sizden hiçbir ücret alınmadı.',
+        'subscribe' => 'Dilerseniz faturalandırma ekranından deneme süresi olmadan abone olabilirsiniz.',
+    ],
+
 ];
