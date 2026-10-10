@@ -4,6 +4,8 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [0.0.24] - 2026-10-10
+
 ### Added
 
 - **The `billing_events` table: an append-only audit log of every billing outcome.** One row per outcome, with `type`, `source` (`webhook`, `reconcile`, `request`, `trial_check`), `provider`, `reason`, `external_id`, the billable (`billable_type`, `billable_id`, no foreign key), `actor_user_id` (nullable foreign key, nulled when the user is deleted), `properties` and `created_at`. The model throws on `update()` and `delete()`; only the prune command removes rows. Rows survive the deletion of a user or a team. (`database/migrations/create_billing_events_table.php`, `src/Models/BillingEvent.php`, `src/Enums/BillingEventType.php`, `src/Enums/BillingSource.php`)
