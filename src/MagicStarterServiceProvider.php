@@ -5,6 +5,7 @@ namespace FlutterSdk\MagicStarter;
 use Filament\Panel;
 use FlutterSdk\MagicStarter\Console\BillingDoctorCommand;
 use FlutterSdk\MagicStarter\Console\BillingManifestCommand;
+use FlutterSdk\MagicStarter\Console\ExpireBillingGrantsCommand;
 use FlutterSdk\MagicStarter\Console\FilamentEjectCommand;
 use FlutterSdk\MagicStarter\Console\FilamentInstallCommand;
 use FlutterSdk\MagicStarter\Console\InstallCommand;
@@ -108,6 +109,11 @@ class MagicStarterServiceProvider extends ServiceProvider
         // contract. A consumer has to be able to bind its own entitlement
         // writer before it decides to switch billing on.
         $this->app->bind(Contracts\WritesEntitlement::class, Actions\WriteEntitlement::class);
+
+        // The operator side of billing, bound beside the writer it writes
+        // through and unconditionally for the same reason: a consumer binds its
+        // own before switching the panel's billing actions on.
+        $this->app->bind(Contracts\AdministersBilling::class, Actions\AdministerBilling::class);
 
         // The trial card check's two Stripe calls. Bound so an application
         // with its own Stripe wrapper binds a subclass over it, and so a test
@@ -409,9 +415,11 @@ class MagicStarterServiceProvider extends ServiceProvider
             if (Features::hasBillingFeatures()) {
                 $this->commands([
                     PruneBillingRecordsCommand::class,
+                    ExpireBillingGrantsCommand::class,
                 ]);
 
                 $this->schedulePruneBillingRecords();
+                $this->scheduleExpireBillingGrants();
             }
 
             // Filament is an optional dependency: its commands exist only where it
@@ -712,6 +720,26 @@ class MagicStarterServiceProvider extends ServiceProvider
             $schedule->command(PruneBillingRecordsCommand::NAME)
                 ->name(PruneBillingRecordsCommand::NAME)
                 ->daily()
+                ->withoutOverlapping()
+                ->onOneServer();
+        });
+    }
+
+    /**
+     * Put `magic-starter:billing:expire-grants` on the schedule, hourly.
+     *
+     * Mirrors {@see self::schedulePruneBillingRecords()}: `withoutOverlapping()`
+     * keeps a slow run from racing its successor over the same grants and
+     * `onOneServer()` keeps a fleet from settling one grant twice. Hourly rather
+     * than daily, because a grant's expiry is an instant an operator chose and
+     * a day's lag is a day of a plan nobody granted.
+     */
+    private function scheduleExpireBillingGrants(): void
+    {
+        $this->callAfterResolving(Schedule::class, function (Schedule $schedule): void {
+            $schedule->command(ExpireBillingGrantsCommand::NAME)
+                ->name(ExpireBillingGrantsCommand::NAME)
+                ->hourly()
                 ->withoutOverlapping()
                 ->onOneServer();
         });

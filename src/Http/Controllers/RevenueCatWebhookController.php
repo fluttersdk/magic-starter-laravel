@@ -76,7 +76,8 @@ use Symfony\Component\HttpKernel\Exception\AccessDeniedHttpException;
  *  2. `environment`, READ OFF THE EVENT. A `SANDBOX` delivery is refused in code
  *     rather than by a dashboard filter, because a sandbox purchase granting a
  *     production tier is money out of the door and a dashboard filter is one
- *     unchecked checkbox.
+ *     unchecked checkbox. The deployment widens it with `accept_sandbox`, or
+ *     for named billable keys with `sandbox_app_user_ids`.
  *  3. ALWAYS 200, except for a signature that did not verify. RevenueCat retries
  *     a non-200 five times across roughly three hours and then abandons the
  *     event permanently, so an unknown billable, an ignored type and an
@@ -360,6 +361,13 @@ class RevenueCatWebhookController
      * treated as not production, which is the direction that cannot cost money:
      * it is no evidence of a real purchase.
      *
+     * `sandbox_app_user_ids` widens it for named BILLABLE KEYS only (the App
+     * Review account): a `SANDBOX` event is actionable when any identity field
+     * it carries names one. This gate only lets the re-read happen; whether a
+     * sandbox subscription counts is decided again in the job for each billable
+     * it resolves, because an event can name a listed key in an alias while the
+     * subscriber it is about is somebody else.
+     *
      * The flag is read HERE and again in {@see SyncRevenueCatEntitlement}, and the
      * duplication is deliberate rather than an oversight to consolidate: this one
      * gates the event's own `environment` field and that one gates the
@@ -382,8 +390,54 @@ class RevenueCatWebhookController
             return true;
         }
 
-        return $environment === self::SANDBOX_ENVIRONMENT
-            && (bool) config('magic-starter.billing.revenuecat.accept_sandbox', false);
+        if ($environment !== self::SANDBOX_ENVIRONMENT) {
+            return false;
+        }
+
+        return (bool) config('magic-starter.billing.revenuecat.accept_sandbox', false)
+            || $this->namesAllowlistedSandboxKey($event);
+    }
+
+    /**
+     * Whether any identity field on the event names a billable key in
+     * `magic-starter.billing.revenuecat.sandbox_app_user_ids`.
+     *
+     * Every field RevenueCat uses to name a subscriber is searched, because the
+     * listed key can be any of them: the last-seen `app_user_id`, the
+     * `original_app_user_id`, an alias behind an anonymous id, or either side of
+     * a transfer. Non-string entries are skipped rather than cast, for the same
+     * reason as the environment field above.
+     *
+     * @param  array<string, mixed>  $event
+     */
+    protected function namesAllowlistedSandboxKey(array $event): bool
+    {
+        $allowlist = array_filter(
+            (array) config('magic-starter.billing.revenuecat.sandbox_app_user_ids', []),
+            'is_string',
+        );
+
+        if ($allowlist === []) {
+            return false;
+        }
+
+        $ids = array_merge(
+            [
+                $event['app_user_id'] ?? null,
+                $event['original_app_user_id'] ?? null,
+            ],
+            (array) ($event['aliases'] ?? []),
+            (array) ($event['transferred_from'] ?? []),
+            (array) ($event['transferred_to'] ?? []),
+        );
+
+        foreach ($ids as $id) {
+            if (is_string($id) && trim($id) !== '' && in_array(trim($id), $allowlist, true)) {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     /**

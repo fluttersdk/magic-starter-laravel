@@ -486,7 +486,9 @@ class SyncRevenueCatEntitlement implements ShouldQueue
         //    granting a production paid tier is money out of the door, and it is
         //    equally no evidence that a production tier ENDED, so a subscriber
         //    holding nothing else is left exactly as it was.
-        $production = $this->acceptsSandbox()
+        //    Decided for THIS billable: the webhook may have let the event in
+        //    through an allowlisted alias of somebody else.
+        $production = $this->acceptsSandbox($billable)
             ? $all
             : array_filter($all, fn (mixed $subscription): bool => ! $this->isSandbox($subscription));
 
@@ -878,12 +880,25 @@ class SyncRevenueCatEntitlement implements ShouldQueue
     }
 
     /**
-     * Whether this deployment is allowed to act on sandbox purchases at all.
-     * Absent config means no, which is the direction that cannot cost money.
+     * Whether sandbox purchases count for this billable: the deployment accepts
+     * them for everybody, or `sandbox_app_user_ids` names this billable's KEY
+     * (the App Review account). Absent config means no, which is the direction
+     * that cannot cost money.
+     *
+     * Per billable and never per event, so the reconciler, which runs this job
+     * once per billable, is bound by the same list, and an event that named a
+     * listed key only in an alias or on the other side of a transfer cannot
+     * carry that permission to the subscriber it resolved.
      */
-    protected function acceptsSandbox(): bool
+    protected function acceptsSandbox(Model $billable): bool
     {
-        return (bool) config('magic-starter.billing.revenuecat.accept_sandbox', false);
+        if ((bool) config('magic-starter.billing.revenuecat.accept_sandbox', false)) {
+            return true;
+        }
+
+        $allowlist = (array) config('magic-starter.billing.revenuecat.sandbox_app_user_ids', []);
+
+        return in_array((string) $billable->getKey(), array_filter($allowlist, 'is_string'), true);
     }
 
     /**
