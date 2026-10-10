@@ -16,6 +16,7 @@ use FlutterSdk\MagicStarter\Support\JsonObject;
 use FlutterSdk\MagicStarter\Support\PriceTable;
 use FlutterSdk\MagicStarter\Support\ReadsBillableAttributes;
 use FlutterSdk\MagicStarter\Support\StripeSubscriptionState;
+use FlutterSdk\MagicStarter\Support\TrialEligibility;
 use Illuminate\Contracts\Auth\Authenticatable;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Http\Exceptions\HttpResponseException;
@@ -139,6 +140,23 @@ class BillingController
     public const INVOICES_PER_PAGE = 24;
 
     /**
+     * The subscription metadata key a trial checkout tags with the acting
+     * user's key.
+     *
+     * The trial webhook records the `billing_trials` row from it, and it is the
+     * only place the PERSON travels: under the team subject the Stripe customer
+     * is the team, so nothing else on the subscription says who started the
+     * trial.
+     */
+    public const TRIAL_USER_METADATA_KEY = 'magic_starter_trial_user';
+
+    /**
+     * @param  TrialEligibility  $trialEligibility  Who may start a trial; a container
+     *                                              binding, so an adopter can replace it.
+     */
+    public function __construct(protected TrialEligibility $trialEligibility) {}
+
+    /**
      * Read the billable's current entitlement.
      */
     public function show(Request $request): SubscriptionResource
@@ -150,8 +168,12 @@ class BillingController
      * Return the adopter's tier rows, floor first, each carrying the catalogue
      * products that sell it.
      *
-     * Served from config with no rail call and no per-subject state, so it is
-     * safe on the hot path. The rows come from
+     * Served from config with no rail call, so it is safe on the hot path. The
+     * one per-subject fact is each product row's `trial_days`, the trial THIS
+     * caller would get ({@see self::trialOffered()}): read from the local
+     * database once per request, and not at all while no product offers a
+     * trial, so an adopter selling without trials pays no query and needs no
+     * `billing_trials` table. The rows come from
      * {@see ReadsBillableAttributes::planCatalogue()}, which is
      * {@see BillingCatalogue::tiers()}: the `tier_order` ranking decides which
      * tiers exist and in what order, and the `tiers` map only describes them.
@@ -173,11 +195,56 @@ class BillingController
      * nothing yet) and it is not the same fact as "this endpoint is not wired",
      * which is what `billing/usage` reports when nobody has bound its contract.
      */
-    public function plans(): JsonResponse
+    public function plans(Request $request): JsonResponse
     {
         return response()->json([
-            'data' => $this->sellableCatalogue(),
+            'data' => $this->sellableCatalogue($this->trialOffered($request)),
         ]);
+    }
+
+    /**
+     * Whether the caller would be given a trial on any product that offers one.
+     *
+     * Resolved ONCE per request rather than per product row: eligibility is a
+     * fact about the caller and their subject, never about a product, so every
+     * row of one answer agrees.
+     *
+     * Two ways to answer false without asking {@see TrialEligibility}:
+     *
+     * - No catalogue product offers a trial. Asked first because it is config
+     *   alone, and it is what keeps an adopter who never ran the `billing_trials`
+     *   migration off that table entirely.
+     * - There is no subject. A team-subject caller with no current team, or a
+     *   pointer at a team they left, gets the plan grid as before; the other
+     *   reads answer that caller 404, and this one never has.
+     */
+    protected function trialOffered(Request $request): bool
+    {
+        if (! $this->catalogueOffersTrials()) {
+            return false;
+        }
+
+        $billable = $this->currentBillable($request);
+
+        if ($billable === null) {
+            return false;
+        }
+
+        return $this->trialEligibility->allows($request->user(), $billable);
+    }
+
+    /**
+     * Whether any catalogue product offers a trial.
+     */
+    protected function catalogueOffersTrials(): bool
+    {
+        foreach (BillingCatalogue::products() as $product) {
+            if ($product['trial_days'] > 0) {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     /**
@@ -201,9 +268,15 @@ class BillingController
      * on a tier definition is replaced: two values under one key, one
      * hand-written and one derived, is a disagreement no reader can resolve.
      *
+     * Each product's `trial_days` is the trial THIS caller would get, which is
+     * the configured length only while [$trialOffered] holds: a row promising a
+     * trial the checkout would then not start is a charge on day one against
+     * what the screen said.
+     *
+     * @param  bool  $trialOffered  Whether the caller may start a trial ({@see self::trialOffered()}).
      * @return array<int, array<string, mixed>>
      */
-    protected function sellableCatalogue(): array
+    protected function sellableCatalogue(bool $trialOffered): array
     {
         $sellable = [];
         $products = [];
@@ -227,6 +300,7 @@ class BillingController
                 'tier' => $product['tier'],
                 'cycle' => $product['cycle']?->value,
                 'sellable' => $product['sellable'],
+                'trial_days' => $trialOffered ? $product['trial_days'] : 0,
                 'store_ids' => [
                     BillingChannel::APP_STORE->value => $product['refs'][BillingChannel::APP_STORE->value],
                     BillingChannel::PLAY->value => $product['refs'][BillingChannel::PLAY->value],
@@ -630,9 +704,35 @@ class BillingController
         //    `cancel` below both act on `subscription('default')`, so a checkout
         //    opened under any other name would sell a subscription neither of
         //    them could reach.
-        $checkout = $billable->newSubscription(StripeSubscriptionState::SUBSCRIPTION_TYPE, $priceId)->checkout([
+        $subscription = $billable->newSubscription(StripeSubscriptionState::SUBSCRIPTION_TYPE, $priceId);
+
+        // 7. The product's trial, for a caller who may have one. Eligibility is
+        //    asked only when the product offers days, so a catalogue without
+        //    trials never reads `billing_trials`. An ineligible caller (a guest,
+        //    somebody who trialed, a returning customer) is not refused: they
+        //    buy at the full price, which is what they were shown. The metadata
+        //    names the acting USER, because under the team subject the Stripe
+        //    customer is the team and the webhook needs the person.
+        $trialDays = $this->trialDaysFor($validated['product']);
+        $user = $request->user();
+
+        if ($trialDays > 0 && $this->trialEligibility->allows($user, $billable)) {
+            $subscription
+                ->trialDays($trialDays)
+                ->withMetadata([
+                    self::TRIAL_USER_METADATA_KEY => (string) $user->getKey(),
+                ]);
+        }
+
+        // 8. A card is collected whatever the first total, and said explicitly
+        //    rather than left to Stripe's default: a trial's first invoice is
+        //    zero, a session that skipped the card would end the trial on a
+        //    customer with nothing to charge, and the card is what the trial
+        //    check fingerprints. Sent on every checkout, trial or not.
+        $checkout = $subscription->checkout([
             'success_url' => $validated['success_url'],
             'cancel_url' => $validated['cancel_url'],
+            'payment_method_collection' => 'always',
         ]);
 
         return response()->json([
@@ -740,6 +840,23 @@ class BillingController
      */
     protected function resolveBillable(Request $request): Model
     {
+        $billable = $this->currentBillable($request);
+
+        abort_if($billable === null, HttpResponse::HTTP_NOT_FOUND);
+
+        return $billable;
+    }
+
+    /**
+     * The subject this request bills, or null when there is none to act on.
+     *
+     * The single definition of "the caller's billable" for both
+     * {@see self::resolveBillable()}, which masks a null as 404, and the plans
+     * endpoint, which has always answered such a caller 200 and keeps doing so.
+     * Both absences {@see self::resolveBillable()} describes are null here.
+     */
+    protected function currentBillable(Request $request): ?Model
+    {
         $user = $request->user();
         $billableClass = MagicStarter::billableModel();
 
@@ -749,12 +866,13 @@ class BillingController
 
         // Reached only under the team subject. An application whose user model
         // has no team trait has no `currentTeam` relation either, so the read
-        // lands on a null attribute and answers 404 here rather than reaching
+        // lands on a null attribute and answers null here rather than reaching
         // the membership call below.
         $billable = $user->currentTeam;
 
-        abort_if(! $billable instanceof Model, HttpResponse::HTTP_NOT_FOUND);
-        abort_if(! $user->belongsToTeam($billable), HttpResponse::HTTP_NOT_FOUND);
+        if (! $billable instanceof Model || ! $user->belongsToTeam($billable)) {
+            return null;
+        }
 
         return $billable;
     }
@@ -942,6 +1060,17 @@ class BillingController
         }
 
         return $priceId;
+    }
+
+    /**
+     * The trial length catalogue product [$key] offers, 0 when it offers none.
+     *
+     * Read after {@see self::sellablePriceId()} has accepted the key, so the
+     * product exists; the fallback only keeps the type honest.
+     */
+    protected function trialDaysFor(string $key): int
+    {
+        return BillingCatalogue::product($key)['trial_days'] ?? 0;
     }
 
     /**

@@ -8,6 +8,7 @@ use FlutterSdk\MagicStarter\Features;
 use FlutterSdk\MagicStarter\Http\Controllers\BillingController;
 use FlutterSdk\MagicStarter\MagicStarter;
 use FlutterSdk\MagicStarter\MagicStarterServiceProvider;
+use FlutterSdk\MagicStarter\Models\BillingTrial;
 use FlutterSdk\MagicStarter\Models\Team;
 use FlutterSdk\MagicStarter\Support\ConditionallyUsesUuids;
 use FlutterSdk\MagicStarter\Tests\TestCase;
@@ -19,8 +20,10 @@ use Illuminate\Database\Schema\Blueprint;
 use Illuminate\Foundation\Auth\Access\Authorizable;
 use Illuminate\Pagination\CursorPaginator;
 use Illuminate\Routing\RouteCollection;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Gate;
 use Illuminate\Support\Facades\Lang;
+use Illuminate\Support\Str;
 use Illuminate\Testing\TestResponse;
 use Laravel\Cashier\Invoice;
 use Laravel\Cashier\PaymentMethod;
@@ -166,6 +169,13 @@ class BillingControllerTest extends TestCase
             $table->string('role')->nullable();
             $table->timestamps();
         });
+
+        // The trial history the plans rows are decided against, from the
+        // package's own migration so the columns read are the shipped ones.
+        $this->artisan('migrate', [
+            '--path' => __DIR__ . '/../../../database/migrations/create_billing_trials_table.php',
+            '--realpath' => true,
+        ]);
     }
 
     protected function tearDown(): void
@@ -925,6 +935,7 @@ class BillingControllerTest extends TestCase
                 'tier' => 'pro',
                 'cycle' => 'monthly',
                 'sellable' => true,
+                'trial_days' => 0,
                 'store_ids' => [
                     'app_store' => 'com.example.pro.monthly',
                     'play' => null,
@@ -948,6 +959,7 @@ class BillingControllerTest extends TestCase
                 'tier' => 'pro',
                 'cycle' => 'annual',
                 'sellable' => true,
+                'trial_days' => 0,
                 'store_ids' => [
                     'app_store' => null,
                     'play' => 'pro:annual',
@@ -1216,6 +1228,133 @@ class BillingControllerTest extends TestCase
     }
 
     /**
+     * Each product row carries the trial THIS subject would get: the configured
+     * days while the caller is eligible, 0 once they have trialed, and 0 on a
+     * product that offers none.
+     *
+     * The pair is the test. A row that always carried the configured days
+     * passes the first limb and promises a trial the checkout then refuses;
+     * one that always carried 0 passes the second.
+     */
+    public function test_each_product_row_offers_its_trial_only_to_an_eligible_subject(): void
+    {
+        $this->configureTrialCatalogue();
+        $this->bootBillingRoutes('user');
+
+        $user = $this->createUser('trial-rows@example.test');
+
+        $this->assertSame(
+            [
+                'pro_monthly' => 14,
+                'pro_annual' => 0,
+            ],
+            $this->trialDaysByProduct($user),
+        );
+
+        $this->recordTrial($user, $user);
+
+        $this->assertSame(
+            [
+                'pro_monthly' => 0,
+                'pro_annual' => 0,
+            ],
+            $this->trialDaysByProduct($user),
+        );
+    }
+
+    /**
+     * Under the team subject the TEAM's history counts as well as the caller's:
+     * an owner who never trialed is offered nothing on a team a member already
+     * trialed, and the full trial on a team nobody did.
+     */
+    public function test_a_team_another_member_trialed_is_offered_no_trial(): void
+    {
+        $this->configureTrialCatalogue();
+        $this->bootBillingRoutes('team');
+
+        $owner = $this->createUser('trial-team-owner@example.test');
+        $member = $this->createUser('trial-team-member@example.test');
+        $team = $this->createTeam($owner);
+        $team->users()->attach($member->getKey(), ['role' => 'admin']);
+        $this->setCurrentTeam($owner, $team);
+
+        $this->recordTrial($member, $team);
+
+        $this->assertSame(0, $this->trialDaysByProduct($owner)['pro_monthly']);
+
+        $fresh = $this->createTeam($owner, ['name' => 'Fresh Team']);
+        $this->setCurrentTeam($owner, $fresh);
+
+        $this->assertSame(14, $this->trialDaysByProduct($owner)['pro_monthly']);
+    }
+
+    /**
+     * A team-subject caller with no current team still gets the catalogue, as
+     * they always have, with no trial on any row: there is no subject whose
+     * history could be read, and a 404 here would blank the plan grid of
+     * somebody who has simply not picked a team yet.
+     */
+    public function test_a_team_subject_caller_with_no_current_team_gets_the_plans_with_no_trial(): void
+    {
+        $this->configureTrialCatalogue();
+        $this->bootBillingRoutes('team');
+
+        $owner = $this->createUser('no-team-trial@example.test');
+
+        $this->assertSame(
+            [
+                'pro_monthly' => 0,
+                'pro_annual' => 0,
+            ],
+            $this->trialDaysByProduct($owner),
+        );
+
+        // The same for a pointer at a team the caller no longer belongs to.
+        $stranger = $this->createUser('stranger-owner@example.test');
+        $this->setCurrentTeam($owner, $this->createTeam($stranger));
+
+        $this->assertSame(0, $this->trialDaysByProduct($owner)['pro_monthly']);
+
+        // The disarming limb: the same caller on a team of their own is offered
+        // the trial, so the zeros above are the missing subject.
+        $this->setCurrentTeam($owner, $this->createTeam($owner));
+
+        $this->assertSame(14, $this->trialDaysByProduct($owner)['pro_monthly']);
+    }
+
+    /**
+     * An adopter whose catalogue offers no trial is answered exactly as before,
+     * every row at 0, WITHOUT reading the trial history: an application that
+     * never ran the `billing_trials` migration must keep its plan grid.
+     */
+    public function test_plans_without_a_trial_product_read_no_trial_history(): void
+    {
+        config([
+            'magic-starter.billing.products' => [
+                'pro_monthly' => [
+                    'type' => 'subscription',
+                    'tier' => 'pro',
+                    'cycle' => 'monthly',
+                    'refs' => ['stripe_price' => 'price_pro_monthly'],
+                ],
+            ],
+        ]);
+
+        $this->bootBillingRoutes('user');
+
+        $user = $this->createUser('unmigrated@example.test');
+
+        app('db.schema')->drop('billing_trials');
+        DB::enableQueryLog();
+
+        $this->assertSame(['pro_monthly' => 0], $this->trialDaysByProduct($user));
+        $this->assertSame([], array_filter(
+            array_column(DB::getQueryLog(), 'query'),
+            static fn (string $query): bool => str_contains($query, 'billing_trials'),
+        ));
+    }
+
+    /**
      * Re-register the package's routes against a billable subject.
      *
      * The gate is thrown away with them: it is a container singleton resolved
@@ -1372,6 +1511,59 @@ class BillingControllerTest extends TestCase
     private function setCurrentTeam(BillingTestUser $user, Model $team): void
     {
         $user->forceFill(['current_team_id' => $team->getKey()])->save();
+    }
+
+    /**
+     * Two monthly and annual products of one tier, only the monthly offering a
+     * trial.
+     */
+    private function configureTrialCatalogue(): void
+    {
+        config([
+            'magic-starter.billing.products' => [
+                'pro_monthly' => [
+                    'type' => 'subscription',
+                    'tier' => 'pro',
+                    'cycle' => 'monthly',
+                    'trial_days' => 14,
+                    'refs' => ['stripe_price' => 'price_pro_monthly'],
+                ],
+                'pro_annual' => [
+                    'type' => 'subscription',
+                    'tier' => 'pro',
+                    'cycle' => 'annual',
+                    'refs' => ['stripe_price' => 'price_pro_annual'],
+                ],
+            ],
+        ]);
+    }
+
+    /**
+     * Each product row's `trial_days` from the plans endpoint, keyed by product.
+     *
+     * @return array<string, mixed>
+     */
+    private function trialDaysByProduct(Model $user): array
+    {
+        $data = $this->ask($user, '/billing/plans')->assertOk()->json('data');
+        $products = array_merge([], ...array_column($data, 'products'));
+
+        return array_column($products, 'trial_days', 'key');
+    }
+
+    /**
+     * Record that [$user] started a trial on [$billable], as the trial webhook
+     * would.
+     */
+    private function recordTrial(Model $user, Model $billable): void
+    {
+        BillingTrial::query()->create([
+            'user_id' => $user->getKey(),
+            'billable_type' => $billable->getMorphClass(),
+            'billable_id' => $billable->getKey(),
+            'stripe_subscription_id' => 'sub_' . Str::random(12),
+            'subscription_created_at' => now(),
+        ]);
     }
 }
 

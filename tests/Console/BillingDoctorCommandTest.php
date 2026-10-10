@@ -439,6 +439,49 @@ class BillingDoctorCommandTest extends TestCase
     }
 
     /**
+     * A catalogue that offers a trial needs the `billing_trials` table, because
+     * checkout and the plans endpoint read it for every trial product; without
+     * it both fail on a missing table. Reported as an error naming the
+     * migration, and as fine once the table exists.
+     */
+    public function test_a_trial_product_without_the_billing_trials_table_is_an_error(): void
+    {
+        config(['magic-starter.billing.products.pro_monthly.trial_days' => 14]);
+
+        $doctor = $this->doctor();
+
+        $this->assertSame(1, $doctor['exit']);
+        $this->assertSame('error', $doctor['checks']['schema.billing_trials']['status']);
+        $this->assertStringContainsString('billing_trials', $doctor['checks']['schema.billing_trials']['message']);
+        $this->assertStringContainsString('pro_monthly', $doctor['checks']['schema.billing_trials']['message']);
+
+        // The disarming limb: the same catalogue with the table present.
+        Schema::create('billing_trials', function (Blueprint $table): void {
+            $table->uuid('id')->primary();
+        });
+
+        $doctor = $this->doctor();
+
+        $this->assertSame(0, $doctor['exit']);
+        $this->assertSame('ok', $doctor['checks']['schema.billing_trials']['status']);
+    }
+
+    /**
+     * A catalogue that offers no trial never reads the table, so its absence is
+     * not a finding at all: an adopter who sells without trials is not asked to
+     * run a migration nothing uses.
+     */
+    public function test_a_catalogue_without_a_trial_is_silent_about_the_billing_trials_table(): void
+    {
+        $this->assertFalse(Schema::hasTable('billing_trials'));
+
+        $doctor = $this->doctor();
+
+        $this->assertSame(0, $doctor['exit']);
+        $this->assertArrayNotHasKey('schema.billing_trials', $doctor['checks']);
+    }
+
+    /**
      * A database the doctor cannot reach is a warning that says the comparison
      * did not happen, not a stack trace in place of the JSON an agent parses.
      */
