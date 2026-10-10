@@ -591,3 +591,4 @@ Code that builds on the package internals changes in these places:
 - A custom `WritesEntitlement` records through `BillingEventRecorder` itself, or the writes it makes leave no row.
 - A subclass of `StripeWebhookController` that overrides `subscriptionClaim`, `revokeEntitlement`, `reaffirmEntitlementFromInvoice` or `warnUnmappedPrice` adds the `string $eventId` parameter those methods gained. Its constructor, like `BillingController`'s, now takes a `BillingEventRecorder`.
 - `CheckTrialCard::handle` takes a `BillingEventRecorder` parameter, and `ReconcileBillingEntitlements::reconcileStripeSubject` takes an optional `BillingSource`.
+- `BillingController::abortWithBillingConflict()` takes `Model $billable` first; `StripeWebhookController::existingUserKey()` is now `existingUser()` and returns `?Model`; a `WriteEntitlement` subclass with its own constructor calls `parent::__construct()` so the recorder is set.
