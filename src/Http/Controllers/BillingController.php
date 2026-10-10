@@ -5,6 +5,7 @@ namespace FlutterSdk\MagicStarter\Http\Controllers;
 use Carbon\CarbonInterface;
 use FlutterSdk\MagicStarter\Actions\SubscriptionGuardedDeleteTeam;
 use FlutterSdk\MagicStarter\Contracts\ReportsUsage;
+use FlutterSdk\MagicStarter\Contracts\ResolvesBillingCurrency;
 use FlutterSdk\MagicStarter\Enums\BillingChannel;
 use FlutterSdk\MagicStarter\Enums\BillingEventType;
 use FlutterSdk\MagicStarter\Enums\BillingProvider;
@@ -76,6 +77,10 @@ use Symfony\Component\HttpFoundation\Response as HttpResponse;
  *   adopter has published no tier ranking at all. Both share one remedy shape
  *   (fix the config, or ask for a product that exists) and each carries its
  *   own sentence.
+ * - 422 with {@see self::REFUSAL_CURRENCY_UNPRICED}, the product is for sale
+ *   but not in the one currency Stripe will bill this subject in. Unlike the
+ *   two above it is recorded, because it is decided by the subject's billing
+ *   state rather than by the request alone.
  *
  * EVERY CASHIER CALL SITS BEHIND `method_exists()`, and that is not defensive
  * padding. This package ships the billing COLUMNS and the endpoints, not the
@@ -137,6 +142,17 @@ class BillingController
     public const REFUSAL_PRODUCT_NOT_SELLABLE = 'product_not_sellable';
 
     /**
+     * The 422 `code` for a checkout or swap naming a product that has web
+     * prices, none of them in the currency this subject is billed in.
+     *
+     * Its own code rather than {@see self::REFUSAL_PRODUCT_NOT_SELLABLE},
+     * because the product is fine and the config is fine: what blocks it is
+     * the currency Stripe has already fixed for this customer, so the client's
+     * next step is a product priced in that currency, not a config change.
+     */
+    public const REFUSAL_CURRENCY_UNPRICED = 'currency_unpriced';
+
+    /**
      * How many invoices one page of the invoice list carries.
      *
      * Untyped on purpose: the package's PHP floor is 8.2 and a typed class
@@ -168,12 +184,14 @@ class BillingController
      * Return the adopter's tier rows, floor first, each carrying the catalogue
      * products that sell it.
      *
-     * Served from config with no rail call, so it is safe on the hot path. The
-     * one per-subject fact is each product row's `trial_days`, the trial THIS
+     * Served from config with no rail call, so it is safe on the hot path. Two
+     * facts are per caller. Each product row's `trial_days` is the trial THIS
      * caller would get ({@see self::trialOffered()}): read from the local
      * database once per request, and not at all while no product offers a
      * trial, so an adopter selling without trials pays no query and needs no
-     * `billing_trials` table. The rows come from
+     * `billing_trials` table. And each row's `currency` is the one web
+     * currency it is shown in, which is the one the checkout charges
+     * ({@see ResolvesBillingCurrency}). The rows come from
      * {@see ReadsBillableAttributes::planCatalogue()}, which is
      * {@see BillingCatalogue::tiers()}: the `tier_order` ranking decides which
      * tiers exist and in what order, and the `tiers` map only describes them.
@@ -197,8 +215,14 @@ class BillingController
      */
     public function plans(Request $request): JsonResponse
     {
+        $billable = $this->currentBillable($request);
+
         return response()->json([
-            'data' => $this->sellableCatalogue($this->trialOffered($request)),
+            'data' => $this->sellableCatalogue(
+                $this->trialOffered($request, $billable),
+                app(ResolvesBillingCurrency::class)->resolve($request, $billable),
+                $billable !== null && $this->pinnedCurrency($billable) !== null,
+            ),
         ]);
     }
 
@@ -217,14 +241,14 @@ class BillingController
      * - There is no subject. A team-subject caller with no current team, or a
      *   pointer at a team they left, gets the plan grid as before; the other
      *   reads answer that caller 404, and this one never has.
+     *
+     * @param  Model|null  $billable  {@see self::currentBillable()}, resolved once by the caller.
      */
-    protected function trialOffered(Request $request): bool
+    protected function trialOffered(Request $request, ?Model $billable): bool
     {
         if (! BillingCatalogue::offersTrials()) {
             return false;
         }
-
-        $billable = $this->currentBillable($request);
 
         if ($billable === null) {
             return false;
@@ -259,10 +283,19 @@ class BillingController
      * trial the checkout would then not start is a charge on day one against
      * what the screen said.
      *
+     * Each product's `prices.web` holds ONE currency, named again as the row's
+     * `currency`, so a client rendering the first web price it finds renders
+     * the one the checkout charges. Which one is {@see self::productCurrency()}
+     * from [$currency]. For a PINNED caller a product not priced in the pin is
+     * one Stripe cannot bill them for, so it is flagged unsellable and its
+     * cycle is not offered; it keeps a price so the row can still be placed.
+     *
      * @param  bool  $trialOffered  Whether the caller may start a trial ({@see self::trialOffered()}).
+     * @param  string  $currency  The caller's currency ({@see ResolvesBillingCurrency}).
+     * @param  bool  $pinned  Whether [$currency] is the billable's pin rather than a preference.
      * @return array<int, array<string, mixed>>
      */
-    protected function sellableCatalogue(bool $trialOffered): array
+    protected function sellableCatalogue(bool $trialOffered, string $currency, bool $pinned): array
     {
         $sellable = [];
         $products = [];
@@ -273,7 +306,11 @@ class BillingController
                 continue;
             }
 
-            if ($product['sellable']
+            $web = PriceTable::display(PriceTable::for($product, BillingChannel::WEB, $pricing));
+            $shown = $this->productCurrency(array_keys($web), $currency, $pricing['currency']);
+            $forSale = $product['sellable'] && ! ($pinned && $shown !== null && $shown !== $currency);
+
+            if ($forSale
                 && $product['refs']['stripe_price'] !== null
                 && $product['cycle'] !== null
             ) {
@@ -285,16 +322,15 @@ class BillingController
                 'type' => $product['type']->value,
                 'tier' => $product['tier'],
                 'cycle' => $product['cycle']?->value,
-                'sellable' => $product['sellable'],
+                'sellable' => $forSale,
                 'trial_days' => $trialOffered ? $product['trial_days'] : 0,
                 'store_ids' => [
                     BillingChannel::APP_STORE->value => $product['refs'][BillingChannel::APP_STORE->value],
                     BillingChannel::PLAY->value => $product['refs'][BillingChannel::PLAY->value],
                 ],
+                'currency' => $shown,
                 'prices' => [
-                    BillingChannel::WEB->value => JsonObject::map(PriceTable::display(
-                        PriceTable::for($product, BillingChannel::WEB, $pricing),
-                    )),
+                    BillingChannel::WEB->value => JsonObject::map($shown === null ? [] : [$shown => $web[$shown]]),
                 ],
             ];
         }
@@ -681,6 +717,11 @@ class BillingController
         //    checked out against some other product's price.
         $priceId = $this->sellablePriceId($validated['product']);
 
+        // 5b. The currency the screen showed, or the one Stripe has already
+        //     fixed for this subject. Decided before the session opens, so a
+        //     refusal leaves Stripe untouched.
+        $currency = $this->checkoutCurrency($request, $billable, $validated['product']);
+
         // 6. One price, through the SUBSCRIPTION builder. Quantity is not the
         //    client's to send: a request body carrying it would let a caller
         //    decide what they are charged.
@@ -725,11 +766,20 @@ class BillingController
         //    zero, a session that skipped the card would end the trial on a
         //    customer with nothing to charge, and the card is what the trial
         //    check fingerprints. Sent on every checkout, trial or not.
-        $checkout = $subscription->checkout([
+        //    An explicit currency overrides Stripe's own localisation, which
+        //    is what makes the charge the figure the screen showed; Cashier
+        //    merges these options into the session payload as they are.
+        $sessionOptions = [
             'success_url' => $validated['success_url'],
             'cancel_url' => $validated['cancel_url'],
             'payment_method_collection' => 'always',
-        ]);
+        ];
+
+        if ($currency !== null) {
+            $sessionOptions['currency'] = strtolower($currency);
+        }
+
+        $checkout = $subscription->checkout($sessionOptions);
 
         // 9. Recorded once the session exists, never before: a Stripe error above
         //    leaves no row, and the row's external id is the session itself. The
@@ -794,6 +844,11 @@ class BillingController
         // 4. Reached only on a rail this application controls, so an absent
         //    subscription really does mean there is nothing to swap.
         $subscription = $this->actionableSubscription($billable, 'swap');
+
+        // 4b. A subscription keeps the currency it was opened in, so the target
+        //     has to be priced in it. The country is never asked: it is not
+        //     what Stripe bills this subscription in.
+        $this->guardSwapCurrency($billable, $validated['product']);
 
         // 5. Recorded after the rail answers, and on BOTH of its two outcomes
         //    that mean the plan moved. Cashier throws `IncompletePayment` from
@@ -1151,6 +1206,172 @@ class BillingController
     }
 
     /**
+     * The currency a checkout for catalogue product [$key] charges in, or null
+     * when the product has no web price and so names none.
+     *
+     * A currency Stripe has already fixed for this subject wins and is a hard
+     * constraint: the pin, else the currency its Stripe customer carries,
+     * which is read only for a subject that has a customer and only for a
+     * product priced on the web, so the common first checkout makes no extra
+     * call. With neither, the caller's currency falls back per product exactly
+     * as {@see self::sellableCatalogue()} does, so the charge is the figure
+     * the screen showed.
+     *
+     * Nothing is written here. The pin belongs to the subscription webhook,
+     * because a checkout the customer abandons has billed nobody in anything.
+     *
+     * @throws ValidationException When the product is not priced in the fixed currency.
+     */
+    protected function checkoutCurrency(Request $request, Model $billable, string $key): ?string
+    {
+        $priced = $this->webCurrencies($key);
+
+        if ($priced === []) {
+            return null;
+        }
+
+        $fixed = $this->pinnedCurrency($billable) ?? $this->customerCurrency($billable);
+
+        if ($fixed !== null) {
+            if (! in_array($fixed, $priced, true)) {
+                $this->refuseUnpricedCurrency($billable, $key, $fixed);
+            }
+
+            return $fixed;
+        }
+
+        return $this->productCurrency(
+            $priced,
+            app(ResolvesBillingCurrency::class)->resolve($request, $billable),
+            BillingCatalogue::pricing()['currency'],
+        );
+    }
+
+    /**
+     * Refuse a swap onto catalogue product [$key] when it has web prices and
+     * none in the subscription's currency: the pin, or the base for a subject
+     * the webhook has not pinned yet.
+     *
+     * @throws ValidationException When the product is not priced in that currency.
+     */
+    protected function guardSwapCurrency(Model $billable, string $key): void
+    {
+        $priced = $this->webCurrencies($key);
+        $currency = $this->pinnedCurrency($billable) ?? BillingCatalogue::pricing()['currency'];
+
+        if ($priced !== [] && ! in_array($currency, $priced, true)) {
+            $this->refuseUnpricedCurrency($billable, $key, $currency);
+        }
+    }
+
+    /**
+     * The currency one product is shown and charged in for a caller whose
+     * currency is [$currency]: that one when the product is priced in it,
+     * else the base, else the first web currency the product carries, and
+     * null for a product with no web price.
+     *
+     * @param  list<string>  $priced  The product's web currencies, uppercase, in config order.
+     */
+    protected function productCurrency(array $priced, string $currency, string $base): ?string
+    {
+        foreach ([$currency, $base] as $candidate) {
+            if (in_array($candidate, $priced, true)) {
+                return $candidate;
+            }
+        }
+
+        return $priced[0] ?? null;
+    }
+
+    /**
+     * The uppercase web currencies catalogue product [$key] is priced in.
+     *
+     * @return list<string>
+     */
+    protected function webCurrencies(string $key): array
+    {
+        $product = BillingCatalogue::product($key);
+
+        if ($product === null) {
+            return [];
+        }
+
+        return array_keys(PriceTable::for($product, BillingChannel::WEB, BillingCatalogue::pricing()));
+    }
+
+    /**
+     * The currency the Stripe webhook pinned for [$billable], uppercase, or
+     * null while Stripe has billed it in nothing (or the adopter has not added
+     * the column, which reads the same).
+     */
+    protected function pinnedCurrency(Model $billable): ?string
+    {
+        $pin = $this->stringAttribute($billable, 'billing_currency');
+
+        return $pin === null ? null : strtoupper($pin);
+    }
+
+    /**
+     * The currency [$billable]'s Stripe customer is billed in, uppercase, or
+     * null for a subject with no customer or a customer nothing has billed.
+     *
+     * A live Stripe read, which is why the only caller asks for it last.
+     */
+    protected function customerCurrency(Model $billable): ?string
+    {
+        if (! method_exists($billable, 'asStripeCustomer') || ! $billable->hasStripeId()) {
+            return null;
+        }
+
+        $currency = $billable->asStripeCustomer()->currency;
+
+        return is_string($currency) && $currency !== '' ? strtoupper($currency) : null;
+    }
+
+    /**
+     * Refuse product [$key] for a subject billed in [$currency], with a 422
+     * carrying a machine `code` beside the localised sentence.
+     *
+     * Recorded as a `request_refused` row, unlike the product refusal above:
+     * that one is the caller's mistake about the catalogue, this one is
+     * decided by what Stripe has already fixed for the subject, which a
+     * support question about a refused purchase needs to see.
+     *
+     * @throws ValidationException Always.
+     */
+    protected function refuseUnpricedCurrency(Model $billable, string $key, string $currency): never
+    {
+        $this->recorder->record(
+            BillingEventType::REQUEST_REFUSED,
+            BillingSource::REQUEST,
+            $billable,
+            provider: BillingProvider::STRIPE,
+            reason: self::REFUSAL_CURRENCY_UNPRICED,
+            properties: [
+                'product' => $key,
+                'currency' => $currency,
+            ],
+        );
+
+        $message = (string) __('magic-starter::billing.refusals.currency_unpriced', [
+            'product' => $key,
+            'currency' => $currency,
+        ]);
+
+        $exception = ValidationException::withMessages([
+            'product' => [$message],
+        ]);
+
+        $exception->response = new JsonResponse([
+            'message' => $message,
+            'code' => self::REFUSAL_CURRENCY_UNPRICED,
+            'errors' => $exception->errors(),
+        ], HttpResponse::HTTP_UNPROCESSABLE_ENTITY);
+
+        throw $exception;
+    }
+
+    /**
      * The card-rail subscription a write acts on, 404-ing when there is none.
      *
      * The 404 is a DIFFERENT fact from the store 409 rather than a milder
@@ -1191,7 +1412,8 @@ class BillingController
      *
      * Recorded as a `request_refused` row before the throw, so a customer who
      * was turned away is as visible in the history as one who was served. Only
-     * these 409s are: a 422 is the caller's own mistake and a 404 an honest
+     * these 409s and the currency 422 ({@see self::refuseUnpricedCurrency()})
+     * are: any other 422 is the caller's own mistake and a 404 an honest
      * absence, and neither is a billing outcome.
      *
      * @param  Model  $billable  The subject the request was refused for.

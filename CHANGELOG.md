@@ -4,6 +4,30 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Added
+
+- **A per-caller web currency, chosen by country and pinned by Stripe.** `billing.pricing.country_header` (default `null`, off) names the request header carrying the caller's two-letter country, and `billing.pricing.country_currencies` maps a country to a currency. The caller's currency is the billable's `billing_currency` pin, else the mapped country (a missing header, `XX`, `T1` or an unmapped country gets the base), else `pricing.currency`. Boot refuses a malformed header or map, and a mapped currency no product prices on the web. (`src/Support/BillingCatalogue.php`, `config/magic-starter.php`)
+- **`Contracts\ResolvesBillingCurrency`, bound to `Actions\ResolveBillingCurrency`** and overridable like the other contracts. (`src/Contracts/ResolvesBillingCurrency.php`, `src/Actions/ResolveBillingCurrency.php`, `src/MagicStarterServiceProvider.php`)
+- **The migration `add_billing_currency_to_billable_table.php`**: a nullable `billing_currency` `string(3)` on the billable table, published by the install command before the provenance migration. (`database/migrations/add_billing_currency_to_billable_table.php`, `src/Console/InstallCommand.php`)
+- **The Stripe webhook pins the currency.** `customer.subscription.created` and `.updated` for a `default` subscription write its `currency`, uppercased, while `billing_currency` is null, in one conditional update; a set pin is never overwritten, and a table without the column is skipped. (`src/Http/Controllers/StripeWebhookController.php`)
+- **The 422 refusal `currency_unpriced`** from `billing/checkout` and `billing/swap`, recorded as a `request_refused` row with `product` and `currency`. (`src/Http/Controllers/BillingController.php`, `lang/en/billing.php`, `lang/tr/billing.php`)
+- **`billing:doctor` checks `schema.billing_currency`**: an `error` while `country_header` is set and the billable table has no `billing_currency`, silent while no header is set. (`src/Console/BillingDoctorCommand.php`)
+
+### Changed
+
+- **`GET billing/plans` shows each product in one web currency.** Every product row gains `currency`, and `prices.web` holds only that currency: the caller's, else the base, else the product's first web currency; a product with no web price carries `"currency": null` and `"web": {}`. For a pinned caller a product not priced in the pin is `sellable: false`, keeps its base price and its cycle leaves the tier's `cycles`. (`src/Http/Controllers/BillingController.php`)
+- **`POST billing/checkout` sends `currency` to Stripe**, lowercase, for a product with a web price: the pin, else the currency the billable's Stripe customer already carries, else the caller's currency with the same per-product fallback as the plans screen. A product not priced in the pin or the customer's currency is refused. Checkout writes no pin. (`src/Http/Controllers/BillingController.php`)
+- **`POST billing/swap` refuses a target product not priced in the pin**, or in the base currency for a subject not pinned yet. (`src/Http/Controllers/BillingController.php`)
+- **`BillingController::trialOffered()` takes the billable** as its second parameter, and `sellableCatalogue()` takes the caller's currency and whether it is pinned. (`src/Http/Controllers/BillingController.php`)
+
+### Upgrading
+
+- **Copy `add_billing_currency_to_billable_table.php` and run `php artisan migrate`.** Copy it from `vendor/fluttersdk/magic-starter-laravel/database/migrations/` into `database/migrations/` under a timestamp later than your latest migration. Until then nothing is pinned and the webhook skips the pin; `billing:doctor` reports `schema.billing_currency` once a header is set.
+- **Set `billing.pricing.country_header`** to turn the country rule on, e.g. `CF-IPCountry` behind Cloudflare with the "Add visitor location headers" managed transform on, and map countries in `billing.pricing.country_currencies`. Price every mapped currency on the web channel of at least one product, and the Stripe price behind each product in it (`currency_options`).
+- **Clients read one web price per product.** A client rendering the first web price of a row is unaffected; one that offered a currency picker over `prices.web` now sees one entry.
+- **Cashier balance and invoice items.** An application that charges through Cashier outside these endpoints overrides `preferredCurrency()` on its billable model to return `billing_currency`; the package does not add it to a trait, where it would collide with Cashier's.
+- **A subclass of `BillingController`** that overrides or calls `trialOffered()` or `sellableCatalogue()` passes the new parameters.
+
 ## [0.0.25] - 2026-10-10
 
 ### Added

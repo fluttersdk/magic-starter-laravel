@@ -38,7 +38,12 @@ use LogicException;
  *     prices: array<string, mixed>,
  *     refs: Refs,
  * }
- * @phpstan-type Pricing array{currency: string, commission: array{mode: CommissionMode, rate: float}}
+ * @phpstan-type Pricing array{
+ *     currency: string,
+ *     country_header: ?string,
+ *     country_currencies: array<string, string>,
+ *     commission: array{mode: CommissionMode, rate: float},
+ * }
  */
 final class BillingCatalogue
 {
@@ -136,6 +141,9 @@ final class BillingCatalogue
         }
 
         $products = self::products();
+
+        // 3b. A country is never sent to a currency nothing is sold in.
+        self::validateCountryCurrenciesArePriced($products);
 
         // 4. The floor is what a customer holds for free, so nothing sells it.
         foreach ($products as $product) {
@@ -346,11 +354,17 @@ final class BillingCatalogue
     }
 
     /**
-     * The base currency and the commission rule store prices derive under.
+     * The base currency, the country rule that picks a caller's web currency,
+     * and the commission rule store prices derive under.
      *
      * An absent or empty mode is the default; a mode that names nothing is
      * refused here rather than defaulted, because absorbing a cut the adopter
      * asked to pass on would sell every store product below its figure.
+     *
+     * The country keys are only normalised here: their shape is refused at
+     * boot by {@see self::validate()}, so a reader keeps what it can read. An
+     * empty or absent header is the feature switched off, which is the shape
+     * an unset environment variable writes.
      *
      * @return Pricing
      *
@@ -363,11 +377,14 @@ final class BillingCatalogue
         $commission = is_array($pricing['commission'] ?? null) ? $pricing['commission'] : [];
 
         $currency = $pricing['currency'] ?? null;
+        $header = $pricing['country_header'] ?? null;
         $mode = $commission['mode'] ?? null;
         $rate = $commission['rate'] ?? null;
 
         return [
             'currency' => is_string($currency) && $currency !== '' ? strtoupper($currency) : self::DEFAULT_CURRENCY,
+            'country_header' => is_string($header) && trim($header) !== '' ? trim($header) : null,
+            'country_currencies' => self::countryCurrencies($pricing['country_currencies'] ?? []),
             'commission' => [
                 'mode' => is_string($mode) && $mode !== '' ? self::commissionMode($mode) : self::DEFAULT_COMMISSION_MODE,
                 'rate' => is_int($rate) || is_float($rate) ? (float) $rate : self::DEFAULT_COMMISSION_RATE,
@@ -625,17 +642,104 @@ final class BillingCatalogue
             ));
         }
 
-        if (! array_key_exists('rate', $commission)) {
-            return;
+        if (array_key_exists('rate', $commission)) {
+            $rate = $commission['rate'];
+
+            if (! (is_int($rate) || is_float($rate)) || $rate < 0 || $rate >= 1) {
+                throw new LogicException(sprintf(
+                    '[magic-starter.billing.pricing.commission.rate] is [%s]; use a number of at least 0 and below 1.',
+                    is_scalar($rate) ? (string) $rate : get_debug_type($rate),
+                ));
+            }
         }
 
-        $rate = $commission['rate'];
+        self::validateCountryPricing();
+    }
 
-        if (! (is_int($rate) || is_float($rate)) || $rate < 0 || $rate >= 1) {
+    /**
+     * Refuse a country header or a country map the resolver would misread.
+     *
+     * Read from the raw config for the reason {@see self::validatePricing()}
+     * gives: {@see self::pricing()} drops what it cannot read, so a map keyed
+     * by `TUR` would silently send every Turkish caller to the base currency.
+     *
+     * @throws LogicException
+     */
+    private static function validateCountryPricing(): void
+    {
+        $header = config('magic-starter.billing.pricing.country_header');
+
+        if ($header !== null && ! is_string($header)) {
             throw new LogicException(sprintf(
-                '[magic-starter.billing.pricing.commission.rate] is [%s]; use a number of at least 0 and below 1.',
-                is_scalar($rate) ? (string) $rate : get_debug_type($rate),
+                '[magic-starter.billing.pricing.country_header] is of type [%s]; use a header name such as '
+                . 'CF-IPCountry, or null to turn the country rule off.',
+                get_debug_type($header),
             ));
+        }
+
+        $map = config('magic-starter.billing.pricing.country_currencies', []);
+
+        if (! is_array($map)) {
+            throw new LogicException(sprintf(
+                '[magic-starter.billing.pricing.country_currencies] is of type [%s]; use a map of two-letter '
+                . 'country => three-letter currency.',
+                get_debug_type($map),
+            ));
+        }
+
+        foreach ($map as $country => $currency) {
+            if (! is_string($country) || preg_match('/^[A-Za-z]{2}$/', $country) !== 1) {
+                throw new LogicException(sprintf(
+                    '[magic-starter.billing.pricing.country_currencies] maps country [%s]; use a two-letter '
+                    . 'ISO 3166-1 code such as TR.',
+                    $country,
+                ));
+            }
+
+            if (! is_string($currency) || preg_match('/^[A-Za-z]{3}$/', $currency) !== 1) {
+                throw new LogicException(sprintf(
+                    '[magic-starter.billing.pricing.country_currencies] maps [%s] to [%s]; use a three-letter '
+                    . 'ISO 4217 code such as TRY.',
+                    $country,
+                    is_scalar($currency) ? (string) $currency : get_debug_type($currency),
+                ));
+            }
+        }
+    }
+
+    /**
+     * Refuse a country mapped to a currency no product prices on the web.
+     *
+     * The map chooses a WEB currency, so a store-only figure does not count:
+     * every product would fall back to the base for that country, and the map
+     * entry would be a rule that never applies while reading as one that does.
+     *
+     * @param  array<string, Product>  $products
+     *
+     * @throws LogicException
+     */
+    private static function validateCountryCurrenciesArePriced(array $products): void
+    {
+        $priced = [];
+
+        foreach ($products as $product) {
+            $web = $product['prices'][BillingChannel::WEB->value] ?? [];
+
+            foreach (is_array($web) ? array_keys($web) : [] as $currency) {
+                $priced[strtoupper((string) $currency)] = true;
+            }
+        }
+
+        foreach (self::pricing()['country_currencies'] as $country => $currency) {
+            if (! isset($priced[$currency])) {
+                throw new LogicException(sprintf(
+                    '[magic-starter.billing.pricing.country_currencies] sends [%s] to [%s], which no product '
+                    . 'prices on the web; add a [%s] figure under prices.web or remove the entry.',
+                    $country,
+                    $currency,
+                    $currency,
+                ));
+            }
         }
     }
 
@@ -853,6 +957,33 @@ final class BillingCatalogue
         $value = self::stringOrNull($value);
 
         return $value === null ? null : $enum::tryFrom($value);
+    }
+
+    /**
+     * The country map with both codes uppercased, keeping only the entries
+     * that are two-letter country => three-letter currency.
+     *
+     * @return array<string, string>
+     */
+    private static function countryCurrencies(mixed $configured): array
+    {
+        if (! is_array($configured)) {
+            return [];
+        }
+
+        $map = [];
+
+        foreach ($configured as $country => $currency) {
+            if (is_string($country)
+                && preg_match('/^[A-Za-z]{2}$/', $country) === 1
+                && is_string($currency)
+                && preg_match('/^[A-Za-z]{3}$/', $currency) === 1
+            ) {
+                $map[strtoupper($country)] = strtoupper($currency);
+            }
+        }
+
+        return $map;
     }
 
     /**

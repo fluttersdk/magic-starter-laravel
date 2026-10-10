@@ -301,10 +301,14 @@ class StripeWebhookController extends CashierWebhookController
             return;
         }
 
+        // 1. The currency Stripe now bills this subject in, whatever the status:
+        //    an incomplete subscription has still fixed the customer's currency.
+        $this->pinBillingCurrency($billable, $object['currency'] ?? null);
+
         $status = $object['status'] ?? 'incomplete';
         $priceId = $object['items']['data'][0]['price']['id'] ?? null;
 
-        // 1. A genuinely non-granting status (canceled/unpaid/incomplete) really
+        // 2. A genuinely non-granting status (canceled/unpaid/incomplete) really
         //    does revoke the entitlement, and the claim carries NO tier: Stripe
         //    is saying this customer is owed nothing, which is not the same
         //    statement as selling them the cheapest tier. The check stays on
@@ -318,7 +322,7 @@ class StripeWebhookController extends CashierWebhookController
             return;
         }
 
-        // 2. A granting status whose price is unmapped is a config gap, not a
+        // 3. A granting status whose price is unmapped is a config gap, not a
         //    downgrade: skip the write so the config gap never revokes a paid
         //    tier, and surface the missing price to tier mapping for operators.
         $plan = StripeSubscriptionState::planForPrice($priceId);
@@ -330,6 +334,45 @@ class StripeWebhookController extends CashierWebhookController
         }
 
         $this->claim($this->subscriptionClaim($billable, $plan, $status, $object, $eventAt, $payload['id']));
+    }
+
+    /**
+     * Record the currency a `default` subscription bills in as the billable's
+     * `billing_currency`, unless one is recorded already.
+     *
+     * The only writer of the pin, and the right one: Stripe bills a customer
+     * in one currency once a subscription has fixed it, and this event is
+     * Stripe saying which. The plans screen and the card-rail writes read it
+     * ahead of the caller's country, so a customer abroad is never shown a
+     * price Stripe will refuse to charge.
+     *
+     * One conditional UPDATE rather than a read and a write, so two deliveries
+     * racing cannot both see a null and the first currency always wins. It
+     * goes through the base query builder, so the row's `updated_at` does not
+     * move for a column the customer never touched. An adopter who has not
+     * added the column yet is skipped rather than failed: a delivery that can
+     * never succeed would roll back the grant beside it, and Stripe would keep
+     * retrying it for days.
+     */
+    protected function pinBillingCurrency(Model $billable, mixed $currency): void
+    {
+        if (! is_string($currency) || $currency === '') {
+            return;
+        }
+
+        $schema = $billable->getConnection()->getSchemaBuilder();
+
+        if (! $schema->hasColumn($billable->getTable(), 'billing_currency')) {
+            return;
+        }
+
+        $billable->newQuery()
+            ->whereKey($billable->getKey())
+            ->whereNull('billing_currency')
+            ->toBase()
+            ->update([
+                'billing_currency' => strtoupper($currency),
+            ]);
     }
 
     /**

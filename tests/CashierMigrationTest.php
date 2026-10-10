@@ -533,6 +533,51 @@ class CashierMigrationTest extends TestCase
     }
 
     // -------------------------------------------------------------------------
+    // The billing currency pin follows the subject too
+    // -------------------------------------------------------------------------
+
+    /**
+     * The pin lands on the billable's own table and nowhere else, and running
+     * the migration twice is a no-op, since `install` can publish it into an
+     * application that already ran it.
+     */
+    #[DataProvider('billableSubjects')]
+    public function test_the_billing_currency_column_follows_the_billable_subject(
+        string $token,
+        string $table,
+    ): void {
+        $this->useSubject($token);
+        $this->runBillingMigrations();
+
+        $this->runMigration('add_billing_currency_to_billable_table.php');
+        $this->runMigration('add_billing_currency_to_billable_table.php');
+
+        $this->assertTrue(Schema::hasColumn($table, 'billing_currency'));
+        $this->assertFalse(Schema::hasColumn($table === 'users' ? 'teams' : 'users', 'billing_currency'));
+
+        (require __DIR__ . '/../database/migrations/add_billing_currency_to_billable_table.php')->down();
+
+        $this->assertFalse(Schema::hasColumn($table, 'billing_currency'));
+    }
+
+    /**
+     * An absent billable table is refused by name, like the customer columns.
+     */
+    public function test_the_billing_currency_migration_refuses_an_absent_billable_table(): void
+    {
+        $this->useSubject('user');
+
+        try {
+            $this->runMigration('add_billing_currency_to_billable_table.php');
+
+            $this->fail('An absent billable table must fail the migration, not pass it.');
+        } catch (\RuntimeException $exception) {
+            $this->assertStringContainsString('users', $exception->getMessage());
+            $this->assertStringContainsString('magic-starter.billing.billable', $exception->getMessage());
+        }
+    }
+
+    // -------------------------------------------------------------------------
     // The models, and the phase they are registered in
     // -------------------------------------------------------------------------
 

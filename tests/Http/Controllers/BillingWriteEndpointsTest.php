@@ -38,6 +38,7 @@ use Laravel\Cashier\Exceptions\IncompletePayment;
 use Laravel\Cashier\Payment;
 use LogicException;
 use Stripe\Checkout\Session as StripeCheckoutSession;
+use Stripe\Customer as StripeCustomer;
 use Stripe\Exception\ApiConnectionException;
 use Stripe\PaymentIntent;
 use Throwable;
@@ -157,6 +158,7 @@ class BillingWriteEndpointsTest extends TestCase
             $table->uuid('current_team_id')->nullable();
             $table->boolean('is_guest')->default(false);
             $table->string('stripe_id')->nullable();
+            $table->string('billing_currency', 3)->nullable();
             $this->addProvenanceColumns($table);
             $table->timestamps();
         });
@@ -167,6 +169,7 @@ class BillingWriteEndpointsTest extends TestCase
             $table->string('name');
             $table->boolean('personal_team')->default(false);
             $table->string('stripe_id')->nullable();
+            $table->string('billing_currency', 3)->nullable();
             $this->addProvenanceColumns($table);
             $table->timestamps();
         });
@@ -1392,11 +1395,232 @@ class BillingWriteEndpointsTest extends TestCase
     }
 
     /**
+     * The checkout charges in the currency the plans screen showed this
+     * caller: the one their country maps to, or the base without a header.
+     *
+     * Stripe takes an explicit `currency` over its own localisation, so the
+     * option is what makes the charge match the screen; lowercase is the form
+     * Stripe writes currencies in.
+     */
+    public function test_a_checkout_charges_in_the_currency_the_caller_was_shown(): void
+    {
+        $this->configureCurrencyCatalogue();
+        $this->bootBillingRoutes('user');
+
+        $user = $this->createUser('checkout-country@example.test');
+
+        $this->buyFrom($user, 'pro_monthly', 'TR')->assertOk();
+        $this->assertSame('try', BillingWriteRail::$checkoutSessionOptions['currency'] ?? null);
+
+        $this->buyFrom($user, 'pro_monthly', null)->assertOk();
+        $this->assertSame('usd', BillingWriteRail::$checkoutSessionOptions['currency'] ?? null);
+
+        // A product not priced in the caller's currency falls back to the base,
+        // exactly as the screen does, rather than refusing an unpinned caller.
+        $this->buyFrom($user, 'pro_annual', 'TR')->assertOk();
+        $this->assertSame('usd', BillingWriteRail::$checkoutSessionOptions['currency'] ?? null);
+    }
+
+    /**
+     * The pin is written by the subscription webhook alone, once Stripe has
+     * actually billed in a currency. A checkout is only an intention: a
+     * customer who abandons it must not be locked into its currency.
+     */
+    public function test_a_checkout_writes_no_pin(): void
+    {
+        $this->configureCurrencyCatalogue();
+        $this->bootBillingRoutes('user');
+
+        $user = $this->createUser('checkout-no-pin@example.test');
+
+        $this->buyFrom($user, 'pro_monthly', 'TR')->assertOk();
+
+        $this->assertNull($user->fresh()?->getAttribute('billing_currency'));
+    }
+
+    /**
+     * A pinned caller is charged in the pin wherever they are, and refused a
+     * product not priced in it: Stripe bills a customer in one currency, so
+     * any other figure is one the customer could not be charged.
+     */
+    public function test_a_pinned_checkout_is_refused_for_a_product_unpriced_in_the_pin(): void
+    {
+        $this->configureCurrencyCatalogue();
+        $this->bootBillingRoutes('user');
+
+        $user = $this->createUser('checkout-pinned@example.test', ['billing_currency' => 'TRY']);
+
+        $this->buyFrom($user, 'pro_monthly', 'FR')->assertOk();
+        $this->assertSame('try', BillingWriteRail::$checkoutSessionOptions['currency'] ?? null);
+
+        BillingEvent::query()->delete();
+        $this->dispatched = [];
+        BillingWriteRail::$checkoutItems = null;
+
+        $this->assertCurrencyUnpriced($this->buyFrom($user, 'pro_annual', 'TR'));
+        $this->assertNull(BillingWriteRail::$checkoutItems, 'A refused checkout must open no session.');
+
+        $row = $this->onlyRow(BillingEventType::REQUEST_REFUSED, $user, $user);
+        $this->assertSame(BillingController::REFUSAL_CURRENCY_UNPRICED, $row->reason);
+        $this->assertSame(BillingProvider::STRIPE, $row->provider);
+        $this->assertDispatchedOnce(RequestRefused::class, $row);
+    }
+
+    /**
+     * A Stripe customer that already carries a currency is charged in it when
+     * nothing is pinned yet, because Stripe will not bill that customer in
+     * another; with none on it, the caller's currency stands.
+     */
+    public function test_an_existing_stripe_customer_is_charged_in_its_own_currency(): void
+    {
+        $this->configureCurrencyCatalogue();
+        $this->bootBillingRoutes('user');
+
+        $user = $this->createUser('checkout-customer@example.test', ['stripe_id' => self::STRIPE_ID]);
+        BillingWriteRail::$hasStripeId = true;
+
+        BillingWriteRail::$customerCurrency = 'try';
+        $this->buyFrom($user, 'pro_monthly', null)->assertOk();
+        $this->assertSame('try', BillingWriteRail::$checkoutSessionOptions['currency'] ?? null);
+
+        BillingWriteRail::$customerCurrency = null;
+        $this->buyFrom($user, 'pro_monthly', 'TR')->assertOk();
+        $this->assertSame('try', BillingWriteRail::$checkoutSessionOptions['currency'] ?? null);
+
+        BillingWriteRail::$customerCurrency = 'eur';
+        $this->assertCurrencyUnpriced($this->buyFrom($user, 'pro_monthly', null));
+    }
+
+    /**
+     * A product with no web price names no currency, so its checkout sends
+     * none and asks Stripe nothing about the customer: an adopter who never
+     * filled display prices checks out exactly as before.
+     */
+    public function test_a_product_with_no_web_price_is_checked_out_with_no_currency(): void
+    {
+        $this->bootBillingRoutes('user');
+
+        $user = $this->createUser('checkout-unpriced@example.test', ['billing_currency' => 'TRY']);
+        BillingWriteRail::$hasStripeId = true;
+        BillingWriteRail::$customerCurrency = 'try';
+
+        $this->buy($user, 'pro_monthly')->assertOk();
+
+        $this->assertIsArray(BillingWriteRail::$checkoutSessionOptions);
+        $this->assertArrayNotHasKey('currency', BillingWriteRail::$checkoutSessionOptions);
+        $this->assertSame(0, BillingWriteRail::$customerReads);
+    }
+
+    /**
+     * A swap keeps the subscription's currency, which is the pin, or the base
+     * for a subject the webhook has not pinned yet. A target not priced in it
+     * is refused before Stripe is asked, and the country never enters into it.
+     */
+    public function test_a_swap_is_refused_onto_a_product_unpriced_in_the_pin_or_the_base(): void
+    {
+        $this->configureCurrencyCatalogue();
+        $this->bootBillingRoutes('user');
+
+        BillingWriteRail::$subscription = new BillingWriteSubscription;
+
+        $pinned = $this->createUser('swap-pinned@example.test', ['billing_currency' => 'TRY']);
+
+        $this->assertCurrencyUnpriced($this->write($pinned, '/billing/swap', ['product' => 'pro_annual']));
+        $this->assertNull(BillingWriteSubscription::$swappedTo);
+        $this->assertSame(
+            BillingController::REFUSAL_CURRENCY_UNPRICED,
+            BillingEvent::query()->sole()->reason,
+        );
+
+        $this->write($pinned, '/billing/swap', ['product' => 'pro_monthly'])->assertOk();
+        $this->assertSame('price_pro', BillingWriteSubscription::$swappedTo);
+
+        BillingWriteSubscription::reset();
+
+        $unpinned = $this->createUser('swap-unpinned@example.test');
+
+        $this->assertCurrencyUnpriced($this->writeFrom($unpinned, '/billing/swap', ['product' => 'pro_lira'], 'TR'));
+        $this->assertNull(BillingWriteSubscription::$swappedTo);
+
+        $this->writeFrom($unpinned, '/billing/swap', ['product' => 'pro_annual'], 'TR')->assertOk();
+        $this->assertSame('price_pro_annual', BillingWriteSubscription::$swappedTo);
+    }
+
+    /**
      * Open a checkout for one catalogue product, as the given caller.
      */
     private function buy(Model $user, string $product): TestResponse
     {
         return $this->write($user, '/billing/checkout', $this->checkoutPayload($product));
+    }
+
+    /**
+     * Open a checkout for one catalogue product from [$country] as Cloudflare
+     * names it, or with no country header at all when null.
+     */
+    private function buyFrom(Model $user, string $product, ?string $country): TestResponse
+    {
+        return $this->writeFrom($user, '/billing/checkout', $this->checkoutPayload($product), $country);
+    }
+
+    /**
+     * Drive one write endpoint as [$user] from [$country].
+     *
+     * @param  array<string, mixed>  $payload
+     */
+    private function writeFrom(Model $user, string $path, array $payload, ?string $country): TestResponse
+    {
+        $headers = $country === null ? [] : ['CF-IPCountry' => $country];
+
+        return $this->actingAs($user->fresh(), 'sanctum')->postJson($path, $payload, $headers);
+    }
+
+    /**
+     * The refusal for a product not priced in the currency this caller is
+     * charged in: a 422 carrying the machine code and the field it concerns.
+     */
+    private function assertCurrencyUnpriced(TestResponse $response): void
+    {
+        $response
+            ->assertStatus(422)
+            ->assertJsonPath('code', BillingController::REFUSAL_CURRENCY_UNPRICED)
+            ->assertJsonValidationErrors('product');
+    }
+
+    /**
+     * Three subscriptions of one tier: monthly in dollars and lira, annual in
+     * dollars only, and a lira-only one, with Turkey mapped to lira behind a
+     * Cloudflare country header.
+     */
+    private function configureCurrencyCatalogue(): void
+    {
+        config([
+            'magic-starter.billing.pricing.country_header' => 'CF-IPCountry',
+            'magic-starter.billing.pricing.country_currencies' => ['TR' => 'TRY'],
+            'magic-starter.billing.products' => [
+                'pro_monthly' => [
+                    'type' => 'subscription',
+                    'tier' => 'pro',
+                    'cycle' => 'monthly',
+                    'prices' => ['web' => ['USD' => 2900, 'TRY' => 99900]],
+                    'refs' => ['stripe_price' => 'price_pro'],
+                ],
+                'pro_annual' => [
+                    'type' => 'subscription',
+                    'tier' => 'pro',
+                    'cycle' => 'annual',
+                    'prices' => ['web' => ['USD' => 29000]],
+                    'refs' => ['stripe_price' => 'price_pro_annual'],
+                ],
+                'pro_lira' => [
+                    'type' => 'subscription',
+                    'tier' => 'business',
+                    'cycle' => 'monthly',
+                    'prices' => ['web' => ['TRY' => 199900]],
+                    'refs' => ['stripe_price' => 'price_pro_lira'],
+                ],
+            ],
+        ]);
     }
 
     /**
@@ -1598,6 +1822,17 @@ final class BillingWriteRail
      */
     public static ?array $checkoutSessionOptions = null;
 
+    /**
+     * The currency the Stripe customer carries, lowercase as Stripe writes it,
+     * or null for a customer nothing has billed yet.
+     */
+    public static ?string $customerCurrency = null;
+
+    /**
+     * How many times the Stripe customer was retrieved.
+     */
+    public static int $customerReads = 0;
+
     public static function reset(): void
     {
         self::$hasStripeId = false;
@@ -1608,6 +1843,8 @@ final class BillingWriteRail
         self::$checkoutTrialDays = null;
         self::$checkoutMetadata = null;
         self::$checkoutSessionOptions = null;
+        self::$customerCurrency = null;
+        self::$customerReads = 0;
 
         BillingWriteSubscription::reset();
     }
@@ -1630,6 +1867,22 @@ trait BillingWriteBillable
     public function subscription(string $type = 'default'): ?Model
     {
         return BillingWriteRail::$subscription;
+    }
+
+    /**
+     * The Stripe customer, as Cashier's `asStripeCustomer()` retrieves it.
+     *
+     * @param  array<int, string>  $expand
+     */
+    public function asStripeCustomer(array $expand = []): StripeCustomer
+    {
+        BillingWriteRail::$customerReads++;
+
+        return StripeCustomer::constructFrom([
+            'id' => 'cus_billing_write_test',
+            'object' => 'customer',
+            'currency' => BillingWriteRail::$customerCurrency,
+        ]);
     }
 
     /**

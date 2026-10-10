@@ -5,6 +5,7 @@
 - [The Catalogue](#the-catalogue)
 - [Product Keys](#product-keys)
 - [Prices](#prices)
+- [Currency](#currency)
 - [Store Ids](#store-ids)
 - [Reading the Entitlement](#reading-the-entitlement)
 - [Endpoints](#endpoints)
@@ -82,6 +83,8 @@ Four keys describe what you sell. One product entry carries everything every rai
 
     'pricing' => [
         'currency' => 'USD',
+        'country_header' => null,
+        'country_currencies' => [],
         'commission' => ['mode' => 'absorb', 'rate' => 0.15],
     ],
 ],
@@ -92,7 +95,7 @@ Four keys describe what you sell. One product entry carries everything every rai
 | `tier_order` | Your tier ids, cheapest first. Required. The first entry is the **free floor**: what a billable holds when nobody pays, so no product may sell it. It is the only list of tiers that exist, and the order every cross-rail decision reads. |
 | `tiers` | Display copy per tier id: `name`, `tagline`, `features`, `recommended`, and anything else you add. Copy is passed through `__()` per request, so author it as English source strings or translation keys (see [Translating tier copy](#translating-tier-copy)). `cycles` and `products` are reserved: they are derived and written over. |
 | `products` | What you sell, keyed by [product key](#product-keys). |
-| `pricing` | The base `currency` a screen falls back to, and the `commission` rule that [derives store prices](#prices). |
+| `pricing` | The base `currency` a screen falls back to, the `country_header` and `country_currencies` that [choose a caller's web currency](#currency), and the `commission` rule that [derives store prices](#prices). |
 
 A product entry:
 
@@ -116,6 +119,7 @@ A product entry:
 - A `prices` entry that is not a known channel (`web`, `app_store`, `play`) mapping a three-letter currency code to a whole amount of 0 or more.
 - A `refs.play` that is not exactly `<subscription_id>:<base_plan_id>`, or a `refs.app_store` containing `:`.
 - A `pricing.commission.mode` other than `absorb` or `gross_up`, or a `rate` that is not a number of at least 0 and below 1.
+- A `pricing.country_header` that is not a string or null, a `pricing.country_currencies` that is not a map of two-letter country to three-letter currency, or a mapped currency no product prices on the **web** channel.
 - A product that sells the free floor.
 - Two sellable subscriptions on the same tier and cycle, since the plans screen would list one offer twice. Keep one sellable and mark a retired price `sellable: false`.
 - One Stripe price or one store id on two products. The message names both.
@@ -157,6 +161,41 @@ A reverse lookup (a Stripe price or a store id back to its product) is exact, an
   - `gross_up`: the store charges `ceil(web / (1 - rate))`, so you net the web figure. With a `0.15` rate, 2900 becomes 3412.
 - An explicit store price always wins over the derivation.
 - A currency the web channel does not price is **absent** on a store channel. The package never converts between currencies: a rate frozen into config is wrong the day after it is written.
+
+---
+
+<a name="currency"></a>
+## Currency
+
+A caller is shown each product in **one** web currency, and the checkout charges in that same currency, so the screen and the charge never disagree. The caller's currency is, in order:
+
+1. The billable's `billing_currency` **pin**: the currency Stripe already bills it in.
+2. The country in the request header `pricing.country_header` names, mapped through `pricing.country_currencies`. A missing header, an unknown location (`XX`), a Tor exit (`T1`) and an unmapped country go to step 3.
+3. The base `pricing.currency`.
+
+```php
+'pricing' => [
+    'currency' => 'USD',
+    'country_header' => 'CF-IPCountry',
+    'country_currencies' => [
+        'TR' => 'TRY',
+    ],
+],
+```
+
+`country_header` is `null` by default, which turns the country rule off. Behind Cloudflare it is `CF-IPCountry`, with the **Add visitor location headers** managed transform on; an origin reachable without Cloudflare in front of it accepts the header from anybody.
+
+Per product, the caller's currency falls back to the base, then to the first web currency the product carries, so an unpinned caller can buy every product, in the currency the screen showed. A product with no web price names no currency and checks out with none, as before.
+
+**The pin is different, because Stripe bills a customer in one currency.** A pinned caller sees a product not priced in the pin flagged `sellable: false`, at its base price, with its cycle dropped from the tier's `cycles`, and `checkout` and `swap` refuse it with 422 `currency_unpriced`. The pin is written only by the Stripe webhook, from the first `default` subscription event (`customer.subscription.created` or `.updated`) that carries a currency, and is never overwritten; a checkout writes nothing, since an abandoned one has billed nobody. For an unpinned subject:
+
+- `checkout` charges in the currency its Stripe customer already carries, when it has one (one extra Stripe read, made only for a subject with a customer and a product with a web price), and refuses a product not priced in it.
+- `swap` checks the target against the base currency, never the country.
+
+The column comes from `add_billing_currency_to_billable_table.php`. Without it nothing is pinned and the webhook skips the pin rather than failing; `billing:doctor` reports it as `schema.billing_currency` while `country_header` is set.
+
+> [!NOTE]
+> An application that charges through Cashier outside these endpoints (balances, invoice items, `charge()`) overrides `preferredCurrency()` on its billable model to return the pin. The package does not add it to a trait, where it would collide with Cashier's.
 
 ---
 
@@ -232,7 +271,7 @@ A finished or paused plan reads as the floor even if the tier is still stored, s
 }
 ```
 
-`swap` takes `product` alone. The key fixes the tier and the cycle together, so the customer is charged the figure the screen showed. A product this rail cannot sell answers 422 with `code: "product_not_sellable"`: an unknown key, a product that is not a subscription, the free floor, one with no `refs.stripe_price`, or one marked `sellable: false`.
+`swap` takes `product` alone. The key fixes the tier and the cycle together, so the customer is charged the figure the screen showed. A product this rail cannot sell answers 422 with `code: "product_not_sellable"`: an unknown key, a product that is not a subscription, the free floor, one with no `refs.stripe_price`, or one marked `sellable: false`. A product not priced in the currency Stripe bills this subject in answers 422 with `code: "currency_unpriced"`; see [Currency](#currency).
 
 A product with `trial_days` starts a trial for a caller who is eligible, and a checkout always collects a card. An ineligible caller is not refused: they buy at the full price. See [Trials](#trials).
 
@@ -256,6 +295,7 @@ A product with `trial_days` starts a trial for a caller who is eligible, and a c
           "sellable": true,
           "trial_days": 14,
           "store_ids": { "app_store": "com.example.pro.monthly", "play": "pro:monthly" },
+          "currency": "USD",
           "prices": {
             "web": { "USD": { "amount_minor": 2900, "display": "29.00 USD" } }
           }
@@ -268,6 +308,7 @@ A product with `trial_days` starts a trial for a caller who is eligible, and a c
           "sellable": false,
           "trial_days": 0,
           "store_ids": { "app_store": "com.example.pro.monthly.2025", "play": "pro:monthly-2025" },
+          "currency": "USD",
           "prices": {
             "web": { "USD": { "amount_minor": 1900, "display": "19.00 USD" } }
           }
@@ -278,7 +319,7 @@ A product with `trial_days` starts a trial for a caller who is eligible, and a c
 }
 ```
 
-A product with `sellable: false` is listed so a client can rank what a subscriber already holds; offer only the sellable ones. `store_ids` carries `null` for a store the product is not on, and a product with no web price carries `"web": {}`.
+A product with `sellable: false` is listed so a client can rank what a subscriber already holds; offer only the sellable ones. `store_ids` carries `null` for a store the product is not on. `prices.web` holds the one currency `currency` names, the one the checkout charges ([Currency](#currency)); a product with no web price carries `"currency": null` and `"web": {}`.
 
 `trial_days` is the trial THIS caller would get, not the configured length: it is `0` for a caller who is not eligible (and for a caller with no billing subject), so a screen never offers "Free for 14 days" to somebody the checkout would charge on day one. While no product offers a trial, the endpoint makes no `billing_trials` query. See [Trials](#trials).
 
@@ -317,6 +358,7 @@ Each refusal drives a different next step in the client, so they carry a machine
 | 404 | none | `swap` or `cancel` with no card subscription (checked after the store guard, so it never claims there is nothing to cancel while a store charges), or no billing subject at all. |
 | 403 | none | The caller is a member and not the owner. |
 | 422 | `product_not_sellable` | See [Checkout and swap](#checkout-and-swap). |
+| 422 | `currency_unpriced` | The product has no web price in the currency Stripe bills this subject in. See [Currency](#currency). |
 
 Two store SKUs share a subscription group, and a store account holds one active subscription per group, so a second purchase from the same account moves the subscription instead of opening another. `GET billing/store-funded-team` returns `{"store_funded_team": {"id": ..., "name": ...}}` for another subject the caller owns that a store is already funding, or `null`, so a client can refuse a store purchase by name before it moves one.
 
@@ -486,7 +528,7 @@ php artisan billing:doctor --json
 php artisan billing:doctor --json --remote
 ```
 
-Without `--remote` it checks the configuration: the catalogue validates, the rail secrets that a sold product needs are set, `REVENUECAT_WEBHOOK_SECRET` exists while the store rail is on, every web-sold product has a Stripe price id, store ids are listed, billable keys are UUIDs, the subscription tables are keyed the way their models write them (`schema.subscription_keys`), the `billing_trials` table exists while a product offers a trial (`schema.billing_trials`), the `billing_events` table exists (`schema.billing_events`), the `billing_grants` table exists (`schema.billing_grants`), the sandbox allowlist is consistent (`revenuecat.sandbox_allowlist`), and the reconcile cadence suits the store rail. With `--remote` it also reads Stripe and RevenueCat and diffs them against the manifest: a Stripe price per lookup key (id, interval, amounts), and the RevenueCat apps, products, entitlements, `default` offering, packages and webhook (that one delivers to this application's URL). RevenueCat returns a webhook's signing secret only when it is rotated, so whether HMAC signing is on cannot be read: the doctor reports it as an `agent_check` for a person to confirm in the dashboard.
+Without `--remote` it checks the configuration: the catalogue validates, the rail secrets that a sold product needs are set, `REVENUECAT_WEBHOOK_SECRET` exists while the store rail is on, every web-sold product has a Stripe price id, store ids are listed, billable keys are UUIDs, the subscription tables are keyed the way their models write them (`schema.subscription_keys`), the `billing_trials` table exists while a product offers a trial (`schema.billing_trials`), the `billing_events` table exists (`schema.billing_events`), the `billing_grants` table exists (`schema.billing_grants`), the billable table carries `billing_currency` while `pricing.country_header` is set (`schema.billing_currency`), the sandbox allowlist is consistent (`revenuecat.sandbox_allowlist`), and the reconcile cadence suits the store rail. With `--remote` it also reads Stripe and RevenueCat and diffs them against the manifest: a Stripe price per lookup key (id, interval, amounts), and the RevenueCat apps, products, entitlements, `default` offering, packages and webhook (that one delivers to this application's URL). RevenueCat returns a webhook's signing secret only when it is rotated, so whether HMAC signing is on cannot be read: the doctor reports it as an `agent_check` for a person to confirm in the dashboard.
 
 `REVENUECAT_API_V2_KEY` is a separate secret key scoped to `project_configuration:{apps,products,entitlements,offerings,packages,integrations}:read`, and `REVENUECAT_PROJECT_ID` names the project. Neither is needed to sell.
 
@@ -521,7 +563,7 @@ Every billing outcome leaves one row in `billing_events` and dispatches one Lara
 | `subscription_swapped` | `request` | none | `product`, `price_id`. |
 | `subscription_cancelled` | `request` | none | `ends_at`. |
 | `portal_opened` | `request` | none | none. |
-| `request_refused` | `request` | `managed_by_store`, `no_billing_account`, `subscription_exists` | none. The 409s of [Refusals](#refusals). |
+| `request_refused` | `request` | `managed_by_store`, `no_billing_account`, `subscription_exists`, `currency_unpriced` | none for the 409s of [Refusals](#refusals); `product` and `currency` for `currency_unpriced`. |
 | `delivery_refused` | `webhook` | See below. | Per reason. |
 | `trial_recorded` | `webhook` | none | `stripe_subscription_id`, `trial_ends_at`. |
 | `trial_refused` | `trial_check` | `card_reused`, `duplicate` | `billing_trial_id`, `user_id`. |
@@ -549,7 +591,7 @@ An apply writes `entitlement_applied` only when what the entitlement **means** c
 
 `trial_cancelled` is written once per subscription: a re-run that finds Stripe already ended it does not write a second one.
 
-**Deliberately not recorded:** Stripe and RevenueCat signature failures (unauthenticated input must not write rows), the reconciler's per-run skips, Stripe's silent skips (a duplicate delivery, no billable, a non-default subscription type), a 422 or a 404 (the caller's own mistake, or an honest absence), the RevenueCat `family_shared_entitlement` (the tier was granted) and `unfed_store` (another rail's subscription), and a RevenueCat job refusal on the reconcile source or a second time for the same delivery.
+**Deliberately not recorded:** Stripe and RevenueCat signature failures (unauthenticated input must not write rows), the reconciler's per-run skips, Stripe's silent skips (a duplicate delivery, no billable, a non-default subscription type), a 422 other than `currency_unpriced` or a 404 (the caller's own mistake, or an honest absence), the RevenueCat `family_shared_entitlement` (the tier was granted) and `unfed_store` (another rail's subscription), and a RevenueCat job refusal on the reconcile source or a second time for the same delivery.
 
 ### Append-only, and recording never breaks billing
 
@@ -680,6 +722,8 @@ An application that installed before trials existed and wants to sell one copies
 The audit log needs two migrations. Copy `create_billing_events_table.php` and `add_processed_at_index_to_processed_webhook_events_table.php` from `vendor/fluttersdk/magic-starter-laravel/database/migrations/` into `database/migrations/` under timestamps later than your latest migration (or re-run the install command's billing publish) and run `php artisan migrate`. Until you do, billing keeps working and each worker logs one warning that `billing_events` is missing; `billing:doctor` reports it as `schema.billing_events`.
 
 The admin panel's manual grants need one more migration. Copy `create_billing_grants_table.php` from `vendor/fluttersdk/magic-starter-laravel/database/migrations/` into `database/migrations/` under a timestamp later than your latest migration (or re-run the install command's billing publish) and run `php artisan migrate`. Until you do, a grant cannot be recorded and `magic-starter:billing:expire-grants` skips with a line; `billing:doctor` reports it as `schema.billing_grants`. The command is scheduled hourly by the package, so your scheduler has to be running.
+
+The per-caller currency needs one more migration. Copy `add_billing_currency_to_billable_table.php` from `vendor/fluttersdk/magic-starter-laravel/database/migrations/` into `database/migrations/` under a timestamp later than your latest migration and run `php artisan migrate`, then set `pricing.country_header` (see [Currency](#currency)). Every product row of `billing/plans` now carries `currency` and only that currency's web price, whether or not you set a header.
 
 The operator side is overridable: `Contracts\AdministersBilling` is bound to `Actions\AdministerBilling` unconditionally, so an application binds its own class over the contract to change what the panel's billing actions do. An implementation of the contract takes `refundLastInvoice(Authenticatable $actor, Model $billable, string $reason, ?string $expectedInvoiceId = null)`; the panel passes the invoice its modal showed. The expiry command resolves `Actions\AdministerBilling` itself (settling a grant is the sweep's step, not an operator's act, and is not on the contract), so bind a subclass over that class as well when the sweep must use yours; its constructor takes the reconciler (`ReconcileBillingEntitlements`) after the RevenueCat client.
 

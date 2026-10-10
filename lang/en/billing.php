@@ -106,6 +106,13 @@ return [
          * last case is a config gap rather than a client fault.
          */
         'product_not_sellable' => 'The product :product cannot be bought here: only a paid subscription with a Stripe price is sold on this rail. Choose another plan, or set refs.stripe_price on it under magic-starter.billing.products.',
+        /*
+         * A checkout or a swap named a product that is for sale, but not in
+         * the currency this account is billed in. Stripe bills a customer in
+         * one currency, so the sentence names it and points at a plan priced
+         * in it rather than at any config.
+         */
+        'currency_unpriced' => 'The product :product is not priced in :currency, the currency this account is billed in. Choose a plan priced in :currency.',
         'no_subscription' => 'There is no active subscription to change.',
     ],
 

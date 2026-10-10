@@ -2016,6 +2016,114 @@ class StripeWebhookTest extends TestCase
     }
 
     // -------------------------------------------------------------------------
+    // The billing currency pin
+    // -------------------------------------------------------------------------
+
+    /**
+     * The first `default` subscription event carrying a currency pins it, and
+     * no later one moves it.
+     *
+     * Stripe bills a customer in one currency for good, so the pin is a record
+     * of a fact the rail has already fixed. Overwriting it from a later event
+     * would let the screen offer a currency Stripe will then refuse to charge.
+     */
+    public function test_a_subscription_event_pins_the_billing_currency_once(): void
+    {
+        $billable = $this->createBillable();
+
+        $this->postSignedWebhook($this->subscriptionEvent(
+            'evt_pin_created',
+            'customer.subscription.created',
+            'price_pro',
+            'active',
+            currency: 'try',
+        ))->assertOk();
+
+        $this->assertSame('TRY', $billable->fresh()?->getAttribute('billing_currency'));
+
+        $this->postSignedWebhook($this->subscriptionEvent(
+            'evt_pin_updated',
+            'customer.subscription.updated',
+            'price_pro',
+            'active',
+            created: self::EVENT_AT + 60,
+            currency: 'usd',
+        ))->assertOk();
+
+        $this->assertSame('TRY', $billable->fresh()?->getAttribute('billing_currency'));
+    }
+
+    /**
+     * An update pins too, which is how a subject that subscribed before the
+     * column existed gets its pin: the next event Stripe sends about it.
+     */
+    public function test_an_update_pins_a_subject_that_has_no_pin_yet(): void
+    {
+        $billable = $this->createBillable();
+
+        $this->postSignedWebhook($this->subscriptionEvent(
+            'evt_pin_late',
+            'customer.subscription.updated',
+            'price_pro',
+            'active',
+            currency: 'eur',
+        ))->assertOk();
+
+        $this->assertSame('EUR', $billable->fresh()?->getAttribute('billing_currency'));
+    }
+
+    /**
+     * Only the `default` subscription pins, the one every other write in the
+     * package acts on; an event with no currency pins nothing at all.
+     */
+    public function test_only_a_default_subscription_with_a_currency_pins(): void
+    {
+        $billable = $this->createBillable();
+
+        $this->postSignedWebhook($this->subscriptionEvent(
+            'evt_pin_seats',
+            'customer.subscription.created',
+            'price_pro',
+            'active',
+            subscriptionId: 'sub_seats_pin',
+            subscriptionType: 'seats',
+            currency: 'try',
+        ))->assertOk();
+
+        $this->postSignedWebhook($this->subscriptionEvent(
+            'evt_pin_none',
+            'customer.subscription.created',
+            'price_pro',
+            'active',
+        ))->assertOk();
+
+        $this->assertNull($billable->fresh()?->getAttribute('billing_currency'));
+    }
+
+    /**
+     * An adopter who has not copied the migration yet keeps receiving its
+     * deliveries: the pin is skipped, the grant still lands.
+     */
+    public function test_a_billable_without_the_column_is_still_granted(): void
+    {
+        Schema::table('users', function (Blueprint $table): void {
+            $table->dropColumn('billing_currency');
+        });
+
+        $billable = $this->createBillable();
+
+        $this->postSignedWebhook($this->subscriptionEvent(
+            'evt_pin_no_column',
+            'customer.subscription.created',
+            'price_pro',
+            'active',
+            currency: 'try',
+        ))->assertOk();
+
+        $this->assertSame('pro', $billable->fresh()?->getAttribute('plan'));
+    }
+
+    // -------------------------------------------------------------------------
     // Harness
     // -------------------------------------------------------------------------
 
@@ -2154,6 +2262,7 @@ class StripeWebhookTest extends TestCase
         $this->runMigration('create_users_table.php');
         $this->runMigration('add_cashier_customer_columns_to_billable_table.php');
         $this->runMigration('add_entitlement_provenance_to_billable_table.php');
+        $this->runMigration('add_billing_currency_to_billable_table.php');
         $this->runMigration('create_subscriptions_table.php');
         $this->runMigration('create_subscription_items_table.php');
         $this->runMigration('create_processed_webhook_events_table.php');
@@ -2247,6 +2356,7 @@ class StripeWebhookTest extends TestCase
         string $subscriptionType = 'default',
         array $metadata = [],
         ?int $subscriptionCreated = null,
+        ?string $currency = null,
     ): array {
         $object = [
             'id' => $subscriptionId,
@@ -2284,6 +2394,11 @@ class StripeWebhookTest extends TestCase
         // against each other; distinct from the EVENT's `created` below.
         if ($subscriptionCreated !== null) {
             $object['created'] = $subscriptionCreated;
+        }
+
+        // Lowercase, as Stripe writes it; omitted when null like the two above.
+        if ($currency !== null) {
+            $object['currency'] = $currency;
         }
 
         return [

@@ -170,6 +170,7 @@ class BillingControllerTest extends TestCase
             $table->string('email')->unique();
             $table->uuid('current_team_id')->nullable();
             $table->string('stripe_id')->nullable();
+            $table->string('billing_currency', 3)->nullable();
             $this->addProvenanceColumns($table);
             $table->timestamps();
         });
@@ -180,6 +181,7 @@ class BillingControllerTest extends TestCase
             $table->string('name');
             $table->boolean('personal_team')->default(false);
             $table->string('stripe_id')->nullable();
+            $table->string('billing_currency', 3)->nullable();
             $this->addProvenanceColumns($table);
             $table->timestamps();
         });
@@ -980,8 +982,10 @@ class BillingControllerTest extends TestCase
      * refuses anything else; the products ride INSIDE the row they sell rather
      * than beside it. A one-off product names no tier, so it belongs to no row.
      *
-     * The display string is checked per currency because the exponent differs:
-     * a hardcoded `/ 100` would show the yen price a hundred times too small.
+     * Each product carries ONE web price, in the currency this caller is shown
+     * and charged in, named beside it as `currency`: with no country header
+     * that is the base, so the yen figure the product also carries stays off
+     * the wire. A product with no web price at all names no currency.
      */
     public function test_each_tier_row_lists_the_products_that_sell_it_with_web_prices(): void
     {
@@ -1045,15 +1049,12 @@ class BillingControllerTest extends TestCase
                     'app_store' => 'com.example.pro.monthly',
                     'play' => null,
                 ],
+                'currency' => 'USD',
                 'prices' => [
                     'web' => [
                         'USD' => [
                             'amount_minor' => 1900,
                             'display' => '19.00 USD',
-                        ],
-                        'JPY' => [
-                            'amount_minor' => 2900,
-                            'display' => '2900 JPY',
                         ],
                     ],
                 ],
@@ -1069,6 +1070,7 @@ class BillingControllerTest extends TestCase
                     'app_store' => null,
                     'play' => 'pro:annual',
                 ],
+                'currency' => null,
                 'prices' => ['web' => []],
             ],
         ], $data[1]['products']);
@@ -1079,6 +1081,103 @@ class BillingControllerTest extends TestCase
 
         // Only a product with a Stripe price makes a cycle sellable on this rail.
         $this->assertSame(['monthly'], $data[1]['cycles']);
+    }
+
+    /**
+     * An unpinned caller is shown each product in the currency their country
+     * maps to, and a product not priced in it falls back to the base rather
+     * than vanishing: the caller can still buy it, in the currency shown.
+     *
+     * The display string is checked in yen because the exponent differs: a
+     * hardcoded `/ 100` would show the yen price a hundred times too small.
+     */
+    public function test_an_unpinned_caller_is_shown_each_product_in_their_country_currency(): void
+    {
+        $this->configureCurrencyCatalogue();
+        $this->bootBillingRoutes('user');
+
+        $user = $this->createUser('country@example.test');
+
+        $data = $this->askFrom($user, 'JP')->assertOk()->json('data');
+        $products = $data[1]['products'];
+
+        $this->assertSame(['JPY', 'USD'], array_column($products, 'currency'));
+        $this->assertSame(['JPY' => ['amount_minor' => 2900, 'display' => '2900 JPY']], $products[0]['prices']['web']);
+        $this->assertSame(
+            ['USD' => ['amount_minor' => 29000, 'display' => '290.00 USD']],
+            $products[1]['prices']['web'],
+        );
+        $this->assertSame([true, true], array_column($products, 'sellable'));
+        $this->assertSame(['monthly', 'annual'], $data[1]['cycles']);
+
+        // The base for a country nobody mapped, and for no header at all.
+        foreach (['FR', null] as $country) {
+            $products = $this->askFrom($user, $country)->json('data.1.products');
+
+            $this->assertSame(['USD', 'USD'], array_column($products, 'currency'));
+        }
+    }
+
+    /**
+     * A pinned caller is shown only the currency Stripe already bills them
+     * in, whatever country they are in now, and a product not priced in it is
+     * not for sale to them: flagged unsellable with its cycle dropped, and
+     * still shown at a price so the row can be placed, never as an empty map.
+     */
+    public function test_a_pinned_caller_cannot_buy_a_product_unpriced_in_their_currency(): void
+    {
+        $this->configureCurrencyCatalogue();
+        $this->bootBillingRoutes('team');
+
+        $owner = $this->createUser('pinned@example.test');
+        $team = $this->createTeam($owner, ['billing_currency' => 'JPY']);
+        $this->setCurrentTeam($owner, $team);
+
+        $data = $this->askFrom($owner, 'FR')->assertOk()->json('data');
+        $products = $data[1]['products'];
+
+        $this->assertSame(['pro_monthly', 'pro_annual'], array_column($products, 'key'));
+        $this->assertSame(['JPY', 'USD'], array_column($products, 'currency'));
+        $this->assertSame([true, false], array_column($products, 'sellable'));
+        $this->assertSame(
+            ['USD' => ['amount_minor' => 29000, 'display' => '290.00 USD']],
+            $products[1]['prices']['web'],
+        );
+        $this->assertSame(['monthly'], $data[1]['cycles']);
+
+        // The same catalogue, unpinned: the annual product sells again.
+        $team->forceFill(['billing_currency' => null])->save();
+
+        $this->assertSame(['monthly', 'annual'], $this->askFrom($owner, 'FR')->json('data.1.cycles'));
+    }
+
+    /**
+     * A product priced in neither the caller's currency nor the base is shown
+     * in the first currency it does carry, which is what 0.0.25 showed first.
+     */
+    public function test_a_product_priced_in_neither_currency_falls_back_to_its_first_web_price(): void
+    {
+        $this->bootBillingRoutes('user');
+
+        config([
+            'magic-starter.billing.products' => [
+                'pro_monthly' => [
+                    'type' => 'subscription',
+                    'tier' => 'pro',
+                    'cycle' => 'monthly',
+                    'prices' => ['web' => ['EUR' => 1900, 'GBP' => 1700]],
+                    'refs' => ['stripe_price' => 'price_pro_monthly'],
+                ],
+            ],
+        ]);
+
+        $product = $this->ask($this->createUser('first-web@example.test'), '/billing/plans')
+            ->assertOk()
+            ->json('data.1.products.0');
+
+        $this->assertSame('EUR', $product['currency']);
+        $this->assertSame(['EUR'], array_keys($product['prices']['web']));
+        $this->assertTrue($product['sellable']);
     }
 
     /**
@@ -1518,6 +1617,45 @@ class BillingControllerTest extends TestCase
     private function bindUsageReporter(): void
     {
         $this->app->bind(ReportsUsage::class, fn (): ReportsUsage => new BillingTestUsageReporter);
+    }
+
+    /**
+     * Ask for the plans as [$user], from [$country] as Cloudflare names it, or
+     * with no country header at all when null.
+     */
+    private function askFrom(Model $user, ?string $country): TestResponse
+    {
+        $headers = $country === null ? [] : ['CF-IPCountry' => $country];
+
+        return $this->actingAs($user->fresh(), 'sanctum')->getJson('/billing/plans', $headers);
+    }
+
+    /**
+     * One tier sold monthly in dollars and yen and annually in dollars only,
+     * with Japan mapped to yen behind a Cloudflare country header.
+     */
+    private function configureCurrencyCatalogue(): void
+    {
+        config([
+            'magic-starter.billing.pricing.country_header' => 'CF-IPCountry',
+            'magic-starter.billing.pricing.country_currencies' => ['JP' => 'JPY'],
+            'magic-starter.billing.products' => [
+                'pro_monthly' => [
+                    'type' => 'subscription',
+                    'tier' => 'pro',
+                    'cycle' => 'monthly',
+                    'prices' => ['web' => ['USD' => 1900, 'JPY' => 2900]],
+                    'refs' => ['stripe_price' => 'price_pro_monthly'],
+                ],
+                'pro_annual' => [
+                    'type' => 'subscription',
+                    'tier' => 'pro',
+                    'cycle' => 'annual',
+                    'prices' => ['web' => ['USD' => 29000]],
+                    'refs' => ['stripe_price' => 'price_pro_annual'],
+                ],
+            ],
+        ]);
     }
 
     /**

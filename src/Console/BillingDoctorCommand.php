@@ -3,6 +3,7 @@
 namespace FlutterSdk\MagicStarter\Console;
 
 use FlutterSdk\MagicStarter\Enums\BillingChannel;
+use FlutterSdk\MagicStarter\MagicStarter;
 use FlutterSdk\MagicStarter\Models\BillingEvent;
 use FlutterSdk\MagicStarter\Models\BillingGrant;
 use FlutterSdk\MagicStarter\Models\BillingTrial;
@@ -109,6 +110,7 @@ class BillingDoctorCommand extends Command
             $this->checkTrialsTable();
             $this->checkBillingEventsTable();
             $this->checkBillingGrantsTable();
+            $this->checkBillingCurrencyColumn();
             $this->checkSandboxAllowlist();
             $this->checkReconcileCadence();
 
@@ -385,6 +387,50 @@ class BillingDoctorCommand extends Command
                 . 'publish the package migration create_billing_trials_table.php and migrate.',
                 $model->getTable(),
                 implode(', ', $trialProducts),
+            ));
+    }
+
+    /**
+     * Whether the billable table carries `billing_currency` while a country
+     * header is configured.
+     *
+     * The country picks a caller's currency and the webhook pins the one
+     * Stripe then bills in; without the column every pin is skipped, so a
+     * customer who travels is shown, and checked out in, a currency Stripe
+     * refuses to charge them. With no header the column changes nothing a
+     * customer sees, so its absence is not reported. An unreachable database
+     * is reported by exception class alone, for the reason
+     * {@see self::checkSubscriptionKeys()} gives.
+     */
+    private function checkBillingCurrencyColumn(): void
+    {
+        if (BillingCatalogue::pricing()['country_header'] === null) {
+            return;
+        }
+
+        $model = MagicStarter::billableModel();
+        $billable = new $model;
+
+        try {
+            $exists = $billable->getConnection()->getSchemaBuilder()
+                ->hasColumn($billable->getTable(), 'billing_currency');
+        } catch (Throwable $failure) {
+            $this->check('schema.billing_currency', self::WARNING, sprintf(
+                'The %s table could not be read (%s), so the billing currency column was not checked.',
+                $billable->getTable(),
+                class_basename($failure),
+            ));
+
+            return;
+        }
+
+        $exists
+            ? $this->check('schema.billing_currency', self::OK, "{$billable->getTable()}.billing_currency exists.")
+            : $this->check('schema.billing_currency', self::ERROR, sprintf(
+                '%s.billing_currency is missing while [magic-starter.billing.pricing.country_header] is set, so '
+                . 'no currency is ever pinned and a customer abroad is shown prices Stripe will not charge; '
+                . 'publish the package migration add_billing_currency_to_billable_table.php and migrate.',
+                $billable->getTable(),
             ));
     }
 
