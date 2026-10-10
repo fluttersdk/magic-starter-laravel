@@ -4,6 +4,8 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [0.0.26] - 2026-10-11
+
 ### Added
 
 - **A per-caller web currency, chosen by country and pinned by Stripe.** `billing.pricing.country_header` (default `null`, off) names the request header carrying the caller's two-letter country, and `billing.pricing.country_currencies` maps a country to a currency. The caller's currency is the billable's `billing_currency` pin, else the currency its Stripe customer already carries, else the mapped country (a missing header, `XX`, `T1` or an unmapped country gets the base), else `pricing.currency`. Boot refuses a malformed header or map, and a mapped currency no product prices on the web. (`src/Support/BillingCatalogue.php`, `config/magic-starter.php`)
