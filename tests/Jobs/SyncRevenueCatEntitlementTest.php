@@ -5,11 +5,14 @@ namespace FlutterSdk\MagicStarter\Tests\Jobs;
 use Carbon\CarbonImmutable;
 use FlutterSdk\MagicStarter\Actions\WriteEntitlement;
 use FlutterSdk\MagicStarter\Contracts\WritesEntitlement;
+use FlutterSdk\MagicStarter\Enums\BillingEventType;
 use FlutterSdk\MagicStarter\Enums\BillingProvider;
+use FlutterSdk\MagicStarter\Enums\BillingSource;
 use FlutterSdk\MagicStarter\Enums\PlanStatus;
 use FlutterSdk\MagicStarter\Features;
 use FlutterSdk\MagicStarter\Jobs\SyncRevenueCatEntitlement;
 use FlutterSdk\MagicStarter\MagicStarter;
+use FlutterSdk\MagicStarter\Models\BillingEvent;
 use FlutterSdk\MagicStarter\Models\ProcessedWebhookEvent;
 use FlutterSdk\MagicStarter\Support\EntitlementWrite;
 use FlutterSdk\MagicStarter\Support\RevenueCatClient;
@@ -428,6 +431,31 @@ class SyncRevenueCatEntitlementTest extends TestCase
         $billable->refresh();
         $this->assertSame('pro', $billable->getAttribute('plan'));
         $this->assertSame(self::PLAY_PRO, $billable->getAttribute('plan_product_id'));
+    }
+
+    /**
+     * A webhook-sourced grant leaves its row carrying RevenueCat's own event id,
+     * as RevenueCat sent it rather than under the `rc:` claim prefix.
+     */
+    public function test_a_webhook_sourced_grant_row_carries_the_revenuecat_event_id(): void
+    {
+        $billable = $this->makeBillable([]);
+
+        $this->fakeAuthoritativeReads([
+            (string) $billable->getKey() => $this->subscriber([
+                self::PLAY_PRO => $this->subscription(['store' => 'play_store']),
+            ]),
+        ]);
+
+        $event = $this->event('INITIAL_PURCHASE', $billable);
+
+        $this->sync($event);
+
+        $row = BillingEvent::query()->sole();
+        $this->assertSame(BillingEventType::ENTITLEMENT_APPLIED, $row->type);
+        $this->assertSame(BillingSource::WEBHOOK, $row->source);
+        $this->assertSame(BillingProvider::PLAY_STORE, $row->provider);
+        $this->assertSame($event['id'], $row->external_id);
     }
 
     /**
@@ -1423,7 +1451,7 @@ class SyncRevenueCatEntitlementTest extends TestCase
 
         $this->app->bind(
             WritesEntitlement::class,
-            fn (): WritesEntitlement => new RecordingEntitlementWriter(new WriteEntitlement),
+            fn (): WritesEntitlement => new RecordingEntitlementWriter($this->app->make(WriteEntitlement::class)),
         );
     }
 
@@ -1650,6 +1678,7 @@ class SyncRevenueCatEntitlementTest extends TestCase
         $this->runPackageMigration('create_users_table.php');
         $this->runPackageMigration('add_entitlement_provenance_to_billable_table.php');
         $this->runPackageMigration('create_processed_webhook_events_table.php');
+        $this->runPackageMigration('create_billing_events_table.php');
 
         $queueTables = require __DIR__ . '/../../vendor/orchestra/testbench-core/laravel/migrations/'
             . '0001_01_01_000002_testbench_create_jobs_table.php';

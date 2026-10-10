@@ -6,12 +6,13 @@ use Carbon\CarbonImmutable;
 use Carbon\CarbonInterface;
 use FlutterSdk\MagicStarter\Contracts\WritesEntitlement;
 use FlutterSdk\MagicStarter\Enums\BillingProvider;
-use FlutterSdk\MagicStarter\Enums\PlanStatus;
+use FlutterSdk\MagicStarter\Enums\BillingSource;
 use FlutterSdk\MagicStarter\Jobs\CheckTrialCard;
 use FlutterSdk\MagicStarter\Jobs\SyncRevenueCatEntitlement;
 use FlutterSdk\MagicStarter\MagicStarter;
 use FlutterSdk\MagicStarter\Models\BillingTrial;
 use FlutterSdk\MagicStarter\Support\BillingCatalogue;
+use FlutterSdk\MagicStarter\Support\BillingLog;
 use FlutterSdk\MagicStarter\Support\EntitlementWrite;
 use FlutterSdk\MagicStarter\Support\ReadsBillableAttributes;
 use FlutterSdk\MagicStarter\Support\RevenueCatClient;
@@ -23,7 +24,6 @@ use Illuminate\Database\Eloquent\Model;
 use Illuminate\Http\Client\ConnectionException;
 use Illuminate\Http\Client\RequestException;
 use Illuminate\Support\Collection;
-use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Schema;
 use RuntimeException;
 
@@ -324,10 +324,15 @@ class ReconcileBillingEntitlements extends Command
      * trial bills: the duplicate's own created event wrote its tier and
      * product, and no later event writes the survivor's back. Like the arm it
      * wraps it is a local read and a projection, claimed only on disagreement.
+     *
+     * @param  BillingSource  $source  The path the claim is filed under in
+     *                                 `billing_events`: the caller that asked
+     *                                 for this re-projection, not the
+     *                                 reconciler class that performs it.
      */
-    public function reconcileStripeSubject(Model $billable): void
+    public function reconcileStripeSubject(Model $billable, BillingSource $source = BillingSource::RECONCILE): void
     {
-        $this->reconcileStripeRail($billable);
+        $this->reconcileStripeRail($billable, $source);
     }
 
     /**
@@ -425,7 +430,7 @@ class ReconcileBillingEntitlements extends Command
         $this->walked++;
 
         $provider = BillingProvider::fromWire($this->stringAttribute($billable, 'plan_provider'));
-        $before = $this->snapshot($billable);
+        $before = $this->entitlementSnapshot($billable);
 
         $read = $provider->isStore()
             ? $this->reconcileStoreRail($billable)
@@ -435,12 +440,8 @@ class ReconcileBillingEntitlements extends Command
             return;
         }
 
-        $after = $this->snapshot($billable->refresh());
-        $changed = array_keys(array_filter(
-            $after,
-            fn (mixed $value, string $field): bool => $value !== $before[$field],
-            ARRAY_FILTER_USE_BOTH,
-        ));
+        $after = $this->entitlementSnapshot($billable->refresh());
+        $changed = $this->entitlementChanges($before, $after);
 
         if ($changed === []) {
             return;
@@ -466,7 +467,7 @@ class ReconcileBillingEntitlements extends Command
     protected function reconcileStoreRail(Model $billable): bool
     {
         try {
-            (new SyncRevenueCatEntitlement($this->reconciliationEvent($billable)))
+            (new SyncRevenueCatEntitlement($this->reconciliationEvent($billable), source: BillingSource::RECONCILE))
                 ->handle($this->revenueCat, $this->writeEntitlement);
         } catch (ConnectionException|RequestException|RuntimeException $failure) {
             // The three failures {@see RevenueCatClient} documents: nothing
@@ -479,7 +480,7 @@ class ReconcileBillingEntitlements extends Command
             // of being filed as an unreadable subscriber.
             $this->unreadable++;
 
-            Log::warning('A billing rail could not be read; entitlement left untouched.', [
+            BillingLog::warning('A billing rail could not be read; entitlement left untouched.', [
                 'reason' => 'authoritative_read_failed',
                 'billable_id' => $billable->getKey(),
                 'rail' => 'store',
@@ -531,7 +532,7 @@ class ReconcileBillingEntitlements extends Command
      * say: none of the four skips below is a failure of this command, and none
      * of them may revoke.
      */
-    protected function reconcileStripeRail(Model $billable): bool
+    protected function reconcileStripeRail(Model $billable, BillingSource $source = BillingSource::RECONCILE): bool
     {
         // Cashier's `Billable` trait is applied by the CONSUMING application, so
         // this call is checked for rather than assumed, exactly as the billing
@@ -557,7 +558,7 @@ class ReconcileBillingEntitlements extends Command
         // `incomplete_expired` branch deleted.
         if (! $subscription instanceof Model) {
             $this->skip($billable, 'no_local_subscription', 'stripe', [
-                // The RAW column, matching `snapshot()` below and the write
+                // The RAW column, matching `entitlementSnapshot()` and the write
                 // path's own drop log. A tier read through anything that answers
                 // a free-tier word over a NULL row would print that word here
                 // instead, and this is the skip an operator sees most: it fires
@@ -603,7 +604,7 @@ class ReconcileBillingEntitlements extends Command
         // genuinely late Stripe delivery whose `created` predates a reconcile
         // run is dropped as stale. Its Cashier sync still lands (the parent
         // handler runs before the projection), so the next run re-derives it.
-        $claim = $this->stripeClaim($billable, $subscription, CarbonImmutable::now());
+        $claim = $this->stripeClaim($billable, $subscription, CarbonImmutable::now(), $source);
 
         // Only a disagreement is claimed. A local read is no fresher than the
         // delivery that wrote it, so re-applying an agreeing one would stamp
@@ -636,6 +637,7 @@ class ReconcileBillingEntitlements extends Command
         Model $billable,
         Model $subscription,
         CarbonInterface $eventAt,
+        BillingSource $source,
     ): ?EntitlementWrite {
         $status = (string) $this->stringAttribute($subscription, 'stripe_status');
         $priceId = $this->stringAttribute($subscription, 'stripe_price');
@@ -660,6 +662,7 @@ class ReconcileBillingEntitlements extends Command
                 // anybody. The store branch does not go through here at all; it
                 // runs a job that re-reads the rail.
                 authoritative: false,
+                source: $source,
                 providerStatus: $status,
                 productId: $priceId,
                 // A finished subscription has no period left to run and nothing
@@ -689,6 +692,7 @@ class ReconcileBillingEntitlements extends Command
             eventAt: $eventAt,
             // A projection, for the same reason as the branch above.
             authoritative: false,
+            source: $source,
             providerStatus: $status,
             productId: $priceId,
             // The local row carries no period column, so the stored value is
@@ -715,63 +719,18 @@ class ReconcileBillingEntitlements extends Command
     /**
      * Whether a claim says exactly what the row already says.
      *
-     * Compared through the same five fields {@see self::snapshot()} projects, so
-     * that "agrees" and "was corrected" cannot mean two different things.
+     * Compared through the same five fields {@see self::entitlementSnapshot()}
+     * projects, so that "agrees" and "was corrected" cannot mean two different
+     * things.
      */
     protected function agreesWithRecord(Model $billable, EntitlementWrite $claim): bool
     {
-        return $this->snapshot($billable) === [
+        return $this->entitlementSnapshot($billable) === [
             'plan' => $claim->plan,
             'plan_status' => $claim->status->value,
             'plan_provider' => $claim->provider->value,
             'plan_current_period_end' => $claim->currentPeriodEnd?->toIso8601ZuluString(),
             'plan_renews' => $claim->renews,
-        ];
-    }
-
-    /**
-     * The entitlement's MEANING, as five comparable fields.
-     *
-     * Deliberately not the whole row. `plan_source_event_at` and
-     * `plan_provider_status` are provenance and move on every store-rail read,
-     * so including them would report a correction on every run; `plan_manage_url`
-     * and `plan_product_id` are debug and navigation. What is left is what a
-     * customer would notice: the tier, where it stands, who is billing it, when
-     * the period ends and whether it rolls over. A dropped `RENEWAL` moves only
-     * the last two, which is why they are in here rather than assumed harmless.
-     *
-     * Timestamps are compared as UTC ISO-8601 strings, which is also what the
-     * log prints, so the field that reported a correction is the field that was
-     * compared.
-     *
-     * EVERY field goes through the shared decoders, and three of the five are
-     * the reason this method is the most dangerous one in the file. The package
-     * ships these columns and not the model that casts them, so on an uncast
-     * model `plan` read as an enum answers null with a warning,
-     * `plan_current_period_end` read with `?->toIso8601ZuluString()` is a fatal
-     * Error, and `plan_renews` read raw compares `1 !== true` and disagrees with
-     * the column forever. The third is the quiet one: it makes
-     * {@see self::agreesWithRecord()} answer false on a subject that agrees
-     * perfectly, so every scheduled run re-applies the same claim and stamps this
-     * run's provenance over a genuine event's. That is precisely the restamp loop
-     * that method exists to shut.
-     *
-     * `plan` is the RAW column and never a reader that answers a free-tier word
-     * over a NULL one, and that is convergence rather than taste. A revocation
-     * claim carries no tier, so comparing through such a reader would report a
-     * disagreement the write had already resolved, forever.
-     *
-     * @return array<string, mixed>
-     */
-    protected function snapshot(Model $billable): array
-    {
-        return [
-            'plan' => $this->stringAttribute($billable, 'plan'),
-            'plan_status' => PlanStatus::fromWire($this->stringAttribute($billable, 'plan_status'))->value,
-            'plan_provider' => BillingProvider::fromWire($this->stringAttribute($billable, 'plan_provider'))->value,
-            'plan_current_period_end' => $this->dateAttribute($billable, 'plan_current_period_end')
-                ?->toIso8601ZuluString(),
-            'plan_renews' => $this->booleanAttribute($billable, 'plan_renews'),
         ];
     }
 
@@ -795,7 +754,7 @@ class ReconcileBillingEntitlements extends Command
         array $after,
         array $changed,
     ): void {
-        Log::warning('Billing entitlement corrected by the reconciler; a rail delivery was missed.', [
+        BillingLog::warning('Billing entitlement corrected by the reconciler; a rail delivery was missed.', [
             'reason' => 'entitlement_corrected',
             'billable_id' => $billable->getKey(),
             'rail' => $provider->isStore() ? 'store' : 'stripe',
@@ -819,7 +778,7 @@ class ReconcileBillingEntitlements extends Command
      */
     protected function skip(Model $billable, string $reason, string $rail, array $context = []): void
     {
-        Log::warning('A billing rail had nothing to decide; entitlement left untouched.', [
+        BillingLog::warning('A billing rail had nothing to decide; entitlement left untouched.', [
             'reason' => $reason,
             'billable_id' => $billable->getKey(),
             'rail' => $rail,

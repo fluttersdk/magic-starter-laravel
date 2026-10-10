@@ -2,8 +2,11 @@
 
 namespace FlutterSdk\MagicStarter\Tests;
 
+use FlutterSdk\MagicStarter\Console\PruneBillingRecordsCommand;
 use FlutterSdk\MagicStarter\Features;
 use FlutterSdk\MagicStarter\MagicStarterServiceProvider;
+use FlutterSdk\MagicStarter\Tests\Console\BillingManifestCommandTest;
+use Illuminate\Console\Scheduling\Schedule;
 use Illuminate\Notifications\Events\NotificationSending;
 use Illuminate\Support\Facades\Event;
 
@@ -71,5 +74,32 @@ class ServiceProviderTest extends TestCase
         $this->assertFalse(
             $dispatcher->hasListeners(NotificationSending::class),
         );
+    }
+
+    public function test_the_billing_prune_is_scheduled_when_billing_is_on(): void
+    {
+        config([
+            'magic-starter.features' => [Features::billing()],
+            'magic-starter.billing' => BillingManifestCommandTest::billing(),
+        ]);
+
+        (new MagicStarterServiceProvider($this->app))->boot();
+
+        $this->assertTrue($this->scheduleHasBillingPrune());
+    }
+
+    public function test_the_billing_prune_is_not_scheduled_when_billing_is_off(): void
+    {
+        config(['magic-starter.features' => []]);
+
+        (new MagicStarterServiceProvider($this->app))->boot();
+
+        $this->assertFalse($this->scheduleHasBillingPrune());
+    }
+
+    private function scheduleHasBillingPrune(): bool
+    {
+        return collect($this->app->make(Schedule::class)->events())
+            ->contains(fn ($event): bool => str_contains((string) $event->command, PruneBillingRecordsCommand::NAME));
     }
 }

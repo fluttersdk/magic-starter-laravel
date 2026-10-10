@@ -5,6 +5,7 @@ namespace FlutterSdk\MagicStarter\Support;
 use Carbon\CarbonInterface;
 use FlutterSdk\MagicStarter\Contracts\WritesEntitlement;
 use FlutterSdk\MagicStarter\Enums\BillingProvider;
+use FlutterSdk\MagicStarter\Enums\BillingSource;
 use FlutterSdk\MagicStarter\Enums\PlanStatus;
 use Illuminate\Database\Eloquent\Model;
 
@@ -40,8 +41,8 @@ use Illuminate\Database\Eloquent\Model;
 readonly class EntitlementWrite
 {
     /**
-     * CONSTRUCT THIS WITH NAMED ARGUMENTS. Seven of the twelve fields are
-     * nullable, four of them are strings and three are timestamps, so a
+     * CONSTRUCT THIS WITH NAMED ARGUMENTS. Eight of the fourteen fields are
+     * nullable, five of them are strings and three are timestamps, so a
      * positional call site can transpose a pair without any type error to show
      * for it. Named arguments are what makes that impossible.
      *
@@ -115,11 +116,35 @@ readonly class EntitlementWrite
          * needed another. Both were this field, worn as a rule.
          */
         public bool $authoritative,
+        /**
+         * Which path of the package produced this claim, as the
+         * `billing_events` row the write leaves will name it.
+         *
+         * Required, with no default, for the same reason as `authoritative`:
+         * a feeder has to say where its claim came from rather than inherit a
+         * quiet answer, because the history is read precisely when somebody is
+         * asking which path moved a subscriber's plan. A webhook and the
+         * reconciler can write the same claim minutes apart, and a defaulted
+         * source would file one of them under the other.
+         */
+        public BillingSource $source,
         public ?string $providerStatus = null,
         public ?string $productId = null,
         public ?CarbonInterface $currentPeriodEnd = null,
         public ?bool $renews = null,
         public ?CarbonInterface $gracePeriodEndsAt = null,
         public ?string $manageUrl = null,
+        /**
+         * The rail's own id for the delivery behind this claim, which the
+         * `billing_events` row stores as `external_id`.
+         *
+         * Stripe's `evt_...` id, or the RevenueCat event id as RevenueCat sent
+         * it, WITHOUT the `rc:` prefix the dedup table claims it under: the
+         * prefix keeps two senders apart in one unique column, and an operator
+         * searching RevenueCat's dashboard for the id would not find it with
+         * the prefix on. Null when there is no delivery at all, which is every
+         * reconcile run.
+         */
+        public ?string $eventId = null,
     ) {}
 }

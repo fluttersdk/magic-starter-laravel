@@ -5,21 +5,26 @@ namespace FlutterSdk\MagicStarter\Tests\Http\Controllers;
 use Carbon\CarbonImmutable;
 use FlutterSdk\MagicStarter\Actions\WriteEntitlement;
 use FlutterSdk\MagicStarter\Contracts\WritesEntitlement;
+use FlutterSdk\MagicStarter\Enums\BillingEventType;
 use FlutterSdk\MagicStarter\Enums\BillingProvider;
+use FlutterSdk\MagicStarter\Enums\BillingSource;
 use FlutterSdk\MagicStarter\Enums\PlanStatus;
 use FlutterSdk\MagicStarter\Features;
 use FlutterSdk\MagicStarter\Http\Controllers\StripeWebhookController;
 use FlutterSdk\MagicStarter\Jobs\CheckTrialCard;
 use FlutterSdk\MagicStarter\MagicStarter;
 use FlutterSdk\MagicStarter\MagicStarterServiceProvider;
+use FlutterSdk\MagicStarter\Models\BillingEvent;
 use FlutterSdk\MagicStarter\Models\BillingTrial;
 use FlutterSdk\MagicStarter\Models\ProcessedWebhookEvent;
 use FlutterSdk\MagicStarter\Support\EntitlementWrite;
+use FlutterSdk\MagicStarter\Support\MigrationHelper;
 use FlutterSdk\MagicStarter\Support\TrialCardGateway;
 use FlutterSdk\MagicStarter\Tests\Fixtures\ConcreteUser;
 use FlutterSdk\MagicStarter\Tests\Support\FeederInvariantWriter;
 use FlutterSdk\MagicStarter\Tests\TestCase;
 use Illuminate\Database\Eloquent\Model;
+use Illuminate\Database\Schema\Blueprint;
 use Illuminate\Http\Request;
 use Illuminate\Routing\RouteCollection;
 use Illuminate\Support\Carbon;
@@ -606,6 +611,89 @@ class StripeWebhookTest extends TestCase
     }
 
     /**
+     * A delivery that moves the entitlement leaves one `entitlement_applied`
+     * row filed under the webhook and carrying Stripe's own event id, which is
+     * what an operator searches the Stripe dashboard for.
+     */
+    public function test_a_subscription_update_leaves_one_applied_row_carrying_its_event_id(): void
+    {
+        $billable = $this->createBillable();
+
+        $this->seedActiveSubscription();
+
+        $this->postSignedWebhook(
+            $this->subscriptionEvent(
+                'evt_updated_row',
+                'customer.subscription.updated',
+                'price_business',
+                'active',
+                created: static::EVENT_AT + 60,
+            ),
+        )->assertOk();
+
+        $rows = BillingEvent::query()->where('external_id', 'evt_updated_row')->get();
+
+        $this->assertCount(1, $rows);
+        $this->assertSame(BillingEventType::ENTITLEMENT_APPLIED, $rows[0]->type);
+        $this->assertSame(BillingSource::WEBHOOK, $rows[0]->source);
+        $this->assertSame(BillingProvider::STRIPE, $rows[0]->provider);
+        $this->assertSame($billable->getMorphClass(), $rows[0]->billable_type);
+        $this->assertSame((string) $billable->getKey(), $rows[0]->billable_id);
+        $this->assertSame(['plan'], $rows[0]->properties['changed'] ?? null);
+
+        // The seed grant left its own row, and nothing else did.
+        $this->assertSame(2, BillingEvent::query()->count());
+    }
+
+    /**
+     * A billing_events insert that fails never costs the customer the
+     * entitlement the delivery carried.
+     *
+     * The table is rebuilt with one NOT NULL column the recorder never fills,
+     * so every insert fails at the database, inside the webhook transaction.
+     * The write still lands, the dedup row still commits and Stripe still gets
+     * its 200: on PostgreSQL that only holds because the insert ran in its own
+     * savepoint, which is why the plan runs this case there too.
+     */
+    public function test_a_failing_billing_event_insert_still_applies_the_entitlement(): void
+    {
+        Schema::drop('billing_events');
+        Schema::create('billing_events', function (Blueprint $table): void {
+            MigrationHelper::primaryKey($table);
+            $table->string('type');
+            $table->string('source');
+            $table->string('provider')->nullable();
+            $table->string('billable_type')->nullable();
+            $table->string('billable_id')->nullable();
+            $table->string('actor_user_id')->nullable();
+            $table->string('reason')->nullable();
+            $table->string('external_id')->nullable();
+            $table->json('properties')->nullable();
+            $table->timestamp('created_at')->nullable();
+            $table->string('refuse_every_insert');
+        });
+
+        Log::spy();
+
+        $billable = $this->createBillable();
+
+        $this->postSignedWebhook(
+            $this->subscriptionEvent('evt_unrecorded', 'customer.subscription.created', 'price_pro', 'active'),
+        )->assertOk();
+
+        $billable->refresh();
+        $this->assertSame('pro', $billable->getAttribute('plan'));
+        $this->assertSame(1, ProcessedWebhookEvent::query()->where('event_id', 'evt_unrecorded')->count());
+        $this->assertSame(0, DB::table('billing_events')->count());
+
+        // The insert really was attempted and refused, rather than skipped.
+        Log::shouldHaveReceived('error')
+            ->once()
+            ->withArgs(static fn (string $message, array $context): bool => $context['type'] === 'entitlement_applied'
+                && str_contains((string) $context['exception'], 'refuse_every_insert'));
+    }
+
+    /**
      * The one Stripe status word with no neutral twin.
      *
      * `plan_status` speaks the rail-neutral vocabulary, which has no
@@ -1091,7 +1179,7 @@ class StripeWebhookTest extends TestCase
 
         $this->app->bind(
             WritesEntitlement::class,
-            fn (): WritesEntitlement => new SwitchableEntitlementWriter(new WriteEntitlement),
+            fn (): WritesEntitlement => new SwitchableEntitlementWriter($this->app->make(WriteEntitlement::class)),
         );
 
         $event = $this->subscriptionEvent('evt_poison', 'customer.subscription.created', 'price_pro', 'active');
@@ -1737,7 +1825,7 @@ class StripeWebhookTest extends TestCase
     {
         $this->app->bind(
             WritesEntitlement::class,
-            fn (): WritesEntitlement => new RecordingEntitlementWriter(new WriteEntitlement),
+            fn (): WritesEntitlement => new RecordingEntitlementWriter($this->app->make(WriteEntitlement::class)),
         );
     }
 
@@ -1783,6 +1871,7 @@ class StripeWebhookTest extends TestCase
         $this->runMigration('create_subscription_items_table.php');
         $this->runMigration('create_processed_webhook_events_table.php');
         $this->runMigration('create_billing_trials_table.php');
+        $this->runMigration('create_billing_events_table.php');
 
         $this->assertTrue(Schema::hasColumn('users', 'plan_renews'));
     }

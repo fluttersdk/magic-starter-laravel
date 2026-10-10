@@ -2,10 +2,19 @@
 
 namespace FlutterSdk\MagicStarter\Tests\Http\Controllers;
 
+use FlutterSdk\MagicStarter\Enums\BillingEventType;
+use FlutterSdk\MagicStarter\Enums\BillingProvider;
+use FlutterSdk\MagicStarter\Enums\BillingSource;
+use FlutterSdk\MagicStarter\Events\Billing\BillingOutcome;
+use FlutterSdk\MagicStarter\Events\Billing\CheckoutStarted;
+use FlutterSdk\MagicStarter\Events\Billing\RequestRefused;
+use FlutterSdk\MagicStarter\Events\Billing\SubscriptionCancelled;
+use FlutterSdk\MagicStarter\Events\Billing\SubscriptionSwapped;
 use FlutterSdk\MagicStarter\Features;
 use FlutterSdk\MagicStarter\Http\Controllers\BillingController;
 use FlutterSdk\MagicStarter\MagicStarter;
 use FlutterSdk\MagicStarter\MagicStarterServiceProvider;
+use FlutterSdk\MagicStarter\Models\BillingEvent;
 use FlutterSdk\MagicStarter\Models\BillingTrial;
 use FlutterSdk\MagicStarter\Models\Team;
 use FlutterSdk\MagicStarter\Support\ConditionallyUsesUuids;
@@ -17,14 +26,21 @@ use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Schema\Blueprint;
 use Illuminate\Foundation\Auth\Access\Authorizable;
 use Illuminate\Routing\RouteCollection;
+use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Event;
 use Illuminate\Support\Facades\Gate;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Str;
 use Illuminate\Testing\TestResponse;
 use Laravel\Cashier\Checkout;
+use Laravel\Cashier\Exceptions\IncompletePayment;
+use Laravel\Cashier\Payment;
 use LogicException;
 use Stripe\Checkout\Session as StripeCheckoutSession;
+use Stripe\Exception\ApiConnectionException;
+use Stripe\PaymentIntent;
+use Throwable;
 
 /**
  * The three billing WRITES, driven through the routes the package registers.
@@ -61,9 +77,22 @@ class BillingWriteEndpointsTest extends TestCase
 
     private const CANCEL_URL = 'https://app.example.test/billing/cancel';
 
+    /**
+     * Every outcome event a listener on {@see BillingOutcome} received.
+     *
+     * @var list<BillingOutcome>
+     */
+    private array $dispatched = [];
+
     protected function setUp(): void
     {
         parent::setUp();
+
+        $this->dispatched = [];
+
+        Event::listen(BillingOutcome::class, function (BillingOutcome $event): void {
+            $this->dispatched[] = $event;
+        });
 
         MagicStarter::reset();
         BillingWriteRail::reset();
@@ -156,6 +185,9 @@ class BillingWriteEndpointsTest extends TestCase
             '--path' => __DIR__ . '/../../../database/migrations/create_billing_trials_table.php',
             '--realpath' => true,
         ]);
+
+        // The audit trail every write reaches, from the shipped migration.
+        (require __DIR__ . '/../../../database/migrations/create_billing_events_table.php')->up();
     }
 
     protected function tearDown(): void
@@ -1064,6 +1096,302 @@ class BillingWriteEndpointsTest extends TestCase
     }
 
     /**
+     * A checkout leaves one `checkout_started` row, written after the session
+     * exists: the session id is the row's external id, and the trial is the days
+     * actually OFFERED, not the days the product advertises.
+     */
+    public function test_a_checkout_records_the_session_and_the_trial_actually_offered(): void
+    {
+        config(['magic-starter.billing.products.pro_monthly.trial_days' => 14]);
+
+        $this->bootBillingRoutes('user');
+
+        $user = $this->createUser('audit-checkout@example.test');
+
+        $this->buy($user, 'pro_monthly')->assertOk();
+
+        $row = $this->onlyRow(BillingEventType::CHECKOUT_STARTED, $user, $user);
+        $this->assertSame(BillingProvider::STRIPE, $row->provider);
+        $this->assertSame('cs_test_write', $row->external_id);
+        $this->assertNull($row->reason);
+        $this->assertSame(
+            ['product' => 'pro_monthly', 'price_id' => 'price_pro', 'trial_days' => 14],
+            $row->properties,
+        );
+        $this->assertDispatchedOnce(CheckoutStarted::class, $row);
+
+        // The ineligible limb: the product advertises 14 days and a guest is
+        // offered none, so the row says 0 rather than echoing the catalogue.
+        BillingEvent::query()->delete();
+        $this->dispatched = [];
+
+        $guest = $this->createUser('audit-guest@example.test', ['is_guest' => true]);
+
+        $this->buy($guest, 'pro_monthly')->assertOk();
+
+        $guestRow = $this->onlyRow(BillingEventType::CHECKOUT_STARTED, $guest, $guest);
+        $this->assertSame(0, $guestRow->properties['trial_days']);
+    }
+
+    /**
+     * A swap leaves one `swapped` row naming the subscription it moved.
+     */
+    public function test_a_swap_records_the_subscription_and_the_price_it_moved_to(): void
+    {
+        $this->bootBillingRoutes('user');
+
+        $user = $this->createUser('audit-swap@example.test', [
+            'plan_provider' => 'stripe',
+            'stripe_id' => self::STRIPE_ID,
+        ]);
+
+        BillingWriteRail::$hasStripeId = true;
+        BillingWriteRail::$subscription = new BillingWriteSubscription(['stripe_id' => 'sub_write_1']);
+
+        $this->write($user, '/billing/swap', ['product' => 'pro_monthly'])->assertOk();
+
+        $row = $this->onlyRow(BillingEventType::SUBSCRIPTION_SWAPPED, $user, $user);
+        $this->assertSame(BillingProvider::STRIPE, $row->provider);
+        $this->assertSame('sub_write_1', $row->external_id);
+        $this->assertSame(['product' => 'pro_monthly', 'price_id' => 'price_pro'], $row->properties);
+        $this->assertDispatchedOnce(SubscriptionSwapped::class, $row);
+    }
+
+    /**
+     * A cancel leaves one `cancelled` row carrying the end of the paid period.
+     */
+    public function test_a_cancel_records_the_subscription_and_when_it_ends(): void
+    {
+        $this->bootBillingRoutes('user');
+
+        $user = $this->createUser('audit-cancel@example.test', [
+            'plan_provider' => 'stripe',
+            'stripe_id' => self::STRIPE_ID,
+        ]);
+
+        BillingWriteRail::$hasStripeId = true;
+        BillingWriteRail::$subscription = new BillingWriteSubscription(['stripe_id' => 'sub_write_2']);
+
+        $this->write($user, '/billing/cancel')->assertOk();
+
+        $row = $this->onlyRow(BillingEventType::SUBSCRIPTION_CANCELLED, $user, $user);
+        $this->assertSame(BillingProvider::STRIPE, $row->provider);
+        $this->assertSame('sub_write_2', $row->external_id);
+        $this->assertSame(['ends_at' => '2026-11-01T00:00:00+00:00'], $row->properties);
+        $this->assertDispatchedOnce(SubscriptionCancelled::class, $row);
+    }
+
+    /**
+     * Under the team subject the row is about the TEAM and the actor is the
+     * person who clicked, which is the pair the history exists to answer.
+     */
+    public function test_a_team_write_records_the_team_as_billable_and_the_owner_as_actor(): void
+    {
+        $this->bootBillingRoutes('team');
+
+        $owner = $this->createUser('audit-team-owner@example.test');
+        $team = $this->createTeam($owner);
+        $owner->forceFill(['current_team_id' => $team->getKey()])->save();
+
+        $this->buy($owner, 'pro_monthly')->assertOk();
+
+        $this->onlyRow(BillingEventType::CHECKOUT_STARTED, $team, $owner);
+    }
+
+    /**
+     * A 409 is recorded as a refusal with the reason and the rail it named.
+     */
+    public function test_a_store_refusal_records_one_request_refused_row_per_attempt(): void
+    {
+        $this->bootBillingRoutes('user');
+
+        $user = $this->createUser('audit-store@example.test', [
+            'plan' => 'pro',
+            'plan_status' => 'active',
+            'plan_provider' => 'app_store',
+        ]);
+
+        BillingWriteRail::$subscription = new BillingWriteSubscription;
+
+        foreach ([
+            ['/billing/checkout', $this->checkoutPayload('pro_monthly')],
+            ['/billing/swap', ['product' => 'pro_monthly']],
+            ['/billing/cancel', []],
+        ] as [$path, $payload]) {
+            BillingEvent::query()->delete();
+            $this->dispatched = [];
+
+            $this->write($user, $path, $payload)->assertStatus(409);
+
+            $row = $this->onlyRow(BillingEventType::REQUEST_REFUSED, $user, $user);
+            $this->assertSame(BillingProvider::APP_STORE, $row->provider);
+            $this->assertSame(BillingController::REASON_MANAGED_BY_STORE, $row->reason);
+            $this->assertNull($row->external_id);
+            $this->assertDispatchedOnce(RequestRefused::class, $row);
+        }
+    }
+
+    /**
+     * The other two 409 reasons record too, each with its own reason and rail.
+     */
+    public function test_the_other_conflicts_record_their_own_reason(): void
+    {
+        $this->bootBillingRoutes('user');
+
+        $user = $this->createUser('audit-conflicts@example.test');
+
+        BillingWriteRail::$subscriptions = [
+            (object) ['type' => 'default', 'stripe_status' => 'active'],
+        ];
+
+        $this->buy($user, 'pro_monthly')->assertStatus(409);
+
+        $row = $this->onlyRow(BillingEventType::REQUEST_REFUSED, $user, $user);
+        $this->assertSame(BillingController::REASON_SUBSCRIPTION_EXISTS, $row->reason);
+        $this->assertSame(BillingProvider::STRIPE, $row->provider);
+
+        BillingEvent::query()->delete();
+        $this->dispatched = [];
+        config(['magic-starter.models.team' => CashierlessWriteTeam::class]);
+        $this->bootBillingRoutes('team');
+
+        $owner = $this->createUser('audit-no-cashier@example.test');
+        $team = CashierlessWriteTeam::query()->create([
+            'user_id' => $owner->getKey(),
+            'name' => 'Store Only',
+            'plan_provider' => 'none',
+        ]);
+        $team->users()->attach($owner->getKey(), ['role' => 'owner']);
+        $owner->forceFill(['current_team_id' => $team->getKey()])->save();
+
+        $this->buy($owner, 'pro_monthly')->assertStatus(409);
+
+        $row = $this->onlyRow(BillingEventType::REQUEST_REFUSED, $team, $owner);
+        $this->assertSame(BillingController::REASON_NO_BILLING_ACCOUNT, $row->reason);
+        $this->assertSame(BillingProvider::NONE, $row->provider);
+    }
+
+    /**
+     * A 422 and a 404 are the caller's mistake or an honest absence, and neither
+     * is a billing outcome: no row, no event.
+     */
+    public function test_a_validation_failure_and_a_missing_subscription_record_nothing(): void
+    {
+        $this->bootBillingRoutes('user');
+
+        $user = $this->createUser('audit-quiet@example.test');
+
+        $this->write($user, '/billing/checkout', ['product' => 'pro_monthly'])->assertStatus(422);
+        $this->assertNotSellable($this->buy($user, 'enterprise'));
+
+        BillingWriteRail::$subscription = null;
+
+        $this->write($user, '/billing/swap', ['product' => 'pro_monthly'])->assertNotFound();
+        $this->write($user, '/billing/cancel')->assertNotFound();
+
+        $this->assertSame(0, BillingEvent::query()->count());
+        $this->assertSame([], $this->dispatched);
+    }
+
+    /**
+     * A Stripe error from the swap is not an outcome: the move did not happen,
+     * so nothing is recorded, and the error reaches the handler untouched.
+     */
+    public function test_a_stripe_error_from_a_swap_records_nothing(): void
+    {
+        $this->bootBillingRoutes('user');
+        $this->withoutExceptionHandling();
+
+        $user = $this->createUser('audit-api-error@example.test', ['plan_provider' => 'stripe']);
+
+        $failure = new ApiConnectionException('Stripe could not be reached.');
+        BillingWriteRail::$subscription = new BillingWriteSubscription(['stripe_id' => 'sub_write_3']);
+        BillingWriteSubscription::$swapFailure = $failure;
+
+        $this->assertSame($failure, $this->thrownBy(
+            fn () => $this->write($user, '/billing/swap', ['product' => 'pro_monthly']),
+        ));
+
+        $this->assertSame(0, BillingEvent::query()->count());
+        $this->assertSame([], $this->dispatched);
+    }
+
+    /**
+     * An IncompletePayment is thrown AFTER Stripe moved the subscription, so the
+     * swap happened and is recorded, flagged; the exception is rethrown as the
+     * same instance, so the caller's answer is exactly what it was.
+     */
+    public function test_an_incomplete_payment_from_a_swap_is_recorded_and_rethrown_unchanged(): void
+    {
+        $this->bootBillingRoutes('user');
+        $this->withoutExceptionHandling();
+
+        $user = $this->createUser('audit-incomplete@example.test', ['plan_provider' => 'stripe']);
+
+        $failure = IncompletePayment::requiresAction(
+            new Payment(PaymentIntent::constructFrom(['id' => 'pi_incomplete', 'status' => 'requires_action'])),
+        );
+        BillingWriteRail::$subscription = new BillingWriteSubscription(['stripe_id' => 'sub_write_4']);
+        BillingWriteSubscription::$swapFailure = $failure;
+
+        $this->assertSame($failure, $this->thrownBy(
+            fn () => $this->write($user, '/billing/swap', ['product' => 'pro_monthly']),
+        ));
+
+        $row = $this->onlyRow(BillingEventType::SUBSCRIPTION_SWAPPED, $user, $user);
+        $this->assertSame('sub_write_4', $row->external_id);
+        $this->assertSame(
+            ['product' => 'pro_monthly', 'price_id' => 'price_pro', 'payment' => 'incomplete'],
+            $row->properties,
+        );
+        $this->assertDispatchedOnce(SubscriptionSwapped::class, $row);
+    }
+
+    /**
+     * The one row a write left, asserted against the acting user and the subject.
+     */
+    private function onlyRow(BillingEventType $type, Model $billable, Model $actor): BillingEvent
+    {
+        $this->assertSame(1, BillingEvent::query()->count());
+
+        $row = BillingEvent::query()->firstOrFail();
+
+        $this->assertSame($type, $row->type);
+        $this->assertSame(BillingSource::REQUEST, $row->source);
+        $this->assertSame($billable->getMorphClass(), $row->billable_type);
+        $this->assertSame((string) $billable->getKey(), $row->billable_id);
+        $this->assertSame((string) $actor->getKey(), (string) $row->actor_user_id);
+
+        return $row;
+    }
+
+    /**
+     * Exactly one outcome event of [$class] reached the listeners, carrying [$row].
+     *
+     * @param  class-string<BillingOutcome>  $class
+     */
+    private function assertDispatchedOnce(string $class, BillingEvent $row): void
+    {
+        $this->assertCount(1, $this->dispatched);
+        $this->assertInstanceOf($class, $this->dispatched[0]);
+        $this->assertTrue($row->is($this->dispatched[0]->record()));
+    }
+
+    /**
+     * The exception [$call] throws, failing the test when it throws none.
+     */
+    private function thrownBy(callable $call): Throwable
+    {
+        try {
+            $call();
+        } catch (Throwable $exception) {
+            return $exception;
+        }
+
+        $this->fail('The call was expected to throw.');
+    }
+
+    /**
      * Open a checkout for one catalogue product, as the given caller.
      */
     private function buy(Model $user, string $product): TestResponse
@@ -1476,6 +1804,11 @@ class BillingWriteSubscription extends Model
 
     public static bool $cancelled = false;
 
+    /**
+     * What `swap()` throws instead of moving the subscription, when set.
+     */
+    public static ?Throwable $swapFailure = null;
+
     protected $table = 'subscriptions';
 
     protected $guarded = [];
@@ -1484,11 +1817,16 @@ class BillingWriteSubscription extends Model
     {
         self::$swappedTo = null;
         self::$cancelled = false;
+        self::$swapFailure = null;
     }
 
     public function swap(string $price): self
     {
         self::$swappedTo = $price;
+
+        if (self::$swapFailure !== null) {
+            throw self::$swapFailure;
+        }
 
         return $this;
     }
@@ -1496,6 +1834,7 @@ class BillingWriteSubscription extends Model
     public function cancel(): self
     {
         self::$cancelled = true;
+        $this->setAttribute('ends_at', Carbon::parse('2026-11-01 00:00:00'));
 
         return $this;
     }

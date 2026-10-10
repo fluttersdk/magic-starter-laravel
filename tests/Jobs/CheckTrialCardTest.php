@@ -5,6 +5,7 @@ namespace FlutterSdk\MagicStarter\Tests\Jobs;
 use Closure;
 use FlutterSdk\MagicStarter\Console\ReconcileBillingEntitlements;
 use FlutterSdk\MagicStarter\Contracts\WritesEntitlement;
+use FlutterSdk\MagicStarter\Enums\BillingSource;
 use FlutterSdk\MagicStarter\Enums\TrialRefusalReason;
 use FlutterSdk\MagicStarter\Features;
 use FlutterSdk\MagicStarter\Jobs\CheckTrialCard;
@@ -582,11 +583,13 @@ class CheckTrialCardTest extends TestCase
             /** @var list<string> */
             public array $reconciled = [];
 
-            public function reconcileStripeSubject(Model $billable): void
-            {
+            public function reconcileStripeSubject(
+                Model $billable,
+                BillingSource $source = BillingSource::RECONCILE,
+            ): void {
                 $this->reconciled[] = (string) $billable->getKey();
 
-                parent::reconcileStripeSubject($billable);
+                parent::reconcileStripeSubject($billable, $source);
             }
         };
         $this->app->instance(ReconcileBillingEntitlements::class, $reconciler);
@@ -843,6 +846,7 @@ class CheckTrialCardTest extends TestCase
             'create_subscriptions_table.php',
             'create_subscription_items_table.php',
             'create_billing_trials_table.php',
+            'create_billing_events_table.php',
         ] as $filename) {
             $migration = require __DIR__ . '/../../database/migrations/' . $filename;
 

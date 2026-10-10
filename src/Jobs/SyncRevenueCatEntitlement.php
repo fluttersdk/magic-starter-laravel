@@ -7,11 +7,13 @@ use Carbon\Exceptions\InvalidFormatException;
 use FlutterSdk\MagicStarter\Contracts\WritesEntitlement;
 use FlutterSdk\MagicStarter\Enums\BillingChannel;
 use FlutterSdk\MagicStarter\Enums\BillingProvider;
+use FlutterSdk\MagicStarter\Enums\BillingSource;
 use FlutterSdk\MagicStarter\Enums\PlanStatus;
 use FlutterSdk\MagicStarter\Enums\ProductType;
 use FlutterSdk\MagicStarter\MagicStarter;
 use FlutterSdk\MagicStarter\Models\ProcessedWebhookEvent;
 use FlutterSdk\MagicStarter\Support\BillingCatalogue;
+use FlutterSdk\MagicStarter\Support\BillingLog;
 use FlutterSdk\MagicStarter\Support\EntitlementWrite;
 use FlutterSdk\MagicStarter\Support\ReadsBillableAttributes;
 use FlutterSdk\MagicStarter\Support\RevenueCatClient;
@@ -22,7 +24,6 @@ use Illuminate\Database\Eloquent\Model;
 use Illuminate\Foundation\Queue\Queueable as FoundationQueueable;
 use Illuminate\Queue\InteractsWithQueue;
 use Illuminate\Queue\SerializesModels;
-use Illuminate\Support\Facades\Log;
 use RuntimeException;
 use Throwable;
 
@@ -151,6 +152,20 @@ class SyncRevenueCatEntitlement implements ShouldQueue
     public $timeout = 55;
 
     /**
+     * Which path dispatched this re-read, as the `billing_events` row of each
+     * claim it makes will name it: a RevenueCat delivery, or the reconciler's
+     * sweep running the same read on its own schedule.
+     *
+     * Declared here with its default and assigned in the constructor rather
+     * than promoted, deliberately. A promoted parameter's default applies to
+     * the PARAMETER only, and a queued job is rebuilt by unserialising rather
+     * than by calling its constructor: a job serialised before this property
+     * existed would come back with a promoted `$source` uninitialised and throw
+     * on first read. A declared default is what unserialising leaves behind.
+     */
+    protected BillingSource $source = BillingSource::WEBHOOK;
+
+    /**
      * @param  array<string, mixed>  $event  the RevenueCat webhook `event`
      *                                       object. Only IDENTITY and ORDERING
      *                                       are read from it: `app_user_id` plus
@@ -165,9 +180,13 @@ class SyncRevenueCatEntitlement implements ShouldQueue
      *                                       tier, not the product, not the
      *                                       period: those come only from the
      *                                       authoritative read.
+     * @param  BillingSource  $source  who asked for the re-read; see
+     *                                 {@see self::$source}
      */
-    public function __construct(protected array $event)
+    public function __construct(protected array $event, BillingSource $source = BillingSource::WEBHOOK)
     {
+        $this->source = $source;
+
         $this->onQueue(self::QUEUE);
     }
 
@@ -589,12 +608,14 @@ class SyncRevenueCatEntitlement implements ShouldQueue
             // move the record, which is what makes a web-to-store migration
             // land rather than being refused as a same-tier duplicate.
             authoritative: true,
+            source: $this->source,
             providerStatus: $this->eventType(),
             productId: $storedProductId,
             currentPeriodEnd: $this->instant($subscription['expires_date'] ?? null),
             renews: $this->renews($subscription),
             gracePeriodEndsAt: $this->instant($subscription['grace_period_expires_date'] ?? null),
             manageUrl: $this->manageUrl($subscriber),
+            eventId: $this->deliveryId(),
         );
     }
 
@@ -635,6 +656,7 @@ class SyncRevenueCatEntitlement implements ShouldQueue
             // Authoritative for the same reason: this revocation is what the
             // fresh read SHOWED, not what the event was called.
             authoritative: true,
+            source: $this->source,
             providerStatus: $this->eventType(),
             productId: $ranked === [] ? null : (string) array_key_first($ranked),
             // No period is carried forward: a subscription that has run out has
@@ -642,6 +664,7 @@ class SyncRevenueCatEntitlement implements ShouldQueue
             // one thing this path does know, and it is false.
             renews: false,
             manageUrl: $this->manageUrl($subscriber),
+            eventId: $this->deliveryId(),
         );
     }
 
@@ -1001,6 +1024,23 @@ class SyncRevenueCatEntitlement implements ShouldQueue
     }
 
     /**
+     * RevenueCat's own id for the delivery behind this re-read, or null when
+     * there was no delivery.
+     *
+     * Only a WEBHOOK-sourced job has one. The reconciler builds a synthetic
+     * event whose `id` names the sweep for the log, and that id would read in
+     * the history as a RevenueCat event nobody can find in RevenueCat.
+     */
+    protected function deliveryId(): ?string
+    {
+        if ($this->source !== BillingSource::WEBHOOK) {
+            return null;
+        }
+
+        return (string) ($this->event['id'] ?? '') ?: null;
+    }
+
+    /**
      * Parse one RevenueCat date, or null when there is nothing readable there.
      *
      * The caller decides what null MEANS, and every caller here treats it as
@@ -1035,7 +1075,7 @@ class SyncRevenueCatEntitlement implements ShouldQueue
      */
     protected function warn(string $reason, string $message, array $context = []): void
     {
-        Log::warning($message, [
+        BillingLog::warning($message, [
             'reason' => $reason,
             'event_id' => $this->event['id'] ?? null,
             'event_type' => $this->eventType(),

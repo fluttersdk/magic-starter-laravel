@@ -5,10 +5,16 @@ namespace FlutterSdk\MagicStarter\Tests\Actions;
 use Carbon\CarbonInterface;
 use FlutterSdk\MagicStarter\Actions\WriteEntitlement;
 use FlutterSdk\MagicStarter\Contracts\WritesEntitlement;
+use FlutterSdk\MagicStarter\Enums\BillingEventType;
 use FlutterSdk\MagicStarter\Enums\BillingProvider;
+use FlutterSdk\MagicStarter\Enums\BillingSource;
 use FlutterSdk\MagicStarter\Enums\PlanStatus;
+use FlutterSdk\MagicStarter\Events\Billing\BillingOutcome;
+use FlutterSdk\MagicStarter\Events\Billing\EntitlementApplied;
+use FlutterSdk\MagicStarter\Events\Billing\EntitlementDropped;
 use FlutterSdk\MagicStarter\Features;
 use FlutterSdk\MagicStarter\MagicStarter;
+use FlutterSdk\MagicStarter\Models\BillingEvent;
 use FlutterSdk\MagicStarter\Support\EntitlementWrite;
 use FlutterSdk\MagicStarter\Tests\Fixtures\ConcreteTeam;
 use FlutterSdk\MagicStarter\Tests\Fixtures\ConcreteUser;
@@ -18,6 +24,7 @@ use Illuminate\Database\Schema\Blueprint;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Event;
 use Illuminate\Support\Facades\File;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Schema;
@@ -122,6 +129,17 @@ class WriteEntitlementTest extends TestCase
         'user' => EnumCastingUser::class,
     ];
 
+    /**
+     * Every outcome event a listener on {@see BillingOutcome} received.
+     *
+     * A real listener rather than `Event::fake()`, so the events are dispatched
+     * the way an adopter's listener receives them, after-commit semantics
+     * included.
+     *
+     * @var list<BillingOutcome>
+     */
+    private array $dispatched = [];
+
     protected function setUp(): void
     {
         parent::setUp();
@@ -160,6 +178,15 @@ class WriteEntitlementTest extends TestCase
             $table->string('name');
             $this->addEntitlementColumns($table);
             $table->timestamps();
+        });
+
+        // Every write leaves a row, so the history table is part of the schema
+        // this action needs; without it the recorder warns once per process and
+        // that warning would land in the drop-log assertions below.
+        (require __DIR__ . '/../../database/migrations/create_billing_events_table.php')->up();
+
+        Event::listen(BillingOutcome::class, function (BillingOutcome $event): void {
+            $this->dispatched[] = $event;
         });
     }
 
@@ -668,10 +695,11 @@ class WriteEntitlementTest extends TestCase
      */
     public function test_the_claim_carries_every_field_the_contract_used_to_take(): void
     {
-        // The twelve, in the order the twelve-parameter contract declared them.
-        // Written out rather than derived, because this list IS the expectation:
-        // deriving it from the class under test would assert only that the class
-        // equals itself.
+        // The twelve, in the order the twelve-parameter contract declared them,
+        // plus the two the audit trail added: `source` beside `authoritative`
+        // (required for the same reason) and `eventId` last. Written out rather
+        // than derived, because this list IS the expectation: deriving it from
+        // the class under test would assert only that the class equals itself.
         $expected = [
             'billable',
             'plan',
@@ -679,12 +707,14 @@ class WriteEntitlementTest extends TestCase
             'provider',
             'eventAt',
             'authoritative',
+            'source',
             'providerStatus',
             'productId',
             'currentPeriodEnd',
             'renews',
             'gracePeriodEndsAt',
             'manageUrl',
+            'eventId',
         ];
 
         $constructor = (new ReflectionClass(EntitlementWrite::class))->getConstructor();
@@ -699,11 +729,12 @@ class WriteEntitlementTest extends TestCase
             'Every field the twelve-parameter contract took must survive on the claim, under its own name.',
         );
 
-        // Six required, six optional, exactly as the old signature had them. The
-        // split is the half a scenario cannot check: a required field given a
-        // default reads as null at every call site that omits it, and no
-        // assertion here or below omits one.
-        $required = array_slice($expected, 0, 6);
+        // Seven required, seven optional: the old signature's six of each plus
+        // `source`, which a feeder must name, and `eventId`, which a reconcile
+        // run does not have. The split is the half a scenario cannot check: a
+        // required field given a default reads as null at every call site that
+        // omits it, and no assertion here or below omits one.
+        $required = array_slice($expected, 0, 7);
 
         foreach ($parameters as $parameter) {
             $isRequired = in_array($parameter->getName(), $required, true);
@@ -1841,6 +1872,329 @@ class WriteEntitlementTest extends TestCase
         $this->assertSame(TestPlan::PRO, $billable->refresh()->plan);
     }
 
+    // -------------------------------------------------------------------------
+    // The audit trail: one row and one event per write, applied or dropped
+    // -------------------------------------------------------------------------
+
+    /**
+     * RULE 1's drop leaves one `entitlement_dropped` row naming the rule.
+     *
+     * Every drop exit records, and each is pinned on its own below, because a
+     * single scenario can only reach one exit: a test that tripped two would
+     * pass with either recording call deleted.
+     */
+    #[DataProvider('billableSubjects')]
+    public function test_a_stale_drop_records_one_dropped_row(string $subject): void
+    {
+        $grantedAt = Carbon::parse('2026-08-22 12:00:00');
+
+        $billable = $this->makeBillable($subject, [
+            'plan' => 'business',
+            'plan_status' => PlanStatus::ACTIVE->value,
+            'plan_provider' => BillingProvider::APP_STORE->value,
+            'plan_source_event_at' => $grantedAt,
+        ]);
+
+        $this->assertFalse($this->write(
+            billable: $billable,
+            plan: null,
+            status: PlanStatus::EXPIRED,
+            provider: BillingProvider::APP_STORE,
+            eventAt: $grantedAt->copy()->subMinute(),
+            providerStatus: 'EXPIRATION',
+            eventId: 'rc_event_stale',
+        ));
+
+        $row = $this->assertDropRecorded($billable, 'stale', BillingProvider::APP_STORE, 'rc_event_stale');
+        $this->assertSame(PlanStatus::EXPIRED->value, $row->properties['incoming_status'] ?? null);
+        $this->assertSame('app_store', $row->properties['stored_provider'] ?? null);
+    }
+
+    #[DataProvider('billableSubjects')]
+    public function test_a_same_instant_revocation_drop_records_one_dropped_row(string $subject): void
+    {
+        $grantedAt = Carbon::parse('2026-08-22 12:00:00');
+
+        $billable = $this->makeBillable($subject, [
+            'plan' => 'business',
+            'plan_status' => PlanStatus::ACTIVE->value,
+            'plan_provider' => BillingProvider::STRIPE->value,
+            'plan_source_event_at' => $grantedAt,
+        ]);
+
+        $this->assertFalse($this->write(
+            billable: $billable,
+            plan: 'business',
+            status: PlanStatus::EXPIRED,
+            provider: BillingProvider::STRIPE,
+            eventAt: $grantedAt->copy(),
+            providerStatus: 'canceled',
+            eventId: 'evt_same_instant',
+        ));
+
+        $row = $this->assertDropRecorded(
+            $billable,
+            'same_instant_revocation',
+            BillingProvider::STRIPE,
+            'evt_same_instant',
+        );
+        $this->assertSame('same', $row->properties['direction'] ?? null);
+    }
+
+    #[DataProvider('billableSubjects')]
+    public function test_an_undecidable_tier_order_drop_records_one_dropped_row(string $subject): void
+    {
+        config(['magic-starter.billing.tier_order' => []]);
+
+        $grantedAt = Carbon::parse('2026-08-22 12:00:00');
+
+        $billable = $this->makeBillable($subject, [
+            'plan' => 'business',
+            'plan_status' => PlanStatus::ACTIVE->value,
+            'plan_provider' => BillingProvider::APP_STORE->value,
+            'plan_source_event_at' => $grantedAt,
+        ]);
+
+        $this->assertFalse($this->write(
+            billable: $billable,
+            plan: 'free',
+            status: PlanStatus::ACTIVE,
+            provider: BillingProvider::STRIPE,
+            eventAt: $grantedAt->copy()->addMinute(),
+            providerStatus: 'active',
+            eventId: 'evt_no_order',
+        ));
+
+        $row = $this->assertDropRecorded($billable, 'undecidable_tier_order', BillingProvider::STRIPE, 'evt_no_order');
+        $this->assertSame('no-order', $row->properties['direction'] ?? null);
+    }
+
+    #[DataProvider('billableSubjects')]
+    public function test_a_cross_rail_revocation_drop_records_one_dropped_row(string $subject): void
+    {
+        $grantedAt = Carbon::parse('2026-08-22 12:00:00');
+
+        $billable = $this->makeBillable($subject, [
+            'plan' => 'business',
+            'plan_status' => PlanStatus::ACTIVE->value,
+            'plan_provider' => BillingProvider::APP_STORE->value,
+            'plan_source_event_at' => $grantedAt,
+        ]);
+
+        $this->assertFalse($this->write(
+            billable: $billable,
+            plan: null,
+            status: PlanStatus::CANCELED,
+            provider: BillingProvider::STRIPE,
+            eventAt: $grantedAt->copy()->addMinute(),
+            providerStatus: 'canceled',
+            eventId: 'evt_cross_rail',
+        ));
+
+        $row = $this->assertDropRecorded($billable, 'cross_rail_revocation', BillingProvider::STRIPE, 'evt_cross_rail');
+        $this->assertSame('downgrade', $row->properties['direction'] ?? null);
+        $this->assertSame(PlanStatus::CANCELED->value, $row->properties['incoming_status'] ?? null);
+    }
+
+    #[DataProvider('billableSubjects')]
+    public function test_a_projected_cross_rail_takeover_drop_records_one_dropped_row(string $subject): void
+    {
+        $grantedAt = Carbon::parse('2026-08-22 12:00:00');
+
+        $billable = $this->makeBillable($subject, [
+            'plan' => 'business',
+            'plan_status' => PlanStatus::ACTIVE->value,
+            'plan_provider' => BillingProvider::APP_STORE->value,
+            'plan_source_event_at' => $grantedAt,
+        ]);
+
+        $this->assertFalse($this->write(
+            billable: $billable,
+            plan: 'business',
+            status: PlanStatus::ACTIVE,
+            provider: BillingProvider::STRIPE,
+            eventAt: $grantedAt->copy()->addMinute(),
+            authoritative: false,
+            providerStatus: 'active',
+            source: BillingSource::RECONCILE,
+        ));
+
+        $row = $this->assertDropRecorded(
+            $billable,
+            'projected_cross_rail_takeover',
+            BillingProvider::STRIPE,
+            null,
+            BillingSource::RECONCILE,
+        );
+        $this->assertSame('same', $row->properties['direction'] ?? null);
+    }
+
+    /**
+     * An applied write leaves one `entitlement_applied` row carrying what the
+     * entitlement meant before and after, and which fields moved.
+     */
+    #[DataProvider('billableSubjects')]
+    public function test_an_applied_grant_records_one_applied_row_with_before_and_after(string $subject): void
+    {
+        $billable = $this->makeBillable($subject, []);
+
+        $this->assertTrue($this->write(
+            billable: $billable,
+            plan: 'pro',
+            status: PlanStatus::ACTIVE,
+            provider: BillingProvider::STRIPE,
+            eventAt: Carbon::parse('2026-08-22 12:00:00'),
+            providerStatus: 'active',
+            renews: true,
+            eventId: 'evt_first_grant',
+        ));
+
+        $this->assertSame(1, BillingEvent::query()->count());
+
+        $row = BillingEvent::query()->sole();
+        $this->assertSame(BillingEventType::ENTITLEMENT_APPLIED, $row->type);
+        $this->assertSame(BillingSource::WEBHOOK, $row->source);
+        $this->assertSame(BillingProvider::STRIPE, $row->provider);
+        $this->assertSame('evt_first_grant', $row->external_id);
+        $this->assertNull($row->reason);
+        $this->assertSame($billable->getMorphClass(), $row->billable_type);
+        $this->assertSame((string) $billable->getKey(), $row->billable_id);
+
+        $this->assertSame([
+            'plan' => null,
+            'plan_status' => PlanStatus::NONE->value,
+            'plan_provider' => BillingProvider::NONE->value,
+            'plan_current_period_end' => null,
+            'plan_renews' => null,
+        ], $row->properties['before'] ?? null);
+        $this->assertSame([
+            'plan' => 'pro',
+            'plan_status' => PlanStatus::ACTIVE->value,
+            'plan_provider' => BillingProvider::STRIPE->value,
+            'plan_current_period_end' => null,
+            'plan_renews' => true,
+        ], $row->properties['after'] ?? null);
+        $this->assertSame(['plan', 'plan_status', 'plan_provider', 'plan_renews'], $row->properties['changed'] ?? null);
+        $this->assertSame('nothing-stored', $row->properties['direction'] ?? null);
+        $this->assertFalse($row->properties['cross_rail'] ?? null);
+
+        $this->assertCount(1, $this->dispatched);
+        $this->assertInstanceOf(EntitlementApplied::class, $this->dispatched[0]);
+    }
+
+    /**
+     * A write that lands but changes nothing a customer would notice leaves no
+     * row.
+     *
+     * The provenance columns (`plan_source_event_at`, `plan_provider_status`)
+     * move on every renewal and every reconcile read, so "the row was saved" or
+     * "an attribute changed" is true almost every time; a history recording on
+     * either would be one row per delivery and say nothing.
+     */
+    #[DataProvider('billableSubjects')]
+    public function test_re_applying_the_same_meaning_with_newer_provenance_records_no_applied_row(
+        string $subject,
+    ): void {
+        $grantedAt = Carbon::parse('2026-08-22 12:00:00');
+        $periodEnd = Carbon::parse('2026-09-22 12:00:00');
+
+        $billable = $this->makeBillable($subject, [
+            'plan' => 'pro',
+            'plan_status' => PlanStatus::ACTIVE->value,
+            'plan_provider' => BillingProvider::APP_STORE->value,
+            'plan_source_event_at' => $grantedAt,
+            'plan_provider_status' => 'INITIAL_PURCHASE',
+            'plan_current_period_end' => $periodEnd,
+            'plan_renews' => true,
+        ]);
+
+        $this->assertTrue($this->write(
+            billable: $billable,
+            plan: 'pro',
+            status: PlanStatus::ACTIVE,
+            provider: BillingProvider::APP_STORE,
+            eventAt: $grantedAt->copy()->addHour(),
+            providerStatus: 'RENEWAL',
+            currentPeriodEnd: $periodEnd->copy(),
+            renews: true,
+            eventId: 'rc_event_renewal',
+        ));
+
+        $this->assertSame('RENEWAL', $billable->refresh()->getAttribute('plan_provider_status'));
+        $this->assertSame(0, BillingEvent::query()->count());
+        $this->assertSame([], $this->dispatched);
+    }
+
+    /**
+     * An UNCAST billable compares by meaning, not by the shape the driver hands
+     * back.
+     *
+     * Read from the database, an uncast boolean column is SQLite's `1` and the
+     * period end is a string, while the write leaves a real `true` and a Carbon
+     * on the model. Compared raw, every write against such a row would record a
+     * change that is not one.
+     */
+    #[DataProvider('billableSubjects')]
+    public function test_an_uncast_billable_records_no_spurious_applied_row(string $subject): void
+    {
+        $grantedAt = Carbon::parse('2026-08-22 12:00:00');
+        $periodEnd = Carbon::parse('2026-09-22 12:00:00');
+
+        $billable = $this->makeBillable($subject, [
+            'plan' => 'pro',
+            'plan_status' => PlanStatus::ACTIVE->value,
+            'plan_provider' => BillingProvider::STRIPE->value,
+            'plan_source_event_at' => $grantedAt,
+            'plan_current_period_end' => $periodEnd,
+            'plan_renews' => true,
+        ])->refresh();
+
+        // The shape is the point: what the driver hands back, not what was set.
+        $this->assertSame(1, $billable->getAttribute('plan_renews'));
+        $this->assertIsString($billable->getAttribute('plan_current_period_end'));
+
+        $this->assertTrue($this->write(
+            billable: $billable,
+            plan: 'pro',
+            status: PlanStatus::ACTIVE,
+            provider: BillingProvider::STRIPE,
+            eventAt: $grantedAt->copy()->addMinute(),
+            providerStatus: 'active',
+            currentPeriodEnd: $periodEnd->copy(),
+            renews: true,
+        ));
+
+        $this->assertSame(0, BillingEvent::query()->count());
+    }
+
+    /**
+     * Assert the one row and the one event a dropped write leaves.
+     */
+    protected function assertDropRecorded(
+        Model $billable,
+        string $reason,
+        BillingProvider $provider,
+        ?string $externalId,
+        BillingSource $source = BillingSource::WEBHOOK,
+    ): BillingEvent {
+        $this->assertSame(1, BillingEvent::query()->count(), 'A dropped write must leave exactly one row.');
+
+        $row = BillingEvent::query()->sole();
+        $this->assertSame(BillingEventType::ENTITLEMENT_DROPPED, $row->type);
+        $this->assertSame($reason, $row->reason);
+        $this->assertSame($source, $row->source);
+        $this->assertSame($provider, $row->provider);
+        $this->assertSame($externalId, $row->external_id);
+        $this->assertSame($billable->getMorphClass(), $row->billable_type);
+        $this->assertSame((string) $billable->getKey(), $row->billable_id);
+
+        $this->assertCount(1, $this->dispatched);
+        $this->assertInstanceOf(EntitlementDropped::class, $this->dispatched[0]);
+        $this->assertSame($row->getKey(), $this->dispatched[0]->record()->getKey());
+
+        return $row;
+    }
+
     /**
      * Assert the drop was reported with every fact an operator needs to
      * reconstruct the decision: which billable, both rails, both timestamps and
@@ -1900,6 +2254,10 @@ class WriteEntitlementTest extends TestCase
         ?bool $renews = null,
         ?CarbonInterface $gracePeriodEndsAt = null,
         ?string $manageUrl = null,
+        // Defaulted here for the same reason as `authoritative`: only the
+        // recording cases below are about where a claim came from.
+        BillingSource $source = BillingSource::WEBHOOK,
+        ?string $eventId = null,
     ): bool {
         return $this->app->make(WritesEntitlement::class)->write(new EntitlementWrite(
             billable: $billable,
@@ -1908,12 +2266,14 @@ class WriteEntitlementTest extends TestCase
             provider: $provider,
             eventAt: $eventAt,
             authoritative: $authoritative,
+            source: $source,
             providerStatus: $providerStatus,
             productId: $productId,
             currentPeriodEnd: $currentPeriodEnd,
             renews: $renews,
             gracePeriodEndsAt: $gracePeriodEndsAt,
             manageUrl: $manageUrl,
+            eventId: $eventId,
         ));
     }
 

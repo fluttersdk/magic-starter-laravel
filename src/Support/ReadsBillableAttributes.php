@@ -6,6 +6,7 @@ use BackedEnum;
 use Carbon\CarbonInterface;
 use Carbon\Exceptions\InvalidFormatException;
 use DateTimeInterface;
+use FlutterSdk\MagicStarter\Enums\BillingProvider;
 use FlutterSdk\MagicStarter\Enums\PlanStatus;
 use FlutterSdk\MagicStarter\MagicStarter;
 use Illuminate\Database\Eloquent\Model;
@@ -259,5 +260,74 @@ trait ReadsBillableAttributes
     protected function storedEventAt(Model $billable): ?CarbonInterface
     {
         return $this->dateAttribute($billable, 'plan_source_event_at');
+    }
+
+    /**
+     * The entitlement's MEANING, as five comparable fields.
+     *
+     * Deliberately not the whole row. `plan_source_event_at` and
+     * `plan_provider_status` are provenance and move on every store-rail read,
+     * so including them would report a change on every run; `plan_manage_url`
+     * and `plan_product_id` are debug and navigation. What is left is what a
+     * customer would notice: the tier, where it stands, who is billing it, when
+     * the period ends and whether it rolls over. A dropped `RENEWAL` moves only
+     * the last two, which is why they are in here rather than assumed harmless.
+     *
+     * It lives here rather than on the reconciler that first needed it because
+     * two readers now ask "did the entitlement change": the reconciler, to report
+     * a correction, and the write action, to decide whether an apply is worth a
+     * `billing_events` row. Two copies would be free to disagree, and the
+     * disagreement would be a history that records a change the reconciler
+     * calls agreement, or the other way round.
+     *
+     * Timestamps are compared as UTC ISO-8601 strings, which is also what the
+     * log prints, so the field that reported a change is the field that was
+     * compared.
+     *
+     * EVERY field goes through the shared decoders, and three of the five are
+     * the reason this method is the most dangerous one here. The package ships
+     * these columns and not the model that casts them, so on an uncast model
+     * `plan` read as an enum answers null with a warning,
+     * `plan_current_period_end` read with `?->toIso8601ZuluString()` is a fatal
+     * Error, and `plan_renews` read raw compares `1 !== true` and disagrees with
+     * the column forever. The third is the quiet one: it makes every comparison
+     * against an uncast row answer "changed" on a subject that agrees
+     * perfectly, which in the reconciler is a restamp loop and in the write
+     * action a history row per delivery.
+     *
+     * `plan` is the RAW column and never a reader that answers a free-tier word
+     * over a NULL one, and that is convergence rather than taste. A revocation
+     * claim carries no tier, so comparing through such a reader would report a
+     * disagreement the write had already resolved, forever.
+     *
+     * @return array<string, mixed>
+     */
+    protected function entitlementSnapshot(Model $billable): array
+    {
+        return [
+            'plan' => $this->stringAttribute($billable, 'plan'),
+            'plan_status' => PlanStatus::fromWire($this->stringAttribute($billable, 'plan_status'))->value,
+            'plan_provider' => BillingProvider::fromWire($this->stringAttribute($billable, 'plan_provider'))->value,
+            'plan_current_period_end' => $this->dateAttribute($billable, 'plan_current_period_end')
+                ?->toIso8601ZuluString(),
+            'plan_renews' => $this->booleanAttribute($billable, 'plan_renews'),
+        ];
+    }
+
+    /**
+     * The snapshot fields that differ between two {@see self::entitlementSnapshot()}
+     * reads, in snapshot order. Empty means the entitlement means what it meant.
+     *
+     * @param  array<string, mixed>  $before
+     * @param  array<string, mixed>  $after
+     * @return list<string>
+     */
+    protected function entitlementChanges(array $before, array $after): array
+    {
+        return array_keys(array_filter(
+            $after,
+            static fn (mixed $value, string $field): bool => $value !== $before[$field],
+            ARRAY_FILTER_USE_BOTH,
+        ));
     }
 }

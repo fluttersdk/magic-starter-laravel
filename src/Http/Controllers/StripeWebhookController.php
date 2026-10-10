@@ -7,18 +7,19 @@ use Carbon\CarbonInterface;
 use Closure;
 use FlutterSdk\MagicStarter\Contracts\WritesEntitlement;
 use FlutterSdk\MagicStarter\Enums\BillingProvider;
+use FlutterSdk\MagicStarter\Enums\BillingSource;
 use FlutterSdk\MagicStarter\Enums\PlanStatus;
 use FlutterSdk\MagicStarter\Jobs\CheckTrialCard;
 use FlutterSdk\MagicStarter\MagicStarter;
 use FlutterSdk\MagicStarter\Models\BillingTrial;
 use FlutterSdk\MagicStarter\Models\ProcessedWebhookEvent;
+use FlutterSdk\MagicStarter\Support\BillingLog;
 use FlutterSdk\MagicStarter\Support\EntitlementWrite;
 use FlutterSdk\MagicStarter\Support\ReadsBillableAttributes;
 use FlutterSdk\MagicStarter\Support\StripeSubscriptionState;
 use FlutterSdk\MagicStarter\Support\TeamKey;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Support\Facades\DB;
-use Illuminate\Support\Facades\Log;
 use Laravel\Cashier\Http\Controllers\WebhookController as CashierWebhookController;
 use Stripe\Subscription as StripeSubscription;
 use Symfony\Component\HttpFoundation\Response;
@@ -193,7 +194,7 @@ class StripeWebhookController extends CashierWebhookController
     {
         return $this->processOnce($payload, function (array $payload): Response {
             $response = parent::handleCustomerSubscriptionDeleted($payload);
-            $this->revokeEntitlement($payload['data']['object'], $this->eventAt($payload));
+            $this->revokeEntitlement($payload['data']['object'], $this->eventAt($payload), $payload['id']);
 
             return $response;
         });
@@ -208,7 +209,11 @@ class StripeWebhookController extends CashierWebhookController
     {
         return $this->processOnce($payload, function (array $payload): Response {
             $response = parent::handleInvoicePaymentSucceeded($payload);
-            $this->reaffirmEntitlementFromInvoice($payload['data']['object'], $this->eventAt($payload));
+            $this->reaffirmEntitlementFromInvoice(
+                $payload['data']['object'],
+                $this->eventAt($payload),
+                $payload['id'],
+            );
 
             return $response;
         });
@@ -299,7 +304,7 @@ class StripeWebhookController extends CashierWebhookController
         //    vocabulary would be a second definition of "granting" for the same
         //    outcome, free to disagree with the first one.
         if (! StripeSubscriptionState::grants($status)) {
-            $this->claim($this->subscriptionClaim($billable, null, $status, $object, $eventAt));
+            $this->claim($this->subscriptionClaim($billable, null, $status, $object, $eventAt, $payload['id']));
 
             return;
         }
@@ -315,7 +320,7 @@ class StripeWebhookController extends CashierWebhookController
             return;
         }
 
-        $this->claim($this->subscriptionClaim($billable, $plan, $status, $object, $eventAt));
+        $this->claim($this->subscriptionClaim($billable, $plan, $status, $object, $eventAt, $payload['id']));
     }
 
     /**
@@ -495,8 +500,10 @@ class StripeWebhookController extends CashierWebhookController
      * still says `trialing`.
      *
      * @param  array<string, mixed>  $object
+     * @param  string  $eventId  The delivery's Stripe event id, which the
+     *                           invoice object itself does not carry.
      */
-    protected function reaffirmEntitlementFromInvoice(array $object, CarbonInterface $eventAt): void
+    protected function reaffirmEntitlementFromInvoice(array $object, CarbonInterface $eventAt, string $eventId): void
     {
         $billable = $this->resolveBillable($object['customer'] ?? null);
 
@@ -571,6 +578,7 @@ class StripeWebhookController extends CashierWebhookController
             // paid for. It may refresh the record; it may not decide that Stripe
             // is the rail billing this subject.
             authoritative: false,
+            source: BillingSource::WEBHOOK,
             providerStatus: $providerStatus,
             productId: $priceId,
             // An invoice object carries no subscription items, so this path has
@@ -589,6 +597,7 @@ class StripeWebhookController extends CashierWebhookController
             renews: $stripeIsOnRecord
                 ? $this->booleanAttribute($billable, 'plan_renews')
                 : null,
+            eventId: $eventId,
         ));
     }
 
@@ -609,8 +618,10 @@ class StripeWebhookController extends CashierWebhookController
      * A deleted subscription revokes the entitlement: nothing is owed any more.
      *
      * @param  array<string, mixed>  $object
+     * @param  string  $eventId  The delivery's Stripe event id, which the
+     *                           subscription object itself does not carry.
      */
-    protected function revokeEntitlement(array $object, CarbonInterface $eventAt): void
+    protected function revokeEntitlement(array $object, CarbonInterface $eventAt, string $eventId): void
     {
         $billable = $this->resolveBillable($object['customer'] ?? null);
 
@@ -635,7 +646,7 @@ class StripeWebhookController extends CashierWebhookController
         // (see the caller) and has marked the deleted row canceled, so a
         // surviving granting row can only be a DIFFERENT subscription.
         if ($this->stillGrantedByAnotherSubscription($billable)) {
-            Log::warning('Skipped a Stripe revocation: another subscription still grants.', [
+            BillingLog::warning('Skipped a Stripe revocation: another subscription still grants.', [
                 'billable_id' => $billable->getKey(),
                 'deleted_subscription' => $object['id'] ?? null,
             ]);
@@ -654,6 +665,7 @@ class StripeWebhookController extends CashierWebhookController
             eventAt: $eventAt,
             // Stripe telling us directly, on its own event.
             authoritative: true,
+            source: BillingSource::WEBHOOK,
             // Stripe does not put a status on the deletion itself; the deletion
             // IS the status, and `canceled` is the word Stripe uses for it.
             providerStatus: 'canceled',
@@ -661,6 +673,7 @@ class StripeWebhookController extends CashierWebhookController
             // Deliberately not carried forward: a deleted subscription has no
             // period left to run and nothing left to renew, so both fields are
             // now unknown rather than merely unread.
+            eventId: $eventId,
         ));
     }
 
@@ -714,6 +727,8 @@ class StripeWebhookController extends CashierWebhookController
      * be two definitions of the same word, free to disagree.
      *
      * @param  array<string, mixed>  $object
+     * @param  string  $eventId  The delivery's Stripe event id, which the
+     *                           subscription object itself does not carry.
      */
     protected function subscriptionClaim(
         Model $billable,
@@ -721,6 +736,7 @@ class StripeWebhookController extends CashierWebhookController
         string $status,
         array $object,
         CarbonInterface $eventAt,
+        string $eventId,
     ): EntitlementWrite {
         return new EntitlementWrite(
             billable: $billable,
@@ -731,6 +747,7 @@ class StripeWebhookController extends CashierWebhookController
             // Every field here is read out of the event payload Stripe signed,
             // so this is Stripe speaking rather than us remembering.
             authoritative: true,
+            source: BillingSource::WEBHOOK,
             providerStatus: $status,
             productId: $object['items']['data'][0]['price']['id'] ?? null,
             currentPeriodEnd: $this->periodEndFromPayload($object),
@@ -742,6 +759,7 @@ class StripeWebhookController extends CashierWebhookController
             // appears nowhere on a webhook payload. `plan_manage_url` holds
             // only durable values; the Stripe rail mints a short-lived portal
             // session per request through the billing portal endpoint instead.
+            eventId: $eventId,
         );
     }
 
@@ -848,7 +866,7 @@ class StripeWebhookController extends CashierWebhookController
      */
     protected function warnUnmappedPrice(?string $priceId, Model $billable): void
     {
-        Log::warning('Stripe price id is not mapped to a plan; entitlement left untouched.', [
+        BillingLog::warning('Stripe price id is not mapped to a plan; entitlement left untouched.', [
             'price_id' => $priceId,
             'billable_id' => $billable->getKey(),
         ]);
