@@ -4,6 +4,27 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Added
+
+- **`trial_days` on a catalogue product: a free trial on the web rail.** A whole number of days, default `0` (no trial); `0` or `2` and above, since Stripe Checkout enforces a minimum of 48 hours. Boot refuses `1`, a negative or non-integer value, and any non-zero value on a product that is not a subscription. Only Stripe honours it: a store (intro offer) trial is configured in App Store Connect or Play Console and is separate. (`config/magic-starter.php`, `src/Support/BillingCatalogue.php`)
+- **`TrialEligibility::allows($user, $billable)` decides who gets the trial.** It refuses a guest (where `HasGuestSupport` is applied), a user with any `billing_trials` row, a billable with any row, and a billable holding a `default` Cashier subscription in any status; a refused row still counts. It is resolved through the container, so an application binds its own rules over it. (`src/Support/TrialEligibility.php`)
+- **Checkout starts the trial and always collects a card.** `POST billing/checkout` starts an eligible caller's trial with Cashier's `trialDays()` and tags the subscription with the metadata `magic_starter_trial_user`; an ineligible caller buys at the full price. Every checkout now sends `payment_method_collection=always`. (`src/Http/Controllers/BillingController.php`)
+- **`GET billing/plans` product rows carry `trial_days` for the caller.** It is the trial this caller would get, `0` when they are not eligible, and no `billing_trials` query runs while no product offers a trial. (`src/Http/Controllers/BillingController.php`)
+- **A card check that keeps one trial per person, subject and card.** The `customer.subscription.created` webhook records a `billing_trials` row and queues `Jobs\CheckTrialCard` after commit. The job reads the card fingerprint (the subscription's default payment method, then the customer's invoice default), retries for about six minutes, and keeps the trial when no card fingerprint exists. Under a cache lock it keeps the earliest trial (Stripe's `created`) among trials sharing a person, a subject or a card, and cancels later ones still trialing with no proration and no invoice, deleting the local Cashier row of a same-subject duplicate. A trial that already converted to paid is kept. (`src/Http/Controllers/StripeWebhookController.php`, `src/Jobs/CheckTrialCard.php`, `src/Support/TrialCardGateway.php`)
+- **`TrialRefusedNotification` and `billing.trial_refused_notification`, default `true` (`MAGIC_STARTER_TRIAL_REFUSED_NOTIFICATION`).** A person whose trial was refused because the card had already taken one is mailed that nothing was charged; a duplicate by the same person or subject sends nothing. Set it `false` to send your own message. The sentences are `billing.trial_refused.*` in `en` and `tr`. (`src/Notifications/TrialRefusedNotification.php`, `config/magic-starter.php`, `lang/`)
+- **The `billing_trials` table and its migration `create_billing_trials_table.php`.** One row per trialing subscription a package checkout opened, with the card fingerprint and the refusal. Deleting a user sets `user_id` to null and keeps the row, so a refused person's card fingerprint is retained after account deletion as an anti-abuse record; disclose it in your privacy policy. New installs publish it with the billing migrations. (`database/migrations/create_billing_trials_table.php`, `src/Models/BillingTrial.php`, `src/Console/InstallCommand.php`)
+- **`billing:reconcile` re-dispatches unchecked trials, and `billing:doctor` checks the table.** A full run re-dispatches `CheckTrialCard` for every live trial still unchecked after 30 minutes, which covers the `sync` queue and a dispatch lost after commit. The doctor reports a missing `billing_trials` table as `schema.billing_trials` while a product offers a trial. (`src/Console/ReconcileBillingEntitlements.php`, `src/Console/BillingDoctorCommand.php`)
+
+### Upgrading
+
+- **Trials need the `billing_trials` table.** To upgrade an application that installed before this release and wants to sell a trial, copy `vendor/fluttersdk/magic-starter-laravel/database/migrations/create_billing_trials_table.php` into `database/migrations/` under a timestamp later than your latest migration and run `php artisan migrate`, before setting a `trial_days`. Do not re-run `magic-starter:install` for this. An application that sets no `trial_days` never reads the table.
+- **Checkout now sends `payment_method_collection=always` on every session**, trial or not, instead of leaving it to Stripe's default. A card is collected whatever the first total, because the trial check fingerprints it.
+- **A wallet card (Apple Pay, Google Pay) can carry a different fingerprint than the same card entered plainly**, so one card can reach a second trial through the wallet. This is an accepted limitation, and web and store trials do not count against each other.
+
+### Documentation
+
+- `doc/basics/billing.md` documents trials: the `trial_days` field, eligibility, checkout, the card check, the refusal mail, the `billing_trials` table and the privacy note; `resources/boost/skills/magic-starter-development/references/billing-setup.md` carries the same in brief.
+
 ## [0.0.22] - 2026-10-10
 
 ### Added

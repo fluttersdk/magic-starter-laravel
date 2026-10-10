@@ -9,6 +9,7 @@
 - [Reading the Entitlement](#reading-the-entitlement)
 - [Endpoints](#endpoints)
 - [Refusals](#refusals)
+- [Trials](#trials)
 - [RevenueCat Webhook](#revenuecat-webhook)
 - [Agent Commands](#agent-commands)
 - [Account Deletion](#account-deletion)
@@ -101,6 +102,7 @@ A product entry:
 | `credits` | Optional integer a one-off purchase grants. |
 | `prices` | `channel => currency => amount in minor units`. See [Prices](#prices). |
 | `refs` | Each rail's id for the product: `stripe_price`, `app_store`, `play`. See [Store Ids](#store-ids). |
+| `trial_days` | Optional whole number of free days a subscription starts with, default `0` (no trial). `0` or `2` and above: Stripe Checkout enforces a minimum of 48 hours, so `1` stops boot, as does a negative or non-integer value and any non-zero value on a product that is not a subscription. Only the web (Stripe) rail honours it, and it is the length offered, not a promise to everybody. See [Trials](#trials). |
 | `sellable` | Boolean, default `true`. `false` keeps the product mapped for webhooks, reconciliation and entitlement reads (a grandfathered price still bills people). `billing/plans` lists it with `sellable: false` so a client can place what a subscriber holds; a client must offer only sellable products. It cannot be checked out or swapped to (422 `product_not_sellable`), and is left out of `billing:manifest` and `billing:doctor`. Anything but a boolean stops boot. |
 
 ### What boot refuses
@@ -108,6 +110,7 @@ A product entry:
 - A leftover `plans`, `prices` or `store_products` key, even empty. The message names where its content moved: `tiers` and `tier_order`, `refs.stripe_price`, and `refs.app_store` and `refs.play`. There is no alias.
 - An empty `tier_order`.
 - A product with an unknown `type` or a `sellable` that is not a boolean, or a subscription with no tier, a tier outside `tier_order`, or a `cycle` that is not `monthly` or `annual`.
+- A `trial_days` that is not a whole number of 0 or more, is `1`, or is non-zero on a product that is not a subscription.
 - A `prices` entry that is not a known channel (`web`, `app_store`, `play`) mapping a three-letter currency code to a whole amount of 0 or more.
 - A `refs.play` that is not exactly `<subscription_id>:<base_plan_id>`, or a `refs.app_store` containing `:`.
 - A `pricing.commission.mode` other than `absorb` or `gross_up`, or a `rate` that is not a number of at least 0 and below 1.
@@ -229,6 +232,8 @@ A finished or paused plan reads as the floor even if the tier is still stored, s
 
 `swap` takes `product` alone. The key fixes the tier and the cycle together, so the customer is charged the figure the screen showed. A product this rail cannot sell answers 422 with `code: "product_not_sellable"`: an unknown key, a product that is not a subscription, the free floor, one with no `refs.stripe_price`, or one marked `sellable: false`.
 
+A product with `trial_days` starts a trial for a caller who is eligible, and a checkout always collects a card. An ineligible caller is not refused: they buy at the full price. See [Trials](#trials).
+
 ### Plans
 
 `data` is a list of tier rows in `tier_order` order, each carrying its `tiers` definition plus the derived `cycles` (the cycles a sellable product with a Stripe price sells it on) and `products`, every subscription product of the tier:
@@ -247,6 +252,7 @@ A finished or paused plan reads as the floor even if the tier is still stored, s
           "tier": "pro",
           "cycle": "monthly",
           "sellable": true,
+          "trial_days": 14,
           "store_ids": { "app_store": "com.example.pro.monthly", "play": "pro:monthly" },
           "prices": {
             "web": { "USD": { "amount_minor": 2900, "display": "29.00 USD" } }
@@ -258,6 +264,7 @@ A finished or paused plan reads as the floor even if the tier is still stored, s
           "tier": "pro",
           "cycle": "monthly",
           "sellable": false,
+          "trial_days": 0,
           "store_ids": { "app_store": "com.example.pro.monthly.2025", "play": "pro:monthly-2025" },
           "prices": {
             "web": { "USD": { "amount_minor": 1900, "display": "19.00 USD" } }
@@ -270,6 +277,8 @@ A finished or paused plan reads as the floor even if the tier is still stored, s
 ```
 
 A product with `sellable: false` is listed so a client can rank what a subscriber already holds; offer only the sellable ones. `store_ids` carries `null` for a store the product is not on, and a product with no web price carries `"web": {}`.
+
+`trial_days` is the trial THIS caller would get, not the configured length: it is `0` for a caller who is not eligible (and for a caller with no billing subject), so a screen never offers "Free for 14 days" to somebody the checkout would charge on day one. While no product offers a trial, the endpoint makes no `billing_trials` query. See [Trials](#trials).
 
 An application that has published nothing gets an empty list, not a 404.
 
@@ -323,6 +332,87 @@ A `TRANSFER` event re-reads both the `transferred_from` and the `transferred_to`
 
 ---
 
+<a name="trials"></a>
+## Trials
+
+A product with `trial_days` of 2 or more starts a free trial on the **web rail** (Stripe Checkout through Cashier). Whether a given customer still gets it is decided per user and billable, never by the catalogue alone.
+
+```php
+'pro_monthly' => [
+    'type' => 'subscription',
+    'tier' => 'pro',
+    'cycle' => 'monthly',
+    'trial_days' => 14,
+    // ...
+],
+```
+
+### Who is eligible
+
+`TrialEligibility::allows($user, $billable)` answers it, from the local database only (no Stripe call). The user is always the signed-in person, and the billable is the subject the trial would bill: the user itself, or their current team under team billing. It refuses:
+
+| Refused | Why |
+|---------|-----|
+| A guest | A guest account costs one tap to make. Asked only where the application applied `HasGuestSupport`; without it there are no guests. |
+| A user with any `billing_trials` row | One trial per person, so a person cannot trial on their account and again on every team they create. |
+| A billable with any `billing_trials` row | One trial per subject, so a team one member trialed is not trialed again by the next member. |
+| A billable holding a `default` Cashier subscription, in any status | A returning paid customer is not a new one, and a current subscriber would meet `subscription_exists` straight after a "Start free trial" button. |
+
+A row the card check refused still counts, so a refusal never resets eligibility. An application with its own rules (a domain allow-list, a sales-led exception) binds a subclass of `TrialEligibility` in the container.
+
+### Checkout
+
+`POST billing/checkout` starts the trial for an eligible caller with Cashier's `trialDays()` and tags the subscription with the metadata `magic_starter_trial_user`, the acting user's key. The tag is how the webhook learns the person, since under team billing the Stripe customer is the team. An ineligible caller is not refused: they buy at the full price, which is what `GET billing/plans` showed them.
+
+Every checkout, trial or not, sends `payment_method_collection=always`. A trial's first invoice is zero, and a session that skipped the card would end the trial on a customer with nothing to charge. The card is also what the check below reads.
+
+### The card check
+
+1. The `customer.subscription.created` webhook records a `billing_trials` row for a `trialing` `default` subscription carrying the metadata tag, in the same transaction as the entitlement write, and queues `CheckTrialCard` after that transaction commits. A trial started anywhere else (the Stripe dashboard, another integration) carries no tag and is not this package's to police.
+2. `CheckTrialCard` reads the card's fingerprint outside the webhook: the subscription's default payment method first, then the customer's invoice default. Checkout may not have attached the card yet, so the job asks again a minute later, for about six minutes (six attempts), and then keeps the trial. A payment method that is not a card, or a card Stripe reports without a fingerprint, also keeps the trial: there is nothing to compare.
+3. Under a cache lock (`magic-starter:billing-trials`), the job walks every trial that shares a person, a billed subject or a card with this one, **earliest first**, and keeps the trial Stripe created first (its `created`, then the row key), never the job that happened to run first. A later trial that is still `trialing` is refused and cancelled in Stripe with no proration and no invoice. One that already converted to paying is kept, because this check refuses trials and never customers.
+4. A refused trial on the same subject as the surviving one also loses its local Cashier row, so `subscription('default')` keeps answering the survivor.
+
+The lock is fleet-wide only on a shared cache store (`redis`, `memcached`, `database`); on `file` or `array` each server locks for itself.
+
+The refusal reason is `card_reused` when the card is the only thing two trials share, and `duplicate` when they share a person or a subject. The refusal is written before the cancel, and a refused row with no `checked_at` is a cancel still owed that any later check of its set finishes.
+
+On the `sync` queue the job cannot release itself for a retry, so it never retries there. `billing:reconcile` covers that, and a dispatch lost after the commit: a full run re-dispatches the check of every live trial still unchecked after 30 minutes. It does so only while a product offers `trial_days` and the `billing_trials` table exists.
+
+### The refusal mail
+
+`TrialRefusedNotification` is mailed only for `card_reused`: the person's card had already taken a trial, no trial was opened, nothing was charged, and they can still subscribe without one. A `duplicate` sends nothing, since the trial they meant to have is the surviving one. The mail goes out after the cancel is confirmed, so a mail failure never causes a second cancel.
+
+| Config key | Env | Default |
+|------------|-----|---------|
+| `magic-starter.billing.trial_refused_notification` | `MAGIC_STARTER_TRIAL_REFUSED_NOTIFICATION` | `true` |
+
+Set it `false` to send your own message instead. The sentences are `magic-starter::billing.trial_refused.*` in `en` and `tr`; a published `lang/vendor/magic-starter/` copy wins over the package's own.
+
+### The table
+
+`billing_trials` has one row per trialing subscription a package checkout opened, and is the anti-abuse record behind the rules above. A fresh `magic-starter:install --features=billing` publishes `create_billing_trials_table.php` with the other billing migrations; an existing application copies it in, see [Upgrading](#upgrading). Keys follow `use_uuids`. `billing:doctor` reports a table missing while a product offers a trial as `schema.billing_trials`.
+
+| Column | Holds |
+|--------|-------|
+| `user_id` | The person who started the trial. Nullable foreign key to `users`, set to null when the user is deleted. |
+| `billable_type`, `billable_id` | The subject, as `getMorphClass()` and its key. No foreign key, so deleting a team keeps the record that it trialed. |
+| `stripe_subscription_id` | The Stripe subscription, unique. |
+| `subscription_created_at` | Stripe's own `created`, the order "earliest wins" is decided on. |
+| `card_fingerprint` | The card's fingerprint, indexed, null until read. |
+| `checked_at` | Stamped once the check finished, whether or not it found a fingerprint. |
+| `refused_at`, `refusal_reason` | Set on a refused trial: `card_reused` or `duplicate`. |
+
+> [!WARNING]
+> The card fingerprint of a refused person is retained after their account is deleted: the row keeps its fingerprint and only `user_id` becomes null, because the record has to survive a delete and sign-up again. Disclose it in your privacy policy as an anti-abuse record.
+
+### Limits
+
+- A wallet card (Apple Pay, Google Pay) can carry a different fingerprint than the same card entered plainly, so one card can reach a second trial through the wallet. This is an accepted limitation.
+- Web and store trials are separate. `trial_days` reaches Stripe only. A store (intro offer) trial is configured in App Store Connect or Google Play Console, and is not recorded, checked or counted here, so a customer can take one on each rail.
+
+---
+
 <a name="revenuecat-webhook"></a>
 ## RevenueCat Webhook
 
@@ -373,7 +463,7 @@ php artisan billing:doctor --json
 php artisan billing:doctor --json --remote
 ```
 
-Without `--remote` it checks the configuration: the catalogue validates, the rail secrets that a sold product needs are set, `REVENUECAT_WEBHOOK_SECRET` exists while the store rail is on, every web-sold product has a Stripe price id, store ids are listed, billable keys are UUIDs, the subscription tables are keyed the way their models write them (`schema.subscription_keys`), and the reconcile cadence suits the store rail. With `--remote` it also reads Stripe and RevenueCat and diffs them against the manifest: a Stripe price per lookup key (id, interval, amounts), and the RevenueCat apps, products, entitlements, `default` offering, packages and webhook (that one delivers to this application's URL). RevenueCat returns a webhook's signing secret only when it is rotated, so whether HMAC signing is on cannot be read: the doctor reports it as an `agent_check` for a person to confirm in the dashboard.
+Without `--remote` it checks the configuration: the catalogue validates, the rail secrets that a sold product needs are set, `REVENUECAT_WEBHOOK_SECRET` exists while the store rail is on, every web-sold product has a Stripe price id, store ids are listed, billable keys are UUIDs, the subscription tables are keyed the way their models write them (`schema.subscription_keys`), the `billing_trials` table exists while a product offers a trial (`schema.billing_trials`), and the reconcile cadence suits the store rail. With `--remote` it also reads Stripe and RevenueCat and diffs them against the manifest: a Stripe price per lookup key (id, interval, amounts), and the RevenueCat apps, products, entitlements, `default` offering, packages and webhook (that one delivers to this application's URL). RevenueCat returns a webhook's signing secret only when it is rotated, so whether HMAC signing is on cannot be read: the doctor reports it as an `agent_check` for a person to confirm in the dashboard.
 
 `REVENUECAT_API_V2_KEY` is a separate secret key scoped to `project_configuration:{apps,products,entitlements,offerings,packages,integrations}:read`, and `REVENUECAT_PROJECT_ID` names the project. Neither is needed to sell.
 
@@ -392,3 +482,5 @@ A user who owns a team that a rail is still billing, or who is billed directly u
 ## Upgrading
 
 The catalogue replaces `plans`, `prices` and `store_products`, and checkout and swap take `product` instead of `plan` and `cycle`. The [changelog](../../CHANGELOG.md) carries the migration steps.
+
+An application that installed before trials existed and wants to sell one copies `vendor/fluttersdk/magic-starter-laravel/database/migrations/create_billing_trials_table.php` into `database/migrations/` under a timestamp later than your latest migration and runs `php artisan migrate`, before it sets a `trial_days`. Do not re-run `magic-starter:install` for this. An application that sets no `trial_days` never reads the table and needs neither.
