@@ -286,6 +286,27 @@ final class InstallCommandTest extends TestCase
         $this->assertTrue(basename($events[0]) < basename($provenance[0]), 'Provenance stays last.');
     }
 
+    /**
+     * The grants table is the same shape as the history table and follows it,
+     * ahead of the provenance migration that stays last.
+     */
+    public function test_billing_publishes_the_grants_table_after_the_events_table(): void
+    {
+        $this->artisan('magic-starter:install', [
+            '--features' => ['billing'],
+        ])->assertExitCode(0);
+
+        $published = static fn (string $name): array => glob(database_path("migrations/*_{$name}.php")) ?: [];
+
+        $events = $published('create_billing_events_table');
+        $grants = $published('create_billing_grants_table');
+        $provenance = $published('add_entitlement_provenance_to_billable_table');
+
+        $this->assertCount(1, $grants, 'Billing must publish the billing grants migration once.');
+        $this->assertTrue(basename($events[0]) < basename($grants[0]), 'The grants table follows the events table.');
+        $this->assertTrue(basename($grants[0]) < basename($provenance[0]), 'Provenance stays last.');
+    }
+
     public function test_without_billing_the_billing_events_table_is_not_published(): void
     {
         $this->artisan('magic-starter:install', [
@@ -293,6 +314,7 @@ final class InstallCommandTest extends TestCase
         ])->assertExitCode(0);
 
         $this->assertEmpty(glob(database_path('migrations/*_create_billing_events_table.php')) ?: []);
+        $this->assertEmpty(glob(database_path('migrations/*_create_billing_grants_table.php')) ?: []);
         $this->assertEmpty(
             glob(database_path('migrations/*_add_processed_at_index_to_processed_webhook_events_table.php')) ?: [],
         );

@@ -78,6 +78,67 @@ return [
         'relation_title' => 'Denetim kaydı',
     ],
 
+    /*
+     * Faturalama olayları: paketin bir abonenin planı hakkında verdiği kararların
+     * ve hangi yoldan geldiklerinin salt okunur geçmişi.
+     */
+    'billing_events' => [
+        'navigation_label' => 'Faturalama olayları',
+        'model_label' => 'faturalama olayı',
+        'plural_model_label' => 'faturalama olayları',
+        'columns' => [
+            'created_at' => 'Zaman',
+            'type' => 'Tür',
+            'source' => 'Kaynak',
+            'provider' => 'Sağlayıcı',
+            'billable' => 'Faturalanan',
+            'reason' => 'Neden',
+            'external_id' => 'Harici ID',
+            'actor' => 'İşlemi yapan',
+        ],
+        'filters' => [
+            'type' => 'Tür',
+            'source' => 'Kaynak',
+            'provider' => 'Sağlayıcı',
+            'created_from' => 'Başlangıç',
+            'created_until' => 'Bitiş',
+        ],
+        'view' => [
+            'properties' => 'Özellikler',
+        ],
+    ],
+
+    /*
+     * Webhook teslimatları: Stripe ve RevenueCat webhook'larının işlenmiş olarak
+     * kaydettiği olaylar, en yeniden eskiye. Saklama süresi prune komutunun işi.
+     */
+    'webhook_deliveries' => [
+        'navigation_label' => 'Webhook teslimatları',
+        'model_label' => 'webhook teslimatı',
+        'plural_model_label' => 'webhook teslimatları',
+        'providers' => [
+            'stripe' => 'Stripe',
+            'revenuecat' => 'RevenueCat',
+        ],
+        'columns' => [
+            'processed_at' => 'İşlenme zamanı',
+            'provider' => 'Sağlayıcı',
+            'event_id' => 'Olay ID',
+            'type' => 'Tür',
+        ],
+        'filters' => [
+            'provider' => 'Sağlayıcı',
+        ],
+        'view' => [
+            'billing_events' => 'Faturalama olayları',
+            'billing_events_note' => 'Yalnızca bu olay ID\'si altında kaydedilen satırlar görünür. Ödeme oturumu,'
+                . ' plan değişikliği ve deneme kontrolü satırları başka ID\'lerle anahtarlanır ve burada'
+                . ' listelenmez.',
+            'no_billing_events' => 'Bu ID altında faturalama olayı kaydedilmedi: teslimat hiçbir şeyi'
+                . ' değiştirmedi.',
+        ],
+    ],
+
     'dashboard' => [
         'stats' => [
             'users' => 'Kullanıcılar',

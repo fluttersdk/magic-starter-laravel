@@ -96,6 +96,7 @@ class BillingDoctorCommandTest extends TestCase
         // The doctor reports a missing audit table as an error, so a run that is
         // about something else starts from a schema that has it.
         (require __DIR__ . '/../../database/migrations/create_billing_events_table.php')->up();
+        (require __DIR__ . '/../../database/migrations/create_billing_grants_table.php')->up();
     }
 
     public function test_a_complete_configuration_passes_its_local_checks(): void
@@ -497,6 +498,85 @@ class BillingDoctorCommandTest extends TestCase
 
         $this->assertSame(0, $doctor['exit']);
         $this->assertSame('ok', $doctor['checks']['schema.billing_events']['status']);
+    }
+
+    /**
+     * A grant the panel cannot record is a grant nobody can end, so the missing
+     * table is an error naming the migration, and fine once it exists.
+     */
+    public function test_a_missing_billing_grants_table_is_an_error(): void
+    {
+        Schema::drop('billing_grants');
+
+        $doctor = $this->doctor();
+
+        $this->assertSame(1, $doctor['exit']);
+        $this->assertSame('error', $doctor['checks']['schema.billing_grants']['status']);
+        $this->assertStringContainsString(
+            'create_billing_grants_table.php',
+            $doctor['checks']['schema.billing_grants']['message'],
+        );
+
+        (require __DIR__ . '/../../database/migrations/create_billing_grants_table.php')->up();
+
+        $doctor = $this->doctor();
+
+        $this->assertSame(0, $doctor['exit']);
+        $this->assertSame('ok', $doctor['checks']['schema.billing_grants']['status']);
+    }
+
+    public function test_an_unreadable_schema_leaves_the_billing_grants_check_a_warning(): void
+    {
+        config([
+            'database.connections.unreachable' => [
+                'driver' => 'sqlite',
+                'database' => '/nonexistent/magic-starter-doctor.sqlite',
+                'prefix' => '',
+            ],
+            'database.default' => 'unreachable',
+        ]);
+
+        $doctor = $this->doctor();
+
+        $this->assertSame('warning', $doctor['checks']['schema.billing_grants']['status']);
+        $this->assertStringNotContainsString('/nonexistent', $doctor['checks']['schema.billing_grants']['message']);
+    }
+
+    public function test_an_empty_sandbox_allowlist_is_not_reported(): void
+    {
+        $this->assertArrayNotHasKey('revenuecat.sandbox_allowlist', $this->doctor()['checks']);
+    }
+
+    public function test_a_sandbox_allowlist_is_reported_by_count_and_never_by_id(): void
+    {
+        config(['magic-starter.billing.revenuecat.sandbox_app_user_ids' => ['team-secret-1', 'team-secret-2']]);
+
+        $doctor = $this->doctor();
+
+        $this->assertSame(0, $doctor['exit']);
+        $check = $doctor['checks']['revenuecat.sandbox_allowlist'];
+        $this->assertSame('ok', $check['status']);
+        $this->assertStringContainsString('2', $check['message']);
+        $this->assertStringNotContainsString('team-secret', $check['message']);
+    }
+
+    /**
+     * With sandbox accepted for everybody the list narrows nothing, so it is a
+     * sign somebody expects it to protect something it does not.
+     */
+    public function test_a_sandbox_allowlist_beside_accept_sandbox_is_a_warning(): void
+    {
+        config([
+            'magic-starter.billing.revenuecat.accept_sandbox' => true,
+            'magic-starter.billing.revenuecat.sandbox_app_user_ids' => ['team-1'],
+        ]);
+
+        $doctor = $this->doctor();
+
+        $this->assertSame(0, $doctor['exit']);
+        $check = $doctor['checks']['revenuecat.sandbox_allowlist'];
+        $this->assertSame('warning', $check['status']);
+        $this->assertStringContainsString('accept_sandbox', $check['message']);
     }
 
     public function test_an_unreadable_schema_leaves_the_billing_events_check_a_warning(): void

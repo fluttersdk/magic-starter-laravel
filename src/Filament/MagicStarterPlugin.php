@@ -57,6 +57,8 @@ class MagicStarterPlugin implements Plugin
 
     protected ?Closure $authorizeUsing = null;
 
+    protected ?Closure $authorizeBillingUsing = null;
+
     protected bool $horizon = false;
 
     protected bool $pulse = false;
@@ -107,8 +109,9 @@ class MagicStarterPlugin implements Plugin
     /**
      * Register a resource class under a key.
      *
-     * A default key (`users`, `teams`, `subscriptions`, `newsletter_subscribers`,
-     * `audits`) keeps its feature gate; any other key is registered unconditionally.
+     * A default key (`users`, `teams`, `subscriptions`, `billing_events`,
+     * `webhook_deliveries`, `newsletter_subscribers`, `audits`) keeps its
+     * feature gate; any other key is registered unconditionally.
      */
     public function resource(string $key, string $class): static
     {
@@ -163,6 +166,26 @@ class MagicStarterPlugin implements Plugin
     public function getAuthorizeUsing(): ?Closure
     {
         return $this->authorizeUsing;
+    }
+
+    /**
+     * Replace the `magic-starter.admin.billing_emails` list that decides who may
+     * run the billing actions with the given callback.
+     *
+     * The callback receives the panel user and the panel and must return `true`
+     * to allow; any other value denies. It narrows an admitted admin further and
+     * never opens the panel itself.
+     */
+    public function authorizeBillingUsing(?Closure $callback): static
+    {
+        $this->authorizeBillingUsing = $callback;
+
+        return $this;
+    }
+
+    public function getAuthorizeBillingUsing(): ?Closure
+    {
+        return $this->authorizeBillingUsing;
     }
 
     /**
@@ -389,6 +412,9 @@ class MagicStarterPlugin implements Plugin
             'users' => 'FlutterSdk\\MagicStarter\\Filament\\Resources\\Users\\UserResource',
             'teams' => 'FlutterSdk\\MagicStarter\\Filament\\Resources\\Teams\\TeamResource',
             'subscriptions' => 'FlutterSdk\\MagicStarter\\Filament\\Resources\\Subscriptions\\SubscriptionResource',
+            'billing_events' => 'FlutterSdk\\MagicStarter\\Filament\\Resources\\BillingEvents\\BillingEventResource',
+            'webhook_deliveries' => 'FlutterSdk\\MagicStarter\\Filament\\Resources\\WebhookDeliveries\\'
+                . 'WebhookDeliveryResource',
             'newsletter_subscribers' => 'FlutterSdk\\MagicStarter\\Filament\\Resources\\NewsletterSubscribers\\'
                 . 'NewsletterSubscriberResource',
             'audits' => 'FlutterSdk\\MagicStarter\\Filament\\Resources\\Audits\\AuditResource',
@@ -420,7 +446,7 @@ class MagicStarterPlugin implements Plugin
     {
         return match ($key) {
             'teams' => Features::hasTeamFeatures(),
-            'subscriptions' => Features::hasBillingFeatures(),
+            'subscriptions', 'billing_events', 'webhook_deliveries' => Features::hasBillingFeatures(),
             'newsletter_subscribers' => Features::hasNewsletterSubscriptionFeatures(),
             'audits' => Features::hasAuditFeatures(),
             default => true,

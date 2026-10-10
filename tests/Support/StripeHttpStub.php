@@ -2,6 +2,7 @@
 
 namespace FlutterSdk\MagicStarter\Tests\Support;
 
+use Closure;
 use Stripe\ApiRequestor;
 use Stripe\HttpClient\ClientInterface;
 
@@ -28,10 +29,12 @@ final class StripeHttpStub implements ClientInterface
 {
     /**
      * Every request made, in order. `path` is the URL path alone (`/v1/customers`),
-     * and `params` is the nested array the SDK encodes onto the wire, so a nested
-     * field reads as `$params['subscription_data']['trial_end']`.
+     * `params` is the nested array the SDK encodes onto the wire, so a nested
+     * field reads as `$params['subscription_data']['trial_end']`, and `headers`
+     * are the raw `Name: value` lines, so a request option such as an
+     * idempotency key reads as `Idempotency-Key: <key>`.
      *
-     * @var list<array{method: string, path: string, params: array<string, mixed>}>
+     * @var list<array{method: string, path: string, params: array<string, mixed>, headers: array<int, string>}>
      */
     public array $requests = [];
 
@@ -41,6 +44,14 @@ final class StripeHttpStub implements ClientInterface
      * @var list<array{0: string, 1: int, 2: array<string, string>}>
      */
     private array $answers = [];
+
+    /**
+     * What happens while each queued answer's request is in flight, by the
+     * answer's position in {@see self::$answers}.
+     *
+     * @var list<Closure(): void|null>
+     */
+    private array $during = [];
 
     /**
      * Put a fresh stub in front of the SDK and answer it.
@@ -68,14 +79,17 @@ final class StripeHttpStub implements ClientInterface
      *
      * @param  array<string, mixed>  $body  Decoded JSON, as Stripe would send it.
      * @param  int  $status  The HTTP status; a 4xx or 5xx makes the SDK raise.
+     * @param  (Closure(): void)|null  $during  Run while the request is in flight, before it is
+     *                                          answered: the world moving under a read.
      */
-    public function answer(array $body, int $status = 200): self
+    public function answer(array $body, int $status = 200, ?Closure $during = null): self
     {
         $this->answers[] = [
             (string) json_encode($body),
             $status,
             [],
         ];
+        $this->during[] = $during;
 
         return $this;
     }
@@ -84,7 +98,7 @@ final class StripeHttpStub implements ClientInterface
      * The requests made to one method and path, in order.
      *
      * @param  'delete'|'get'|'post'  $method
-     * @return list<array{method: string, path: string, params: array<string, mixed>}>
+     * @return list<array{method: string, path: string, params: array<string, mixed>, headers: array<int, string>}>
      */
     public function requestsTo(string $method, string $path): array
     {
@@ -112,7 +126,14 @@ final class StripeHttpStub implements ClientInterface
             'method' => $method,
             'path' => $path,
             'params' => $params,
+            'headers' => $headers,
         ];
+
+        $during = array_shift($this->during);
+
+        if ($during !== null) {
+            $during();
+        }
 
         return array_shift($this->answers) ?? [
             (string) json_encode([

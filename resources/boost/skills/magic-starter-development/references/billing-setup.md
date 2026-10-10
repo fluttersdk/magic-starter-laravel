@@ -130,7 +130,7 @@ Then ask the owner to set each price id in the env variable the manifest names a
 php artisan billing:doctor --json --remote
 ```
 
-`ok: true` and exit 0 mean no `error`. Fix each `error` by its check id, which is stable (`stripe.remote.price.pro_monthly`, `revenuecat.package.pro_monthly`, `revenuecat.webhook`). Re-run until it passes. An `agent_check` is vendor state the package cannot read. When it carries a `command`, run it yourself and compare the output with the manifest section it names (`asc subscriptions groups list --app <app-id>`, `gplay subscriptions list --package <package-name>`). When it carries none, it is a dashboard step only a person can confirm (`revenuecat.webhook.hmac`: the RevenueCat API returns the signing secret only on rotation, so never rotate it to check): ask the owner. Report the remaining `warning` entries to the owner. `schema.billing_events` is an `error` while the audit log table is missing: publish `create_billing_events_table.php` and migrate.
+`ok: true` and exit 0 mean no `error`. Fix each `error` by its check id, which is stable (`stripe.remote.price.pro_monthly`, `revenuecat.package.pro_monthly`, `revenuecat.webhook`). Re-run until it passes. An `agent_check` is vendor state the package cannot read. When it carries a `command`, run it yourself and compare the output with the manifest section it names (`asc subscriptions groups list --app <app-id>`, `gplay subscriptions list --package <package-name>`). When it carries none, it is a dashboard step only a person can confirm (`revenuecat.webhook.hmac`: the RevenueCat API returns the signing secret only on rotation, so never rotate it to check): ask the owner. Report the remaining `warning` entries to the owner. `schema.billing_events` is an `error` while the audit log table is missing: publish `create_billing_events_table.php` and migrate. `schema.billing_grants` is the same for `create_billing_grants_table.php`. `revenuecat.sandbox_allowlist` is a `warning` only when `REVENUECAT_ACCEPT_SANDBOX` is on while the list is set.
 
 ## Trials
 
@@ -153,6 +153,21 @@ Every billing outcome leaves an append-only `billing_events` row (`type`, `sourc
 - `magic-starter.billing.log_channel` (`MAGIC_STARTER_BILLING_LOG_CHANNEL`, default null; blank reads as null) routes billing log lines to a channel. `magic-starter:billing:prune` runs daily: `webhook_retention_days` (default `90`, never below 31) for dedup claims, `events_retention_days` (default null, keep forever; blank or non-numeric also keeps forever) for the history.
 - A refused request leaves a `request_refused` row: put a throttle on the billing routes through `magic-starter.route_middleware` or the app's route group.
 - An adopter-built `EntitlementWrite` needs `source:`; a custom `WritesEntitlement` records through `BillingEventRecorder`.
+
+## Admin panel billing
+
+With the admin panel mounted, the billable's edit page has a Billing tab with eight operator actions (grant, revoke, extend trial, end trial, cancel, resume, refund, sync now), all through `Contracts\AdministersBilling` and each leaving a `billing_events` row with source `admin`. Refusals are `request_refused` rows (source `admin`) and survive the panel's halt.
+
+- A grant is refused (`paid_rail_active`) while a paid rail grants: a plan record on Stripe or a store, or a granting local Stripe subscription. One open grant per billable, stamped `plan_product_id` `grant:{id}`; a new one supersedes it. Revoke ends only a manual grant or a store record with no production subscription (`not_manual` otherwise).
+- `magic-starter:billing:expire-grants` runs hourly: it revokes an expired grant, closes a moved-off one as `superseded`, and re-projects the paid rails. The scheduler must run.
+- Trial, cancel, resume and refund act on the local `default` Cashier subscription (`no_subscription` without one). Extend and End trial need a trialing subscription, and End trial bills now. Resume sends only `cancel_at_period_end=false`. Refund is the newest invoice with `amount_paid` above zero and a paid payment intent, in full, reason `requested_by_customer` or `duplicate`, idempotency key `admin-refund:{invoice}:{reason}`. Sync now reads Stripe live, heals the local Cashier row and writes an authoritative claim (`unmapped_price` is refused).
+- Who may run them: `MAGIC_STARTER_ADMIN_BILLING_EMAILS` (empty means every panel admin) or `MagicStarterPlugin::authorizeBillingUsing()`, which replaces the list.
+- The table needs `create_billing_grants_table.php`: a fresh install publishes it; for an existing application copy it under a later timestamp and run `php artisan migrate`. `billing:doctor` reports it as `schema.billing_grants`.
+- Two read-only resources, `billing_events` and `webhook_deliveries`. A delivery links only the billing events recorded under its delivery id.
+
+## RevenueCat sandbox allowlist
+
+`REVENUECAT_SANDBOX_APP_USER_IDS` (`billing.revenuecat.sandbox_app_user_ids`) is a comma-separated list of billable keys, for the App Review account, while `REVENUECAT_ACCEPT_SANDBOX` stays `false`. The webhook accepts a `SANDBOX` event naming a listed key in `app_user_id`, `original_app_user_id`, `aliases` or a transfer side, and the job counts sandbox subscriptions only for a billable whose own key is listed, the reconciler included. The owner sets it. `billing:doctor` reports `revenuecat.sandbox_allowlist` by count and warns when `accept_sandbox` is on as well.
 
 ## What to Watch For
 

@@ -104,6 +104,10 @@ return [
     | Email addresses allowed into the admin panel, from the comma-separated
     | MAGIC_STARTER_ADMIN_EMAILS. Empty by default.
     |
+    | `billing_emails` narrows who may run the panel's billing actions (grant a
+    | plan, extend or end a trial, refund), from the comma-separated
+    | MAGIC_STARTER_ADMIN_BILLING_EMAILS. Empty means every panel admin may.
+    |
     */
 
     'admin' => [
@@ -113,6 +117,11 @@ return [
         'emails' => array_values(array_filter(array_map(
             'trim',
             explode(',', (string) env('MAGIC_STARTER_ADMIN_EMAILS', '')),
+        ))),
+
+        'billing_emails' => array_values(array_filter(array_map(
+            'trim',
+            explode(',', (string) env('MAGIC_STARTER_ADMIN_BILLING_EMAILS', '')),
         ))),
     ],
 
@@ -652,6 +661,13 @@ return [
     | reachable by anybody with a developer account. It only WIDENS what an
     | inbound event is allowed to say; it is never read instead of it.
     |
+    | 'sandbox_app_user_ids' widens it for named subjects only: a
+    | comma-separated list (REVENUECAT_SANDBOX_APP_USER_IDS) of BILLABLE KEYS,
+    | such as the team or user id behind the App Review account, whose sandbox
+    | events are accepted while 'accept_sandbox' stays false. Empty by default.
+    | With 'accept_sandbox' true the list is pointless, and `billing:doctor`
+    | says so.
+    |
     | 'reconcile' configures the SWEEP that heals a dropped webhook. Both rails
     | abandon a delivery (RevenueCat after five retries inside about three
     | hours, Stripe after roughly three days) and after that the drift is
@@ -797,6 +813,10 @@ return [
             'base_url' => env('REVENUECAT_BASE_URL', RevenueCatClient::DEFAULT_BASE_URL),
             'operation_budget_seconds' => env('REVENUECAT_OPERATION_BUDGET_SECONDS', 10),
             'accept_sandbox' => (bool) env('REVENUECAT_ACCEPT_SANDBOX', false),
+            'sandbox_app_user_ids' => array_values(array_filter(array_map(
+                'trim',
+                explode(',', (string) env('REVENUECAT_SANDBOX_APP_USER_IDS', '')),
+            ))),
             'api_v2_key' => env('REVENUECAT_API_V2_KEY'),
             'project_id' => env('REVENUECAT_PROJECT_ID'),
         ],

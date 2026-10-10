@@ -9,6 +9,7 @@ use Filament\Notifications\Notification;
 use Filament\Support\Exceptions\Halt;
 use FlutterSdk\MagicStarter\Events\AdminActionPerformed;
 use FlutterSdk\MagicStarter\Social\SocialSignInRefused;
+use FlutterSdk\MagicStarter\Support\BillingAdministrationRefused;
 use Illuminate\Auth\AuthenticationException;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Support\Arr;
@@ -23,6 +24,13 @@ use Illuminate\Validation\ValidationException;
  * not a crash: it becomes a danger notification and the action or page halts,
  * rolling back the surrounding transaction and staying open. Any other
  * exception is a bug and propagates.
+ *
+ * A {@see BillingAdministrationRefused} halts the same way but COMMITS the
+ * surrounding transaction instead. The billing contract records its
+ * `request_refused` row before it throws, and that row is the only record the
+ * operator was refused; it wrote nothing else, so there is nothing to roll back
+ * and a rollback under a panel with `databaseTransactions()` would erase the
+ * audit row alone.
  */
 class ContractAction
 {
@@ -51,6 +59,8 @@ class ContractAction
             static::refuse($action, Arr::first(Arr::flatten($exception->errors())) ?? $exception->getMessage());
         } catch (SocialSignInRefused $exception) {
             static::refuse($action, $exception->getMessage());
+        } catch (BillingAdministrationRefused $exception) {
+            static::refuse($action, $exception->getMessage(), rollBack: false);
         }
 
         $subject ??= $result instanceof Model ? $result : null;
@@ -61,17 +71,19 @@ class ContractAction
     }
 
     /**
+     * @param  bool  $rollBack  whether the halt rolls back the surrounding database transaction
+     *
      * @throws Halt always
      */
-    protected static function refuse(?Action $action, string $message): never
+    protected static function refuse(?Action $action, string $message, bool $rollBack = true): never
     {
         Notification::make()
             ->danger()
             ->title($message)
             ->send();
 
-        $action?->halt(shouldRollBackDatabaseTransaction: true);
+        $action?->halt(shouldRollBackDatabaseTransaction: $rollBack);
 
-        throw (new Halt)->rollBackDatabaseTransaction();
+        throw (new Halt)->rollBackDatabaseTransaction($rollBack);
     }
 }

@@ -2,10 +2,14 @@
 
 namespace FlutterSdk\MagicStarter\Tests;
 
+use FlutterSdk\MagicStarter\Actions\AdministerBilling;
+use FlutterSdk\MagicStarter\Console\ExpireBillingGrantsCommand;
 use FlutterSdk\MagicStarter\Console\PruneBillingRecordsCommand;
+use FlutterSdk\MagicStarter\Contracts\AdministersBilling;
 use FlutterSdk\MagicStarter\Features;
 use FlutterSdk\MagicStarter\MagicStarterServiceProvider;
 use FlutterSdk\MagicStarter\Tests\Console\BillingManifestCommandTest;
+use Illuminate\Console\Scheduling\Event as ScheduledEvent;
 use Illuminate\Console\Scheduling\Schedule;
 use Illuminate\Notifications\Events\NotificationSending;
 use Illuminate\Support\Facades\Event;
@@ -95,6 +99,48 @@ class ServiceProviderTest extends TestCase
         (new MagicStarterServiceProvider($this->app))->boot();
 
         $this->assertFalse($this->scheduleHasBillingPrune());
+    }
+
+    public function test_the_billing_administration_contract_is_bound_to_the_package_action(): void
+    {
+        $this->assertInstanceOf(AdministerBilling::class, $this->app->make(AdministersBilling::class));
+    }
+
+    public function test_the_grant_expiry_is_scheduled_hourly_on_one_server_when_billing_is_on(): void
+    {
+        config([
+            'magic-starter.features' => [Features::billing()],
+            'magic-starter.billing' => BillingManifestCommandTest::billing(),
+        ]);
+
+        (new MagicStarterServiceProvider($this->app))->boot();
+
+        $events = $this->scheduledEventsFor(ExpireBillingGrantsCommand::NAME);
+
+        $this->assertCount(1, $events);
+        $this->assertSame('0 * * * *', $events[0]->expression);
+        $this->assertTrue($events[0]->withoutOverlapping);
+        $this->assertTrue($events[0]->onOneServer);
+    }
+
+    public function test_the_grant_expiry_is_not_scheduled_when_billing_is_off(): void
+    {
+        config(['magic-starter.features' => []]);
+
+        (new MagicStarterServiceProvider($this->app))->boot();
+
+        $this->assertSame([], $this->scheduledEventsFor(ExpireBillingGrantsCommand::NAME));
+    }
+
+    /**
+     * @return list<ScheduledEvent>
+     */
+    private function scheduledEventsFor(string $command): array
+    {
+        return collect($this->app->make(Schedule::class)->events())
+            ->filter(fn (ScheduledEvent $event): bool => str_contains((string) $event->command, $command))
+            ->values()
+            ->all();
     }
 
     private function scheduleHasBillingPrune(): bool

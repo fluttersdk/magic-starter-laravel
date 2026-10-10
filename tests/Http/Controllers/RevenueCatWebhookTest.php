@@ -829,6 +829,78 @@ class RevenueCatWebhookTest extends TestCase
         Queue::assertPushed(SyncRevenueCatEntitlement::class, 1);
     }
 
+    /**
+     * The App Review account: its billable key is on the sandbox allowlist, so
+     * its sandbox purchase is claimed and re-read while `accept_sandbox` stays
+     * false. The job then decides per billable; this gate only lets it look.
+     */
+    public function test_a_sandbox_event_for_an_allowlisted_billable_key_is_claimed_and_queued(): void
+    {
+        $billable = $this->createBillable();
+
+        config(['magic-starter.billing.revenuecat.sandbox_app_user_ids' => [(string) $billable->getKey()]]);
+
+        $event = $this->event('INITIAL_PURCHASE', $billable->getKey(), ['environment' => 'SANDBOX']);
+
+        $this->deliver($event)->assertOk();
+
+        Queue::assertPushed(SyncRevenueCatEntitlement::class, 1);
+        $this->assertSame([$event], $this->queuedEvents());
+        $this->assertTrue(ProcessedWebhookEvent::query()->where('event_id', $this->claimKey($event))->exists());
+        $this->assertSame(0, BillingEvent::query()->count(), 'An accepted sandbox event left a refusal row.');
+    }
+
+    /**
+     * An allowlist naming somebody else changes nothing for this event: it is
+     * refused exactly as before, with its one row. Non-string identity fields
+     * are skipped rather than cast, because a 500 here burns a delivery.
+     */
+    public function test_a_sandbox_event_for_a_key_not_on_the_allowlist_is_refused_as_before(): void
+    {
+        config(['magic-starter.billing.revenuecat.sandbox_app_user_ids' => [Str::uuid()->toString()]]);
+
+        $event = $this->event('INITIAL_PURCHASE', Str::uuid()->toString(), [
+            'environment' => 'SANDBOX',
+            'original_app_user_id' => ['nested'],
+            'aliases' => [42, ['nested']],
+        ]);
+
+        $this->deliver($event)->assertOk();
+
+        Queue::assertNothingPushed();
+        $this->assertSame(0, ProcessedWebhookEvent::query()->count());
+        $this->assertSame('non_production_environment', BillingEvent::query()->sole()->reason);
+    }
+
+    /**
+     * The allowlisted key may arrive in any identity field the event carries:
+     * an anonymous last-seen id with the key in `aliases` or
+     * `original_app_user_id`, or either side of a transfer.
+     */
+    public function test_a_sandbox_event_naming_an_allowlisted_key_in_any_identity_field_is_accepted(): void
+    {
+        $key = Str::uuid()->toString();
+
+        config(['magic-starter.billing.revenuecat.sandbox_app_user_ids' => [$key]]);
+
+        $fields = [
+            'original_app_user_id' => $key,
+            'aliases' => ['$RCAnonymousID:8f3a', " {$key} "],
+            'transferred_from' => [$key],
+            'transferred_to' => [$key],
+        ];
+
+        foreach ($fields as $field => $value) {
+            $this->deliver($this->event('INITIAL_PURCHASE', '$RCAnonymousID:8f3a', [
+                'environment' => 'SANDBOX',
+                $field => $value,
+            ]))->assertOk();
+        }
+
+        Queue::assertPushed(SyncRevenueCatEntitlement::class, count($fields));
+        $this->assertSame(0, BillingEvent::query()->count());
+    }
+
     public function test_an_event_naming_no_environment_is_treated_as_not_production(): void
     {
         // An absent or unrecognised `environment` is not evidence of a production

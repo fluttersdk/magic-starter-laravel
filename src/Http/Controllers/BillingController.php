@@ -20,6 +20,7 @@ use FlutterSdk\MagicStarter\Support\BillingLog;
 use FlutterSdk\MagicStarter\Support\JsonObject;
 use FlutterSdk\MagicStarter\Support\PriceTable;
 use FlutterSdk\MagicStarter\Support\ReadsBillableAttributes;
+use FlutterSdk\MagicStarter\Support\StripeBillingState;
 use FlutterSdk\MagicStarter\Support\StripeSubscriptionState;
 use FlutterSdk\MagicStarter\Support\TrialEligibility;
 use Illuminate\Contracts\Auth\Authenticatable;
@@ -1310,38 +1311,21 @@ class BillingController
 
     /**
      * The billable's default subscription, or null when it has none or carries
-     * no Cashier trait.
+     * no Cashier trait; see {@see StripeBillingState::defaultSubscription()}.
      */
     protected function defaultSubscription(Model $billable): ?Model
     {
-        if (! method_exists($billable, 'subscription')) {
-            return null;
-        }
-
-        $subscription = $billable->subscription(StripeSubscriptionState::SUBSCRIPTION_TYPE);
-
-        return $subscription instanceof Model ? $subscription : null;
+        return StripeBillingState::defaultSubscription($billable);
     }
 
     /**
-     * When the subscription's current paid period ends, read live from the rail.
-     *
-     * One of this endpoint's rail retrievals, and the reason the endpoint is
-     * rail-live at all: Cashier resolves the period per subscription ITEM, so
-     * there is no local column to read it from. It is guarded because the
-     * subscription model is resolvable by the consuming application and a call
-     * on a model that does not carry the accessor would be a fatal rather than a
-     * missing field.
+     * When the subscription's current paid period ends, read live from the rail;
+     * see {@see StripeBillingState::periodEnd()}. One of this endpoint's rail
+     * retrievals, and the reason the endpoint is rail-live at all.
      */
     protected function periodEnd(Model $subscription): ?CarbonInterface
     {
-        if (! method_exists($subscription, 'currentPeriodEnd')) {
-            return null;
-        }
-
-        $end = $subscription->currentPeriodEnd();
-
-        return $end instanceof CarbonInterface ? $end : null;
+        return StripeBillingState::periodEnd($subscription);
     }
 
     /**

@@ -169,8 +169,9 @@ class InstallCommand extends Command
         // The trial record follows them and stays ahead of the provenance one.
         // It keeps no foreign key to the billable, only one to `users`, so its
         // place is about keeping provenance last, not about a dependency. The
-        // billing history table is the same shape and sits right after it, and
-        // the `processed_at` index follows the dedup table it indexes.
+        // billing history table is the same shape and sits right after it, the
+        // manual grants table follows that, and the `processed_at` index follows
+        // the dedup table it indexes.
         'billing' => [
             'create_processed_webhook_events_table.php',
             'add_processed_at_index_to_processed_webhook_events_table.php',
@@ -179,6 +180,7 @@ class InstallCommand extends Command
             'create_subscription_items_table.php',
             'create_billing_trials_table.php',
             'create_billing_events_table.php',
+            'create_billing_grants_table.php',
             'add_entitlement_provenance_to_billable_table.php',
         ],
     ];

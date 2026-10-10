@@ -6,6 +6,7 @@ use Filament\Actions\Action;
 use FlutterSdk\MagicStarter\Contracts\CreatesUsers;
 use FlutterSdk\MagicStarter\Contracts\UpdatesUserProfiles;
 use FlutterSdk\MagicStarter\Features;
+use FlutterSdk\MagicStarter\Filament\Resources\Billing\RelationManagers\BillingRelationManager;
 use FlutterSdk\MagicStarter\Filament\Resources\Users\Pages\CreateUser;
 use FlutterSdk\MagicStarter\Filament\Resources\Users\Pages\EditUser;
 use FlutterSdk\MagicStarter\Filament\Resources\Users\Pages\ListUsers;
@@ -296,6 +297,18 @@ class UserResourceTest extends FilamentTestCase
             PushDevicesRelationManager::class,
             TeamsRelationManager::class,
         ], UserResource::getRelations());
+    }
+
+    /**
+     * A config published before `billing.billable` existed bills users, as
+     * the rest of the package reads it, so the tab still shows.
+     */
+    public function test_the_billing_tab_defaults_to_users_when_the_billable_key_is_absent(): void
+    {
+        config()->set('magic-starter.features', [Features::billing()]);
+        config()->set('magic-starter.billing', ['tier_order' => []]);
+
+        $this->assertSame([BillingRelationManager::class], UserResource::getRelations());
     }
 
     public function test_push_devices_are_hidden_for_a_user_without_the_relation(): void

@@ -883,6 +883,123 @@ class SyncRevenueCatEntitlementTest extends TestCase
     }
 
     /**
+     * The App Review account: its billable key is allowlisted, so its sandbox
+     * purchase grants while `accept_sandbox` stays false.
+     */
+    public function test_an_allowlisted_billable_is_granted_its_sandbox_purchase(): void
+    {
+        $billable = $this->makeBillable([]);
+
+        config(['magic-starter.billing.revenuecat.sandbox_app_user_ids' => [(string) $billable->getKey()]]);
+
+        $this->fakeAuthoritativeReads([
+            (string) $billable->getKey() => $this->subscriber([
+                self::APP_STORE_BUSINESS => $this->subscription(['is_sandbox' => true]),
+            ]),
+        ]);
+
+        $this->sync($this->event('INITIAL_PURCHASE', $billable, ['environment' => 'SANDBOX']));
+
+        $this->assertSame('business', $billable->refresh()->getAttribute('plan'));
+    }
+
+    /**
+     * The allowlist is read per RESOLVED billable, never per event.
+     *
+     * The webhook accepts a sandbox event when ANY identity field names a
+     * listed key, here an alias. The subscriber this job resolves is a
+     * different, unlisted billable, and its sandbox purchase must stay refused:
+     * otherwise any developer account could alias a listed key and take a paid
+     * tier for free.
+     */
+    public function test_the_allowlist_does_not_reach_a_billable_it_does_not_name(): void
+    {
+        Log::spy();
+
+        $reviewer = $this->makeBillable([]);
+        $stranger = $this->makeBillable([]);
+
+        config(['magic-starter.billing.revenuecat.sandbox_app_user_ids' => [(string) $reviewer->getKey()]]);
+
+        $this->fakeAuthoritativeReads([
+            (string) $stranger->getKey() => $this->subscriber([
+                self::APP_STORE_BUSINESS => $this->subscription(['is_sandbox' => true]),
+            ]),
+        ]);
+
+        $this->sync($this->event('INITIAL_PURCHASE', $stranger, [
+            'environment' => 'SANDBOX',
+            'aliases' => [(string) $reviewer->getKey()],
+        ]));
+
+        $this->assertNull($stranger->refresh()->getAttribute('plan'), 'An unlisted billable got a sandbox tier.');
+        $this->assertNull($reviewer->refresh()->getAttribute('plan'));
+        $this->assertWarned([
+            'reason' => 'sandbox_only_subscriber',
+            'billable_id' => $stranger->getKey(),
+        ]);
+    }
+
+    /**
+     * Both sides of one transfer are judged on their own key: the listed
+     * destination is granted its sandbox purchase, the unlisted source keeps
+     * what it had.
+     */
+    public function test_each_side_of_a_transfer_is_judged_against_the_allowlist_on_its_own_key(): void
+    {
+        $reviewer = $this->makeBillable([]);
+        $stranger = $this->makeBillable([
+            'plan' => 'pro',
+            'plan_status' => PlanStatus::ACTIVE->value,
+            'plan_provider' => BillingProvider::APP_STORE->value,
+        ]);
+
+        config(['magic-starter.billing.revenuecat.sandbox_app_user_ids' => [(string) $reviewer->getKey()]]);
+
+        $this->fakeAuthoritativeReads([
+            (string) $reviewer->getKey() => $this->subscriber([
+                self::APP_STORE_BUSINESS => $this->subscription(['is_sandbox' => true]),
+            ]),
+            (string) $stranger->getKey() => $this->subscriber([
+                self::APP_STORE_BUSINESS => $this->subscription(['is_sandbox' => true]),
+            ]),
+        ]);
+
+        $this->sync($this->event('TRANSFER', $reviewer, [
+            'environment' => 'SANDBOX',
+            'transferred_to' => [(string) $reviewer->getKey()],
+            'transferred_from' => [(string) $stranger->getKey()],
+        ]));
+
+        $this->assertSame('business', $reviewer->refresh()->getAttribute('plan'));
+        $this->assertSame('pro', $stranger->refresh()->getAttribute('plan'));
+    }
+
+    /**
+     * With `accept_sandbox` on, the allowlist narrows nothing: a billable it
+     * does not name is granted exactly as before.
+     */
+    public function test_accept_sandbox_still_accepts_every_billable_beside_an_allowlist(): void
+    {
+        config([
+            'magic-starter.billing.revenuecat.accept_sandbox' => true,
+            'magic-starter.billing.revenuecat.sandbox_app_user_ids' => [Str::uuid()->toString()],
+        ]);
+
+        $billable = $this->makeBillable([]);
+
+        $this->fakeAuthoritativeReads([
+            (string) $billable->getKey() => $this->subscriber([
+                self::APP_STORE_BUSINESS => $this->subscription(['is_sandbox' => true]),
+            ]),
+        ]);
+
+        $this->sync($this->event('INITIAL_PURCHASE', $billable, ['environment' => 'SANDBOX']));
+
+        $this->assertSame('business', $billable->refresh()->getAttribute('plan'));
+    }
+
+    /**
      * A sandbox subscription does not hide the production one behind it.
      *
      * The sandbox entry reaches further into the future, so a filter applied to
