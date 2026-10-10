@@ -1627,6 +1627,66 @@ class BillingWriteEndpointsTest extends TestCase
     }
 
     /**
+     * The plans screen is a config read that must not fail because Stripe
+     * does: when the customer cannot be read (an outage, a customer deleted in
+     * Stripe) the caller is simply not fixed to a currency and is answered in
+     * the one their country maps to. The checkout, which does need the answer,
+     * still fails hard.
+     */
+    public function test_the_plans_screen_survives_an_unreadable_stripe_customer(): void
+    {
+        $this->configureCurrencyCatalogue();
+        $this->bootBillingRoutes('user');
+
+        $user = $this->createUser('plans-outage@example.test', ['stripe_id' => self::STRIPE_ID]);
+        BillingWriteRail::$hasStripeId = true;
+        BillingWriteRail::$customerFailure = new ApiConnectionException('Stripe is down');
+        Log::spy();
+
+        $products = $this->plansFrom($user, 'TR');
+
+        $this->assertSame('TRY', $products['pro_monthly']['currency']);
+        $this->assertTrue($products['pro_lira']['sellable']);
+
+        Log::shouldHaveReceived('warning')
+            ->withArgs(fn (string $message, array $context): bool => ($context['billable_id'] ?? null)
+                === $user->getKey())
+            ->once();
+
+        $this->assertSame(
+            500,
+            $this->buyFrom($user, 'pro_monthly', 'TR')->getStatusCode(),
+        );
+    }
+
+    /**
+     * The plans screen reads the Stripe customer once per billable and a few
+     * minutes, not once per load: a customer who opened a checkout and left
+     * has an id and no currency, and would otherwise cost a Stripe call on every
+     * visit for good. Nothing here is written to the billable.
+     */
+    public function test_the_plans_screen_reads_the_stripe_customer_once_for_a_while(): void
+    {
+        $this->configureCurrencyCatalogue();
+        $this->bootBillingRoutes('user');
+
+        $user = $this->createUser('plans-cached@example.test', ['stripe_id' => self::STRIPE_ID]);
+        BillingWriteRail::$hasStripeId = true;
+
+        BillingWriteRail::$customerCurrency = null;
+        $this->plansFrom($user, 'TR');
+        $this->plansFrom($user, 'TR');
+        $this->assertSame(1, BillingWriteRail::$customerReads);
+
+        $other = $this->createUser('plans-cached-2@example.test', ['stripe_id' => self::STRIPE_ID]);
+        BillingWriteRail::$customerCurrency = 'usd';
+        $this->plansFrom($other, null);
+        $this->plansFrom($other, null);
+        $this->assertSame(2, BillingWriteRail::$customerReads);
+        $this->assertNull($other->fresh()?->getAttribute('billing_currency'));
+    }
+
+    /**
      * The plans screen's products by key, as [$user] sees them from [$country].
      *
      * @return array<string, array<string, mixed>>
@@ -1938,6 +1998,11 @@ final class BillingWriteRail
      */
     public static int $customerReads = 0;
 
+    /**
+     * What the customer retrieval throws instead of answering, when set.
+     */
+    public static ?Throwable $customerFailure = null;
+
     public static function reset(): void
     {
         self::$hasStripeId = false;
@@ -1950,6 +2015,7 @@ final class BillingWriteRail
         self::$checkoutSessionOptions = null;
         self::$customerCurrency = null;
         self::$customerReads = 0;
+        self::$customerFailure = null;
 
         BillingWriteSubscription::reset();
     }
@@ -1982,6 +2048,10 @@ trait BillingWriteBillable
     public function asStripeCustomer(array $expand = []): StripeCustomer
     {
         BillingWriteRail::$customerReads++;
+
+        if (BillingWriteRail::$customerFailure !== null) {
+            throw BillingWriteRail::$customerFailure;
+        }
 
         return StripeCustomer::constructFrom([
             'id' => 'cus_billing_write_test',

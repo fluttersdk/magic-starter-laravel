@@ -29,6 +29,7 @@ use Illuminate\Database\Eloquent\Model;
 use Illuminate\Http\Exceptions\HttpResponseException;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\Gate;
 use Illuminate\Validation\ValidationException;
 use Laravel\Cashier\Exceptions\IncompletePayment;
@@ -162,6 +163,17 @@ class BillingController
     public const INVOICES_PER_PAGE = 24;
 
     /**
+     * How long the plans screen remembers what a Stripe customer's currency
+     * was, in seconds, a currency or its absence alike.
+     *
+     * Short because the absence is the case that changes: a customer who opened
+     * a checkout and left has an id and no currency until a payment bills them,
+     * and from then on the pin (written by the webhook, read first) answers.
+     * A currency itself never changes, so a remembered one is never stale.
+     */
+    public const CUSTOMER_CURRENCY_CACHE_SECONDS = 600;
+
+    /**
      * @param  TrialEligibility  $trialEligibility  Who may start a trial; a container
      *                                              binding, so an adopter can replace it.
      * @param  BillingEventRecorder  $recorder  Where every write and every 409 refusal is
@@ -185,9 +197,10 @@ class BillingController
      * products that sell it.
      *
      * Served from config with no rail call, bar one: a billable with a Stripe
-     * customer and no pin yet has that customer read once, for the currency
-     * Stripe has already fixed ({@see self::fixedCurrency()}). Two
-     * facts are per caller. Each product row's `trial_days` is the trial THIS
+     * customer and no pin yet has that customer read, for the currency Stripe
+     * has already fixed, at most once per
+     * {@see self::CUSTOMER_CURRENCY_CACHE_SECONDS} and never failing the
+     * screen ({@see self::displayedFixedCurrency()}). Two facts are per caller. Each product row's `trial_days` is the trial THIS
      * caller would get ({@see self::trialOffered()}): read from the local
      * database once per request, and not at all while no product offers a
      * trial, so an adopter selling without trials pays no query and needs no
@@ -219,7 +232,7 @@ class BillingController
     public function plans(Request $request): JsonResponse
     {
         $billable = $this->currentBillable($request);
-        $fixed = $billable === null ? null : $this->fixedCurrency($billable);
+        $fixed = $billable === null ? null : $this->displayedFixedCurrency($billable);
 
         return response()->json([
             'data' => $this->sellableCatalogue(
@@ -1320,6 +1333,58 @@ class BillingController
     }
 
     /**
+     * {@see self::fixedCurrency()} as the plans screen asks it: the Stripe
+     * customer is remembered for a few minutes, and a Stripe failure leaves the
+     * caller not fixed instead of failing a screen that is otherwise config.
+     *
+     * The checkout and the swap, which cannot proceed on a guess, still ask
+     * {@see self::fixedCurrency()} fresh and let a failure surface.
+     */
+    protected function displayedFixedCurrency(Model $billable): ?string
+    {
+        $pin = $this->pinnedCurrency($billable);
+
+        if ($pin !== null || ! $this->hasStripeCustomer($billable)) {
+            return $pin;
+        }
+
+        $key = sprintf(
+            'magic-starter:billing:customer-currency:%s:%s',
+            $billable->getMorphClass(),
+            $billable->getKey(),
+        );
+        $remembered = Cache::get($key);
+
+        if (is_string($remembered)) {
+            return $remembered === '' ? null : $remembered;
+        }
+
+        try {
+            $currency = $this->customerCurrency($billable);
+        } catch (ApiErrorException $exception) {
+            BillingLog::warning('Failed to read the billable Stripe customer currency.', [
+                'billable_id' => $billable->getKey(),
+                'exception' => $exception->getMessage(),
+            ]);
+
+            return null;
+        }
+
+        Cache::put($key, $currency ?? '', self::CUSTOMER_CURRENCY_CACHE_SECONDS);
+
+        return $currency;
+    }
+
+    /**
+     * Whether [$billable] carries Cashier's customer surface and has a Stripe
+     * customer.
+     */
+    protected function hasStripeCustomer(Model $billable): bool
+    {
+        return method_exists($billable, 'asStripeCustomer') && $billable->hasStripeId();
+    }
+
+    /**
      * The currency the Stripe webhook pinned for [$billable], uppercase, or
      * null while Stripe has billed it in nothing (or the adopter has not added
      * the column, which reads the same).
@@ -1339,7 +1404,7 @@ class BillingController
      */
     protected function customerCurrency(Model $billable): ?string
     {
-        if (! method_exists($billable, 'asStripeCustomer') || ! $billable->hasStripeId()) {
+        if (! $this->hasStripeCustomer($billable)) {
             return null;
         }
 
