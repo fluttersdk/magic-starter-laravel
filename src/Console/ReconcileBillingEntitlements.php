@@ -7,8 +7,11 @@ use Carbon\CarbonInterface;
 use FlutterSdk\MagicStarter\Contracts\WritesEntitlement;
 use FlutterSdk\MagicStarter\Enums\BillingProvider;
 use FlutterSdk\MagicStarter\Enums\PlanStatus;
+use FlutterSdk\MagicStarter\Jobs\CheckTrialCard;
 use FlutterSdk\MagicStarter\Jobs\SyncRevenueCatEntitlement;
 use FlutterSdk\MagicStarter\MagicStarter;
+use FlutterSdk\MagicStarter\Models\BillingTrial;
+use FlutterSdk\MagicStarter\Support\BillingCatalogue;
 use FlutterSdk\MagicStarter\Support\EntitlementWrite;
 use FlutterSdk\MagicStarter\Support\ReadsBillableAttributes;
 use FlutterSdk\MagicStarter\Support\RevenueCatClient;
@@ -21,6 +24,7 @@ use Illuminate\Http\Client\ConnectionException;
 use Illuminate\Http\Client\RequestException;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\Log;
+use Illuminate\Support\Facades\Schema;
 use RuntimeException;
 
 /**
@@ -104,6 +108,12 @@ use RuntimeException;
  * {@see MagicStarter::billableModel()}, and Cashier's `Billable` trait is the
  * consuming application's decision rather than this package's, so every read
  * that trait provides is guarded with `method_exists()` before it is made.
+ *
+ * ## It also retries the trial card checks nothing else will
+ *
+ * A full run (never a `--billable=` one) re-dispatches {@see CheckTrialCard}
+ * for every live trial still unchecked half an hour after it was recorded:
+ * see {@see self::redispatchUncheckedTrials()}.
  */
 class ReconcileBillingEntitlements extends Command
 {
@@ -168,6 +178,12 @@ class ReconcileBillingEntitlements extends Command
      * thing: this row was last written by the sweep, not by a delivery.
      */
     protected const RECONCILED = 'RECONCILIATION';
+
+    /**
+     * Minutes an unchecked trial is left to its own queued check before this
+     * sweep dispatches another one.
+     */
+    protected const TRIAL_CHECK_GRACE_MINUTES = 30;
 
     /**
      * How many subjects were walked, corrected, and skipped without a correction.
@@ -241,7 +257,68 @@ class ReconcileBillingEntitlements extends Command
             $this->unreadable,
         ));
 
+        // A hand-run diagnosis of ONE subject is about that subject, so it
+        // leaves everybody else's trials to the scheduled run.
+        if ($only === null) {
+            $this->redispatchUncheckedTrials();
+        }
+
         return $this->unreadable === 0 ? self::SUCCESS : self::FAILURE;
+    }
+
+    /**
+     * Re-dispatch the card check of every live trial still unchecked half an
+     * hour after the webhook recorded it.
+     *
+     * The webhook queues {@see CheckTrialCard} after its transaction commits,
+     * and that dispatch can be lost after the row has committed (a process
+     * killed between the two, a queue that refused the push). On the `sync`
+     * queue the job also cannot release itself for a retry. Either way the row
+     * stays unchecked, and this sweep is what retries it. Half an hour leaves a
+     * check still on its way (six attempts a minute apart) alone.
+     *
+     * Two guards, both before the first query, so an adopter who sells no
+     * trial never touches the table: some catalogue product must offer
+     * `trial_days`, and the `billing_trials` table must exist. The second is
+     * an adopter who turned trials on and has not migrated yet; a scheduled
+     * run raising a QueryException there would also cost every subject the
+     * reconciliation above it.
+     */
+    protected function redispatchUncheckedTrials(): void
+    {
+        if (! $this->catalogueOffersTrials() || ! Schema::hasTable('billing_trials')) {
+            return;
+        }
+
+        $dispatched = 0;
+
+        BillingTrial::query()
+            ->live()
+            ->whereNull('checked_at')
+            ->where('created_at', '<=', CarbonImmutable::now()->subMinutes(self::TRIAL_CHECK_GRACE_MINUTES))
+            ->lazyById(self::CHUNK_SIZE)
+            ->each(function (BillingTrial $trial) use (&$dispatched): void {
+                CheckTrialCard::dispatch($trial->getKey());
+                $dispatched++;
+            });
+
+        if ($dispatched > 0) {
+            $this->info(sprintf('Re-dispatched %d unchecked trial card check(s).', $dispatched));
+        }
+    }
+
+    /**
+     * Whether any catalogue product offers a trial.
+     */
+    protected function catalogueOffersTrials(): bool
+    {
+        foreach (BillingCatalogue::products() as $product) {
+            if ($product['trial_days'] > 0) {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     /**

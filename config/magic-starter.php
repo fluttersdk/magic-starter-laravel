@@ -683,6 +683,27 @@ return [
     | at a shared store (redis, memcached, database, dynamodb) if one sweep per
     | fleet is what you need; otherwise expect one per server.
     |
+    | THE TRIAL CARD CHECK. Every trialing `default` subscription a package
+    | checkout opened is recorded in `billing_trials` by the Stripe webhook,
+    | and a queued job (CheckTrialCard) reads its card fingerprint once,
+    | outside the webhook. Among trials sharing a person, a billed subject or a
+    | card, the EARLIEST (Stripe's own `created`) survives; a later one still
+    | trialing is refused and cancelled with no proration and no invoice, and
+    | one that already converted to paid is left alone. The resolution runs
+    | under a cache lock, which like onOneServer() above is only fleet-wide on a
+    | shared cache store. On the `sync` queue the job cannot retry itself, so
+    | the sweep above re-dispatches any trial still unchecked after 30 minutes;
+    | it does so only while a product offers `trial_days` and the
+    | `billing_trials` table exists.
+    |
+    | 'trial_refused_notification' (default true) mails the person whose trial
+    | was refused because the card had already taken one: no trial was opened,
+    | nothing was charged, and they can subscribe without a trial from the
+    | billing screen. A refusal of the same person's or the same subject's
+    | second trial sends nothing, since their first trial is still running.
+    | Set it false to send your own message instead. A config published before
+    | this key existed has no key at all and gets the default.
+    |
     */
 
     'billing' => [
@@ -740,6 +761,8 @@ return [
         'reconcile' => [
             'cadence' => env('MAGIC_STARTER_BILLING_RECONCILE_CADENCE', 'daily'),
         ],
+
+        'trial_refused_notification' => (bool) env('MAGIC_STARTER_TRIAL_REFUSED_NOTIFICATION', true),
 
         'revenuecat' => [
             'path' => env('REVENUECAT_WEBHOOK_PATH', 'webhooks/revenuecat'),

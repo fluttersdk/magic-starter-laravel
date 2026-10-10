@@ -8,10 +8,14 @@ use Closure;
 use FlutterSdk\MagicStarter\Contracts\WritesEntitlement;
 use FlutterSdk\MagicStarter\Enums\BillingProvider;
 use FlutterSdk\MagicStarter\Enums\PlanStatus;
+use FlutterSdk\MagicStarter\Jobs\CheckTrialCard;
+use FlutterSdk\MagicStarter\MagicStarter;
+use FlutterSdk\MagicStarter\Models\BillingTrial;
 use FlutterSdk\MagicStarter\Models\ProcessedWebhookEvent;
 use FlutterSdk\MagicStarter\Support\EntitlementWrite;
 use FlutterSdk\MagicStarter\Support\ReadsBillableAttributes;
 use FlutterSdk\MagicStarter\Support\StripeSubscriptionState;
+use FlutterSdk\MagicStarter\Support\TeamKey;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
@@ -97,6 +101,17 @@ use Symfony\Component\HttpFoundation\Response;
  * upstream of anything here. Do not read the heading as an invariant for the
  * whole route, and do not build a timeout or transaction-boundary assumption on
  * top of it.
+ *
+ * ## Trials are recorded here and checked elsewhere
+ *
+ * `customer.subscription.created` for a trial this package's checkout opened
+ * writes a `billing_trials` row in the same transaction as the grant, and
+ * queues {@see CheckTrialCard} to read the card after the commit; the same
+ * no-Stripe rule holds for it. A trial that check refused is cancelled in
+ * Stripe and, on a shared subject, deleted locally, so its later
+ * `customer.subscription.updated` events are skipped whole (see
+ * {@see self::handleCustomerSubscriptionUpdated()}). Its deletion event runs as
+ * any other does and revokes nothing while the survivor still grants.
  */
 class StripeWebhookController extends CashierWebhookController
 {
@@ -131,6 +146,7 @@ class StripeWebhookController extends CashierWebhookController
         return $this->processOnce($payload, function (array $payload): Response {
             $response = parent::handleCustomerSubscriptionCreated($payload);
             $this->syncEntitlementFromSubscription($payload, $this->eventAt($payload));
+            $this->recordTrial($payload);
 
             return $response;
         });
@@ -144,6 +160,16 @@ class StripeWebhookController extends CashierWebhookController
     protected function handleCustomerSubscriptionUpdated(array $payload): Response
     {
         return $this->processOnce($payload, function (array $payload): Response {
+            // A trial the card check refused is over as far as this package is
+            // concerned, and both halves below would undo that: Cashier's
+            // handler is `firstOrNew` on the Stripe id, so it recreates a local
+            // row the check deleted (as the subject's newest `default`), and
+            // the projection would write the cancelled subscription's status
+            // over the survivor's grant. The deletion event still runs.
+            if ($this->isRefusedTrial($payload)) {
+                return $this->successMethod();
+            }
+
             // Parent returns null on the incomplete_expired branch (it deletes
             // the subscription); the projection still revokes the tier there.
             $response = parent::handleCustomerSubscriptionUpdated($payload);
@@ -319,6 +345,134 @@ class StripeWebhookController extends CashierWebhookController
         }
 
         return (string) $this->newSubscriptionType($payload);
+    }
+
+    /**
+     * Record a trial this package's checkout opened, and queue its card check.
+     *
+     * Three conditions, all read from the payload: the subscription is
+     * `trialing`, it is of type `default`, and it carries the checkout's
+     * {@see BillingController::TRIAL_USER_METADATA_KEY} tag. A trial started
+     * anywhere else (the dashboard, another integration) carries no tag and is
+     * not this package's to police.
+     *
+     * The tagged user may be gone by the time Stripe delivers, so the key is
+     * checked and the row written with no person rather than failing the
+     * foreign key: a failure here would roll back the grant written a moment
+     * earlier, and Stripe would retry a delivery that can never succeed.
+     *
+     * The card itself is NOT read here. That is a Stripe round trip, and this
+     * runs inside the webhook transaction (see the class docblock), so
+     * {@see CheckTrialCard} is queued to run after the commit instead.
+     *
+     * @param  array<string, mixed>  $payload
+     */
+    protected function recordTrial(array $payload): void
+    {
+        $object = $payload['data']['object'] ?? [];
+
+        if (! is_array($object)) {
+            return;
+        }
+
+        // 1. Only a trialing `default` subscription the checkout tagged.
+        $userId = $this->trialUserTag($object);
+        $subscriptionId = $object['id'] ?? null;
+
+        if ($userId === null
+            || ! is_string($subscriptionId)
+            || ($object['status'] ?? null) !== 'trialing'
+            || $this->subscriptionType($payload) !== StripeSubscriptionState::SUBSCRIPTION_TYPE
+        ) {
+            return;
+        }
+
+        // 2. The subject. A customer nothing here bills has no trial to keep.
+        $billable = $this->resolveBillable($object['customer'] ?? null);
+
+        if ($billable === null) {
+            return;
+        }
+
+        // 3. One row per subscription, ordered by Stripe's own `created`.
+        $trial = BillingTrial::query()->firstOrCreate(
+            [
+                'stripe_subscription_id' => $subscriptionId,
+            ],
+            [
+                'user_id' => $this->existingUserKey($userId),
+                'billable_type' => $billable->getMorphClass(),
+                'billable_id' => $billable->getKey(),
+                'subscription_created_at' => isset($object['created'])
+                    ? CarbonImmutable::createFromTimestamp((int) $object['created'])
+                    : $this->eventAt($payload),
+            ],
+        );
+
+        // 4. The card check, once this transaction has committed.
+        CheckTrialCard::dispatch($trial->getKey())->afterCommit();
+    }
+
+    /**
+     * Whether a subscription event is about a trial the card check refused.
+     *
+     * Asked only for a subscription carrying the checkout's trial tag, so an
+     * application that never sold a trial (and may never have migrated the
+     * `billing_trials` table) is never queried for one. A refused trial always
+     * carries the tag: Stripe keeps a subscription's metadata on every event.
+     *
+     * @param  array<string, mixed>  $payload
+     */
+    protected function isRefusedTrial(array $payload): bool
+    {
+        $object = $payload['data']['object'] ?? [];
+
+        if (! is_array($object) || $this->trialUserTag($object) === null) {
+            return false;
+        }
+
+        $subscriptionId = $object['id'] ?? null;
+
+        if (! is_string($subscriptionId)) {
+            return false;
+        }
+
+        return BillingTrial::query()
+            ->where('stripe_subscription_id', $subscriptionId)
+            ->whereNotNull('refused_at')
+            ->exists();
+    }
+
+    /**
+     * The user key a trial checkout tagged the subscription with, or null.
+     *
+     * @param  array<string, mixed>  $object
+     */
+    protected function trialUserTag(array $object): ?string
+    {
+        $metadata = $object['metadata'] ?? [];
+        $tag = is_array($metadata) ? ($metadata[BillingController::TRIAL_USER_METADATA_KEY] ?? null) : null;
+
+        return is_string($tag) && $tag !== '' ? $tag : null;
+    }
+
+    /**
+     * [$userId] when that user still exists, otherwise null.
+     *
+     * The shape is checked before the lookup: on a UUID deployment the key
+     * column is a PostgreSQL `uuid`, and a malformed value would raise inside
+     * the webhook transaction instead of answering "nobody".
+     */
+    protected function existingUserKey(string $userId): ?string
+    {
+        if (! TeamKey::looksLikeOne($userId)) {
+            return null;
+        }
+
+        /** @var class-string<Model> $userModel */
+        $userModel = MagicStarter::userModel();
+
+        return $userModel::query()->whereKey($userId)->exists() ? $userId : null;
     }
 
     /**

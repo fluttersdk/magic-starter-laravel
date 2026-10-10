@@ -109,4 +109,17 @@ return [
         'no_subscription' => 'There is no active subscription to change.',
     ],
 
+    /*
+     * The mail TrialRefusedNotification sends when the card check refuses a
+     * trial because the card on file already took one. It says the three
+     * things the reader needs: why there is no trial, that no money moved, and
+     * that buying without a trial is still open to them.
+     */
+    'trial_refused' => [
+        'subject' => 'Your free trial was not started',
+        'card_used' => 'The card on file has already been used for a free trial, so no trial was opened for this subscription.',
+        'nothing_charged' => 'The subscription was ended straight away and nothing was charged.',
+        'subscribe' => 'You can still subscribe without a trial from the billing screen.',
+    ],
+
 ];
