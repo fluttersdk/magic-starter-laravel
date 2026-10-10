@@ -4,6 +4,8 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [0.0.25] - 2026-10-10
+
 ### Added
 
 - **A Billing tab in the admin panel, with eight operator actions.** On the user's edit page (or the team's, per `billing.billable`): a summary of the plan, status, provider, period end, open grant and Stripe trial end, the billable's `billing_events` history, and Grant plan, Revoke grant, Extend trial, End trial, Cancel subscription, Resume subscription, Refund last invoice and Sync now. Each is shown only in the state it applies to and refuses with a stable reason (`paid_rail_active`, `unknown_plan`, `expiry_in_past`, `entitlement_refused`, `not_manual`, `rail_error`, `no_subscription`, `not_trialing`, `date_in_past`, `not_later`, `already_cancelled`, `not_on_grace_period`, `scheduled_cancel`, `invalid_reason`, `nothing_refundable`, `stale_target`, `nothing_to_sync`, `unmapped_price`), recorded as a `request_refused` row with source `admin` that survives the panel's halt. A grant's expiry date means the end of that day. The tab's history and the two read-only resources below are visible to every panel admin; the billing actions follow the billing allowlist. (`src/Filament/Resources/Billing/RelationManagers/BillingRelationManager.php`, `lang/en/admin_billing.php`, `lang/tr/admin_billing.php`)
