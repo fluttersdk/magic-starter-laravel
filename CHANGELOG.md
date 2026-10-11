@@ -4,6 +4,8 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [0.0.27] - 2026-10-11
+
 ### Added
 
 - **A Stripe test-mode guard.** A test key (`sk_test_` or `rk_test_`) accepts test cards, so a public server left on one would sell a paid tier to anybody. While `STRIPE_SECRET` (`cashier.secret`) is a test key and the environment is not `local` or `testing`, `POST billing/checkout` and `POST billing/swap` answer `409` with `billing.reason` `stripe_test_mode` for everybody but the people named in `MAGIC_STARTER_BILLING_STRIPE_TEST_EMAILS` (`billing.stripe_test_mode.emails`, comma-separated, lower-cased), whose email must also be verified; a guest never passes. Each refusal is recorded as a `request_refused` row. Cancel and the billing portal are never gated. (`src/Support/StripeTestMode.php`, `src/Http/Controllers/BillingController.php`, `config/magic-starter.php`, `lang/en/billing.php`, `lang/tr/billing.php`)
