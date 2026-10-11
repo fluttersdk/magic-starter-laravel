@@ -585,8 +585,12 @@ class BillingController
 
         try {
             // 1. The renewal date favours the local trial end (a plain column
-            //    read) and only falls back to the live period end when there is
-            //    no trial, which is a rail retrieval.
+            //    read) while the trial is still running, and otherwise takes the
+            //    live period end, which is a rail retrieval. A trial end in the
+            //    past is history, not a renewal: Cashier keeps it on the row
+            //    after the trial converts, and preferring it whenever it was set
+            //    told every converted customer the plan renewed, or ended, on the
+            //    day the trial did.
             //
             //    This endpoint used to make exactly one, and the docblocks below
             //    said so. It no longer does: on the common post-checkout state
@@ -596,9 +600,12 @@ class BillingController
             //    customer whose card Stripe filed on the subscription, and it is
             //    still the only rail-live read on the billing screen.
             $subscription = $this->defaultSubscription($billable);
-            $renewalDate = $subscription === null
-                ? null
-                : $this->dateAttribute($subscription, 'trial_ends_at') ?? $this->periodEnd($subscription);
+            $trialEnd = $subscription === null ? null : $this->dateAttribute($subscription, 'trial_ends_at');
+            $renewalDate = match (true) {
+                $subscription === null => null,
+                $trialEnd !== null && $trialEnd->isFuture() => $trialEnd,
+                default => $this->periodEnd($subscription),
+            };
 
             // 2. Only a Cashier PaymentMethod exposes a card, and a billable
             //    whose application never applied Cashier's trait has none to

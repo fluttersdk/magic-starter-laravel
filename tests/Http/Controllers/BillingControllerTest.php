@@ -19,6 +19,7 @@ use FlutterSdk\MagicStarter\Models\BillingTrial;
 use FlutterSdk\MagicStarter\Models\Team;
 use FlutterSdk\MagicStarter\Support\ConditionallyUsesUuids;
 use FlutterSdk\MagicStarter\Tests\TestCase;
+use Carbon\CarbonInterface;
 use Illuminate\Auth\Authenticatable as AuthenticatableTrait;
 use Illuminate\Contracts\Auth\Access\Gate as GateContract;
 use Illuminate\Contracts\Auth\Authenticatable as AuthenticatableContract;
@@ -31,6 +32,7 @@ use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Event;
 use Illuminate\Support\Facades\Gate;
 use Illuminate\Support\Facades\Lang;
+use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Str;
 use Illuminate\Testing\TestResponse;
@@ -74,6 +76,13 @@ class BillingControllerTest extends TestCase
     private const TRIAL_END = '2026-10-01 09:00:00';
 
     private const TRIAL_END_ISO = '2026-10-01T09:00:00+00:00';
+
+    /**
+     * When the paid period that follows the trial ends, as the rail reports it.
+     */
+    private const PERIOD_END = '2026-11-01 09:00:00';
+
+    private const PERIOD_END_ISO = '2026-11-01T09:00:00+00:00';
 
     /**
      * The Stripe customer id both billable fixtures carry.
@@ -218,6 +227,9 @@ class BillingControllerTest extends TestCase
      */
     public function test_the_seven_read_endpoints_answer_under_the_team_subject(): void
     {
+        // Inside the trial, so the renewal date is the trial end.
+        $this->travelTo(Carbon::parse(self::TRIAL_END)->subDays(5));
+
         $this->bindUsageReporter();
         $this->bootBillingRoutes('team');
 
@@ -250,6 +262,41 @@ class BillingControllerTest extends TestCase
         $this->assertSame(true, $card->json('available'));
         $this->assertSame(self::TRIAL_END_ISO, $card->json('renewal_date'));
         $this->assertSame('visa', $card->json('brand'));
+    }
+
+    /**
+     * Once the trial is over its end is history, so the renewal date is the
+     * live period end.
+     *
+     * Cashier keeps `trial_ends_at` on the row after the trial converts, and a
+     * reader that preferred it whenever it was set told every converted
+     * customer that the plan renewed, or ended, on the day the trial did:
+     * measured on the sandbox, a Pro subscription whose period ran to Nov 11
+     * read "renews Oct 11", and once cancelled, "ends Oct 11".
+     */
+    public function test_a_finished_trial_gives_way_to_the_period_end(): void
+    {
+        $this->travelTo(Carbon::parse(self::TRIAL_END)->addDays(3));
+
+        $this->bootBillingRoutes('team');
+
+        $owner = $this->createUser('converted@example.test');
+        $team = $this->createTeam($owner, [
+            'plan' => 'pro',
+            'plan_status' => 'active',
+            'plan_provider' => 'stripe',
+            'stripe_id' => self::STRIPE_ID,
+        ]);
+        $this->setCurrentTeam($owner, $team);
+
+        BillingTestRail::$hasStripeId = true;
+        BillingTestRail::$subscription = $this->subscriptionWithTrial();
+        BillingTestRail::$periodEnd = Carbon::parse(self::PERIOD_END);
+        BillingTestRail::$paymentMethod = $this->visaPaymentMethod($team);
+
+        $card = $this->ask($owner, '/billing/payment-method');
+
+        $this->assertSame(self::PERIOD_END_ISO, $card->json('renewal_date'));
     }
 
     /**
@@ -1862,6 +1909,12 @@ final class BillingTestRail
     public static string $portalUrl = 'https://billing.stripe.test/session';
 
     /**
+     * The live period end the subscription reports, or null when the rail
+     * reports none.
+     */
+    public static ?CarbonInterface $periodEnd = null;
+
+    /**
      * The Stripe payment method the SUBSCRIPTION carries, which is where a
      * hosted checkout leaves the card, or null when it carries none.
      */
@@ -1876,6 +1929,7 @@ final class BillingTestRail
         self::$subscription = null;
         self::$invoices = null;
         self::$portalUrl = 'https://billing.stripe.test/session';
+        self::$periodEnd = null;
     }
 }
 
@@ -1971,6 +2025,14 @@ class BillingTestSubscription extends Model
     protected $table = 'subscriptions';
 
     protected $guarded = [];
+
+    /**
+     * The live period end, as Cashier's own method reads it from the rail.
+     */
+    public function currentPeriodEnd(): ?CarbonInterface
+    {
+        return BillingTestRail::$periodEnd;
+    }
 
     /**
      * The live Stripe subscription, with `default_payment_method` expanded when
