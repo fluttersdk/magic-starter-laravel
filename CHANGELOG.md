@@ -4,6 +4,15 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Added
+
+- **A Stripe test-mode guard.** A test key (`sk_test_` or `rk_test_`) accepts test cards, so a public server left on one would sell a paid tier to anybody. While `STRIPE_SECRET` (`cashier.secret`) is a test key and the environment is not `local` or `testing`, `POST billing/checkout` and `POST billing/swap` answer `409` with `billing.reason` `stripe_test_mode` for everybody but the people named in `MAGIC_STARTER_BILLING_STRIPE_TEST_EMAILS` (`billing.stripe_test_mode.emails`, comma-separated, lower-cased), whose email must also be verified; a guest never passes. Each refusal is recorded as a `request_refused` row. Cancel and the billing portal are never gated. (`src/Support/StripeTestMode.php`, `src/Http/Controllers/BillingController.php`, `config/magic-starter.php`, `lang/en/billing.php`, `lang/tr/billing.php`)
+- **`billing:doctor` checks `stripe.test_mode`**: silent without a Stripe secret, `ok` on a live key or on a test key in `local` or `testing`, a `warning` on a guarded server with an empty allowlist (every checkout and swap is refused until the variable names someone), and `ok` with the number of entries otherwise. The addresses are never printed. (`src/Console/BillingDoctorCommand.php`)
+
+### Changed
+
+- **Checkout sends the trial as `subscription_data.trial_period_days`** instead of Cashier's `trial_end`, so Stripe Checkout shows the full trial and it starts when the customer completes Checkout. A `trial_days` of `1` is now accepted (range `0` to `730`); the 48-hour minimum was Cashier's `trial_end` clamp. (`src/Http/Controllers/BillingController.php`, `src/Support/BillingCatalogue.php`)
+
 ## [0.0.26] - 2026-10-11
 
 ### Added

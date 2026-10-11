@@ -644,6 +644,78 @@ class BillingDoctorCommandTest extends TestCase
         $this->assertStringContainsString('accept_sandbox', $check['message']);
     }
 
+    public function test_no_stripe_secret_leaves_the_test_mode_check_silent(): void
+    {
+        config(['cashier.secret' => null]);
+
+        $this->assertArrayNotHasKey('stripe.test_mode', $this->doctor()['checks']);
+    }
+
+    public function test_a_live_stripe_key_reports_the_test_mode_guard_off(): void
+    {
+        config(['cashier.secret' => 'sk_live_doctor']);
+        $this->app->detectEnvironment(fn (): string => 'production');
+
+        $doctor = $this->doctor();
+
+        $this->assertSame(0, $doctor['exit']);
+        $check = $doctor['checks']['stripe.test_mode'];
+        $this->assertSame('ok', $check['status']);
+        $this->assertSame('Stripe live key: the test-mode guard is off.', $check['message']);
+    }
+
+    public function test_a_stripe_test_key_in_a_local_environment_reports_checkout_open_for_development(): void
+    {
+        config(['cashier.secret' => 'sk_test_doctor']);
+        $this->app->detectEnvironment(fn (): string => 'local');
+
+        $check = $this->doctor()['checks']['stripe.test_mode'];
+
+        $this->assertSame('ok', $check['status']);
+        $this->assertStringContainsString('local', $check['message']);
+        $this->assertStringContainsString('open for development', $check['message']);
+    }
+
+    public function test_a_stripe_test_key_in_production_with_no_allowlist_is_a_warning(): void
+    {
+        config([
+            'cashier.secret' => 'sk_test_doctor',
+            'magic-starter.billing.stripe_test_mode.emails' => [],
+        ]);
+        $this->app->detectEnvironment(fn (): string => 'production');
+
+        $doctor = $this->doctor();
+
+        $this->assertSame(0, $doctor['exit']);
+        $check = $doctor['checks']['stripe.test_mode'];
+        $this->assertSame('warning', $check['status']);
+        $this->assertStringContainsString('production', $check['message']);
+        $this->assertStringContainsString('every checkout and swap is refused', $check['message']);
+        $this->assertStringContainsString('MAGIC_STARTER_BILLING_STRIPE_TEST_EMAILS', $check['message']);
+    }
+
+    public function test_a_stripe_test_mode_allowlist_is_reported_by_count_and_never_by_email(): void
+    {
+        config([
+            'cashier.secret' => 'rk_test_doctor',
+            'magic-starter.billing.stripe_test_mode.emails' => [
+                'reviewer-one@example.test',
+                'reviewer-two@example.test',
+            ],
+        ]);
+        $this->app->detectEnvironment(fn (): string => 'production');
+
+        $doctor = $this->doctor();
+
+        $this->assertSame(0, $doctor['exit']);
+        $check = $doctor['checks']['stripe.test_mode'];
+        $this->assertSame('ok', $check['status']);
+        $this->assertStringContainsString('production', $check['message']);
+        $this->assertStringContainsString('2', $check['message']);
+        $this->assertStringNotContainsString('reviewer-', json_encode($doctor));
+        $this->assertStringNotContainsString('example.test', $check['message']);
+    }
+
     public function test_an_unreadable_schema_leaves_the_billing_events_check_a_warning(): void
     {
         config([
