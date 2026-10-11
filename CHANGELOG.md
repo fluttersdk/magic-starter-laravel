@@ -4,6 +4,12 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [0.0.29] - 2026-10-11
+
+### Fixed
+
+- **A downgrade onto another cycle takes the declined-card guard.** 0.0.28 ranked the tier before the cycle, so a move from an annual Pro to a monthly Starter ran a plain swap; Stripe still charges the new period at once on a cycle change, and a declined charge moved the plan and left the invoice unpaid. Any cycle change now invoices with `error_if_incomplete`, whichever way the tier moves. (`src/Http/Controllers/BillingController.php`)
+
 ## [0.0.28] - 2026-10-11
 
 ### Fixed
