@@ -653,8 +653,19 @@ class StripeWebhookController extends CashierWebhookController
         // that delayed event dropped as stale, leaving the entitlement trialing
         // for the whole first paid period. The row is still asked, so a $0
         // first invoice with no trial behind it (a full discount) stays active.
-        $trialing = $this->isTrialStartInvoice($object)
-            && $this->stringAttribute($subscription, 'stripe_status') === StripeSubscription::STATUS_TRIALING;
+        //
+        // A $0 invoice paid while the local trial end is still AHEAD is the
+        // same case from another door: a cycle change during a trial makes
+        // Stripe issue a $0 `subscription_update` invoice and leaves the
+        // subscription trialing. The trial end being in the future is what
+        // keeps the conversion race above out of it: once the trial is over a
+        // $0 invoice is a discount, not a trial.
+        $rowTrialing = $this->stringAttribute($subscription, 'stripe_status') === StripeSubscription::STATUS_TRIALING;
+        $trialing = $rowTrialing && (
+            $this->isTrialStartInvoice($object)
+            || (($object['amount_paid'] ?? null) === 0
+                && $this->dateAttribute($subscription, 'trial_ends_at')?->isFuture() === true)
+        );
         $providerStatus = $trialing ? StripeSubscription::STATUS_TRIALING : StripeSubscription::STATUS_ACTIVE;
 
         $this->claim(new EntitlementWrite(
