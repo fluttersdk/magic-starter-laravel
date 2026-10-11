@@ -797,6 +797,12 @@ class BillingController
         //    buy at the full price, which is what they were shown. The metadata
         //    names the acting USER, because under the team subject the Stripe
         //    customer is the team and the webhook needs the person.
+        //
+        //    The days themselves are NOT set on the builder. Cashier's
+        //    trial-days builder method fixes `trial_end` when the session opens,
+        //    so Checkout counts the days left from that moment and the page
+        //    shows one fewer than advertised. Step 8 sends `trial_period_days`
+        //    instead.
         $trialDays = $this->trialDaysFor($validated['product']);
         $user = $request->user();
         $offeredTrialDays = 0;
@@ -804,11 +810,9 @@ class BillingController
         if ($trialDays > 0 && $this->trialEligibility->allows($user, $billable)) {
             $offeredTrialDays = $trialDays;
 
-            $subscription
-                ->trialDays($trialDays)
-                ->withMetadata([
-                    BillingTrial::USER_METADATA_KEY => (string) $user->getKey(),
-                ]);
+            $subscription->withMetadata([
+                BillingTrial::USER_METADATA_KEY => (string) $user->getKey(),
+            ]);
         }
 
         // 8. A card is collected whatever the first total, and said explicitly
@@ -824,6 +828,16 @@ class BillingController
             'cancel_url' => $validated['cancel_url'],
             'payment_method_collection' => 'always',
         ];
+
+        // 8b. The trial starts when the customer completes Checkout, so the page
+        //     shows the full length and the customer gets every advertised day.
+        //     Cashier deep-merges `subscription_data` (`array_merge_recursive`),
+        //     so its `name` and `type` metadata and the trial user tag from step
+        //     7 survive beside this key. `trial_end` is never sent with it:
+        //     Stripe takes one or the other.
+        if ($offeredTrialDays > 0) {
+            $sessionOptions['subscription_data'] = ['trial_period_days' => $offeredTrialDays];
+        }
 
         if ($currency !== null) {
             $sessionOptions['currency'] = strtolower($currency);

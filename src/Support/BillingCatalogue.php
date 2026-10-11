@@ -466,9 +466,8 @@ final class BillingCatalogue
      * Refuse a trial length Stripe would not honour as written.
      *
      * A string, a float or a negative number would read as no trial and a
-     * customer would be charged on day one against what the screen promised;
-     * one day would be silently stretched to two, because Stripe Checkout (and
-     * so Cashier) enforces a minimum of 48 hours. More than 730 days is a
+     * customer would be charged on day one against what the screen promised.
+     * The accepted range is 0 (no trial) to 730 days: more than 730 is a
      * checkout Stripe refuses outright, found by the first customer to try
      * rather than at boot. A trial on a product that is
      * not a subscription has nothing to defer, so it is a mistake, not a no-op.
@@ -490,14 +489,6 @@ final class BillingCatalogue
                 'Product [%s] has [trial_days] of [%s]; use a whole number of days, 0 or more.',
                 $key,
                 is_int($days) ? $days : get_debug_type($days),
-            ));
-        }
-
-        if ($days === 1) {
-            throw new LogicException(sprintf(
-                'Product [%s] has [trial_days] of [1]; Stripe Checkout enforces a minimum of 48 hours, '
-                . 'so use 0 for no trial or 2 or more days.',
-                $key,
             ));
         }
 
