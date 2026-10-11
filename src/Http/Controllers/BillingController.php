@@ -1403,9 +1403,10 @@ class BillingController
      *
      * Ranked on the catalogue, never on prices: catalogue prices are display
      * figures, and what Stripe charges is the price the product maps to. An
-     * upgrade (a higher tier) and a cycle change are charged now; Stripe moves
-     * the billing date on a cycle change and attempts payment at once anyway,
-     * so it needs the same declined-card guard. A same-cycle downgrade is not.
+     * upgrade (a higher tier) and any cycle change, a downgrade onto another
+     * cycle included, are charged now; Stripe moves the billing date on a
+     * cycle change and attempts payment at once anyway, so it needs the same
+     * declined-card guard. A same-cycle downgrade is not.
      * A running trial owes nothing yet, and Cashier keeps the trial end on the
      * swap, so nothing is charged during one; "running" is the row's status AND
      * a future trial end, because a trial Stripe ended early keeps its original
@@ -1439,12 +1440,18 @@ class BillingController
             return true;
         }
 
+        // The cycle first: a move onto another cycle resets Stripe's billing
+        // date and is charged at once whichever way the tier moves, so a
+        // downgrade onto another cycle needs the declined-card guard too.
+        if (($current['cycle'] ?? null) !== ($target['cycle'] ?? null)) {
+            return true;
+        }
+
         if ($targetRank !== $currentRank) {
             return $targetRank > $currentRank;
         }
 
-        return ($current['cycle'] ?? null) !== ($target['cycle'] ?? null)
-            || ($current['refs']['stripe_price'] ?? null) !== ($target['refs']['stripe_price'] ?? null);
+        return ($current['refs']['stripe_price'] ?? null) !== ($target['refs']['stripe_price'] ?? null);
     }
 
     /**

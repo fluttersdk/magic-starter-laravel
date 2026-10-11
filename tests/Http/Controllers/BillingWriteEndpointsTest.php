@@ -473,6 +473,26 @@ class BillingWriteEndpointsTest extends TestCase
     }
 
     /**
+     * A downgrade that also changes the cycle still moves Stripe's billing
+     * date, and Stripe still charges the new period at once, so it takes the
+     * declined-card guard too. Ranked on the tier first, it ran a plain swap:
+     * a declined charge then moved the plan and left the invoice unpaid.
+     */
+    public function test_a_downgrade_onto_another_cycle_is_invoiced_at_once(): void
+    {
+        $this->useSwapCatalogue();
+        $this->bootBillingRoutes('user');
+
+        $user = $this->createUser('cross-cycle@example.test');
+        BillingWriteRail::$subscription = $this->subscriptionOn('price_business_monthly');
+
+        $this->write($user, '/billing/swap', ['product' => 'pro_annual'])->assertOk();
+
+        $this->assertTrue(BillingWriteSubscription::$invoicedNow);
+        $this->assertTrue(BillingWriteSubscription::$errorIfPaymentFails);
+    }
+
+    /**
      * A trial owes nothing yet, so an upgrade during one is a plain swap: the
      * trial end is kept and the first charge stays where the trial ends. Once
      * the trial is over the same upgrade is charged at once.
