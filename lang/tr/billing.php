@@ -58,6 +58,7 @@ return [
         'managed_by_store' => 'Bu abonelik onu satan mağaza tarafından yönetiliyor ve buradan değiştirilemez.',
         'no_billing_account' => 'Yönetilecek bir ödeme hesabı henüz yok.',
         'subscription_exists' => 'Aboneliğiniz henüz sona ermedi, bu yüzden ikinci bir abonelik almak yerine planınızı değiştirin.',
+        'stripe_test_mode' => 'Satın alma henüz açık değil; bu sunucu Stripe test anahtarlarıyla çalışıyor.',
 
         /*
          * The three refusals the card-rail WRITES raise. Two of them describe a

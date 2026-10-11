@@ -2168,13 +2168,6 @@ final class BillingWriteSubscriptionBuilder
         protected array|string $prices,
     ) {}
 
-    public function trialDays(int $trialDays): self
-    {
-        BillingWriteRail::$checkoutTrialDays = $trialDays;
-
-        return $this;
-    }
-
     /**
      * @param  array<string, mixed>  $metadata
      */
@@ -2200,6 +2193,9 @@ final class BillingWriteSubscriptionBuilder
         BillingWriteRail::$checkoutItems = $items;
         BillingWriteRail::$checkoutSubscriptionType = $this->type;
         BillingWriteRail::$checkoutSessionOptions = $sessionOptions;
+        // The trial travels as Stripe's `trial_period_days` in the session
+        // options, never through the builder, so the fake reads it there.
+        BillingWriteRail::$checkoutTrialDays = $sessionOptions['subscription_data']['trial_period_days'] ?? null;
 
         return new Checkout($this->billable, StripeCheckoutSession::constructFrom([
             'id' => 'cs_test_write',

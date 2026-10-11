@@ -715,8 +715,9 @@ class BillingCatalogueTest extends TestCase
     {
         return [
             'none' => [0],
+            'one day' => [1],
+            'two days' => [2],
             'two weeks' => [14],
-            'the 48 hour minimum' => [2],
             'the 730 day maximum' => [730],
         ];
     }
@@ -741,8 +742,6 @@ class BillingCatalogueTest extends TestCase
     public static function refusedTrialDays(): array
     {
         return [
-            // Stripe Checkout enforces 48 hours, so one day would silently become two.
-            'one day' => [1, '48 hours'],
             // Stripe refuses a trial longer than 730 days at checkout.
             'over two years' => [731, '730 days'],
             'negative' => [-1, 'whole number'],

@@ -107,7 +107,7 @@ A product entry:
 | `credits` | Optional integer a one-off purchase grants. |
 | `prices` | `channel => currency => amount in minor units`. See [Prices](#prices). |
 | `refs` | Each rail's id for the product: `stripe_price`, `app_store`, `play`. See [Store Ids](#store-ids). |
-| `trial_days` | Optional whole number of free days a subscription starts with, default `0` (no trial). `0`, or `2` to `730`: Stripe Checkout enforces a minimum of 48 hours, so `1` stops boot, as does anything above `730` (the longest trial Stripe accepts), a negative or non-integer value and any non-zero value on a product that is not a subscription. Only the web (Stripe) rail honours it, and it is the length offered, not a promise to everybody. See [Trials](#trials). |
+| `trial_days` | Optional whole number of free days a subscription starts with, default `0` (no trial). `0` to `730`: anything above `730` (the longest trial Stripe accepts), a negative or non-integer value and any non-zero value on a product that is not a subscription stops boot. Sent to Stripe as `trial_period_days`, so the trial starts when the customer completes Checkout. Only the web (Stripe) rail honours it, and it is the length offered, not a promise to everybody. See [Trials](#trials). |
 | `sellable` | Boolean, default `true`. `false` keeps the product mapped for webhooks, reconciliation and entitlement reads (a grandfathered price still bills people). `billing/plans` lists it with `sellable: false` so a client can place what a subscriber holds; a client must offer only sellable products. It cannot be checked out or swapped to (422 `product_not_sellable`), and is left out of `billing:manifest` and `billing:doctor`. Anything but a boolean stops boot. |
 
 ### What boot refuses
@@ -115,7 +115,7 @@ A product entry:
 - A leftover `plans`, `prices` or `store_products` key, even empty. The message names where its content moved: `tiers` and `tier_order`, `refs.stripe_price`, and `refs.app_store` and `refs.play`. There is no alias.
 - An empty `tier_order`.
 - A product with an unknown `type` or a `sellable` that is not a boolean, or a subscription with no tier, a tier outside `tier_order`, or a `cycle` that is not `monthly` or `annual`.
-- A `trial_days` that is not a whole number of 0 or more, is `1`, is above `730` (Stripe's longest trial), or is non-zero on a product that is not a subscription.
+- A `trial_days` that is not a whole number of 0 or more, is above `730` (Stripe's longest trial), or is non-zero on a product that is not a subscription. `1` is accepted; the trial is sent as `trial_period_days`, so it starts when the customer completes Checkout.
 - A `prices` entry that is not a known channel (`web`, `app_store`, `play`) mapping a three-letter currency code to a whole amount of 0 or more.
 - A `refs.play` that is not exactly `<subscription_id>:<base_plan_id>`, or a `refs.app_store` containing `:`.
 - A `pricing.commission.mode` other than `absorb` or `gross_up`, or a `rate` that is not a number of at least 0 and below 1.
@@ -378,7 +378,7 @@ A `TRANSFER` event re-reads both the `transferred_from` and the `transferred_to`
 <a name="trials"></a>
 ## Trials
 
-A product with `trial_days` of 2 or more starts a free trial on the **web rail** (Stripe Checkout through Cashier). Whether a given customer still gets it is decided per user and billable, never by the catalogue alone.
+A product with a `trial_days` of 1 or more starts a free trial on the **web rail** (Stripe Checkout through Cashier). Whether a given customer still gets it is decided per user and billable, never by the catalogue alone.
 
 ```php
 'pro_monthly' => [
@@ -494,6 +494,33 @@ REVENUECAT_SANDBOX_APP_USER_IDS=2f6c1e0a-9d44-4b7e-8a53-0c1d5e7f9a21
 
 A store record that holds sandbox purchases only is never revoked by the store job. The panel's [Revoke grant](#admin-panel) action ends such a record by hand.
 
+<a name="stripe-test-mode"></a>
+### Stripe test mode
+
+A Stripe test key accepts test cards, so a public server left on one would sell a paid tier to anybody who types `4242 4242 4242 4242`. The guard refuses that, and lets named people through so a reviewer can still try a purchase.
+
+It is active when `CASHIER_SECRET` starts with `sk_test_` or `rk_test_` **and** the application environment is not `local` or `testing`. Any other name (`staging`, `production`, `prod`) is guarded. A live key, or no key, never activates it.
+
+While it is active, `POST billing/checkout` and `POST billing/swap` answer `409` for everybody except the allowlist, and record a `request_refused` row:
+
+```json
+{
+  "message": "Purchases are not open yet; this server is running on Stripe test keys.",
+  "billing": { "reason": "stripe_test_mode", "provider": "stripe" }
+}
+```
+
+`MAGIC_STARTER_BILLING_STRIPE_TEST_EMAILS` (`billing.stripe_test_mode.emails`) is a comma-separated list of email addresses, trimmed and compared lower-cased.
+
+```bash
+MAGIC_STARTER_BILLING_STRIPE_TEST_EMAILS=reviewer@example.com,qa@example.com
+```
+
+- A caller passes only when their email is listed and **verified** (a user model that does not implement `MustVerifyEmail` is judged on the list alone). A guest never passes.
+- Cancel and the billing portal are never gated: a customer who already holds a subscription can always leave it.
+- With an empty list on a guarded server, every checkout and swap is refused.
+- `billing:doctor` reports `stripe.test_mode`: silent without a Stripe secret, `ok` on a live key, `ok` on a test key in `local` or `testing`, a `warning` on a guarded server with an empty list (naming the environment and the variable above), and `ok` with the number of entries otherwise. The addresses are never printed.
+
 ---
 
 <a name="agent-commands"></a>
@@ -527,7 +554,7 @@ php artisan billing:doctor --json
 php artisan billing:doctor --json --remote
 ```
 
-Without `--remote` it checks the configuration: the catalogue validates, the rail secrets that a sold product needs are set, `REVENUECAT_WEBHOOK_SECRET` exists while the store rail is on, every web-sold product has a Stripe price id, store ids are listed, billable keys are UUIDs, the subscription tables are keyed the way their models write them (`schema.subscription_keys`), the `billing_trials` table exists while a product offers a trial (`schema.billing_trials`), the `billing_events` table exists (`schema.billing_events`), the `billing_grants` table exists (`schema.billing_grants`), the billable table carries `billing_currency` while `pricing.country_header` is set (`schema.billing_currency`), the sandbox allowlist is consistent (`revenuecat.sandbox_allowlist`), and the reconcile cadence suits the store rail. With `--remote` it also reads Stripe and RevenueCat and diffs them against the manifest: a Stripe price per lookup key (id, interval, amounts), and the RevenueCat apps, products, entitlements, `default` offering, packages and webhook (that one delivers to this application's URL). RevenueCat returns a webhook's signing secret only when it is rotated, so whether HMAC signing is on cannot be read: the doctor reports it as an `agent_check` for a person to confirm in the dashboard.
+Without `--remote` it checks the configuration: the catalogue validates, the rail secrets that a sold product needs are set, `REVENUECAT_WEBHOOK_SECRET` exists while the store rail is on, every web-sold product has a Stripe price id, store ids are listed, billable keys are UUIDs, the subscription tables are keyed the way their models write them (`schema.subscription_keys`), the `billing_trials` table exists while a product offers a trial (`schema.billing_trials`), the `billing_events` table exists (`schema.billing_events`), the `billing_grants` table exists (`schema.billing_grants`), the billable table carries `billing_currency` while `pricing.country_header` is set (`schema.billing_currency`), the sandbox allowlist is consistent (`revenuecat.sandbox_allowlist`), the Stripe test-mode guard is accounted for (`stripe.test_mode`), and the reconcile cadence suits the store rail. With `--remote` it also reads Stripe and RevenueCat and diffs them against the manifest: a Stripe price per lookup key (id, interval, amounts), and the RevenueCat apps, products, entitlements, `default` offering, packages and webhook (that one delivers to this application's URL). RevenueCat returns a webhook's signing secret only when it is rotated, so whether HMAC signing is on cannot be read: the doctor reports it as an `agent_check` for a person to confirm in the dashboard.
 
 `REVENUECAT_API_V2_KEY` is a separate secret key scoped to `project_configuration:{apps,products,entitlements,offerings,packages,integrations}:read`, and `REVENUECAT_PROJECT_ID` names the project. Neither is needed to sell.
 

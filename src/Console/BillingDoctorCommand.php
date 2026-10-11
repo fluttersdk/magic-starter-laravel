@@ -13,6 +13,7 @@ use FlutterSdk\MagicStarter\Support\PriceTable;
 use FlutterSdk\MagicStarter\Support\RevenueCatProjectClient;
 use FlutterSdk\MagicStarter\Support\StoreRailConfiguration;
 use FlutterSdk\MagicStarter\Support\StripePriceReader;
+use FlutterSdk\MagicStarter\Support\StripeTestMode;
 use Illuminate\Console\Command;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Http\Client\ConnectionException;
@@ -112,6 +113,7 @@ class BillingDoctorCommand extends Command
             $this->checkBillingGrantsTable();
             $this->checkBillingCurrencyColumn();
             $this->checkSandboxAllowlist();
+            $this->checkStripeTestMode();
             $this->checkReconcileCadence();
 
             // 3. What the vendors hold, read and never written.
@@ -532,6 +534,63 @@ class BillingDoctorCommand extends Command
             'revenuecat.sandbox_allowlist',
             self::OK,
             "Billable keys allowlisted for RevenueCat sandbox events: {$count}.",
+        );
+    }
+
+    /**
+     * Whether the Stripe test-mode guard is holding checkout and swap, and who
+     * it lets through, by count: the emails are personal data and are never
+     * printed. Silent without a Stripe secret, since there is no Stripe rail to
+     * guard. The guard state and the count come from {@see StripeTestMode}, so
+     * this report and the guard itself cannot disagree; the key prefix is read
+     * only to word a test key in `local` or `testing`, which the guard exempts.
+     */
+    private function checkStripeTestMode(): void
+    {
+        $secret = (string) config('cashier.secret');
+
+        if ($secret === '') {
+            return;
+        }
+
+        $isTestKey = str_starts_with($secret, 'sk_test_') || str_starts_with($secret, 'rk_test_');
+
+        if (! $isTestKey) {
+            $this->check('stripe.test_mode', self::OK, 'Stripe live key: the test-mode guard is off.');
+
+            return;
+        }
+
+        $environment = app()->environment();
+
+        if (! StripeTestMode::active()) {
+            $this->check(
+                'stripe.test_mode',
+                self::OK,
+                "Stripe test key in the [{$environment}] environment: checkout is open for development.",
+            );
+
+            return;
+        }
+
+        $count = StripeTestMode::allowlistCount();
+
+        if ($count === 0) {
+            $this->check(
+                'stripe.test_mode',
+                self::WARNING,
+                "Stripe test key in the [{$environment}] environment with no allowlist: every checkout and swap is "
+                . 'refused until MAGIC_STARTER_BILLING_STRIPE_TEST_EMAILS names someone.',
+            );
+
+            return;
+        }
+
+        $this->check(
+            'stripe.test_mode',
+            self::OK,
+            "Stripe test key in the [{$environment}] environment: checkout and swap are open to the allowlist only "
+            . "(entries: {$count}).",
         );
     }
 

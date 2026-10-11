@@ -26,12 +26,12 @@ use Laravel\Cashier\Billable;
  * HTTP transport stubbed ({@see StripeHttpStub}).
  *
  * The builder fakes in {@see BillingWriteEndpointsTest} certify what the
- * controller asked the builder for. They cannot certify that Cashier turns
- * `trialDays()` into `subscription_data[trial_end]`, that the trial user tag
- * survives Cashier merging in its own `name` and `type`, or that the card
- * collection option survives `array_merge_recursive` with the builder's
- * payload. The webhook that records the trial reads those exact fields, so
- * this is where they are pinned.
+ * controller asked the builder for. They cannot certify that the trial length
+ * reaches Stripe as `subscription_data[trial_period_days]` and never as a fixed
+ * `trial_end`, that the trial user tag survives Cashier merging in its own
+ * `name` and `type`, or that the card collection option survives
+ * `array_merge_recursive` with the builder's payload. The webhook that records
+ * the trial reads those exact fields, so this is where they are pinned.
  */
 class TrialCheckoutPayloadTest extends TestCase
 {
@@ -128,14 +128,13 @@ class TrialCheckoutPayloadTest extends TestCase
     }
 
     /**
-     * An eligible caller's session carries the trial end, the trial user tag
+     * An eligible caller's session carries the trial length in days (never a
+     * fixed trial end, which Stripe Checkout shows one day short), the trial user tag
      * beside Cashier's own `type`, and the instruction to collect a card even
      * though the first invoice is zero.
      */
     public function test_an_eligible_checkout_sends_the_trial_and_the_trial_user_to_stripe(): void
     {
-        $this->freezeTime();
-
         $user = $this->createUser('payload-eligible@example.test');
 
         $this->buy($user)
@@ -151,7 +150,8 @@ class TrialCheckoutPayloadTest extends TestCase
         $this->assertSame('subscription', $params['mode']);
         $this->assertSame('price_pro', $params['line_items'][0]['price']);
         $this->assertSame('cus_trial_payload', $params['customer']);
-        $this->assertSame(now()->addDays(14)->getTimestamp(), $params['subscription_data']['trial_end']);
+        $this->assertSame(14, $params['subscription_data']['trial_period_days']);
+        $this->assertArrayNotHasKey('trial_end', $params['subscription_data']);
         $this->assertSame(
             (string) $user->getKey(),
             $params['subscription_data']['metadata']['magic_starter_trial_user'],
@@ -183,6 +183,7 @@ class TrialCheckoutPayloadTest extends TestCase
         $params = $this->sessionParams();
 
         $this->assertArrayNotHasKey('trial_end', $params['subscription_data']);
+        $this->assertArrayNotHasKey('trial_period_days', $params['subscription_data']);
         $this->assertArrayNotHasKey('magic_starter_trial_user', $params['subscription_data']['metadata']);
         $this->assertSame('default', $params['subscription_data']['metadata']['type']);
         $this->assertSame('always', $params['payment_method_collection']);
