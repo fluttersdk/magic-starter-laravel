@@ -157,9 +157,9 @@ Every key available in `config/magic-starter.php`:
 | `billing.revenuecat.base_url` | `env('REVENUECAT_BASE_URL')` | RevenueCat API base URL |
 | `billing.revenuecat.operation_budget_seconds` | `10` | Time budget for the whole retried read |
 | `billing.revenuecat.accept_sandbox` | `false` | Whether sandbox purchases may grant a tier. Never in production |
-| `billing.stripe_test_mode.emails` | `env('MAGIC_STARTER_BILLING_STRIPE_TEST_EMAILS')`, comma list | Emails allowed to check out or swap while a Stripe test key runs outside `local` and `testing`. Verified and lower-cased; empty refuses everybody |
 | `billing.revenuecat.api_v2_key` | `env('REVENUECAT_API_V2_KEY')` | RevenueCat v2 read key, used by `billing:doctor --remote` only |
 | `billing.revenuecat.project_id` | `env('REVENUECAT_PROJECT_ID')` | RevenueCat project id, used by `billing:doctor --remote` only |
+| `billing.stripe_test_mode.emails` | `env('MAGIC_STARTER_BILLING_STRIPE_TEST_EMAILS')`, comma list | Emails allowed to check out or swap while a Stripe key that is not provably live runs outside `local` and `testing`. Verified and lower-cased; empty refuses everybody |
 
 <a name="authentication-identity"></a>
 ## Authentication Identity
@@ -443,6 +443,6 @@ All environment variables recognized by the package:
 | `REVENUECAT_BASE_URL` | `billing.revenuecat.base_url` | RevenueCat's API | RevenueCat API base URL |
 | `REVENUECAT_OPERATION_BUDGET_SECONDS` | `billing.revenuecat.operation_budget_seconds` | `10` | Time budget for the whole retried read |
 | `REVENUECAT_ACCEPT_SANDBOX` | `billing.revenuecat.accept_sandbox` | `false` | Act on sandbox purchases. Never in production |
-| `MAGIC_STARTER_BILLING_STRIPE_TEST_EMAILS` | `billing.stripe_test_mode.emails` | empty | Comma-separated emails allowed to buy on a Stripe test key outside `local` and `testing` |
 | `REVENUECAT_API_V2_KEY` | `billing.revenuecat.api_v2_key` | `null` | v2 read key for `billing:doctor --remote` |
 | `REVENUECAT_PROJECT_ID` | `billing.revenuecat.project_id` | `null` | RevenueCat project id for `billing:doctor --remote` |
+| `MAGIC_STARTER_BILLING_STRIPE_TEST_EMAILS` | `billing.stripe_test_mode.emails` | empty | Comma-separated emails allowed to buy on a Stripe key that is not provably live, outside `local` and `testing` |

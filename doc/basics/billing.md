@@ -499,7 +499,9 @@ A store record that holds sandbox purchases only is never revoked by the store j
 
 A Stripe test key accepts test cards, so a public server left on one would sell a paid tier to anybody who types `4242 4242 4242 4242`. The guard refuses that, and lets named people through so a reviewer can still try a purchase.
 
-It is active when `CASHIER_SECRET` starts with `sk_test_` or `rk_test_` **and** the application environment is not `local` or `testing`. Any other name (`staging`, `production`, `prod`) is guarded. A live key, or no key, never activates it.
+It is active when `STRIPE_SECRET` (`cashier.secret`) is not provably live **and** the application environment is not `local` or `testing`. Only `sk_live_` and `rk_live_` prove a live key; `sk_test_`, `rk_test_` and any prefix that names no mode (an organisation key, a key a platform manages) are guarded. Any environment name other than `local` and `testing` (`staging`, `production`, `prod`) is guarded. A live key, or no key, never activates it.
+
+The allowlist trusts `email_verified_at`, so keep the `emailVerification` feature on while the guard is in force: with it on, changing an email address clears the verification, and a user cannot move onto a listed address that nobody verified.
 
 While it is active, `POST billing/checkout` and `POST billing/swap` answer `409` for everybody except the allowlist, and record a `request_refused` row:
 

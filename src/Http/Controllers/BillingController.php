@@ -37,7 +37,9 @@ use Laravel\Cashier\Exceptions\IncompletePayment;
 use Laravel\Cashier\Invoice;
 use Laravel\Cashier\PaymentMethod;
 use Stripe\Exception\ApiErrorException;
+use Stripe\Exception\CardException;
 use Stripe\StripeObject;
+use Stripe\Subscription as StripeSubscription;
 use Symfony\Component\HttpFoundation\Response as HttpResponse;
 
 /**
@@ -74,6 +76,10 @@ use Symfony\Component\HttpFoundation\Response as HttpResponse;
  *   server running a Stripe test key outside local development, by somebody
  *   not on the test allowlist ({@see StripeTestMode}). Cancel and the portal
  *   never raise it.
+ * - 402 with {@see self::REASON_PAYMENT_FAILED}, a swap that is charged at
+ *   once (an upgrade or a cycle change) was declined, and the plan is where it
+ *   was; {@see self::REASON_PAYMENT_REQUIRES_ACTION} when the card asked for a
+ *   confirmation step instead.
  * - 404 from a write, there is no card-rail subscription to change. Reached only
  *   AFTER the store guard, so it can never claim there is nothing to cancel
  *   while a store is still charging the customer every month.
@@ -146,6 +152,28 @@ class BillingController
      * simply not selling yet. Travels with `billing.provider` set to `stripe`.
      */
     public const REASON_STRIPE_TEST_MODE = 'stripe_test_mode';
+
+    /**
+     * A swap that is charged at once (an upgrade, or a cycle change) was
+     * declined by the card, so Stripe applied nothing and the plan has not
+     * moved. Travels with a 402 and `billing.provider` set to `stripe`; the
+     * customer's next step is a working payment method.
+     */
+    public const REASON_PAYMENT_FAILED = 'payment_failed';
+
+    /**
+     * A swap that is charged at once needed the card holder to confirm the
+     * payment (3D Secure), which an in-place swap cannot ask for, so Stripe
+     * applied nothing. Its own reason because "declined" would send the
+     * customer to replace a card that works. Travels with a 402.
+     */
+    public const REASON_PAYMENT_REQUIRES_ACTION = 'payment_requires_action';
+
+    /**
+     * Stripe's code for a charged swap whose payment needs the card holder to
+     * act, under `error_if_incomplete`.
+     */
+    private const STRIPE_CODE_REQUIRES_ACTION = 'subscription_payment_intent_requires_action';
 
     /**
      * The 422 `code` for a checkout or swap naming a product this rail cannot
@@ -585,8 +613,12 @@ class BillingController
 
         try {
             // 1. The renewal date favours the local trial end (a plain column
-            //    read) and only falls back to the live period end when there is
-            //    no trial, which is a rail retrieval.
+            //    read) while the trial is still running, and otherwise takes the
+            //    live period end, which is a rail retrieval. A trial end in the
+            //    past is history, not a renewal: Cashier keeps it on the row
+            //    after the trial converts, and preferring it whenever it was set
+            //    told every converted customer the plan renewed, or ended, on the
+            //    day the trial did.
             //
             //    This endpoint used to make exactly one, and the docblocks below
             //    said so. It no longer does: on the common post-checkout state
@@ -596,9 +628,12 @@ class BillingController
             //    customer whose card Stripe filed on the subscription, and it is
             //    still the only rail-live read on the billing screen.
             $subscription = $this->defaultSubscription($billable);
-            $renewalDate = $subscription === null
-                ? null
-                : $this->dateAttribute($subscription, 'trial_ends_at') ?? $this->periodEnd($subscription);
+            $trialEnd = $subscription === null ? null : $this->dateAttribute($subscription, 'trial_ends_at');
+            $renewalDate = match (true) {
+                $subscription === null => null,
+                $trialEnd !== null && $trialEnd->isFuture() => $trialEnd,
+                default => $this->periodEnd($subscription),
+            };
 
             // 2. Only a Cashier PaymentMethod exposes a card, and a billable
             //    whose application never applied Cashier's trait has none to
@@ -836,7 +871,9 @@ class BillingController
         //     7 survive beside this key. `trial_end` is never sent with it:
         //     Stripe takes one or the other.
         if ($offeredTrialDays > 0) {
-            $sessionOptions['subscription_data'] = ['trial_period_days' => $offeredTrialDays];
+            $sessionOptions['subscription_data'] = [
+                'trial_period_days' => $offeredTrialDays,
+            ];
         }
 
         if ($currency !== null) {
@@ -931,8 +968,24 @@ class BillingController
         //    update (the meter lookup for a metered item) leaves Stripe and the
         //    local row on the new price with no request row. The webhook that
         //    update triggers still records the outcome as `entitlement_applied`.
+        //
+        //    An upgrade, or a cycle change, is charged NOW and refused on a
+        //    declined card. Cashier's default proration parks the difference
+        //    on the next invoice, which handed a customer moving from an
+        //    annual Starter to an annual Pro a year of Pro before the
+        //    difference was billed. `error_if_incomplete` makes Stripe refuse
+        //    the update outright when the charge fails, so a decline leaves
+        //    the old price, the old tier and no swap row, rather than the new
+        //    tier on an unpaid invoice. A downgrade on the same cycle keeps the
+        //    default: its unused time is a credit on the next invoice.
         try {
-            $subscription->swap($priceId);
+            if ($this->swapChargesNow($subscription, $validated['product'])) {
+                $subscription->errorIfPaymentFails()->swapAndInvoice($priceId);
+            } else {
+                $subscription->swap($priceId);
+            }
+        } catch (CardException $exception) {
+            $this->refuseDeclinedSwap($billable, $validated['product'], $exception);
         } catch (IncompletePayment $exception) {
             $this->recordSwap($request, $billable, $subscription, $validated['product'], $priceId, [
                 'payment' => 'incomplete',
@@ -1342,6 +1395,90 @@ class BillingController
             app(ResolvesBillingCurrency::class)->resolve($request, $billable),
             BillingCatalogue::pricing()['currency'],
         );
+    }
+
+    /**
+     * Whether a swap of [$subscription] onto catalogue product [$targetKey] is
+     * charged now rather than on the next invoice.
+     *
+     * Ranked on the catalogue, never on prices: catalogue prices are display
+     * figures, and what Stripe charges is the price the product maps to. An
+     * upgrade (a higher tier) and a cycle change are charged now; Stripe moves
+     * the billing date on a cycle change and attempts payment at once anyway,
+     * so it needs the same declined-card guard. A same-cycle downgrade is not.
+     * A running trial owes nothing yet, and Cashier keeps the trial end on the
+     * swap, so nothing is charged during one; "running" is the row's status AND
+     * a future trial end, because a trial Stripe ended early keeps its original
+     * end on the row until the webhook lands. A current price the catalogue
+     * does not map is charged now, the safe side: a negative invoice lands on
+     * the customer's balance, an unbilled upgrade lands nowhere. So is a move
+     * between two prices of the same tier and cycle (a grandfathered price onto
+     * the current one): nothing ranks higher, but the difference is real money.
+     */
+    protected function swapChargesNow(Model $subscription, string $targetKey): bool
+    {
+        $trialRunning = $this->stringAttribute($subscription, 'stripe_status') === StripeSubscription::STATUS_TRIALING
+            && $this->dateAttribute($subscription, 'trial_ends_at')?->isFuture() === true;
+
+        if ($trialRunning) {
+            return false;
+        }
+
+        $current = BillingCatalogue::productForStripePrice($this->stringAttribute($subscription, 'stripe_price'));
+        $target = BillingCatalogue::product($targetKey);
+
+        if ($current === null || $target === null) {
+            return true;
+        }
+
+        $order = BillingCatalogue::tierOrder();
+        $currentRank = array_search($current['tier'] ?? null, $order, true);
+        $targetRank = array_search($target['tier'] ?? null, $order, true);
+
+        if ($currentRank === false || $targetRank === false) {
+            return true;
+        }
+
+        if ($targetRank !== $currentRank) {
+            return $targetRank > $currentRank;
+        }
+
+        return ($current['cycle'] ?? null) !== ($target['cycle'] ?? null)
+            || ($current['refs']['stripe_price'] ?? null) !== ($target['refs']['stripe_price'] ?? null);
+    }
+
+    /**
+     * Refuse a swap the card declined: Stripe applied nothing under
+     * `error_if_incomplete`, so the plan has not moved and no swap row is
+     * written. One `request_refused` row records it, with the product asked
+     * for and Stripe's decline code, which is what a support question about a
+     * refused upgrade needs.
+     */
+    protected function refuseDeclinedSwap(Model $billable, string $key, CardException $exception): never
+    {
+        $reason = $exception->getStripeCode() === self::STRIPE_CODE_REQUIRES_ACTION
+            ? self::REASON_PAYMENT_REQUIRES_ACTION
+            : self::REASON_PAYMENT_FAILED;
+
+        $this->recorder->record(
+            BillingEventType::REQUEST_REFUSED,
+            BillingSource::REQUEST,
+            $billable,
+            provider: BillingProvider::STRIPE,
+            reason: $reason,
+            properties: [
+                'product' => $key,
+                'decline_code' => $exception->getDeclineCode() ?? $exception->getStripeCode(),
+            ],
+        );
+
+        throw new HttpResponseException(response()->json([
+            'message' => __("magic-starter::billing.refusals.{$reason}"),
+            'billing' => [
+                'reason' => $reason,
+                'provider' => BillingProvider::STRIPE->value,
+            ],
+        ], HttpResponse::HTTP_PAYMENT_REQUIRED));
     }
 
     /**

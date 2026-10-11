@@ -664,6 +664,20 @@ class BillingDoctorCommandTest extends TestCase
         $this->assertSame('Stripe live key: the test-mode guard is off.', $check['message']);
     }
 
+    public function test_a_key_with_an_unrecognised_prefix_is_reported_as_guarded_not_live(): void
+    {
+        config([
+            'cashier.secret' => 'sk_org_doctor',
+            'magic-starter.billing.stripe_test_mode.emails' => [],
+        ]);
+        $this->app->detectEnvironment(fn (): string => 'production');
+
+        $check = $this->doctor()['checks']['stripe.test_mode'];
+
+        $this->assertSame('warning', $check['status']);
+        $this->assertStringContainsString('every checkout and swap is refused', $check['message']);
+    }
+
     public function test_a_stripe_test_key_in_a_local_environment_reports_checkout_open_for_development(): void
     {
         config(['cashier.secret' => 'sk_test_doctor']);

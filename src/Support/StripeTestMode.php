@@ -16,26 +16,43 @@ use Illuminate\Database\Eloquent\Model;
  * {@see self::active()} holds, and `billing:doctor` reports the same state, so
  * the predicate exists once rather than in both.
  *
- * Fails CLOSED on the environment: only `local` and `testing` are exempt, so a
- * box named `staging`, `prod` or anything else on a test key is guarded.
+ * Fails CLOSED twice: only `local` and `testing` are exempt, so a box named
+ * `staging`, `prod` or anything else on a test key is guarded; and only a key
+ * that proves it is live (`sk_live_`, `rk_live_`) counts as live, so a key
+ * whose prefix names no mode is guarded too.
  */
 final class StripeTestMode
 {
     /**
-     * Whether the guard is in force: a test key outside local development.
-     *
-     * Restricted keys count too, because `rk_test_` is as much a test key as
-     * `sk_test_`. A live key, or no key at all, answers no.
+     * Whether the guard is in force: a key that is not provably live, outside
+     * local development. No key at all answers no.
      */
     public static function active(): bool
     {
-        $secret = (string) config('cashier.secret');
-
-        if (! str_starts_with($secret, 'sk_test_') && ! str_starts_with($secret, 'rk_test_')) {
+        if (! self::isTestKey((string) config('cashier.secret'))) {
             return false;
         }
 
         return ! app()->environment(['local', 'testing']);
+    }
+
+    /**
+     * Whether [$secret] must be treated as a test key: set, and not one of the
+     * two prefixes that prove a live key.
+     *
+     * `sk_test_` and `rk_test_` are test keys by name, but Stripe also issues
+     * shapes whose prefix spells out no mode (organisation keys, keys a
+     * platform manages). Reading those as live would switch the guard off on
+     * the very box it exists for, so anything short of `sk_live_` or
+     * `rk_live_` is a test key here. An empty secret is no key, not a test key.
+     */
+    public static function isTestKey(string $secret): bool
+    {
+        if ($secret === '') {
+            return false;
+        }
+
+        return ! str_starts_with($secret, 'sk_live_') && ! str_starts_with($secret, 'rk_live_');
     }
 
     /**

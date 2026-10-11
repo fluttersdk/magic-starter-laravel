@@ -1586,6 +1586,41 @@ class StripeWebhookTest extends TestCase
     }
 
     /**
+     * A $0 invoice paid INSIDE a running trial keeps the trial, whatever
+     * prompted it. A cycle change during a trial makes Stripe issue a $0
+     * `subscription_update` invoice with the subscription still trialing, and
+     * stamping `active` from it took the trial off the screen (measured on the
+     * sandbox after a monthly to annual swap during a Pro trial).
+     */
+    public function test_a_zero_invoice_inside_a_running_trial_keeps_the_trial_status(): void
+    {
+        $billable = $this->createBillable();
+
+        $this->postSignedWebhook($this->subscriptionEvent(
+            'evt_trial_created',
+            'customer.subscription.created',
+            'price_pro',
+            'trialing',
+        ))->assertOk();
+
+        CashierSubscription::query()->sole()->forceFill(['trial_ends_at' => now()->addDays(5)])->save();
+
+        $this->postSignedWebhook($this->invoiceEvent('evt_trial_swap_invoice', static::EVENT_AT + 5, [
+            'billing_reason' => 'subscription_update',
+            'amount_paid' => 0,
+            'subscription' => 'sub_webhook_test',
+        ]))->assertOk();
+
+        $billable->refresh();
+        $this->assertSame(PlanStatus::TRIALING->value, $billable->getAttribute('plan_status'));
+        $this->assertSame('trialing', $billable->getAttribute('plan_provider_status'));
+
+        // It affirms nothing: no projection is stamped, so it can never win a
+        // race against the subscription event that really moved the trial.
+        $this->assertSame(static::EVENT_AT, $this->storedTimestamp($billable, 'plan_source_event_at'));
+    }
+
+    /**
      * A $0 `subscription_create` invoice with no trial behind it (a fully
      * discounted first period) is the start of a paid subscription, so it
      * stays `active`: the local row is asked as well as the invoice.

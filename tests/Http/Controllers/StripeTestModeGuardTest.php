@@ -234,6 +234,29 @@ class StripeTestModeGuardTest extends TestCase
     }
 
     /**
+     * A key whose prefix names no live mode is guarded like a test key.
+     *
+     * Only `sk_live_` and `rk_live_` prove a live key. Stripe issues other
+     * shapes (organisation keys, keys a platform manages) whose mode the
+     * prefix does not spell out, and reading those as live would switch the
+     * guard off on exactly the box it exists for.
+     */
+    public function test_a_key_with_an_unrecognised_prefix_is_guarded(): void
+    {
+        config([
+            'cashier.secret' => 'sk_org_x',
+        ]);
+
+        $user = $this->createUser('unrecognised@example.test');
+
+        $this->checkout($user)
+            ->assertStatus(409)
+            ->assertJsonPath('billing.reason', BillingController::REASON_STRIPE_TEST_MODE);
+
+        $this->assertSame([], $this->stripe->requests);
+    }
+
+    /**
      * (e) A live key turns the guard off: anybody may buy.
      */
     public function test_a_live_key_lets_a_user_who_is_not_allowlisted_buy(): void
