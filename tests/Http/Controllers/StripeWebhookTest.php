@@ -1614,6 +1614,10 @@ class StripeWebhookTest extends TestCase
         $billable->refresh();
         $this->assertSame(PlanStatus::TRIALING->value, $billable->getAttribute('plan_status'));
         $this->assertSame('trialing', $billable->getAttribute('plan_provider_status'));
+
+        // It affirms nothing: no projection is stamped, so it can never win a
+        // race against the subscription event that really moved the trial.
+        $this->assertSame(static::EVENT_AT, $this->storedTimestamp($billable, 'plan_source_event_at'));
     }
 
     /**

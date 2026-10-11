@@ -588,7 +588,8 @@ class StripeWebhookController extends CashierWebhookController
      * A paid subscription invoice re-affirms the entitlement tier read from the
      * billable's synced Cashier subscription price, as `active`, or as
      * `trialing` for a trial's $0 `subscription_create` invoice while that row
-     * still says `trialing`.
+     * still says `trialing`. Any other $0 invoice paid inside a running trial
+     * affirms nothing and writes nothing.
      *
      * @param  array<string, mixed>  $object
      * @param  string  $eventId  The delivery's Stripe event id, which the
@@ -654,18 +655,25 @@ class StripeWebhookController extends CashierWebhookController
         // for the whole first paid period. The row is still asked, so a $0
         // first invoice with no trial behind it (a full discount) stays active.
         //
-        // A $0 invoice paid while the local trial end is still AHEAD is the
-        // same case from another door: a cycle change during a trial makes
-        // Stripe issue a $0 `subscription_update` invoice and leaves the
-        // subscription trialing. The trial end being in the future is what
-        // keeps the conversion race above out of it: once the trial is over a
-        // $0 invoice is a discount, not a trial.
         $rowTrialing = $this->stringAttribute($subscription, 'stripe_status') === StripeSubscription::STATUS_TRIALING;
-        $trialing = $rowTrialing && (
-            $this->isTrialStartInvoice($object)
-            || (($object['amount_paid'] ?? null) === 0
-                && $this->dateAttribute($subscription, 'trial_ends_at')?->isFuture() === true)
-        );
+
+        // Any OTHER $0 invoice paid while the trial is still running (the row
+        // says trialing and its end is ahead) affirms nothing: a cycle change
+        // during a trial makes Stripe issue a $0 `subscription_update` invoice
+        // and leaves the subscription trialing, and stamping `active` from it
+        // took the trial off the screen. Writing `trialing` instead would be a
+        // projection that can win a race against the subscription event that
+        // really moved the trial (a trial ended early on a fully discounted
+        // invoice), so nothing is written at all; that subscription event
+        // carries the truth either way.
+        if ($rowTrialing
+            && ! $this->isTrialStartInvoice($object)
+            && ($object['amount_paid'] ?? null) === 0
+            && $this->dateAttribute($subscription, 'trial_ends_at')?->isFuture() === true) {
+            return;
+        }
+
+        $trialing = $rowTrialing && $this->isTrialStartInvoice($object);
         $providerStatus = $trialing ? StripeSubscription::STATUS_TRIALING : StripeSubscription::STATUS_ACTIVE;
 
         $this->claim(new EntitlementWrite(

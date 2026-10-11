@@ -39,6 +39,7 @@ use Laravel\Cashier\PaymentMethod;
 use Stripe\Exception\ApiErrorException;
 use Stripe\Exception\CardException;
 use Stripe\StripeObject;
+use Stripe\Subscription as StripeSubscription;
 use Symfony\Component\HttpFoundation\Response as HttpResponse;
 
 /**
@@ -77,7 +78,8 @@ use Symfony\Component\HttpFoundation\Response as HttpResponse;
  *   never raise it.
  * - 402 with {@see self::REASON_PAYMENT_FAILED}, a swap that is charged at
  *   once (an upgrade or a cycle change) was declined, and the plan is where it
- *   was.
+ *   was; {@see self::REASON_PAYMENT_REQUIRES_ACTION} when the card asked for a
+ *   confirmation step instead.
  * - 404 from a write, there is no card-rail subscription to change. Reached only
  *   AFTER the store guard, so it can never claim there is nothing to cancel
  *   while a store is still charging the customer every month.
@@ -158,6 +160,20 @@ class BillingController
      * customer's next step is a working payment method.
      */
     public const REASON_PAYMENT_FAILED = 'payment_failed';
+
+    /**
+     * A swap that is charged at once needed the card holder to confirm the
+     * payment (3D Secure), which an in-place swap cannot ask for, so Stripe
+     * applied nothing. Its own reason because "declined" would send the
+     * customer to replace a card that works. Travels with a 402.
+     */
+    public const REASON_PAYMENT_REQUIRES_ACTION = 'payment_requires_action';
+
+    /**
+     * Stripe's code for a charged swap whose payment needs the card holder to
+     * act, under `error_if_incomplete`.
+     */
+    private const STRIPE_CODE_REQUIRES_ACTION = 'subscription_payment_intent_requires_action';
 
     /**
      * The 422 `code` for a checkout or swap naming a product this rail cannot
@@ -1391,13 +1407,20 @@ class BillingController
      * the billing date on a cycle change and attempts payment at once anyway,
      * so it needs the same declined-card guard. A same-cycle downgrade is not.
      * A running trial owes nothing yet, and Cashier keeps the trial end on the
-     * swap, so nothing is charged during one. A current price the catalogue
+     * swap, so nothing is charged during one; "running" is the row's status AND
+     * a future trial end, because a trial Stripe ended early keeps its original
+     * end on the row until the webhook lands. A current price the catalogue
      * does not map is charged now, the safe side: a negative invoice lands on
-     * the customer's balance, an unbilled upgrade lands nowhere.
+     * the customer's balance, an unbilled upgrade lands nowhere. So is a move
+     * between two prices of the same tier and cycle (a grandfathered price onto
+     * the current one): nothing ranks higher, but the difference is real money.
      */
     protected function swapChargesNow(Model $subscription, string $targetKey): bool
     {
-        if ($this->dateAttribute($subscription, 'trial_ends_at')?->isFuture() === true) {
+        $trialRunning = $this->stringAttribute($subscription, 'stripe_status') === StripeSubscription::STATUS_TRIALING
+            && $this->dateAttribute($subscription, 'trial_ends_at')?->isFuture() === true;
+
+        if ($trialRunning) {
             return false;
         }
 
@@ -1416,7 +1439,12 @@ class BillingController
             return true;
         }
 
-        return $targetRank > $currentRank || ($current['cycle'] ?? null) !== ($target['cycle'] ?? null);
+        if ($targetRank !== $currentRank) {
+            return $targetRank > $currentRank;
+        }
+
+        return ($current['cycle'] ?? null) !== ($target['cycle'] ?? null)
+            || ($current['refs']['stripe_price'] ?? null) !== ($target['refs']['stripe_price'] ?? null);
     }
 
     /**
@@ -1428,12 +1456,16 @@ class BillingController
      */
     protected function refuseDeclinedSwap(Model $billable, string $key, CardException $exception): never
     {
+        $reason = $exception->getStripeCode() === self::STRIPE_CODE_REQUIRES_ACTION
+            ? self::REASON_PAYMENT_REQUIRES_ACTION
+            : self::REASON_PAYMENT_FAILED;
+
         $this->recorder->record(
             BillingEventType::REQUEST_REFUSED,
             BillingSource::REQUEST,
             $billable,
             provider: BillingProvider::STRIPE,
-            reason: self::REASON_PAYMENT_FAILED,
+            reason: $reason,
             properties: [
                 'product' => $key,
                 'decline_code' => $exception->getDeclineCode() ?? $exception->getStripeCode(),
@@ -1441,9 +1473,9 @@ class BillingController
         );
 
         throw new HttpResponseException(response()->json([
-            'message' => __('magic-starter::billing.refusals.payment_failed'),
+            'message' => __("magic-starter::billing.refusals.{$reason}"),
             'billing' => [
-                'reason' => self::REASON_PAYMENT_FAILED,
+                'reason' => $reason,
                 'provider' => BillingProvider::STRIPE->value,
             ],
         ], HttpResponse::HTTP_PAYMENT_REQUIRED));

@@ -98,6 +98,13 @@ return [
         'payment_failed' => 'Your card was declined, so your plan has not changed. Update your payment method and try again.',
 
         /*
+         * An upgrade or a cycle change whose card asked for a confirmation
+         * step (3D Secure), which a plan change here cannot show. The card
+         * works, so the sentence does not ask the customer to replace it.
+         */
+        'payment_requires_action' => 'Your bank asked to confirm this payment, which a plan change cannot do here, so your plan has not changed. Try a card that does not ask for confirmation, or contact us.',
+
+        /*
          * The three refusals the card-rail WRITES raise. Two of them describe a
          * gap in the adopter's own configuration rather than a fault in the
          * request, and they name the key that closes it: without that, an

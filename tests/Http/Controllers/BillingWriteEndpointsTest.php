@@ -484,7 +484,7 @@ class BillingWriteEndpointsTest extends TestCase
 
         $user = $this->createUser('trial-upgrade@example.test');
 
-        BillingWriteRail::$subscription = $this->subscriptionOn('price_pro_monthly', now()->addDays(5));
+        BillingWriteRail::$subscription = $this->subscriptionOn('price_pro_monthly', now()->addDays(5), 'trialing');
         $this->write($user, '/billing/swap', ['product' => 'business_monthly'])->assertOk();
         $this->assertFalse(BillingWriteSubscription::$invoicedNow);
 
@@ -493,6 +493,74 @@ class BillingWriteEndpointsTest extends TestCase
         BillingWriteRail::$subscription = $this->subscriptionOn('price_pro_monthly', now()->subDays(5));
         $this->write($user, '/billing/swap', ['product' => 'business_monthly'])->assertOk();
         $this->assertTrue(BillingWriteSubscription::$invoicedNow);
+
+        BillingWriteSubscription::reset();
+
+        // A trial Stripe already ended early still carries its original end on
+        // the row until the webhook lands; the row's status is what says the
+        // trial is over, so the upgrade is charged.
+        BillingWriteRail::$subscription = $this->subscriptionOn('price_pro_monthly', now()->addDays(5), 'active');
+        $this->write($user, '/billing/swap', ['product' => 'business_monthly'])->assertOk();
+        $this->assertTrue(BillingWriteSubscription::$invoicedNow);
+    }
+
+    /**
+     * A move between two products of the same tier and cycle at different
+     * prices (a grandfathered one onto the current one) is charged now: the
+     * price difference is real money even though nothing ranks higher.
+     */
+    public function test_a_move_between_two_prices_of_the_same_tier_and_cycle_is_invoiced_at_once(): void
+    {
+        $this->useSwapCatalogue();
+        config([
+            'magic-starter.billing.products.pro_monthly_legacy' => [
+                'type' => 'subscription',
+                'tier' => 'pro',
+                'cycle' => 'monthly',
+                'sellable' => false,
+                'refs' => ['stripe_price' => 'price_pro_monthly_legacy'],
+            ],
+        ]);
+        $this->bootBillingRoutes('user');
+
+        $user = $this->createUser('legacy@example.test');
+        BillingWriteRail::$subscription = $this->subscriptionOn('price_pro_monthly_legacy');
+
+        $this->write($user, '/billing/swap', ['product' => 'pro_monthly'])->assertOk();
+
+        $this->assertTrue(BillingWriteSubscription::$invoicedNow);
+    }
+
+    /**
+     * A card that asks for an extra confirmation step is told so, not that it
+     * was declined: Stripe answers `subscription_payment_intent_requires_action`
+     * under `error_if_incomplete`, and "your card was declined" sends the
+     * customer to replace a card that works.
+     */
+    public function test_an_upgrade_needing_card_confirmation_is_refused_with_its_own_reason(): void
+    {
+        $this->useSwapCatalogue();
+        $this->bootBillingRoutes('user');
+
+        $user = $this->createUser('three-ds@example.test');
+        BillingWriteRail::$subscription = $this->subscriptionOn('price_pro_monthly');
+        BillingWriteSubscription::$swapFailure = CardException::factory(
+            'This payment requires additional user action.',
+            402,
+            null,
+            null,
+            null,
+            'subscription_payment_intent_requires_action',
+        );
+
+        $this->write($user, '/billing/swap', ['product' => 'business_monthly'])
+            ->assertStatus(402)
+            ->assertJsonPath('billing.reason', BillingController::REASON_PAYMENT_REQUIRES_ACTION);
+
+        $this->assertSame(
+            BillingController::REASON_PAYMENT_REQUIRES_ACTION,
+            BillingEvent::query()->firstOrFail()->reason,
+        );
     }
 
     /**
@@ -1911,10 +1979,14 @@ class BillingWriteEndpointsTest extends TestCase
      * The local `default` subscription on a Stripe price, optionally in a
      * trial ending at [$trialEndsAt].
      */
-    private function subscriptionOn(string $price, ?Carbon $trialEndsAt = null): BillingWriteSubscription
-    {
+    private function subscriptionOn(
+        string $price,
+        ?Carbon $trialEndsAt = null,
+        string $status = 'active',
+    ): BillingWriteSubscription {
         $subscription = new BillingWriteSubscription;
         $subscription->setAttribute('stripe_price', $price);
+        $subscription->setAttribute('stripe_status', $status);
         $subscription->setAttribute('trial_ends_at', $trialEndsAt);
 
         return $subscription;
