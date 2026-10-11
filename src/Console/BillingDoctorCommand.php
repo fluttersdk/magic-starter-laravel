@@ -542,8 +542,8 @@ class BillingDoctorCommand extends Command
      * it lets through, by count: the emails are personal data and are never
      * printed. Silent without a Stripe secret, since there is no Stripe rail to
      * guard. The guard state and the count come from {@see StripeTestMode}, so
-     * this report and the guard itself cannot disagree; the key prefix is read
-     * only to word a test key in `local` or `testing`, which the guard exempts.
+     * this report and the guard itself cannot disagree, including on a key
+     * whose prefix names no mode, which both treat as a test key.
      */
     private function checkStripeTestMode(): void
     {
@@ -553,9 +553,7 @@ class BillingDoctorCommand extends Command
             return;
         }
 
-        $isTestKey = str_starts_with($secret, 'sk_test_') || str_starts_with($secret, 'rk_test_');
-
-        if (! $isTestKey) {
+        if (! StripeTestMode::isTestKey($secret)) {
             $this->check('stripe.test_mode', self::OK, 'Stripe live key: the test-mode guard is off.');
 
             return;
