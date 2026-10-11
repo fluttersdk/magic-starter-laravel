@@ -9,6 +9,7 @@ use FlutterSdk\MagicStarter\MagicStarter;
 use FlutterSdk\MagicStarter\MagicStarterServiceProvider;
 use FlutterSdk\MagicStarter\Models\BillingEvent;
 use FlutterSdk\MagicStarter\Support\ConditionallyUsesUuids;
+use FlutterSdk\MagicStarter\Support\StripeTestMode;
 use FlutterSdk\MagicStarter\Tests\Support\StripeHttpStub;
 use FlutterSdk\MagicStarter\Tests\TestCase;
 use FlutterSdk\MagicStarter\Traits\HasGuestSupport;
@@ -382,6 +383,31 @@ class StripeTestModeGuardTest extends TestCase
             ->assertJsonPath('billing.reason', BillingController::REASON_STRIPE_TEST_MODE);
 
         $this->assertSame([], $this->stripe->requests);
+    }
+
+    /**
+     * (l) The allowlist is only ever consulted for a person who has an email:
+     * no user at all, an authenticatable that is not an Eloquent model and a
+     * user without an address are all refused, even when the list is not empty.
+     */
+    public function test_a_caller_without_an_identity_the_list_can_match_is_refused(): void
+    {
+        $this->allowlist('stranger@example.test');
+
+        $this->assertFalse(StripeTestMode::allows(null));
+
+        $notAModel = new class implements AuthenticatableContract
+        {
+            use AuthenticatableTrait;
+        };
+
+        $this->assertFalse(StripeTestMode::allows($notAModel));
+
+        $noEmail = $this->createUser(null);
+
+        $this->assertFalse(StripeTestMode::allows($noEmail));
+
+        $this->assertTrue(StripeTestMode::allows($this->createUser('stranger@example.test')));
     }
 
     /**
