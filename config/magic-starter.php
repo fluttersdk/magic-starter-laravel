@@ -418,11 +418,12 @@ return [
     |             with, default 0 (no trial). Only the WEB rail honours it: a
     |             Stripe Checkout session starts the trial, while a store trial
     |             is configured in App Store Connect or Play Console and this key
-    |             never reaches either. Stripe Checkout (through Cashier)
-    |             enforces a minimum of 48 hours, so 1 would silently become 2
-    |             and is refused, as is anything above 730 (the longest trial
-    |             Stripe accepts), a negative or non-integer value and any
-    |             non-zero value on a product that is not a subscription.
+    |             never reaches either. The checkout sends it as Stripe's
+    |             `trial_period_days`, so the trial starts when the customer
+    |             completes Checkout and the page shows the full length. 0 to
+    |             730 (the longest trial Stripe accepts); anything above, a
+    |             negative or non-integer value and any non-zero value on a
+    |             product that is not a subscription is refused.
     |             Whether a given customer still gets the trial is decided per
     |             user and billable at checkout, never by this key alone: it is
     |             the length offered, not a promise made to everybody.
@@ -837,8 +838,9 @@ return [
         |--------------------------------------------------------------------------
         |
         | Who may open a checkout or swap a plan while this server runs on a
-        | Stripe TEST key (`sk_test_` or `rk_test_` in `cashier.secret`) in any
-        | environment other than `local` or `testing`. Everybody else gets a 409
+        | Stripe key that is not provably live (anything in `cashier.secret`
+        | but `sk_live_` or `rk_live_`) in any environment other than `local`
+        | or `testing`. Everybody else gets a 409
         | `stripe_test_mode`, so a public box on test keys cannot hand out a paid
         | tier against a test card. A name other than those two, `staging`
         | included, is guarded: the check fails closed.
@@ -850,6 +852,8 @@ return [
         | key outside local development.
         |
         | A LIVE key turns the guard off entirely and the list is never read.
+        | The list trusts `email_verified_at`, so keep the emailVerification
+        | feature on while the guard is in force.
         | Cancel and the portal are never gated, so a sandbox subscriber can
         | always leave. The store rail has its own allowlist,
         | REVENUECAT_SANDBOX_APP_USER_IDS above.

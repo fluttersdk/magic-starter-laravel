@@ -843,7 +843,9 @@ class BillingController
         //     7 survive beside this key. `trial_end` is never sent with it:
         //     Stripe takes one or the other.
         if ($offeredTrialDays > 0) {
-            $sessionOptions['subscription_data'] = ['trial_period_days' => $offeredTrialDays];
+            $sessionOptions['subscription_data'] = [
+                'trial_period_days' => $offeredTrialDays,
+            ];
         }
 
         if ($currency !== null) {
