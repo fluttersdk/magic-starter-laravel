@@ -4,6 +4,16 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Fixed
+
+- **An upgrade is charged when it is granted.** `POST billing/swap` used Cashier's default proration, which parks the difference on the next invoice: a move from an annual Starter to an annual Pro granted Pro at once and billed the difference a year later. A swap to a higher tier, or to another cycle, now invoices at once with `error_if_incomplete`, so a declined card changes nothing and answers `402` with `billing.reason` `payment_failed` (one `request_refused` row, no `subscription_swapped` row). A same-cycle downgrade keeps the credit on the next invoice, and nothing is charged during a running trial. (`src/Http/Controllers/BillingController.php`, `lang/en/billing.php`, `lang/tr/billing.php`)
+- **The renewal date after a trial.** `GET billing/payment-method` preferred `trial_ends_at` whenever it was set, and Cashier keeps it after the trial converts, so every converted customer read "renews" (or, once cancelled, "ends") on the day the trial ended. The trial end is used only while it is in the future; otherwise the live period end. (`src/Http/Controllers/BillingController.php`)
+
+### Changed
+
+- **The Stripe test-mode guard fails closed on the key.** Only `sk_live_` and `rk_live_` count as live; any other set key, an organisation or platform-managed key whose prefix names no mode included, is guarded. `StripeTestMode::isTestKey()` is the one predicate the guard and `billing:doctor` share. (`src/Support/StripeTestMode.php`, `src/Console/BillingDoctorCommand.php`)
+- **Docs**: the `trial_days` note in the shipped config no longer claims a 48 hour Checkout minimum, the test-mode section names `STRIPE_SECRET` and says the allowlist relies on the `emailVerification` feature, and the configuration rows sit with their groups. (`config/magic-starter.php`, `doc/basics/billing.md`, `doc/getting-started/configuration.md`)
+
 ## [0.0.27] - 2026-10-11
 
 ### Added
