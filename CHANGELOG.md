@@ -4,6 +4,8 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [0.0.28] - 2026-10-11
+
 ### Fixed
 
 - **An upgrade is charged when it is granted.** `POST billing/swap` used Cashier's default proration, which parks the difference on the next invoice: a move from an annual Starter to an annual Pro granted Pro at once and billed the difference a year later. A swap to a higher tier, to another cycle, or between two prices of the same tier and cycle, now invoices at once with `error_if_incomplete`, so a declined card changes nothing and answers `402` with `billing.reason` `payment_failed`, or `payment_requires_action` when the card asked for a 3D Secure confirmation an in-place swap cannot show (one `request_refused` row, no `subscription_swapped` row). A same-cycle downgrade keeps the credit on the next invoice, and nothing is charged during a running trial (the row says `trialing` and its end is ahead). (`src/Http/Controllers/BillingController.php`, `lang/en/billing.php`, `lang/tr/billing.php`)
