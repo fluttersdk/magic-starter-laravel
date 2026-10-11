@@ -2,6 +2,7 @@
 
 namespace FlutterSdk\MagicStarter\Tests\Http\Controllers;
 
+use Carbon\CarbonInterface;
 use FlutterSdk\MagicStarter\Actions\SubscriptionGuardedDeleteTeam;
 use FlutterSdk\MagicStarter\Contracts\ReportsUsage;
 use FlutterSdk\MagicStarter\Enums\BillingEventType;
@@ -19,7 +20,6 @@ use FlutterSdk\MagicStarter\Models\BillingTrial;
 use FlutterSdk\MagicStarter\Models\Team;
 use FlutterSdk\MagicStarter\Support\ConditionallyUsesUuids;
 use FlutterSdk\MagicStarter\Tests\TestCase;
-use Carbon\CarbonInterface;
 use Illuminate\Auth\Authenticatable as AuthenticatableTrait;
 use Illuminate\Contracts\Auth\Access\Gate as GateContract;
 use Illuminate\Contracts\Auth\Authenticatable as AuthenticatableContract;
@@ -28,11 +28,11 @@ use Illuminate\Database\Schema\Blueprint;
 use Illuminate\Foundation\Auth\Access\Authorizable;
 use Illuminate\Pagination\CursorPaginator;
 use Illuminate\Routing\RouteCollection;
+use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Event;
 use Illuminate\Support\Facades\Gate;
 use Illuminate\Support\Facades\Lang;
-use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Str;
 use Illuminate\Testing\TestResponse;

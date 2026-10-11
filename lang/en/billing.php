@@ -92,6 +92,12 @@ return [
         'stripe_test_mode' => 'Purchases are not open yet; this server is running on Stripe test keys.',
 
         /*
+         * An upgrade or a cycle change the card declined. Nothing moved, and
+         * the sentence says so before it says what to do.
+         */
+        'payment_failed' => 'Your card was declined, so your plan has not changed. Update your payment method and try again.',
+
+        /*
          * The three refusals the card-rail WRITES raise. Two of them describe a
          * gap in the adopter's own configuration rather than a fault in the
          * request, and they name the key that closes it: without that, an

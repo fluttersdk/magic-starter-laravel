@@ -42,6 +42,7 @@ use LogicException;
 use Stripe\Checkout\Session as StripeCheckoutSession;
 use Stripe\Customer as StripeCustomer;
 use Stripe\Exception\ApiConnectionException;
+use Stripe\Exception\CardException;
 use Stripe\PaymentIntent;
 use Throwable;
 
@@ -409,6 +410,120 @@ class BillingWriteEndpointsTest extends TestCase
         $this->write($user, '/billing/swap', ['product' => 'pro_annual'])->assertOk();
 
         $this->assertSame('price_pro_annual', BillingWriteSubscription::$swappedTo);
+    }
+
+    /**
+     * An upgrade is charged the moment it is granted.
+     *
+     * Cashier's default proration parks the difference on the NEXT invoice, so
+     * a customer who moved from an annual Starter to an annual Pro held Pro for
+     * a year before paying a cent of the difference (measured on the sandbox).
+     * The swap now invoices at once, and refuses rather than grants when the
+     * card declines.
+     */
+    public function test_an_upgrade_is_invoiced_at_once_and_refuses_on_a_declined_card(): void
+    {
+        $this->useSwapCatalogue();
+        $this->bootBillingRoutes('user');
+
+        $user = $this->createUser('upgrade@example.test');
+        BillingWriteRail::$subscription = $this->subscriptionOn('price_pro_monthly');
+
+        $this->write($user, '/billing/swap', ['product' => 'business_monthly'])->assertOk();
+
+        $this->assertSame('price_business_monthly', BillingWriteSubscription::$swappedTo);
+        $this->assertTrue(BillingWriteSubscription::$invoicedNow);
+        $this->assertTrue(BillingWriteSubscription::$errorIfPaymentFails);
+    }
+
+    /**
+     * A downgrade on the same cycle keeps Stripe's proration: the unused time
+     * is a credit on the next invoice, and nothing is charged now.
+     */
+    public function test_a_same_cycle_downgrade_is_not_invoiced_at_once(): void
+    {
+        $this->useSwapCatalogue();
+        $this->bootBillingRoutes('user');
+
+        $user = $this->createUser('downgrade@example.test');
+        BillingWriteRail::$subscription = $this->subscriptionOn('price_business_monthly');
+
+        $this->write($user, '/billing/swap', ['product' => 'pro_monthly'])->assertOk();
+
+        $this->assertSame('price_pro_monthly', BillingWriteSubscription::$swappedTo);
+        $this->assertFalse(BillingWriteSubscription::$invoicedNow);
+    }
+
+    /**
+     * A cycle change moves Stripe's billing date and is charged at once by
+     * Stripe anyway, so it takes the same declined-card guard as an upgrade.
+     */
+    public function test_a_cycle_change_on_the_same_tier_is_invoiced_at_once(): void
+    {
+        $this->useSwapCatalogue();
+        $this->bootBillingRoutes('user');
+
+        $user = $this->createUser('cycle@example.test');
+        BillingWriteRail::$subscription = $this->subscriptionOn('price_pro_monthly');
+
+        $this->write($user, '/billing/swap', ['product' => 'pro_annual'])->assertOk();
+
+        $this->assertTrue(BillingWriteSubscription::$invoicedNow);
+        $this->assertTrue(BillingWriteSubscription::$errorIfPaymentFails);
+    }
+
+    /**
+     * A trial owes nothing yet, so an upgrade during one is a plain swap: the
+     * trial end is kept and the first charge stays where the trial ends. Once
+     * the trial is over the same upgrade is charged at once.
+     */
+    public function test_an_upgrade_during_a_trial_is_not_invoiced_until_the_trial_is_over(): void
+    {
+        $this->useSwapCatalogue();
+        $this->bootBillingRoutes('user');
+
+        $user = $this->createUser('trial-upgrade@example.test');
+
+        BillingWriteRail::$subscription = $this->subscriptionOn('price_pro_monthly', now()->addDays(5));
+        $this->write($user, '/billing/swap', ['product' => 'business_monthly'])->assertOk();
+        $this->assertFalse(BillingWriteSubscription::$invoicedNow);
+
+        BillingWriteSubscription::reset();
+
+        BillingWriteRail::$subscription = $this->subscriptionOn('price_pro_monthly', now()->subDays(5));
+        $this->write($user, '/billing/swap', ['product' => 'business_monthly'])->assertOk();
+        $this->assertTrue(BillingWriteSubscription::$invoicedNow);
+    }
+
+    /**
+     * A declined card leaves the plan where it was and says so: 402 with the
+     * reason, one `request_refused` row, and no `subscription_swapped` row.
+     */
+    public function test_a_declined_upgrade_is_refused_and_recorded_without_a_swap_row(): void
+    {
+        $this->useSwapCatalogue();
+        $this->bootBillingRoutes('user');
+
+        $user = $this->createUser('declined@example.test');
+        BillingWriteRail::$subscription = $this->subscriptionOn('price_pro_monthly');
+        BillingWriteSubscription::$swapFailure = CardException::factory(
+            'Your card was declined.',
+            402,
+            null,
+            null,
+            null,
+            'card_declined',
+        );
+
+        $this->write($user, '/billing/swap', ['product' => 'business_monthly'])
+            ->assertStatus(402)
+            ->assertJsonPath('billing.reason', BillingController::REASON_PAYMENT_FAILED)
+            ->assertJsonPath('billing.provider', 'stripe');
+
+        $this->assertSame(1, BillingEvent::query()->count());
+        $row = BillingEvent::query()->firstOrFail();
+        $this->assertSame(BillingEventType::REQUEST_REFUSED, $row->type);
+        $this->assertSame(BillingController::REASON_PAYMENT_FAILED, $row->reason);
     }
 
     /**
@@ -1762,6 +1877,49 @@ class BillingWriteEndpointsTest extends TestCase
      *
      * @param  array<string, mixed>  $payload
      */
+    /**
+     * A ranked catalogue with two tiers on the card rail, monthly and annual,
+     * so an upgrade, a downgrade and a cycle change are each one swap away.
+     */
+    private function useSwapCatalogue(): void
+    {
+        config([
+            'magic-starter.billing.products' => [
+                'pro_monthly' => [
+                    'type' => 'subscription',
+                    'tier' => 'pro',
+                    'cycle' => 'monthly',
+                    'refs' => ['stripe_price' => 'price_pro_monthly'],
+                ],
+                'pro_annual' => [
+                    'type' => 'subscription',
+                    'tier' => 'pro',
+                    'cycle' => 'annual',
+                    'refs' => ['stripe_price' => 'price_pro_annual'],
+                ],
+                'business_monthly' => [
+                    'type' => 'subscription',
+                    'tier' => 'business',
+                    'cycle' => 'monthly',
+                    'refs' => ['stripe_price' => 'price_business_monthly'],
+                ],
+            ],
+        ]);
+    }
+
+    /**
+     * The local `default` subscription on a Stripe price, optionally in a
+     * trial ending at [$trialEndsAt].
+     */
+    private function subscriptionOn(string $price, ?Carbon $trialEndsAt = null): BillingWriteSubscription
+    {
+        $subscription = new BillingWriteSubscription;
+        $subscription->setAttribute('stripe_price', $price);
+        $subscription->setAttribute('trial_ends_at', $trialEndsAt);
+
+        return $subscription;
+    }
+
     private function writeFrom(Model $user, string $path, array $payload, ?string $country): TestResponse
     {
         $headers = $country === null ? [] : ['CF-IPCountry' => $country];
@@ -2258,6 +2416,16 @@ class BillingWriteSubscription extends Model
     public static bool $cancelled = false;
 
     /**
+     * Whether the swap was asked to invoice the difference at once.
+     */
+    public static bool $invoicedNow = false;
+
+    /**
+     * Whether the swap was asked to refuse rather than apply on a declined card.
+     */
+    public static bool $errorIfPaymentFails = false;
+
+    /**
      * What `swap()` throws instead of moving the subscription, when set.
      */
     public static ?Throwable $swapFailure = null;
@@ -2266,11 +2434,31 @@ class BillingWriteSubscription extends Model
 
     protected $guarded = [];
 
+    protected $casts = [
+        'trial_ends_at' => 'datetime',
+    ];
+
     public static function reset(): void
     {
         self::$swappedTo = null;
         self::$cancelled = false;
+        self::$invoicedNow = false;
+        self::$errorIfPaymentFails = false;
         self::$swapFailure = null;
+    }
+
+    public function errorIfPaymentFails(): self
+    {
+        self::$errorIfPaymentFails = true;
+
+        return $this;
+    }
+
+    public function swapAndInvoice(string $price): self
+    {
+        self::$invoicedNow = true;
+
+        return $this->swap($price);
     }
 
     public function swap(string $price): self
