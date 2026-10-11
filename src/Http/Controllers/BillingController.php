@@ -23,6 +23,7 @@ use FlutterSdk\MagicStarter\Support\PriceTable;
 use FlutterSdk\MagicStarter\Support\ReadsBillableAttributes;
 use FlutterSdk\MagicStarter\Support\StripeBillingState;
 use FlutterSdk\MagicStarter\Support\StripeSubscriptionState;
+use FlutterSdk\MagicStarter\Support\StripeTestMode;
 use FlutterSdk\MagicStarter\Support\TrialEligibility;
 use Illuminate\Contracts\Auth\Authenticatable;
 use Illuminate\Database\Eloquent\Model;
@@ -69,6 +70,10 @@ use Symfony\Component\HttpFoundation\Response as HttpResponse;
  *   behind the subject at all. A distinct fact from the one above and it leads
  *   somewhere else entirely: "manage this where you bought it" and "there is
  *   nothing to manage yet" are opposite instructions.
+ * - 409 with {@see self::REASON_STRIPE_TEST_MODE}, a checkout or swap on a
+ *   server running a Stripe test key outside local development, by somebody
+ *   not on the test allowlist ({@see StripeTestMode}). Cancel and the portal
+ *   never raise it.
  * - 404 from a write, there is no card-rail subscription to change. Reached only
  *   AFTER the store guard, so it can never claim there is nothing to cancel
  *   while a store is still charging the customer every month.
@@ -131,6 +136,16 @@ class BillingController
      * told to CHANGE what they already have. The client's next step is `swap`.
      */
     public const REASON_SUBSCRIPTION_EXISTS = 'subscription_exists';
+
+    /**
+     * This server runs on a Stripe TEST key outside local development and the
+     * caller is not on the test allowlist, so nothing may be bought here.
+     *
+     * Its own reason because the remedy is the operator's, not the customer's:
+     * there is no plan to change and nowhere else to manage it, the box is
+     * simply not selling yet. Travels with `billing.provider` set to `stripe`.
+     */
+    public const REASON_STRIPE_TEST_MODE = 'stripe_test_mode';
 
     /**
      * The 422 `code` for a checkout or swap naming a product this rail cannot
@@ -687,6 +702,13 @@ class BillingController
         //    the request shape was the only thing wrong with it.
         $billable = $this->resolveBillableForBillingChange($request);
 
+        // 1b. A box on a Stripe TEST key outside local development sells only
+        //     to its allowlist. Ahead of every other check and of any Stripe
+        //     call, because the session step below runs `Checkout::customer`,
+        //     which creates the Stripe customer: a refusal after it would still
+        //     leave a `stripe_id` on a subject that was never allowed to buy.
+        $this->guardStripeTestMode($request, $billable);
+
         // 2. A store already charging this subject must not be able to acquire a
         //    second, parallel Stripe subscription. The entitlement writer warns
         //    when two rails claim one billable, but a warning arrives after the
@@ -850,6 +872,10 @@ class BillingController
     {
         // 1. Authorized first, for the reason checkout gives.
         $billable = $this->resolveBillableForBillingChange($request);
+
+        // 1b. The test-key allowlist, for the reason checkout gives: a swap
+        //     moves a sandbox subscription onto a paid tier just as well.
+        $this->guardStripeTestMode($request, $billable);
 
         // 2. The rail before the input, which is the order the application this
         //    was ported from used on two of its three writes and not on this
@@ -1055,6 +1081,36 @@ class BillingController
             self::REASON_MANAGED_BY_STORE,
             $provider,
             __('magic-starter::billing.refusals.managed_by_store'),
+        );
+    }
+
+    /**
+     * Refuse a checkout or swap on a Stripe TEST key outside local development,
+     * for anybody {@see StripeTestMode::allows} does not let through.
+     *
+     * Called by checkout and swap only. Cancel and the portal are never gated:
+     * a sandbox subscriber must always be able to leave, and refusing them
+     * would trap somebody in a subscription this guard was meant to stop.
+     *
+     * It outranks every other checkout refusal on purpose. Nothing is sold on
+     * this box until its operator says so, and a store-billed subject on a
+     * test-key box being told `stripe_test_mode` rather than
+     * `managed_by_store` is harmless: neither answer lets them buy here.
+     *
+     * The refusal names the reason and nothing else; who IS allowlisted never
+     * reaches the response, the recorded row or a log line.
+     */
+    protected function guardStripeTestMode(Request $request, Model $billable): void
+    {
+        if (! StripeTestMode::active() || StripeTestMode::allows($request->user())) {
+            return;
+        }
+
+        $this->abortWithBillingConflict(
+            $billable,
+            self::REASON_STRIPE_TEST_MODE,
+            BillingProvider::STRIPE,
+            __('magic-starter::billing.refusals.stripe_test_mode'),
         );
     }
 

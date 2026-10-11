@@ -830,6 +830,38 @@ return [
             'api_v2_key' => env('REVENUECAT_API_V2_KEY'),
             'project_id' => env('REVENUECAT_PROJECT_ID'),
         ],
+
+        /*
+        |--------------------------------------------------------------------------
+        | Stripe Test Mode Allowlist
+        |--------------------------------------------------------------------------
+        |
+        | Who may open a checkout or swap a plan while this server runs on a
+        | Stripe TEST key (`sk_test_` or `rk_test_` in `cashier.secret`) in any
+        | environment other than `local` or `testing`. Everybody else gets a 409
+        | `stripe_test_mode`, so a public box on test keys cannot hand out a paid
+        | tier against a test card. A name other than those two, `staging`
+        | included, is guarded: the check fails closed.
+        |
+        | A comma-separated list of email addresses
+        | (MAGIC_STARTER_BILLING_STRIPE_TEST_EMAILS), trimmed and lower-cased
+        | here. A listed person must also have verified the address and must not
+        | be a guest. Empty by default, which refuses every purchase on a test
+        | key outside local development.
+        |
+        | A LIVE key turns the guard off entirely and the list is never read.
+        | Cancel and the portal are never gated, so a sandbox subscriber can
+        | always leave. The store rail has its own allowlist,
+        | REVENUECAT_SANDBOX_APP_USER_IDS above.
+        |
+        */
+
+        'stripe_test_mode' => [
+            'emails' => array_values(array_filter(array_map(
+                fn (string $email): string => strtolower(trim($email)),
+                explode(',', (string) env('MAGIC_STARTER_BILLING_STRIPE_TEST_EMAILS', '')),
+            ))),
+        ],
     ],
 
     /*

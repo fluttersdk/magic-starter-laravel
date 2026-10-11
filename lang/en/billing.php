@@ -85,6 +85,13 @@ return [
         'subscription_exists' => 'Your subscription has not ended yet, so change your plan instead of buying a second one.',
 
         /*
+         * Checkout and swap on a server running Stripe TEST keys outside local
+         * development, for somebody not on the test allowlist. It says why and
+         * nothing more: it never names who is allowed.
+         */
+        'stripe_test_mode' => 'Purchases are not open yet; this server is running on Stripe test keys.',
+
+        /*
          * The three refusals the card-rail WRITES raise. Two of them describe a
          * gap in the adopter's own configuration rather than a fault in the
          * request, and they name the key that closes it: without that, an
