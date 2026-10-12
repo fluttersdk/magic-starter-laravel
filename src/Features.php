@@ -130,6 +130,14 @@ class Features
     }
 
     /**
+     * Enable the support desk feature.
+     */
+    public static function support(): string
+    {
+        return 'support';
+    }
+
+    /**
      * Determine whether the given feature is enabled.
      */
     public static function enabled(string $feature): bool
@@ -255,6 +263,14 @@ class Features
     public static function hasAuditFeatures(): bool
     {
         return static::enabled(static::audit());
+    }
+
+    /**
+     * Determine whether the support desk feature is enabled.
+     */
+    public static function hasSupportFeatures(): bool
+    {
+        return static::enabled(static::support());
     }
 
     /**

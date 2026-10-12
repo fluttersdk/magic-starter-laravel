@@ -51,6 +51,38 @@ return [
         // \FlutterSdk\MagicStarter\Features::timezones(),
         // \FlutterSdk\MagicStarter\Features::billing(),
         // \FlutterSdk\MagicStarter\Features::audit(),
+        // \FlutterSdk\MagicStarter\Features::support(),
+    ],
+
+    /*
+    |--------------------------------------------------------------------------
+    | Support Desk
+    |--------------------------------------------------------------------------
+    |
+    | With the support feature on, every customer contact becomes a recorded
+    | conversation that staff answer from the admin panel. Only the opener
+    | reads their conversation; a team mate does not.
+    |
+    | `message_max_length` caps a single message body, in characters.
+    |
+    | `public` covers a visitor who writes in without an account and follows
+    | the thread through a mailed link. The link carries a secret token that
+    | is stored only as a hash, replaced by every mail that sends a new one,
+    | and dead after `link_ttl_days` days. `thread_url` is the frontend page
+    | that opens the thread; `{token}` is replaced with the token. `extra_rules`
+    | maps a field of the public form to a list of validation rule class
+    | names applied on top of the package's own, for a captcha or a blocklist.
+    |
+    */
+
+    'support' => [
+        'message_max_length' => 2000,
+
+        'public' => [
+            'link_ttl_days' => (int) env('MAGIC_STARTER_SUPPORT_LINK_TTL_DAYS', 14),
+            'extra_rules' => [],
+            'thread_url' => env('MAGIC_STARTER_SUPPORT_THREAD_URL'),
+        ],
     ],
 
     /*
