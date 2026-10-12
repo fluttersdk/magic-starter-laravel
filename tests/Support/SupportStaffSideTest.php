@@ -458,7 +458,14 @@ class SupportStaffSideTest extends TestCase
         $mail = $notification->toMail($staff);
 
         $this->assertSame($hostile, $database['subject']);
-        $this->assertStringNotContainsString('<a href', (string) $database['body']);
+
+        // Only Filament renders the body as HTML; without it the body is plain data and stays the raw text.
+        if (class_exists(FilamentNotification::class)) {
+            $this->assertStringNotContainsString('<a href', (string) $database['body']);
+        } else {
+            $this->assertSame($hostile, $database['body']);
+        }
+
         $this->assertStringNotContainsString('evil.example', json_encode([
             $mail->introLines,
             $mail->outroLines,
