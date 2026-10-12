@@ -4,6 +4,8 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [0.0.30] - 2026-10-13
+
 ### Added
 
 - **`GuestConverted`**, dispatched once when a guest is promoted to a registered account, from whichever path completes it: a profile update that supplies the last missing credential, or a guest setting its first password. It carries the promoted user (`is_guest` already false, `device_id` released) and dispatches after the enclosing transaction commits. (`src/Events/GuestConverted.php`, `src/Actions/UpdateUserProfile.php`, `src/Actions/UpdateUserPassword.php`)
