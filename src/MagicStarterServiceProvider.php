@@ -106,6 +106,8 @@ class MagicStarterServiceProvider extends ServiceProvider
         $this->app->bind(Contracts\GeneratesNewRecoveryCodes::class, Actions\GenerateNewRecoveryCodes::class);
         $this->app->bind(Contracts\OpensSupportConversations::class, Actions\OpenSupportConversation::class);
         $this->app->bind(Contracts\PostsCustomerSupportMessages::class, Actions\PostCustomerSupportMessage::class);
+        $this->app->bind(Contracts\RepliesToSupport::class, Actions\ReplyToSupportConversation::class);
+        $this->app->bind(Contracts\ChangesSupportConversations::class, Actions\ChangeSupportConversation::class);
 
         // Bound unconditionally, like every binding above it: the billing
         // feature gates the SCHEMA (see InstallCommand), not the arbitration
@@ -373,6 +375,12 @@ class MagicStarterServiceProvider extends ServiceProvider
         //       account. `Verified` only: `Registered` proves no mailbox.
         if (Features::hasSupportFeatures()) {
             Event::listen(Verified::class, Listeners\LinkSupportConversationsOnVerified::class);
+
+            // Tell the staff recipients a conversation is waiting on them.
+            Event::listen(
+                Events\SupportConversationNeedsStaff::class,
+                Listeners\NotifyStaffOfSupportConversation::class,
+            );
         }
 
         // 3.7. Register package translations.
