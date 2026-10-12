@@ -3,6 +3,7 @@
 namespace FlutterSdk\MagicStarter\Http\Controllers;
 
 use FlutterSdk\MagicStarter\Contracts\CreatesUsers;
+use FlutterSdk\MagicStarter\Contracts\RevokesApiTokens;
 use FlutterSdk\MagicStarter\Http\Controllers\Concerns\AuthenticatesUsers;
 use FlutterSdk\MagicStarter\Http\Requests\LoginRequest;
 use FlutterSdk\MagicStarter\Http\Requests\RegisterRequest;
@@ -12,6 +13,7 @@ use FlutterSdk\MagicStarter\MagicStarter;
 use Illuminate\Auth\Events\Registered;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Hash;
 
 /**
@@ -80,10 +82,31 @@ class AuthController
 
     /**
      * Handle a logout request.
+     *
+     * An account revokes only the token it presented, so its other devices stay
+     * signed in. A guest ends its session for good: every token it holds is
+     * revoked and its `device_id` is released, the way a claim consumes one.
+     * A guest has no credential besides those two, so leaving either behind let
+     * the next person on the device resume the row, by a guest login with the
+     * device id or by a claim made with a token the guest still held.
      */
     public function logout(Request $request): JsonResponse
     {
-        $request->user()?->currentAccessToken()?->delete();
+        $user = $request->user();
+
+        if ((bool) ($user->is_guest ?? false)) {
+            // One transaction, so a guest is never left half ended: tokens gone
+            // but still findable by its device id, or the reverse.
+            DB::transaction(function () use ($user): void {
+                app(RevokesApiTokens::class)->revoke($user);
+
+                // `forceFill` because `device_id` is system-managed and kept out
+                // of the published User stub's $fillable.
+                $user->forceFill(['device_id' => null])->save();
+            });
+        } else {
+            $user?->currentAccessToken()?->delete();
+        }
 
         return response()->json([
             'data' => null, 'message' => __('magic-starter::auth.logged_out'),

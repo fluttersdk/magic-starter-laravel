@@ -206,7 +206,9 @@ The user resource shape is the same as described in [Login](#login).
 <a name="logout"></a>
 ## Logout
 
-Revokes the current Sanctum access token.
+Revokes the current Sanctum access token. An account's other devices stay signed in.
+
+A guest's sign-out ends the guest session for good: every token the guest holds is revoked and its `device_id` is released, as a [claim](#guest-authentication) does. A later `POST auth/guest` from the same device opens a NEW guest row (201), and no token the guest held can claim it. The row keeps `is_guest`, so a job pruning abandoned guests can still reclaim it.
 
 **Endpoint:** `POST {prefix}/auth/logout`
 
@@ -404,7 +406,7 @@ Creates or retrieves a guest user identified by a device ID, and issues a Sanctu
 
 When a returning guest authenticates (same `device_id`), all previous tokens are revoked before issuing a new one to prevent session buildup.
 
-A `device_id` only ever matches a row that is still a guest. An account that was promoted out of a guest session, or a guest that was claimed by the endpoint below, releases the identifier, so a later call with that same `device_id` opens a NEW guest row (201) rather than returning the old one. Nothing reads `device_id` on a registered account, so releasing it costs that account nothing, and it is what stops an identifier that travels in a request body with no credential beside it from reopening somebody's promoted account.
+A `device_id` only ever matches a row that is still a guest. An account that was promoted out of a guest session, a guest that was claimed by the endpoint below, or a guest that [signed out](#logout), releases the identifier, so a later call with that same `device_id` opens a NEW guest row (201) rather than returning the old one. Nothing reads `device_id` on a registered account, so releasing it costs that account nothing, and it is what stops an identifier that travels in a request body with no credential beside it from reopening somebody's promoted account.
 
 ### Claim a Guest Session
 
