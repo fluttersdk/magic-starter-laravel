@@ -9,6 +9,7 @@ use FlutterSdk\MagicStarter\MagicStarter;
 use FlutterSdk\MagicStarter\Social\VerifiedIdentity;
 use FlutterSdk\MagicStarter\Support\RequestLocaleDetector;
 use Illuminate\Auth\Events\Registered;
+use Illuminate\Auth\Events\Verified;
 use Illuminate\Contracts\Auth\Authenticatable;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
@@ -34,6 +35,9 @@ class CreateUserFromProvider implements CreatesUsersFromProvider
      *
      * `Registered` fires inside the transaction so the personal team its
      * listener creates rolls back with the user when anything after it fails.
+     * `Verified` follows when the provider vouched for the address, because
+     * the account is born verified and never passes through the verification
+     * link that would otherwise fire it.
      *
      * @param  Request  $request  read for the new user's locale and timezone
      * @return Authenticatable the created user
@@ -56,6 +60,12 @@ class CreateUserFromProvider implements CreatesUsersFromProvider
             // 3. Let the package's listeners (the personal team) and the
             //    framework's (the verification mail) see the new account.
             Event::dispatch(new Registered($user));
+
+            // 4. A provider-vouched address is proven already, so whatever waits
+            //    on a verified address (the support desk's linking) runs now.
+            if ($identity->emailVerified) {
+                Event::dispatch(new Verified($user));
+            }
 
             return $user;
         });

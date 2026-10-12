@@ -15,6 +15,7 @@ use FlutterSdk\MagicStarter\Console\PurgeDeletedUsersCommand;
 use FlutterSdk\MagicStarter\Console\ReconcileBillingEntitlements;
 use FlutterSdk\MagicStarter\Support\FrontendUrl;
 use Illuminate\Auth\Events\Registered;
+use Illuminate\Auth\Events\Verified;
 use Illuminate\Auth\Notifications\ResetPassword;
 use Illuminate\Cache\RateLimiting\Limit;
 // Aliased because this file already imports the `Event` FACADE below, and the
@@ -103,6 +104,8 @@ class MagicStarterServiceProvider extends ServiceProvider
         $this->app->bind(Contracts\ConfirmsTwoFactorAuthentication::class, Actions\ConfirmTwoFactorAuthentication::class);
         $this->app->bind(Contracts\DisablesTwoFactorAuthentication::class, Actions\DisableTwoFactorAuthentication::class);
         $this->app->bind(Contracts\GeneratesNewRecoveryCodes::class, Actions\GenerateNewRecoveryCodes::class);
+        $this->app->bind(Contracts\OpensSupportConversations::class, Actions\OpenSupportConversation::class);
+        $this->app->bind(Contracts\PostsCustomerSupportMessages::class, Actions\PostCustomerSupportMessage::class);
 
         // Bound unconditionally, like every binding above it: the billing
         // feature gates the SCHEMA (see InstallCommand), not the arbitration
@@ -366,6 +369,12 @@ class MagicStarterServiceProvider extends ServiceProvider
             $this->schedulePruneAudits();
         }
 
+        // 3.66. Hand a proven address's public support conversations to its
+        //       account. `Verified` only: `Registered` proves no mailbox.
+        if (Features::hasSupportFeatures()) {
+            Event::listen(Verified::class, Listeners\LinkSupportConversationsOnVerified::class);
+        }
+
         // 3.7. Register package translations.
         $this->loadTranslationsFrom(__DIR__ . '/../lang', 'magic-starter');
 
@@ -387,6 +396,11 @@ class MagicStarterServiceProvider extends ServiceProvider
             // its url is registered in every provider's console.
             if (Features::hasSocialLoginFeatures()) {
                 $this->loadRoutesFrom(__DIR__ . '/routes/social.php');
+            }
+
+            // The customer side of the support desk, absent with the feature off.
+            if (Features::hasSupportFeatures()) {
+                $this->loadRoutesFrom(__DIR__ . '/routes/support.php');
             }
         }
 
@@ -852,6 +866,42 @@ class MagicStarterServiceProvider extends ServiceProvider
         // Five a minute is a person pressing a button, not a client loop.
         RateLimiter::for('magic-starter-push-test', function ($request) {
             return Limit::perMinute(5)->by($request->user()?->getAuthIdentifier() ?: $request->ip());
+        });
+
+        // Support desk, signed in: bucketed on the caller like the push test.
+        // Only writing a conversation or a message is held to 6 a minute;
+        // reads and seen receipts ride a looser bucket, because opening a
+        // thread costs a show, a receipt and a list reread and the client
+        // polls every 30 seconds.
+        RateLimiter::for('magic-starter-support', function ($request) {
+            $caller = $request->user()?->getAuthIdentifier() ?: $request->ip();
+            $writes = $request->isMethod('POST') && ! str_ends_with($request->path(), '/seen');
+
+            return $writes
+                ? Limit::perMinute(6)->by('write|' . $caller)
+                : Limit::perMinute(60)->by('read|' . $caller);
+        });
+
+        // Support desk, public. A submission is bounded per IP and per address,
+        // so neither a single sender nor a botnet aimed at one inbox floods the
+        // desk. A reply is bounded per thread; the token is hashed before it
+        // becomes a cache key. Reading a thread is bounded per IP and loosely,
+        // so a visitor who keeps the page open is not locked out of it.
+        RateLimiter::for('magic-starter-support-public', function ($request) {
+            $token = $request->route('token');
+
+            if (! is_string($token)) {
+                return [
+                    Limit::perHour(3)->by('ip|' . $request->ip()),
+                    Limit::perDay(3)->by('email|' . mb_strtolower(trim((string) $request->input('email', '')))),
+                ];
+            }
+
+            if ($request->isMethod('GET')) {
+                return Limit::perMinute(60)->by('read|' . $request->ip());
+            }
+
+            return Limit::perHour(10)->by('thread|' . hash('sha256', $token));
         });
     }
 }
