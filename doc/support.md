@@ -57,6 +57,13 @@ Public, no account (throttle `magic-starter-support-public`). The thread token i
 | GET | `{prefix}/support/public/thread/{token}` | The thread |
 | POST | `{prefix}/support/public/thread/{token}` | Add a message |
 
+The public limits:
+- Opening a conversation allows 3 an hour per IP and 3 a day per submitted email.
+- Thread reads allow 60 a minute per IP.
+- Thread writes allow 10 an hour per token.
+
+The per-email cap bounds how much one address can put in front of staff, but it has a cost. The throttle counts a request before validation runs, so anyone who knows an address can use up its 3 for the day, and the owner of that address cannot open a public conversation until the next day. The owner can still sign in and write from the app, where the per-user limiter applies instead. An app that would rather not carry that cost can rebind `magic-starter-support-public` in its own service provider.
+
 A conversation belongs to its opener alone. When a visitor verifies an address that matches a public conversation, `LinkSupportConversationsOnVerified` hands it to their account.
 
 ---
