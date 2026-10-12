@@ -2,6 +2,7 @@
 
 namespace FlutterSdk\MagicStarter\Tests\Http\Controllers;
 
+use FlutterSdk\MagicStarter\Events\GuestConverted;
 use FlutterSdk\MagicStarter\Http\Controllers\GuestAuthController;
 use FlutterSdk\MagicStarter\MagicStarter;
 use FlutterSdk\MagicStarter\Support\ConditionallyUsesUuids;
@@ -13,6 +14,7 @@ use FlutterSdk\MagicStarter\Traits\HasGuestSupport;
 use FlutterSdk\MagicStarter\Traits\HasProfilePhoto;
 use Illuminate\Database\Schema\Blueprint;
 use Illuminate\Foundation\Auth\User as AuthenticatableUser;
+use Illuminate\Support\Facades\Event;
 use Illuminate\Support\Facades\Hash;
 use Illuminate\Support\Facades\Route;
 use Illuminate\Support\Facades\Schema;
@@ -529,6 +531,114 @@ class GuestConversionTest extends TestCase
 
         $this->assertFalse((bool) $fresh->is_guest, 'Promotion must persist past the mass-assignment guard');
         $this->assertNull($fresh->device_id, 'A registered account must stop answering to the device id');
+    }
+
+    /**
+     * Test 16: A promotion through the profile update announces itself once.
+     *
+     * The guest sends a name before the qualifying call, so a dispatch on every
+     * profile update rather than on the promotion would be counted twice.
+     */
+    public function test_profile_promotion_dispatches_guest_converted_once(): void
+    {
+        Event::fake([GuestConverted::class]);
+
+        /** @var ConcreteUser $user */
+        $user = ConcreteUser::create([
+            'is_guest' => true,
+            'device_id' => 'device-16',
+        ]);
+
+        $this->actingAs($user)
+            ->putJson('/user/profile', [
+                'name' => 'Still Guest',
+            ])
+            ->assertOk();
+
+        Event::assertNotDispatched(GuestConverted::class);
+
+        $this->actingAs($user)
+            ->putJson('/user/profile', [
+                'name' => 'Promoted User',
+                'email' => 'promoted-16@example.com',
+                'password' => 'Password123!',
+                'password_confirmation' => 'Password123!',
+            ])
+            ->assertOk();
+
+        Event::assertDispatchedTimes(GuestConverted::class, 1);
+        Event::assertDispatched(
+            GuestConverted::class,
+            fn (GuestConverted $event): bool => $event->user->getAuthIdentifier() === $user->getKey()
+                && ! (bool) $event->user->is_guest,
+        );
+    }
+
+    /**
+     * Test 17: A promotion through the password endpoint announces itself once.
+     */
+    public function test_password_promotion_dispatches_guest_converted_once(): void
+    {
+        Event::fake([GuestConverted::class]);
+
+        /** @var ConcreteUser $user */
+        $user = ConcreteUser::create([
+            'is_guest' => true,
+            'device_id' => 'device-17',
+        ]);
+
+        $this->actingAs($user)
+            ->putJson('/user/profile', [
+                'email' => 'promoted-17@example.com',
+            ])
+            ->assertOk();
+
+        Event::assertNotDispatched(GuestConverted::class);
+
+        $this->actingAs($user)
+            ->putJson('/user/password', [
+                'password' => 'Password123!',
+                'password_confirmation' => 'Password123!',
+            ])
+            ->assertOk();
+
+        Event::assertDispatchedTimes(GuestConverted::class, 1);
+        Event::assertDispatched(
+            GuestConverted::class,
+            fn (GuestConverted $event): bool => $event->user->getAuthIdentifier() === $user->getKey(),
+        );
+    }
+
+    /**
+     * Test 18: An account that was never a guest converts nothing.
+     */
+    public function test_non_guest_updates_dispatch_no_guest_converted(): void
+    {
+        Event::fake([GuestConverted::class]);
+
+        /** @var ConcreteUser $user */
+        $user = ConcreteUser::create([
+            'name' => 'John Doe',
+            'email' => 'john-18@example.com',
+            'password' => Hash::make('Password123!'),
+            'is_guest' => false,
+        ]);
+
+        $this->actingAs($user)
+            ->putJson('/user/profile', [
+                'name' => 'Jane Doe',
+            ])
+            ->assertOk();
+
+        $this->actingAs($user)
+            ->putJson('/user/password', [
+                'current_password' => 'Password123!',
+                'password' => 'NewPassword123!',
+                'password_confirmation' => 'NewPassword123!',
+            ])
+            ->assertOk();
+
+        Event::assertNotDispatched(GuestConverted::class);
     }
 
     /**

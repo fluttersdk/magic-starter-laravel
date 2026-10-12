@@ -41,7 +41,7 @@ Updates the authenticated user's profile information.
 | `timezone` | string | Nullable, valid IANA timezone (requires `extended-profile` or `timezones` feature) |
 | `locale` | string | Nullable, must be in `magic-starter.supported_locales` (requires `extended-profile` feature) |
 
-Guest users may additionally pass `password` and `password_confirmation` to upgrade their account in a single call. The password must be at least 8 characters with letters, numbers, and mixed case. When a guest provides an email/phone and a password, they are automatically converted to a full user (`is_guest` becomes `false`).
+Guest users may additionally pass `password` and `password_confirmation` to upgrade their account in a single call. The password must be at least 8 characters with letters, numbers, and mixed case. When a guest provides an email/phone and a password, they are automatically converted to a full user (`is_guest` becomes `false`). The conversion dispatches `FlutterSdk\MagicStarter\Events\GuestConverted` once, after the transaction commits, from this endpoint or from a guest setting a first password; listen to it for anything a host does for a new registered account, such as a welcome message.
 
 When the email changes and the `email-verification` feature is enabled, `email_verified_at` is reset to `null` and a new verification notification is sent.
 

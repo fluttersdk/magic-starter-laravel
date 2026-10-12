@@ -3,7 +3,9 @@
 namespace FlutterSdk\MagicStarter\Actions;
 
 use FlutterSdk\MagicStarter\Contracts\UpdatesUserPasswords;
+use FlutterSdk\MagicStarter\Events\GuestConverted;
 use Illuminate\Contracts\Auth\Authenticatable;
+use Illuminate\Support\Facades\Event;
 use Illuminate\Support\Facades\Hash;
 use Illuminate\Support\Facades\Validator;
 
@@ -78,5 +80,7 @@ class UpdateUserPassword implements UpdatesUserPasswords
             'is_guest' => false,
             'device_id' => null,
         ])->save();
+
+        Event::dispatch(new GuestConverted($user));
     }
 }

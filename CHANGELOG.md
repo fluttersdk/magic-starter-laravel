@@ -4,6 +4,14 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Added
+
+- **`GuestConverted`**, dispatched once when a guest is promoted to a registered account, from whichever path completes it: a profile update that supplies the last missing credential, or a guest setting its first password. It carries the promoted user (`is_guest` already false, `device_id` released) and dispatches after the enclosing transaction commits. (`src/Events/GuestConverted.php`, `src/Actions/UpdateUserProfile.php`, `src/Actions/UpdateUserPassword.php`)
+
+### Fixed
+
+- **A deleted account leaves no notification data behind.** `DeleteUser` removed the user row but kept the user's database notifications, notification settings and newsletter subscription, and the audit trail kept their rows too, since it finds related rows through a `user_id` column none of these tables has. Inside the deletion's transaction the notifications and settings (by the notifiable morph) and the subscription (by email) are now deleted with their audit rows, through the query builder so the erasure writes no new row. Each table is read only when it exists. (`src/Actions/DeleteUser.php`)
+
 ## [0.0.29] - 2026-10-11
 
 ### Fixed

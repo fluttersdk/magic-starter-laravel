@@ -4,11 +4,13 @@ namespace FlutterSdk\MagicStarter\Actions;
 
 use DateTimeZone;
 use FlutterSdk\MagicStarter\Contracts\UpdatesUserProfiles;
+use FlutterSdk\MagicStarter\Events\GuestConverted;
 use FlutterSdk\MagicStarter\Features;
 use FlutterSdk\MagicStarter\MagicStarter;
 use FlutterSdk\MagicStarter\Rules\E164Phone;
 use Illuminate\Contracts\Auth\Authenticatable;
 use Illuminate\Contracts\Auth\MustVerifyEmail;
+use Illuminate\Support\Facades\Event;
 use Illuminate\Support\Facades\Hash;
 use Illuminate\Support\Facades\Validator;
 use Illuminate\Support\Str;
@@ -164,5 +166,7 @@ class UpdateUserProfile implements UpdatesUserProfiles
             'is_guest' => false,
             'device_id' => null,
         ])->save();
+
+        Event::dispatch(new GuestConverted($user));
     }
 }

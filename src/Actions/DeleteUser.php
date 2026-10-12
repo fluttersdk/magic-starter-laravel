@@ -2,13 +2,19 @@
 
 namespace FlutterSdk\MagicStarter\Actions;
 
+use FlutterSdk\MagicStarter\Audit\Audit;
 use FlutterSdk\MagicStarter\Contracts\DeletesTeams;
 use FlutterSdk\MagicStarter\Contracts\DeletesUsers;
+use FlutterSdk\MagicStarter\Features;
+use FlutterSdk\MagicStarter\Models\NewsletterSubscriber;
+use FlutterSdk\MagicStarter\Models\NotificationSetting;
 use FlutterSdk\MagicStarter\Models\SocialAccount;
 use FlutterSdk\MagicStarter\Social\AppleProviderFactory;
 use FlutterSdk\MagicStarter\Support\OwnedTeams;
 use Illuminate\Contracts\Auth\Authenticatable;
 use Illuminate\Database\Eloquent\Model;
+use Illuminate\Notifications\DatabaseNotification;
+use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Schema;
 use Illuminate\Support\Facades\Storage;
@@ -32,6 +38,11 @@ use Illuminate\Validation\ValidationException;
  */
 class DeleteUser implements DeletesUsers
 {
+    /**
+     * Rows erased per query from each user-scoped table.
+     */
+    private const ERASE_CHUNK = 500;
+
     public function __construct(
         protected DeletesTeams $teams,
         protected AppleProviderFactory $apple,
@@ -68,7 +79,10 @@ class DeleteUser implements DeletesUsers
             // 4. The linked identities, keeping the Apple rows to revoke later.
             $appleAccounts = $this->deleteSocialAccounts($user);
 
-            // 5. The account itself.
+            // 5. What the package stored about the person outside the user row.
+            $this->eraseNotificationData($user);
+
+            // 6. The account itself.
             $user->tokens()->delete();
 
             $photoPath = empty($user->profile_photo_path) ? null : (string) $user->profile_photo_path;
@@ -81,7 +95,7 @@ class DeleteUser implements DeletesUsers
             ];
         });
 
-        // 6. Neither can be rolled back, so both wait for the OUTERMOST commit:
+        // 7. Neither can be rolled back, so both wait for the OUTERMOST commit:
         //    the purge runs this inside its own transaction, and a grant revoked
         //    for an account that then survives cannot be restored. Apple review
         //    requires the revocation; the factory reports a failure instead of
@@ -149,5 +163,70 @@ class DeleteUser implements DeletesUsers
         $relation->delete();
 
         return $appleAccounts;
+    }
+
+    /**
+     * Delete the user's database notifications, notification settings and
+     * newsletter subscription, with the audit rows that describe them.
+     *
+     * The audit trail forgets the user's own rows after commit, but it finds
+     * related rows through a `user_id` column, which none of these tables has:
+     * notifications and settings are addressed by the notifiable morph, and a
+     * subscription by email. Without this their audit rows would keep the
+     * notification payloads and the address after the person is gone.
+     *
+     * Each table is read only when it exists, because an application that never
+     * installed the feature has none, and a feature switched off since still left
+     * its rows behind. Deleted through the query builder so the erasure itself
+     * fires no model event and writes no new audit row.
+     */
+    protected function eraseNotificationData(Authenticatable $user): void
+    {
+        $notifiable = [
+            'notifiable_type' => $user->getMorphClass(),
+            'notifiable_id' => $user->getAuthIdentifier(),
+        ];
+
+        $this->eraseRows('notifications', new DatabaseNotification, $notifiable);
+        $this->eraseRows((new NotificationSetting)->getTable(), new NotificationSetting, $notifiable);
+
+        if (! empty($user->email)) {
+            $this->eraseRows((new NewsletterSubscriber)->getTable(), new NewsletterSubscriber, [
+                'email' => $user->email,
+            ]);
+        }
+    }
+
+    /**
+     * Delete the rows matching the given columns, and their audit rows first.
+     *
+     * Chunked by id so a user with thousands of notifications never binds more
+     * keys into one query than the driver accepts.
+     *
+     * @param  Model  $auditable  An instance of the model the trail records these rows as.
+     * @param  array<string, mixed>  $match  Column to value, all of which must hold.
+     */
+    private function eraseRows(string $table, Model $auditable, array $match): void
+    {
+        if (! Schema::hasTable($table)) {
+            return;
+        }
+
+        $auditing = Features::hasAuditFeatures();
+
+        DB::table($table)
+            ->where($match)
+            ->chunkById(self::ERASE_CHUNK, function (Collection $rows) use ($table, $auditable, $auditing): void {
+                $ids = $rows->pluck('id')->all();
+
+                if ($auditing) {
+                    Audit::query()
+                        ->where('auditable_type', $auditable->getMorphClass())
+                        ->whereIn('auditable_id', array_map('strval', $ids))
+                        ->delete();
+                }
+
+                DB::table($table)->whereIn('id', $ids)->delete();
+            });
     }
 }
