@@ -80,6 +80,8 @@ return [
 
     'refusals' => [
         'assignee_not_staff' => 'Atanan kişi bir destek ekibi üyesi olmalıdır.',
+        'thread_url_missing' => 'Ziyaretçiye yanıt vermeden önce MAGIC_STARTER_SUPPORT_THREAD_URL ayarlanmalıdır: '
+            . 'yanıt e-postası görüşmenin bağlantısını taşır.',
     ],
 
     /*
@@ -90,7 +92,6 @@ return [
             'title' => 'Destek görüşmesi #:number',
             'opened' => 'Bir müşteri yeni bir görüşme başlattı.',
             'customer_wrote' => 'Bir müşteri yeniden yazdı ve yanıt bekliyor.',
-            'subject_line' => 'Konu: :subject',
             'open_panel' => 'Yanıtlamak için yönetim panelini açın.',
         ],
         'reply' => [

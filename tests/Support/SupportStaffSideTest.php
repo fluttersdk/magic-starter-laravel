@@ -21,6 +21,7 @@ use FlutterSdk\MagicStarter\Filament\MagicStarterPlugin;
 use FlutterSdk\MagicStarter\Listeners\NotifyStaffOfSupportConversation;
 use FlutterSdk\MagicStarter\MagicStarter;
 use FlutterSdk\MagicStarter\Models\SupportConversation;
+use FlutterSdk\MagicStarter\Models\SupportMessage;
 use FlutterSdk\MagicStarter\Notifications\SupportConversationNeedsStaffNotification;
 use FlutterSdk\MagicStarter\Notifications\SupportReplyNotification;
 use FlutterSdk\MagicStarter\Support\SupportStaffRecipients;
@@ -31,6 +32,7 @@ use FlutterSdk\MagicStarter\Tests\TestCase;
 use Illuminate\Broadcasting\BroadcastManager;
 use Illuminate\Contracts\Broadcasting\Broadcaster;
 use Illuminate\Notifications\AnonymousNotifiable;
+use Illuminate\Notifications\SendQueuedNotifications;
 use Illuminate\Support\Facades\Event;
 use Illuminate\Support\Facades\Notification;
 use Illuminate\Support\Testing\Fakes\EventFake;
@@ -260,6 +262,14 @@ class SupportStaffSideTest extends TestCase
         Event::assertNotDispatched(SupportConversationUpdated::class);
     }
 
+    public function test_the_queued_reply_job_is_encrypted_because_it_carries_the_live_token(): void
+    {
+        $notification = new SupportReplyNotification(new SupportMessage, 'https://app.test/support/thread/secret');
+        $job = new SendQueuedNotifications(new AnonymousNotifiable, $notification, ['mail']);
+
+        $this->assertTrue($job->shouldBeEncrypted);
+    }
+
     public function test_a_public_reply_without_a_thread_url_is_refused_before_anything_is_written(): void
     {
         config()->set('magic-starter.support.public.thread_url', null);
@@ -269,8 +279,12 @@ class SupportStaffSideTest extends TestCase
         try {
             (new ReplyToSupportConversation)->reply($staff, $conversation, 'Lost answer.', false);
             $this->fail('A public reply went out without a link to follow.');
-        } catch (RuntimeException $exception) {
-            $this->assertStringContainsString('magic-starter.support.public.thread_url', $exception->getMessage());
+        } catch (ValidationException $exception) {
+            // A refusal the panel's ContractAction turns into a notification, not a 500.
+            $this->assertSame(
+                [__('magic-starter::admin_support.refusals.thread_url_missing')],
+                $exception->errors()['body'],
+            );
         }
 
         $this->assertSame(0, $conversation->messages()->count());
@@ -428,6 +442,27 @@ class SupportStaffSideTest extends TestCase
                 ];
             },
         );
+    }
+
+    public function test_a_customer_written_subject_reaches_staff_as_text_never_as_markup(): void
+    {
+        // Filament renders a database body as sanitised HTML that keeps `style`, and mail lines are Markdown,
+        // so a raw subject could cover the panel with a phishing link or plant a link and a beacon in the mail.
+        $staff = $this->createUser('staff@example.com');
+        $conversation = $this->createInAppConversation($this->createUser('ada@example.com'));
+        $hostile = '<a href="https://evil.example" style="position:fixed">Sign in</a> [here](https://evil.example)';
+        $conversation->forceFill(['subject' => $hostile])->save();
+        $notification = new SupportConversationNeedsStaffNotification($conversation, 'opened');
+
+        $database = $notification->toDatabase($staff);
+        $mail = $notification->toMail($staff);
+
+        $this->assertSame($hostile, $database['subject']);
+        $this->assertStringNotContainsString('<a href', (string) $database['body']);
+        $this->assertStringNotContainsString('evil.example', json_encode([
+            $mail->introLines,
+            $mail->outroLines,
+        ], JSON_THROW_ON_ERROR));
     }
 
     public function test_the_listener_skips_push_when_onesignal_is_off(): void

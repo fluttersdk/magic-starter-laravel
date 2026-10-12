@@ -6,6 +6,7 @@ use FlutterSdk\MagicStarter\Actions\ReplyToSupportConversation;
 use FlutterSdk\MagicStarter\Features;
 use FlutterSdk\MagicStarter\Models\SupportMessage;
 use Illuminate\Bus\Queueable;
+use Illuminate\Contracts\Queue\ShouldBeEncrypted;
 use Illuminate\Contracts\Queue\ShouldQueue;
 use Illuminate\Notifications\Messages\MailMessage;
 use Illuminate\Notifications\Notification;
@@ -22,8 +23,11 @@ use onesignal\client\model\Notification as OneSignalNotification;
  * mail carrying the reply itself and a fresh thread link (`$threadUrl`), since
  * the mail is their only way back in. Only ever built for a customer-visible
  * reply, never for a staff note.
+ *
+ * Encrypted on the queue because `$threadUrl` carries the live token, which
+ * would otherwise sit readable in Redis and in Horizon's job history.
  */
-class SupportReplyNotification extends Notification implements ShouldQueue
+class SupportReplyNotification extends Notification implements ShouldBeEncrypted, ShouldQueue
 {
     use Queueable;
 

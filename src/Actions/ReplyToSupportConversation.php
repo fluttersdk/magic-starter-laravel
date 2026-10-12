@@ -13,9 +13,10 @@ use FlutterSdk\MagicStarter\Notifications\SupportReplyNotification;
 use FlutterSdk\MagicStarter\Support\SupportThreadToken;
 use Illuminate\Contracts\Auth\Authenticatable;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Lang;
 use Illuminate\Support\Facades\Notification;
 use Illuminate\Support\Facades\Validator;
-use RuntimeException;
+use Illuminate\Validation\ValidationException;
 
 /**
  * Records a staff reply or an internal note and tells the customer about a reply.
@@ -97,16 +98,18 @@ class ReplyToSupportConversation implements RepliesToSupport
     }
 
     /**
-     * @throws RuntimeException when `magic-starter.support.public.thread_url` is unset
+     * A refusal rather than a crash, so the panel shows it as a notification and the staff member keeps the draft.
+     *
+     * @throws ValidationException when `magic-starter.support.public.thread_url` is unset
      */
     private function threadUrlTemplate(): string
     {
         $template = config('magic-starter.support.public.thread_url');
 
         if (! is_string($template) || trim($template) === '') {
-            throw new RuntimeException(
-                'Set magic-starter.support.public.thread_url (MAGIC_STARTER_SUPPORT_THREAD_URL) to reply to a visitor.',
-            );
+            throw ValidationException::withMessages([
+                'body' => Lang::get('magic-starter::admin_support.refusals.thread_url_missing'),
+            ]);
         }
 
         return trim($template);

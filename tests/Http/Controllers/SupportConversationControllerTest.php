@@ -318,6 +318,28 @@ class SupportConversationControllerTest extends TestCase
         Carbon::setTestNow();
     }
 
+    public function test_a_seen_receipt_fires_no_model_event_so_the_audit_trail_stays_quiet(): void
+    {
+        // An open thread sends a receipt on every refresh; with audit on, each one would be an audit row.
+        $opener = $this->user('opener@example.com', self::TEAM);
+        $conversation = $this->openAs($opener);
+        $updates = 0;
+        Event::listen('eloquent.updated: ' . SupportConversation::class, function () use (&$updates): void {
+            $updates++;
+        });
+
+        // A later second, so the receipt really changes the row; in the same second it would not be dirty.
+        $seenAt = now()->addMinute()->startOfSecond();
+        Carbon::setTestNow($seenAt);
+
+        $this->actingAs($opener, 'sanctum');
+        $this->postJson("/support/conversations/{$conversation->getKey()}/seen")->assertNoContent();
+
+        $this->assertSame(0, $updates);
+        $this->assertTrue($seenAt->equalTo($conversation->fresh()?->opener_seen_at));
+        Carbon::setTestNow();
+    }
+
     public function test_the_routes_are_absent_with_the_feature_off(): void
     {
         $opener = $this->user('opener@example.com', self::TEAM);

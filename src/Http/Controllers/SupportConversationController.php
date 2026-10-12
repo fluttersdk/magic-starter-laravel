@@ -87,6 +87,8 @@ class SupportConversationController
 
     /**
      * Record that the caller has read the thread up to now, clearing `has_unread`.
+     *
+     * Saved quietly: an open thread sends one on every refresh, and a model event would put each in the audit trail.
      */
     public function seen(Request $request, string $conversation): Response
     {
@@ -94,7 +96,7 @@ class SupportConversationController
             ->forceFill([
                 'opener_seen_at' => now(),
             ])
-            ->save();
+            ->saveQuietly();
 
         return response()->noContent();
     }

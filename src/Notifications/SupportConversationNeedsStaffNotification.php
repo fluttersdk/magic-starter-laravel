@@ -76,21 +76,25 @@ class SupportConversationNeedsStaffNotification extends Notification implements 
             ];
         }
 
+        // Filament renders the body as sanitised HTML that keeps `style`, so the customer's words go in escaped.
         return [
             ...FilamentNotification::make()
                 ->title($this->title())
-                ->body($this->conversation->subject)
+                ->body(e($this->conversation->subject))
                 ->getDatabaseMessage(),
             ...$keys,
         ];
     }
 
+    /**
+     * The customer's subject rides in the plain-text header only: mail lines are Markdown, where it would become
+     * live links and images in a staff inbox.
+     */
     public function toMail(mixed $notifiable): MailMessage
     {
         return (new MailMessage)
             ->subject($this->title() . ': ' . $this->conversation->subject)
             ->line($this->reasonLine())
-            ->line(Lang::get('magic-starter::admin_support.notifications.staff.subject_line', ['subject' => $this->conversation->subject]))
             ->line(Lang::get('magic-starter::admin_support.notifications.staff.open_panel'));
     }
 

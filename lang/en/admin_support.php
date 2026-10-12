@@ -80,6 +80,8 @@ return [
 
     'refusals' => [
         'assignee_not_staff' => 'The assignee must be a support staff member.',
+        'thread_url_missing' => 'Set MAGIC_STARTER_SUPPORT_THREAD_URL before replying to a visitor: '
+            . 'the reply mail carries the link to the thread.',
     ],
 
     /*
@@ -90,7 +92,6 @@ return [
             'title' => 'Support conversation #:number',
             'opened' => 'A customer opened a new conversation.',
             'customer_wrote' => 'A customer wrote again and is waiting for an answer.',
-            'subject_line' => 'Subject: :subject',
             'open_panel' => 'Open the admin panel to answer it.',
         ],
         'reply' => [
