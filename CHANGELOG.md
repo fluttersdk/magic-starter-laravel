@@ -10,6 +10,7 @@ All notable changes to this project will be documented in this file.
 
 ### Fixed
 
+- **A guest sign-out ends the guest session for good** ([#40](https://github.com/fluttersdk/magic-starter-laravel/issues/40)). `POST auth/logout` revoked only the presented token, so a guest kept its `device_id` and any other token it held: the next `POST auth/guest` from that device resumed the same row, and a claim made with a surviving token moved its data into another account. A guest sign-out now revokes every token the guest holds and releases its `device_id` in one transaction, the way a claim consumes one; the row keeps `is_guest`. An account's sign-out is unchanged and revokes only the presented token. (`src/Http/Controllers/AuthController.php`)
 - **A deleted account leaves no notification data behind.** `DeleteUser` removed the user row but kept the user's database notifications, notification settings and newsletter subscription, and the audit trail kept their rows too, since it finds related rows through a `user_id` column none of these tables has. Inside the deletion's transaction the notifications and settings (by the notifiable morph) and the subscription (by email) are now deleted with their audit rows, through the query builder so the erasure writes no new row. Each table is read only when it exists. (`src/Actions/DeleteUser.php`)
 
 ## [0.0.29] - 2026-10-11
