@@ -101,23 +101,23 @@ class SupportReplyNotification extends Notification implements ShouldQueue
         $conversation = $this->message->conversation;
 
         return (new MailMessage)
-            ->subject(Lang::get('Re: [#:number] :subject', [
+            ->subject(Lang::get('magic-starter::admin_support.notifications.reply.mail_subject', [
                 'number' => $conversation->number,
                 'subject' => $conversation->subject,
             ]))
-            ->line(Lang::get('Our support team replied to your message:'))
+            ->line(Lang::get('magic-starter::admin_support.notifications.reply.mail_intro'))
             ->line($this->message->body)
-            ->action(Lang::get('View conversation'), (string) $this->threadUrl)
-            ->line(Lang::get('This link stops working when a newer reply arrives; use the one in the latest mail.'));
+            ->action(Lang::get('magic-starter::admin_support.notifications.reply.mail_action'), (string) $this->threadUrl)
+            ->line(Lang::get('magic-starter::admin_support.notifications.reply.mail_footer'));
     }
 
     private function title(): string
     {
-        return Lang::get('New reply from support');
+        return Lang::get('magic-starter::admin_support.notifications.reply.title');
     }
 
     private function summary(): string
     {
-        return Lang::get('Your support conversation has a new reply.');
+        return Lang::get('magic-starter::admin_support.notifications.reply.summary');
     }
 }

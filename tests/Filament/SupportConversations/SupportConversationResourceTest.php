@@ -27,6 +27,7 @@ use FlutterSdk\MagicStarter\Notifications\SupportReplyNotification;
 use FlutterSdk\MagicStarter\Tests\Filament\FilamentTestCase;
 use FlutterSdk\MagicStarter\Tests\Fixtures\ConcreteAdminUser;
 use Illuminate\Contracts\Auth\Authenticatable;
+use Illuminate\Support\Arr;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\Event;
 use Illuminate\Support\Facades\Notification;
@@ -352,6 +353,88 @@ class SupportConversationResourceTest extends FilamentTestCase
             AdminActionPerformed::class,
             static fn (AdminActionPerformed $event): bool => $event->action === 'support.changed',
         );
+    }
+
+    public function test_a_host_group_file_cannot_hijack_a_label_of_the_inbox(): void
+    {
+        $staff = $this->staff();
+        $conversation = $this->conversation(null, [
+            'name' => 'Ada',
+            'email' => 'ada@example.com',
+        ]);
+        $this->message($conversation, SupportSenderType::CUSTOMER, SupportMessageKind::MESSAGE, 'Hello');
+        $this->message($conversation, SupportSenderType::STAFF, SupportMessageKind::NOTE, 'Check the region');
+
+        // A dot-less key with no JSON line is a group name to the translator, so an application that owns a
+        // `lang/en/status.php` used to turn the Status label into an array and break the page.
+        $hostLang = sys_get_temp_dir() . '/magic-starter-host-lang-' . uniqid();
+        mkdir($hostLang . '/en', 0777, true);
+
+        foreach ($this->hostGroups() as $group) {
+            file_put_contents("{$hostLang}/en/{$group}.php", "<?php return ['hijacked' => 'array'];\n");
+        }
+
+        try {
+            app('translator')->addPath($hostLang);
+
+            $this->actingAs($staff)->get('/admin/support-conversations')->assertOk()->assertSee('Support inbox');
+            $this->actingAs($staff)->get('/admin/support-conversations/' . $conversation->getKey())
+                ->assertOk()
+                ->assertSee('Internal note')
+                ->assertSee('Customer');
+        } finally {
+            foreach ($this->hostGroups() as $group) {
+                @unlink("{$hostLang}/en/{$group}.php");
+            }
+
+            @rmdir($hostLang . '/en');
+            @rmdir($hostLang);
+        }
+    }
+
+    public function test_the_turkish_inbox_file_has_the_keys_of_the_english_one(): void
+    {
+        $english = require __DIR__ . '/../../../lang/en/admin_support.php';
+        $turkish = require __DIR__ . '/../../../lang/tr/admin_support.php';
+
+        $this->assertSame(array_keys(Arr::dot($english)), array_keys(Arr::dot($turkish)));
+    }
+
+    /**
+     * Group names an application's own lang directory is likely to carry, each one a former bare label key.
+     *
+     * @return list<string>
+     */
+    private function hostGroups(): array
+    {
+        return [
+            'status',
+            'priority',
+            'source',
+            'assignee',
+            'opener',
+            'number',
+            'subject',
+            'team',
+            'conversation',
+            'conversations',
+            'visitor',
+            'customer',
+            'staff',
+            'activity',
+            'system',
+            'reply',
+            'note',
+            'open',
+            'pending',
+            'snoozed',
+            'resolved',
+            'low',
+            'normal',
+            'high',
+            'urgent',
+            'feedback',
+        ];
     }
 
     private function staff(): ConcreteAdminUser

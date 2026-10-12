@@ -55,12 +55,12 @@ class ViewSupportConversation extends ViewRecord
     protected function replyAction(): Action
     {
         return Action::make('reply')
-            ->label(__('Reply'))
+            ->label((string) __('magic-starter::admin_support.actions.reply.label'))
             ->icon(Heroicon::OutlinedPaperAirplane)
             ->schema([
-                $this->bodyField(__('Reply')),
+                $this->bodyField((string) __('magic-starter::admin_support.actions.reply.body')),
             ])
-            ->successNotificationTitle(__('Reply sent'))
+            ->successNotificationTitle((string) __('magic-starter::admin_support.actions.reply.sent'))
             ->action(
                 fn (array $data, Action $action) => $this->post($action, $data['body'], false, 'support.replied'),
             );
@@ -69,14 +69,14 @@ class ViewSupportConversation extends ViewRecord
     protected function noteAction(): Action
     {
         return Action::make('add_note')
-            ->label(__('Add note'))
+            ->label((string) __('magic-starter::admin_support.actions.note.label'))
             ->icon(Heroicon::OutlinedPencilSquare)
             ->color('gray')
-            ->modalDescription(__('Only staff can read a note. The customer is never told.'))
+            ->modalDescription((string) __('magic-starter::admin_support.actions.note.description'))
             ->schema([
-                $this->bodyField(__('Note')),
+                $this->bodyField((string) __('magic-starter::admin_support.actions.note.body')),
             ])
-            ->successNotificationTitle(__('Note added'))
+            ->successNotificationTitle((string) __('magic-starter::admin_support.actions.note.added'))
             ->action(
                 fn (array $data, Action $action) => $this->post($action, $data['body'], true, 'support.note_added'),
             );
@@ -85,7 +85,7 @@ class ViewSupportConversation extends ViewRecord
     protected function assignAction(): Action
     {
         return Action::make('assign')
-            ->label(__('Assign'))
+            ->label((string) __('magic-starter::admin_support.actions.assign.label'))
             ->icon(Heroicon::OutlinedUserPlus)
             ->color('gray')
             ->fillForm(fn (): array => [
@@ -93,11 +93,11 @@ class ViewSupportConversation extends ViewRecord
             ])
             ->schema([
                 Select::make('assignee_id')
-                    ->label(__('Assignee'))
+                    ->label(SupportConversationResource::fieldLabel('assignee'))
                     ->options(static fn (): array => SupportConversationResource::staffOptions())
-                    ->placeholder(__('Unassigned')),
+                    ->placeholder((string) __('magic-starter::admin_support.actions.assign.unassigned')),
             ])
-            ->successNotificationTitle(__('Assignee saved'))
+            ->successNotificationTitle((string) __('magic-starter::admin_support.actions.assign.saved'))
             ->action(fn (array $data, Action $action) => $this->change($action, [
                 'assignee_id' => $data['assignee_id'] ?? null,
             ], 'support.assigned'));
@@ -106,7 +106,7 @@ class ViewSupportConversation extends ViewRecord
     protected function changeAction(): Action
     {
         return Action::make('change')
-            ->label(__('Change status or priority'))
+            ->label((string) __('magic-starter::admin_support.actions.change.label'))
             ->icon(Heroicon::OutlinedAdjustmentsHorizontal)
             ->color('gray')
             ->fillForm(fn (): array => [
@@ -115,17 +115,17 @@ class ViewSupportConversation extends ViewRecord
             ])
             ->schema([
                 Select::make('status')
-                    ->label(__('Status'))
+                    ->label(SupportConversationResource::fieldLabel('status'))
                     ->options(SupportConversationResource::enumOptions(SupportConversationStatus::cases()))
                     ->required()
                     ->selectablePlaceholder(false),
                 Select::make('priority')
-                    ->label(__('Priority'))
+                    ->label(SupportConversationResource::fieldLabel('priority'))
                     ->options(SupportConversationResource::enumOptions(SupportPriority::cases()))
                     ->required()
                     ->selectablePlaceholder(false),
             ])
-            ->successNotificationTitle(__('Conversation updated'))
+            ->successNotificationTitle((string) __('magic-starter::admin_support.actions.change.updated'))
             ->action(fn (array $data, Action $action) => $this->change($action, [
                 'status' => $data['status'],
                 'priority' => $data['priority'],

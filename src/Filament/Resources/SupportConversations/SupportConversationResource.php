@@ -34,9 +34,9 @@ use Illuminate\Database\Eloquent\Model;
  * the `RepliesToSupport` and `ChangesSupportConversations` contracts, and every
  * piece of text, the customer's and the staff's, is rendered escaped.
  *
- * The strings are literal English keys rather than `magic-starter::` lang
- * entries, the way the support actions' own refusals are, so an application
- * translates them from its JSON language files.
+ * Every string is a namespaced `magic-starter::admin_support` entry, never a bare
+ * literal key: a dot-less key without a JSON line is read as a group name, so an
+ * application with its own `lang/en/status.php` would hand a label an array.
  */
 class SupportConversationResource extends MagicStarterResource
 {
@@ -55,6 +55,17 @@ class SupportConversationResource extends MagicStarterResource
      */
     protected const NOTE_STYLE = 'border-left: 3px solid #f59e0b; padding-left: 0.75rem;';
 
+    /**
+     * The lang group each enum's labels live under.
+     *
+     * @var array<class-string<BackedEnum>, string>
+     */
+    protected const ENUM_GROUPS = [
+        SupportConversationSource::class => 'source',
+        SupportConversationStatus::class => 'status',
+        SupportPriority::class => 'priority',
+    ];
+
     protected static string|BackedEnum|null $navigationIcon = Heroicon::OutlinedChatBubbleLeftRight;
 
     protected static ?string $recordTitleAttribute = 'subject';
@@ -66,17 +77,17 @@ class SupportConversationResource extends MagicStarterResource
 
     public static function getNavigationLabel(): string
     {
-        return (string) __('Support inbox');
+        return (string) __('magic-starter::admin_support.navigation_label');
     }
 
     public static function getModelLabel(): string
     {
-        return (string) __('conversation');
+        return (string) __('magic-starter::admin_support.model_label');
     }
 
     public static function getPluralModelLabel(): string
     {
-        return (string) __('conversations');
+        return (string) __('magic-starter::admin_support.plural_model_label');
     }
 
     /**
@@ -117,56 +128,56 @@ class SupportConversationResource extends MagicStarterResource
             ]))
             ->columns([
                 TextColumn::make('number')
-                    ->label(__('Number'))
+                    ->label(static::fieldLabel('number'))
                     ->prefix('#')
                     ->sortable()
                     ->searchable(),
                 TextColumn::make('subject')
-                    ->label(__('Subject'))
+                    ->label(static::fieldLabel('subject'))
                     ->limit(60)
                     ->tooltip(static fn (SupportConversation $record): string => $record->subject)
                     ->searchable(),
                 TextColumn::make('source')
-                    ->label(__('Source'))
+                    ->label(static::fieldLabel('source'))
                     ->formatStateUsing(
                         static fn (SupportConversationSource $state): string => static::enumLabel($state),
                     ),
                 TextColumn::make('status')
-                    ->label(__('Status'))
+                    ->label(static::fieldLabel('status'))
                     ->badge()
                     ->formatStateUsing(
                         static fn (SupportConversationStatus $state): string => static::enumLabel($state),
                     )
                     ->color(static fn (SupportConversationStatus $state): string => static::statusColor($state)),
                 TextColumn::make('priority')
-                    ->label(__('Priority'))
+                    ->label(static::fieldLabel('priority'))
                     ->badge()
                     ->formatStateUsing(static fn (SupportPriority $state): string => static::enumLabel($state))
                     ->color(static fn (SupportPriority $state): string => static::priorityColor($state)),
                 TextColumn::make('assignee.name')
-                    ->label(__('Assignee'))
+                    ->label(static::fieldLabel('assignee'))
                     ->placeholder(static::ABSENT),
                 TextColumn::make('email')
-                    ->label(__('Opener'))
+                    ->label(static::fieldLabel('opener'))
                     ->state(static fn (SupportConversation $record): string => static::openerLabel($record))
                     ->searchable(),
                 TextColumn::make('last_activity_at')
-                    ->label(__('Last activity'))
+                    ->label(static::fieldLabel('last_activity'))
                     ->dateTime()
                     ->sinceTooltip()
                     ->sortable(),
             ])
             ->filters([
                 SelectFilter::make('status')
-                    ->label(__('Status'))
+                    ->label(static::fieldLabel('status'))
                     ->multiple()
                     ->options(static::enumOptions(SupportConversationStatus::cases()))
                     ->default(static::unresolvedStatuses()),
                 SelectFilter::make('source')
-                    ->label(__('Source'))
+                    ->label(static::fieldLabel('source'))
                     ->options(static::enumOptions(SupportConversationSource::cases())),
                 SelectFilter::make('assignee_id')
-                    ->label(__('Assignee'))
+                    ->label(static::fieldLabel('assignee'))
                     ->options(static fn (): array => static::staffOptions()),
             ])
             ->recordActions([
@@ -190,42 +201,42 @@ class SupportConversationResource extends MagicStarterResource
                 ])
                 ->schema([
                     TextEntry::make('opener')
-                        ->label(__('Opener'))
+                        ->label(static::fieldLabel('opener'))
                         ->state(static fn (SupportConversation $record): string => static::openerLabel($record)),
                     TextEntry::make('team.name')
-                        ->label(__('Team'))
+                        ->label(static::fieldLabel('team'))
                         ->placeholder(static::ABSENT),
                     TextEntry::make('source')
-                        ->label(__('Source'))
+                        ->label(static::fieldLabel('source'))
                         ->formatStateUsing(
                             static fn (SupportConversationSource $state): string => static::enumLabel($state),
                         ),
                     TextEntry::make('status')
-                        ->label(__('Status'))
+                        ->label(static::fieldLabel('status'))
                         ->badge()
                         ->formatStateUsing(
                             static fn (SupportConversationStatus $state): string => static::enumLabel($state),
                         )
                         ->color(static fn (SupportConversationStatus $state): string => static::statusColor($state)),
                     TextEntry::make('priority')
-                        ->label(__('Priority'))
+                        ->label(static::fieldLabel('priority'))
                         ->badge()
                         ->formatStateUsing(static fn (SupportPriority $state): string => static::enumLabel($state))
                         ->color(static fn (SupportPriority $state): string => static::priorityColor($state)),
                     TextEntry::make('assignee.name')
-                        ->label(__('Assignee'))
+                        ->label(static::fieldLabel('assignee'))
                         ->placeholder(static::ABSENT),
                     TextEntry::make('created_at')
-                        ->label(__('Opened'))
+                        ->label(static::fieldLabel('opened'))
                         ->dateTime()
                         ->sinceTooltip(),
                     TextEntry::make('last_activity_at')
-                        ->label(__('Last activity'))
+                        ->label(static::fieldLabel('last_activity'))
                         ->dateTime()
                         ->sinceTooltip()
                         ->placeholder(static::ABSENT),
                 ]),
-            Section::make(__('Conversation'))
+            Section::make((string) __('magic-starter::admin_support.thread'))
                 ->columnSpanFull()
                 ->schema([
                     RepeatableEntry::make('thread')
@@ -335,7 +346,7 @@ class SupportConversationResource extends MagicStarterResource
             return static::ABSENT;
         }
 
-        return $record->user_id === null ? $label . ' (' . __('visitor') . ')' : $label;
+        return $record->user_id === null ? $label . ' (' . __('magic-starter::admin_support.visitor') . ')' : $label;
     }
 
     /**
@@ -344,18 +355,18 @@ class SupportConversationResource extends MagicStarterResource
     protected static function authorLabel(SupportMessage $message): string
     {
         $role = match (true) {
-            $message->kind === SupportMessageKind::NOTE => __('Internal note'),
-            $message->kind === SupportMessageKind::ACTIVITY => __('Activity'),
+            $message->kind === SupportMessageKind::NOTE => static::authorRole('internal_note'),
+            $message->kind === SupportMessageKind::ACTIVITY => static::authorRole('activity'),
             default => match ($message->sender_type) {
-                SupportSenderType::CUSTOMER => __('Customer'),
-                SupportSenderType::STAFF => __('Staff'),
-                SupportSenderType::AI => __('AI'),
-                SupportSenderType::SYSTEM => __('System'),
+                SupportSenderType::CUSTOMER => static::authorRole('customer'),
+                SupportSenderType::STAFF => static::authorRole('staff'),
+                SupportSenderType::AI => static::authorRole('ai'),
+                SupportSenderType::SYSTEM => static::authorRole('system'),
             },
         };
         $name = $message->sender?->getAttribute('name');
 
-        return filled($name) ? "{$role}: {$name}" : (string) $role;
+        return filled($name) ? "{$role}: {$name}" : $role;
     }
 
     protected static function messageColor(SupportMessage $message): string
@@ -385,8 +396,26 @@ class SupportConversationResource extends MagicStarterResource
         };
     }
 
+    /**
+     * The shipped label of a status, priority or source case.
+     */
     protected static function enumLabel(BackedEnum $case): string
     {
-        return (string) __(ucfirst(str_replace('_', ' ', (string) $case->value)));
+        $group = static::ENUM_GROUPS[$case::class];
+
+        return (string) __("magic-starter::admin_support.enums.{$group}.{$case->value}");
+    }
+
+    /**
+     * A field name as the list, the filters, the thread header and the action forms spell it.
+     */
+    public static function fieldLabel(string $field): string
+    {
+        return (string) __("magic-starter::admin_support.fields.{$field}");
+    }
+
+    protected static function authorRole(string $role): string
+    {
+        return (string) __("magic-starter::admin_support.authors.{$role}");
     }
 }

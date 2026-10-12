@@ -90,8 +90,8 @@ class SupportConversationNeedsStaffNotification extends Notification implements 
         return (new MailMessage)
             ->subject($this->title() . ': ' . $this->conversation->subject)
             ->line($this->reasonLine())
-            ->line(Lang::get('Subject: :subject', ['subject' => $this->conversation->subject]))
-            ->line(Lang::get('Open the admin panel to answer it.'));
+            ->line(Lang::get('magic-starter::admin_support.notifications.staff.subject_line', ['subject' => $this->conversation->subject]))
+            ->line(Lang::get('magic-starter::admin_support.notifications.staff.open_panel'));
     }
 
     /**
@@ -115,13 +115,15 @@ class SupportConversationNeedsStaffNotification extends Notification implements 
 
     private function title(): string
     {
-        return Lang::get('Support conversation #:number', ['number' => $this->conversation->number]);
+        return Lang::get('magic-starter::admin_support.notifications.staff.title', [
+            'number' => $this->conversation->number,
+        ]);
     }
 
     private function reasonLine(): string
     {
         return $this->reason === 'opened'
-            ? Lang::get('A customer opened a new conversation.')
-            : Lang::get('A customer wrote again and is waiting for an answer.');
+            ? Lang::get('magic-starter::admin_support.notifications.staff.opened')
+            : Lang::get('magic-starter::admin_support.notifications.staff.customer_wrote');
     }
 }

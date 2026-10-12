@@ -55,7 +55,7 @@ class ChangeSupportConversation implements ChangesSupportConversations
         // 2. Refuse an assignee who would never be told about the conversation.
         if (($validated['assignee_id'] ?? null) !== null && ! $this->isStaff($validated['assignee_id'])) {
             throw ValidationException::withMessages([
-                'assignee_id' => Lang::get('The assignee must be a support staff member.'),
+                'assignee_id' => Lang::get('magic-starter::admin_support.refusals.assignee_not_staff'),
             ]);
         }
 
