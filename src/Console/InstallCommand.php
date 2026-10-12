@@ -61,6 +61,7 @@ class InstallCommand extends Command
         'timezones' => 'Timezone list (paginated, searchable)',
         'billing' => 'Billing entitlement (provider-neutral plan provenance)',
         'audit' => 'Audit trail (model changes and admin actions)',
+        'support' => 'Support desk (customer conversations and staff inbox)',
     ];
 
     /** @var array<string, string> Feature key → Features class method name. */
@@ -79,6 +80,7 @@ class InstallCommand extends Command
         'timezones' => 'timezones',
         'billing' => 'billing',
         'audit' => 'audit',
+        'support' => 'support',
     ];
 
     /** @var list<string> Migrations always published regardless of feature selection. */
@@ -150,6 +152,12 @@ class InstallCommand extends Command
         ],
         'audit' => [
             'create_magic_starter_audits_table.php',
+        ],
+        // Messages reference conversations, so the conversations table is
+        // stamped first.
+        'support' => [
+            'create_support_conversations_table.php',
+            'create_support_messages_table.php',
         ],
         // Entitlement provenance lands on whichever table
         // `magic-starter.billing.billable` names, which is `users` by default

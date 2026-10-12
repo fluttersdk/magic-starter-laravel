@@ -110,7 +110,7 @@ class MagicStarterPlugin implements Plugin
      * Register a resource class under a key.
      *
      * A default key (`users`, `teams`, `subscriptions`, `billing_events`,
-     * `webhook_deliveries`, `newsletter_subscribers`, `audits`) keeps its
+     * `webhook_deliveries`, `newsletter_subscribers`, `audits`, `support`) keeps its
      * feature gate; any other key is registered unconditionally.
      */
     public function resource(string $key, string $class): static
@@ -418,6 +418,8 @@ class MagicStarterPlugin implements Plugin
             'newsletter_subscribers' => 'FlutterSdk\\MagicStarter\\Filament\\Resources\\NewsletterSubscribers\\'
                 . 'NewsletterSubscriberResource',
             'audits' => 'FlutterSdk\\MagicStarter\\Filament\\Resources\\Audits\\AuditResource',
+            'support' => 'FlutterSdk\\MagicStarter\\Filament\\Resources\\SupportConversations\\'
+                . 'SupportConversationResource',
             ...$this->resources,
         ];
 
@@ -449,6 +451,7 @@ class MagicStarterPlugin implements Plugin
             'subscriptions', 'billing_events', 'webhook_deliveries' => Features::hasBillingFeatures(),
             'newsletter_subscribers' => Features::hasNewsletterSubscriptionFeatures(),
             'audits' => Features::hasAuditFeatures(),
+            'support' => Features::hasSupportFeatures(),
             default => true,
         };
     }
