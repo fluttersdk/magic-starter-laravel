@@ -4,6 +4,8 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [0.0.31] - 2026-10-13
+
 ### Added
 
 - **An AI support desk, off until the application binds `RespondsToSupport`.** The contract answers one customer message (`respond(SupportTurn): SupportAnswer`) and names the daily token pool the turn draws from (`pool()`, `free` or `paid`); it ships with no default implementation and no binding. A verified, non-guest opener who files through the app or Contact sales starts `pending`, and `RespondToSupportConversation` answers the turn in their thread under a per-conversation lock, idempotently by message id. A public-form conversation never reaches it, and eligibility is re-read on every turn. (`src/Contracts/RespondsToSupport.php`, `src/Jobs/RespondToSupportConversation.php`, `src/Support/SupportAi/`, `src/Enums/SupportAiPool.php`)
