@@ -33,7 +33,7 @@ Throughout this document `{prefix}` is `config('magic-starter.route_prefix')`.
 ],
 ```
 
-Run `php artisan magic-starter:install --features=support` for the three migrations (`create_support_conversations_table`, `create_support_messages_table` and `add_ai_columns_to_support_tables`), then `php artisan migrate`. A host that installed support earlier publishes `add_ai_columns_to_support_tables.php` by hand from `vendor/fluttersdk/magic-starter-laravel/database/migrations/`; it is additive and guarded by `hasColumn`, so a second run changes nothing.
+Run `php artisan magic-starter:install --features=support` for the three migrations (`create_support_conversations_table`, `create_support_messages_table` and `add_ai_columns_to_support_tables`), then `php artisan migrate`. A host that installed support earlier publishes `add_ai_columns_to_support_tables.php` by hand from `vendor/fluttersdk/magic-starter-laravel/database/migrations/`; it is additive and guarded by `hasColumn`, so a second run changes nothing. Run it in the same deploy as the package update: opening a conversation and posting a customer message write its columns whether or not a responder is bound.
 
 ---
 
