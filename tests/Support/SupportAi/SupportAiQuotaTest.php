@@ -20,6 +20,10 @@ use ReflectionClass;
  */
 class SupportAiQuotaTest extends TestCase
 {
+    private const TEAM_A = '0194f1c2-0000-7000-8000-00000000000a';
+
+    private const TEAM_B = '0194f1c2-0000-7000-8000-00000000000b';
+
     private int $sequence = 0;
 
     protected function setUp(): void
@@ -151,9 +155,9 @@ class SupportAiQuotaTest extends TestCase
     {
         $this->setQuotas(teamDaily: 3);
         $quota = $this->quota();
-        $first = $this->createConversation($this->createUser(), teamId: 'team-1');
-        $second = $this->createConversation($this->createUser(), teamId: 'team-1');
-        $outsider = $this->createConversation($this->createUser(), teamId: 'team-2');
+        $first = $this->createConversation($this->createUser(), teamId: self::TEAM_A);
+        $second = $this->createConversation($this->createUser(), teamId: self::TEAM_A);
+        $outsider = $this->createConversation($this->createUser(), teamId: self::TEAM_B);
 
         $this->assertNotNull($quota->reserve($first, 'turn-1', SupportAiPool::FREE));
         $this->assertNotNull($quota->reserve($second, 'turn-2', SupportAiPool::FREE));
@@ -233,8 +237,8 @@ class SupportAiQuotaTest extends TestCase
         $member = $this->createUser();
         $other = $this->createUser();
 
-        $otherInTeam = $this->createConversation($other, 'team-1');
-        $memberInTeam = $this->createConversation($member, 'team-1');
+        $otherInTeam = $this->createConversation($other, self::TEAM_A);
+        $memberInTeam = $this->createConversation($member, self::TEAM_A);
 
         $this->assertNotNull($quota->reserve($otherInTeam, 'turn-1', SupportAiPool::FREE));
         $this->assertNull($quota->reserve($memberInTeam, 'turn-2', SupportAiPool::FREE));

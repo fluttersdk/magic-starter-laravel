@@ -74,6 +74,8 @@ What a customer reads back:
 - A message carries `kind` (`message` or `activity`) and `sender`: for staff the first name and profile photo, for the AI desk `support.ai.name`, otherwise null. A staff id, surname or email, and the `meta` the desk recorded, are never sent.
 - The reply notification carries `action_url`: `support.client_thread_path` with `{id}` replaced by the conversation key.
 
+Tapping Contact sales again continues the conversation instead of filing another: while the opener's `contact_sales` conversation in their current team is not `resolved`, the body is added to it as a customer message and the same conversation is returned with 201, so the client navigates to its id. A resolved conversation, one filed under another team (the host builds the AI's account context from the conversation's team) and every `in_app` or public conversation are never reused. The open locks the opener's own user row first, so two taps at once cannot both create.
+
 A conversation belongs to its opener alone. When a visitor verifies an address that matches a public conversation, `LinkSupportConversationsOnVerified` hands it to their account. When a guest session is claimed into an existing account (`POST auth/guest/claim`), the guest's conversations move to that account too, and a conversation whose team the account does not belong to is filed under the account's current team.
 
 ---
