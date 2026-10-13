@@ -15,7 +15,7 @@
     .msl-summary { display: flex; flex-direction: column; gap: 6px; padding: 14px 16px; border-radius: 10px; background: var(--msl-wash); border: 1px solid var(--msl-wash-edge); }
     .msl-summary-head { color: var(--msl-wash-fg); font-weight: 600; font-size: 13px; }
     .msl-summary-text { font-size: 14px; white-space: pre-line; overflow-wrap: anywhere; }
-    .msl-row { display: flex; gap: 10px; align-items: flex-end; }
+    .msl-row { display: flex; gap: 10px; align-items: flex-start; }
     .msl-row.msl-out { justify-content: flex-end; }
     .msl-stack { display: flex; flex-direction: column; gap: 5px; max-width: 70%; min-width: 0; }
     .msl-out .msl-stack { align-items: flex-end; }
