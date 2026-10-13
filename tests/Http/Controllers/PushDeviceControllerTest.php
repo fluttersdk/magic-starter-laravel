@@ -64,6 +64,7 @@ final class PushDeviceControllerTest extends TestCase
             $table->uuid('id')->primary();
             $table->string('name')->nullable();
             $table->string('email')->nullable();
+            $table->boolean('is_guest')->default(false);
             $table->timestamps();
         });
 
@@ -152,6 +153,25 @@ final class PushDeviceControllerTest extends TestCase
         ])->assertNoContent();
 
         $this->assertNull(PushDevice::query()->sole()->external_id);
+    }
+
+    public function test_a_guest_report_is_answered_and_not_recorded(): void
+    {
+        // An app that opens a guest in the background on every launch would
+        // otherwise leave a row per install, for a session nothing is sent to
+        // and nothing ever deletes. 204 rather than a refusal, so the client
+        // memo settles instead of retrying and logging on every launch.
+        $guest = PushDeviceUser::query()->create([
+            'name' => 'Guest',
+            'is_guest' => true,
+        ]);
+
+        $this->report($guest, [
+            ...$this->snapshot($guest),
+            'external_id' => null,
+        ])->assertNoContent();
+
+        $this->assertSame(0, PushDevice::query()->count());
     }
 
     public function test_a_report_validates_its_body(): void

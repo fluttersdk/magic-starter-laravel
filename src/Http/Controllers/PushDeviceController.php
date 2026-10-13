@@ -34,6 +34,15 @@ class PushDeviceController
      */
     public function store(StorePushDeviceStateRequest $request): Response
     {
+        // A guest is answered and not recorded. Nothing is ever sent to one,
+        // and an app that opens a guest in the background on every launch
+        // would otherwise leave a row per install that nothing deletes. A 204
+        // rather than a refusal, so the client's memo settles instead of
+        // retrying and logging on every launch.
+        if ((bool) ($request->user()->is_guest ?? false)) {
+            return response()->noContent();
+        }
+
         $attributes = $request->validated();
         $subscriptionId = self::blankToNull($attributes['subscription_id']);
 
