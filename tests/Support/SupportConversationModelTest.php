@@ -178,6 +178,7 @@ class SupportConversationModelTest extends TestCase
 
         $this->assertSame(Redactor::PLACEHOLDER, $audit->new_values['subject']);
         $this->assertSame(Redactor::PLACEHOLDER, $audit->new_values['email']);
+        $this->assertSame(Redactor::PLACEHOLDER, $audit->new_values['name']);
         $this->assertSame('public_form', $audit->new_values['source']);
     }
 

@@ -94,6 +94,7 @@ class SupportConversation extends Model
     protected array $auditExclude = [
         'subject',
         'email',
+        'name',
     ];
 
     /**

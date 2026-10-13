@@ -76,7 +76,9 @@ class OpenSupportConversation implements OpensSupportConversations
      *
      * @param  array<string, mixed>  $input  topic (required unless the source is `contact_sales` or a subject is
      *                                       sent, then filed under `other`), body, an optional subject and an
-     *                                       optional source (`in_app` or `contact_sales`)
+     *                                       optional source (`in_app` or `contact_sales`); a contact-sales
+     *                                       thread that is continued keeps its own subject and topic, so a sent
+     *                                       subject is ignored then
      *
      * @throws ValidationException
      */

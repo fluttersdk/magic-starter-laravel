@@ -297,6 +297,10 @@ class RespondToSupportConversation implements ShouldQueue
             if ($answer->handsOff()) {
                 $desk->announceHandoff($conversation);
             } else {
+                // The conversation is read again, so the opener is whoever owns it now: a guest claim can commit
+                // while the model thinks and hand it to the account, and the spent guest is not told anything.
+                $conversation->refresh();
+
                 // The opener is told in app and by push, as for a staff reply; an outage of either must never
                 // fail an answer that is already stored.
                 rescue(

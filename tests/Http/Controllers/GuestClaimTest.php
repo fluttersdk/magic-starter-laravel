@@ -3,9 +3,12 @@
 namespace FlutterSdk\MagicStarter\Tests\Http\Controllers;
 
 use FlutterSdk\MagicStarter\Enums\SupportConversationSource;
+use FlutterSdk\MagicStarter\Enums\SupportMessageKind;
+use FlutterSdk\MagicStarter\Enums\SupportSenderType;
 use FlutterSdk\MagicStarter\Events\GuestClaimed;
 use FlutterSdk\MagicStarter\MagicStarter;
 use FlutterSdk\MagicStarter\Models\SupportConversation;
+use FlutterSdk\MagicStarter\Models\SupportMessage;
 use FlutterSdk\MagicStarter\Tests\Fixtures\ConcreteTeam;
 use FlutterSdk\MagicStarter\Tests\Fixtures\ConcreteTeamUser;
 use FlutterSdk\MagicStarter\Tests\TestCase;
@@ -107,6 +110,7 @@ class GuestClaimTest extends TestCase
             'create_teams_table.php',
             'create_team_user_table.php',
             'create_support_conversations_table.php',
+            'create_support_messages_table.php',
         ] as $file) {
             (require __DIR__ . '/../../../database/migrations/' . $file)->up();
         }
@@ -229,6 +233,16 @@ class GuestClaimTest extends TestCase
         ]);
     }
 
+    private function messageIn(SupportConversation $conversation, SupportSenderType $type, string $senderId): SupportMessage
+    {
+        return $conversation->messages()->create([
+            'sender_type' => $type,
+            'sender_id' => $senderId,
+            'kind' => SupportMessageKind::MESSAGE,
+            'body' => 'Hello',
+        ]);
+    }
+
     // ------------------------------------------------------------------
     // Tests
     // ------------------------------------------------------------------
@@ -288,6 +302,32 @@ class GuestClaimTest extends TestCase
         $this->assertSame((string) $accountTeam->getKey(), (string) $moved->team_id);
         $this->assertSame($stranger['user']->getKey(), (string) $untouched->refresh()->user_id);
         $this->assertSame((string) $guestTeam->getKey(), (string) $untouched->team_id);
+    }
+
+    /**
+     * The guest's own messages follow the conversation, or the thread would read as a visitor's once the guest is pruned.
+     */
+    public function test_a_claim_moves_the_guests_customer_messages_with_their_conversations(): void
+    {
+        $guest = $this->startGuestSession();
+        $account = $this->registeredAccount();
+        $staff = $this->registeredAccount('staff@example.com');
+        $stranger = $this->registeredAccount('stranger@example.com');
+
+        $moved = $this->conversationOf($guest['user_id'], $this->teamOwnedBy($account['user'])->getKey());
+        $guestMessage = $this->messageIn($moved, SupportSenderType::CUSTOMER, $guest['user_id']);
+        $staffReply = $this->messageIn($moved, SupportSenderType::STAFF, $staff['user']->getKey());
+        $untouched = $this->conversationOf($stranger['user']->getKey(), $this->teamOwnedBy($account['user'])->getKey());
+        $strangerMessage = $this->messageIn($untouched, SupportSenderType::CUSTOMER, $stranger['user']->getKey());
+
+        $this->withToken($account['token'])
+            ->postJson('/auth/guest/claim', ['guest_token' => $guest['token']])
+            ->assertOk()
+            ->assertJsonPath('data.claimed', true);
+
+        $this->assertSame($account['user']->getKey(), (string) $guestMessage->refresh()->sender_id);
+        $this->assertSame($staff['user']->getKey(), (string) $staffReply->refresh()->sender_id);
+        $this->assertSame($stranger['user']->getKey(), (string) $strangerMessage->refresh()->sender_id);
     }
 
     /**

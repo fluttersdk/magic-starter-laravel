@@ -305,6 +305,27 @@ class SupportAiLifecycleTest extends TestCase
         );
     }
 
+    public function test_a_claim_during_the_model_call_sends_the_notification_to_the_new_owner(): void
+    {
+        $guest = $this->customer('guest@example.com');
+        $owner = $this->customer('owner@example.com');
+        $conversation = null;
+        $this->bindResponder(function () use (&$conversation, $owner): SupportAnswer {
+            // A guest claim commits while the model thinks: the conversation changes hands.
+            SupportConversation::query()->whereKey($conversation->getKey())->update([
+                'user_id' => $owner->getKey(),
+            ]);
+
+            return new SupportAnswer('Your plan renews on the 1st.', 0.9, new SupportUsage(300, 100));
+        });
+        $conversation = $this->open($guest);
+
+        $this->runQueued();
+
+        Notification::assertSentToTimes($owner, SupportReplyNotification::class, 1);
+        Notification::assertNotSentTo($guest, SupportReplyNotification::class);
+    }
+
     public function test_a_notification_outage_never_fails_a_committed_answer(): void
     {
         $this->bindResponder();

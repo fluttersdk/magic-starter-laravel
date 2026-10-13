@@ -3,9 +3,11 @@
 namespace FlutterSdk\MagicStarter\Actions;
 
 use FlutterSdk\MagicStarter\Contracts\ClaimsGuestAccounts;
+use FlutterSdk\MagicStarter\Enums\SupportSenderType;
 use FlutterSdk\MagicStarter\Events\GuestClaimed;
 use FlutterSdk\MagicStarter\MagicStarter;
 use FlutterSdk\MagicStarter\Models\SupportConversation;
+use FlutterSdk\MagicStarter\Models\SupportMessage;
 use Illuminate\Contracts\Auth\Authenticatable;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Support\Facades\DB;
@@ -272,6 +274,13 @@ class ClaimGuestAccount implements ClaimsGuestAccounts
      * keeps it. Each row is saved through the model so the audit trail records the
      * hand-over. The table is checked rather than assumed, as for notifications.
      *
+     * The guest's own customer messages move with them. The staff thread marks a
+     * customer message with no sender in a conversation that has an opener as
+     * "sent as a visitor", and the guest row is pruned later, which nulls
+     * `sender_id` (`nullOnDelete`); a message left on the guest would be
+     * mislabelled from then on. Staff and AI messages are another sender's and
+     * stay as they are.
+     *
      * @param  Authenticatable  $guest  The guest whose conversations move.
      * @param  Authenticatable  $target  The account they move to.
      */
@@ -282,42 +291,64 @@ class ClaimGuestAccount implements ClaimsGuestAccounts
         }
 
         $currentTeamId = $target->getAttribute('current_team_id');
+        $targetTeamIds = $this->teamIdsOf($target);
 
-        SupportConversation::query()
+        $conversations = SupportConversation::query()
             ->where('user_id', $guest->getAuthIdentifier())
             ->lockForUpdate()
-            ->get()
-            ->each(function (SupportConversation $conversation) use ($target, $currentTeamId): void {
+            ->get();
+
+        $conversations->each(
+            function (SupportConversation $conversation) use ($target, $currentTeamId, $targetTeamIds): void {
                 $conversation->forceFill([
                     'user_id' => $target->getAuthIdentifier(),
                 ]);
 
-                if ($conversation->team_id !== null && ! $this->belongsToTeam($target, $conversation->team_id)) {
+                $teamId = $conversation->team_id;
+
+                if ($teamId !== null && ! in_array((string) $teamId, $targetTeamIds, true)) {
                     $conversation->forceFill([
                         'team_id' => $currentTeamId,
                     ]);
                 }
 
                 $conversation->save();
-            });
+            },
+        );
+
+        if ($conversations->isEmpty() || ! Schema::hasTable('support_messages')) {
+            return;
+        }
+
+        SupportMessage::query()
+            ->whereIn('conversation_id', $conversations->modelKeys())
+            ->where('sender_type', SupportSenderType::CUSTOMER->value)
+            ->where('sender_id', $guest->getAuthIdentifier())
+            ->update([
+                'sender_id' => $target->getAuthIdentifier(),
+            ]);
     }
 
     /**
-     * Determine whether the account owns or belongs to a team.
+     * The keys of every team the account owns or belongs to, as strings.
      *
      * `method_exists` rather than a plain call, as for guests: HasTeams is a
      * trait the consumer applies to its own user model, and an account without
-     * it belongs to no team.
+     * it belongs to no team. Read once per claim, not once per conversation.
      *
-     * @param  Authenticatable  $user  The account to judge.
-     * @param  string|int  $teamId  The team's key.
+     * @param  Authenticatable  $user  The account to read.
+     * @return list<string>
      */
-    private function belongsToTeam(Authenticatable $user, string|int $teamId): bool
+    private function teamIdsOf(Authenticatable $user): array
     {
-        return method_exists($user, 'allTeams')
-            && $user->allTeams()->contains(
-                fn (Model $team): bool => (string) $team->getKey() === (string) $teamId,
-            );
+        if (! method_exists($user, 'allTeams')) {
+            return [];
+        }
+
+        return $user->allTeams()
+            ->map(fn (Model $team): string => (string) $team->getKey())
+            ->values()
+            ->all();
     }
 
     /**
