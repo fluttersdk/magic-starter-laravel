@@ -32,6 +32,7 @@ use FlutterSdk\MagicStarter\Tests\TestCase;
 use Illuminate\Broadcasting\BroadcastManager;
 use Illuminate\Contracts\Broadcasting\Broadcaster;
 use Illuminate\Notifications\AnonymousNotifiable;
+use Illuminate\Notifications\Events\BroadcastNotificationCreated;
 use Illuminate\Notifications\SendQueuedNotifications;
 use Illuminate\Support\Facades\Event;
 use Illuminate\Support\Facades\Notification;
@@ -562,7 +563,14 @@ class SupportStaffSideTest extends TestCase
             [$alert, $staff, 'SupportConversationNeedsStaffNotification', $alert->toDatabase($staff)],
         ] as [$notification, $notifiable, $type, $row]) {
             $notification->id = (string) Str::uuid();
-            $frame = $notification->toBroadcast($notifiable)->data;
+            // What goes on the wire: Laravel's event merges `id` and `type` over
+            // the message, so reading `toBroadcast()` alone would miss a `type`
+            // replaced by the fully qualified class name.
+            $frame = (new BroadcastNotificationCreated(
+                $notifiable,
+                $notification,
+                $notification->toBroadcast($notifiable)->data,
+            ))->broadcastWith();
 
             $this->assertSame('notification.created', $notification->broadcastAs());
             $this->assertSame($notification->id, $frame['id']);

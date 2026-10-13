@@ -90,6 +90,29 @@ class GateNotificationChannelsTest extends TestCase
         $this->assertFalse($listener->handle($event));
     }
 
+    public function test_broadcast_follows_the_in_app_preference(): void
+    {
+        // The broadcast is the live delivery of the database row: a frame for a
+        // row never written shows a bell entry that vanishes on the next fetch.
+        NotificationPreferenceRegistry::register([
+            GateTestNotification::class => [
+                'label' => 'Test Notification',
+                'channels' => ['mail', 'database'],
+                'default' => ['mail', 'database'],
+                'locked' => [],
+            ],
+        ]);
+
+        $listener = new GateNotificationChannels;
+        $muted = new GateTestNotifiable;
+        $muted->disabledPreferences = [['gate_test', 'database']];
+
+        $this->assertFalse($listener->handle(new NotificationSending($muted, new GateTestNotification, 'broadcast')));
+        $this->assertTrue($listener->handle(
+            new NotificationSending(new GateTestNotifiable, new GateTestNotification, 'broadcast'),
+        ));
+    }
+
     public function test_allows_locked_channels_even_when_user_disabled(): void
     {
         NotificationPreferenceRegistry::register([

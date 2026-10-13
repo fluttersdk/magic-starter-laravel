@@ -46,11 +46,17 @@ class GateNotificationChannels
             return true;
         }
 
-        // 5. Resolve the logical channel name from the driver channel.
+        // 5. Resolve the logical channel name from the driver channel. An unregistered broadcast is the live
+        //    delivery of the database row, so it answers to the in-app preference: a frame for a row never written
+        //    shows a bell entry that vanishes on the next fetch.
+        $registeredChannels = NotificationPreferenceRegistry::channels($notificationClass);
         $logicalChannel = NotificationPreferenceRegistry::resolveLogicalChannel($event->channel);
 
+        if ($logicalChannel === 'broadcast' && ! in_array('broadcast', $registeredChannels, true)) {
+            $logicalChannel = 'database';
+        }
+
         // 6. If this logical channel is not in the registry's channels list, allow (unknown channel).
-        $registeredChannels = NotificationPreferenceRegistry::channels($notificationClass);
 
         if (! in_array($logicalChannel, $registeredChannels, true)) {
             return true;

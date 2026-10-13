@@ -79,14 +79,21 @@ class SupportReplyNotification extends Notification implements ShouldBeEncrypted
     }
 
     /**
+     * The frame's `type`, as `GET /notifications` answers it ({@see NotificationResource}). Laravel merges this over
+     * the message, and its default is the fully qualified class name.
+     */
+    public function broadcastType(): string
+    {
+        return class_basename(static::class);
+    }
+
+    /**
      * The frame, in the shape `GET /notifications` lists a row ({@see NotificationResource}); Laravel's default
-     * flattens the data, which the client cannot decode.
+     * flattens the data, which the client cannot decode. `id` and `type` are merged in by Laravel.
      */
     public function toBroadcast(mixed $notifiable): BroadcastMessage
     {
         return new BroadcastMessage([
-            'id' => $this->id,
-            'type' => class_basename(static::class),
             'data' => $this->toArray($notifiable),
             'created_at' => now()->toIso8601String(),
             'read_at' => null,
