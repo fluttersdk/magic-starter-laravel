@@ -18,8 +18,9 @@ use onesignal\client\model\Notification as OneSignalNotification;
  * Tells the customer that staff answered their conversation.
  *
  * Two audiences, chosen by {@see ReplyToSupportConversation}: an opener with an
- * account is told in app (database) and by push, with generic text and ids
- * only, and reads the reply through the API; a visitor with no account gets a
+ * account is told in app (database) and by push, with generic text, ids and
+ * the client route of the thread (`action_url`, from
+ * `support.client_thread_path`) only, and reads the reply through the API; a visitor with no account gets a
  * mail carrying the reply itself and a fresh thread link (`$threadUrl`), since
  * the mail is their only way back in. Only ever built for a customer-visible
  * reply, never for a staff note.
@@ -75,6 +76,7 @@ class SupportReplyNotification extends Notification implements ShouldBeEncrypted
             'body' => $this->summary(),
             'conversation_id' => $this->message->conversation_id,
             'message_id' => $this->message->getKey(),
+            'action_url' => $this->actionUrl(),
         ];
     }
 
@@ -92,6 +94,7 @@ class SupportReplyNotification extends Notification implements ShouldBeEncrypted
         $payload->setData((object) [
             'conversation_id' => $this->message->conversation_id,
             'message_id' => $this->message->getKey(),
+            'action_url' => $this->actionUrl(),
         ]);
 
         return $payload;
@@ -113,6 +116,19 @@ class SupportReplyNotification extends Notification implements ShouldBeEncrypted
             ->line($this->message->body)
             ->action(Lang::get('magic-starter::admin_support.notifications.reply.mail_action'), (string) $this->threadUrl)
             ->line(Lang::get('magic-starter::admin_support.notifications.reply.mail_footer'));
+    }
+
+    /**
+     * The in-app route of the thread: `support.client_thread_path` with `{id}`
+     * replaced by the conversation key.
+     */
+    private function actionUrl(): string
+    {
+        return str_replace(
+            '{id}',
+            (string) $this->message->conversation_id,
+            (string) config('magic-starter.support.client_thread_path', '/support/{id}'),
+        );
     }
 
     private function title(): string

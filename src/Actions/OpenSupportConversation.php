@@ -9,14 +9,16 @@ use FlutterSdk\MagicStarter\Enums\SupportMessageKind;
 use FlutterSdk\MagicStarter\Enums\SupportSenderType;
 use FlutterSdk\MagicStarter\Events\SupportConversationNeedsStaff;
 use FlutterSdk\MagicStarter\Models\SupportConversation;
+use FlutterSdk\MagicStarter\Support\SupportRules;
 use Illuminate\Contracts\Auth\Authenticatable;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\UniqueConstraintViolationException;
 use Illuminate\Support\Arr;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Event;
+use Illuminate\Support\Facades\Lang;
 use Illuminate\Support\Facades\Validator;
-use Illuminate\Validation\Rule;
+use Illuminate\Support\Str;
 use Illuminate\Validation\ValidationException;
 
 /**
@@ -27,6 +29,10 @@ use Illuminate\Validation\ValidationException;
  * neither, and every public submission is a new conversation, however many the
  * address already has. Nothing is mailed to a public submitter; the thread link
  * goes out with the first staff reply.
+ *
+ * A contact-sales conversation is always filed under the `sales` topic, and a
+ * conversation opened without a subject gets one from its topic label and the
+ * first line of its body.
  */
 class OpenSupportConversation implements OpensSupportConversations
 {
@@ -42,17 +48,21 @@ class OpenSupportConversation implements OpensSupportConversations
     /**
      * Open a conversation for a signed-in user.
      *
-     * @param  array<string, mixed>  $input  subject, body and an optional source (`in_app` or `contact_sales`)
+     * @param  array<string, mixed>  $input  topic (required unless the source is `contact_sales`), body, an optional
+     *                                       subject and an optional source (`in_app` or `contact_sales`)
      *
      * @throws ValidationException
      */
     public function open(Authenticatable $user, array $input): SupportConversation
     {
         // 1. Validate the customer's own fields; owner fields are not even read.
-        $validated = $this->validate($input, [
+        $validated = Validator::make($input, SupportRules::conversation([
             SupportConversationSource::IN_APP,
             SupportConversationSource::CONTACT_SALES,
-        ]);
+        ], topicRequired: true))->validate();
+        $source = SupportConversationSource::from(
+            Arr::get($validated, 'source', SupportConversationSource::IN_APP->value),
+        );
 
         // 2. The opener, and the team they were in, come from the account. The
         //    raw attributes are read because `current_team_id` only exists with
@@ -65,8 +75,8 @@ class OpenSupportConversation implements OpensSupportConversations
                 'team_id' => $attributes['current_team_id'] ?? null,
                 'email' => $attributes['email'] ?? null,
                 'name' => $attributes['name'] ?? null,
-                'subject' => $validated['subject'],
-                'source' => Arr::get($validated, 'source', SupportConversationSource::IN_APP->value),
+                ...$this->filing($validated, $source),
+                'source' => $source,
             ],
             $validated['body'],
             $user,
@@ -81,7 +91,7 @@ class OpenSupportConversation implements OpensSupportConversations
     /**
      * Open a conversation for a visitor with no account.
      *
-     * @param  array<string, mixed>  $input  email, name, subject, body and an optional source
+     * @param  array<string, mixed>  $input  email, name, body, an optional subject and topic, and an optional source
      *                                       (`public_form` or `contact_sales`)
      *
      * @throws ValidationException
@@ -89,25 +99,25 @@ class OpenSupportConversation implements OpensSupportConversations
     public function openPublic(array $input): SupportConversation
     {
         // 1. Validate, with the address the thread link will be mailed to.
-        $validated = $this->validate(
-            $input,
-            [
+        $validated = Validator::make($input, [
+            'email' => [
+                'required',
+                'string',
+                'email',
+                'max:255',
+            ],
+            'name' => [
+                'nullable',
+                'string',
+                'max:255',
+            ],
+            ...SupportRules::conversation([
                 SupportConversationSource::PUBLIC_FORM,
                 SupportConversationSource::CONTACT_SALES,
-            ],
-            [
-                'email' => [
-                    'required',
-                    'string',
-                    'email',
-                    'max:255',
-                ],
-                'name' => [
-                    'nullable',
-                    'string',
-                    'max:255',
-                ],
-            ],
+            ]),
+        ])->validate();
+        $source = SupportConversationSource::from(
+            Arr::get($validated, 'source', SupportConversationSource::PUBLIC_FORM->value),
         );
 
         // 2. Always a new, unowned conversation. The address is lower-cased so
@@ -118,8 +128,8 @@ class OpenSupportConversation implements OpensSupportConversations
                 'team_id' => null,
                 'email' => mb_strtolower(trim($validated['email'])),
                 'name' => Arr::get($validated, 'name'),
-                'subject' => $validated['subject'],
-                'source' => Arr::get($validated, 'source', SupportConversationSource::PUBLIC_FORM->value),
+                ...$this->filing($validated, $source),
+                'source' => $source,
             ],
             $validated['body'],
             null,
@@ -132,32 +142,40 @@ class OpenSupportConversation implements OpensSupportConversations
     }
 
     /**
-     * @param  array<string, mixed>  $input
-     * @param  list<SupportConversationSource>  $sources  the sources this door accepts
-     * @param  array<string, mixed>  $extraRules
-     * @return array<string, mixed>
+     * The topic and subject a conversation is filed under.
      *
-     * @throws ValidationException
+     * Contact sales is always `sales`. A missing subject is the topic label and
+     * the first line of the body, so the staff inbox still reads at a glance.
+     *
+     * @param  array<string, mixed>  $validated
+     * @return array{topic: string|null, subject: string}
      */
-    private function validate(array $input, array $sources, array $extraRules = []): array
+    private function filing(array $validated, SupportConversationSource $source): array
     {
-        return Validator::make($input, [
-            ...$extraRules,
-            'subject' => [
-                'required',
-                'string',
-                'max:255',
-            ],
-            'body' => [
-                'required',
-                'string',
-                'max:' . (int) config('magic-starter.support.message_max_length', 2000),
-            ],
-            'source' => [
-                'sometimes',
-                Rule::enum(SupportConversationSource::class)->only($sources),
-            ],
-        ])->validate();
+        $topic = $source === SupportConversationSource::CONTACT_SALES
+            ? 'sales'
+            : Arr::get($validated, 'topic');
+
+        $subject = Arr::get($validated, 'subject');
+
+        if (is_string($subject) && trim($subject) !== '') {
+            return [
+                'topic' => $topic,
+                'subject' => $subject,
+            ];
+        }
+
+        $firstLine = trim(Str::before(trim((string) $validated['body']), "\n"));
+        $label = match (true) {
+            $topic === null => null,
+            Lang::has('magic-starter::support.topics.' . $topic) => Lang::get('magic-starter::support.topics.' . $topic),
+            default => Str::headline($topic),
+        };
+
+        return [
+            'topic' => $topic,
+            'subject' => Str::limit($label === null ? $firstLine : $label . ': ' . $firstLine, 80),
+        ];
     }
 
     /**

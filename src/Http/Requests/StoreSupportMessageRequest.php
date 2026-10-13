@@ -2,6 +2,7 @@
 
 namespace FlutterSdk\MagicStarter\Http\Requests;
 
+use FlutterSdk\MagicStarter\Support\SupportRules;
 use Illuminate\Foundation\Http\FormRequest;
 
 /**
@@ -29,11 +30,7 @@ class StoreSupportMessageRequest extends FormRequest
     public function rules(): array
     {
         return [
-            'body' => [
-                'required',
-                'string',
-                'max:' . (int) config('magic-starter.support.message_max_length', 2000),
-            ],
+            'body' => SupportRules::body(),
         ];
     }
 }

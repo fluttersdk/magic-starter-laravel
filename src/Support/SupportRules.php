@@ -14,6 +14,33 @@ use Illuminate\Validation\Rule;
 final class SupportRules
 {
     /**
+     * The topics a host gets when its published config predates `support.topics`.
+     *
+     * A published `support` block replaces the package's whole block (the
+     * merge is shallow), so without this fallback every in-app conversation of
+     * such a host would be refused as an invalid topic.
+     *
+     * @var list<string>
+     */
+    public const DEFAULT_TOPICS = [
+        'billing',
+        'technical',
+        'account',
+        'sales',
+        'other',
+    ];
+
+    /**
+     * The topics a conversation may be filed under.
+     *
+     * @return list<string>
+     */
+    public static function topics(): array
+    {
+        return array_values((array) config('magic-starter.support.topics', self::DEFAULT_TOPICS));
+    }
+
+    /**
      * Rules for a message body, capped at `support.message_max_length` characters.
      *
      * @return list<string>
@@ -28,26 +55,30 @@ final class SupportRules
     }
 
     /**
-     * Rules for opening a conversation: subject, body, an optional topic from
-     * `support.topics`, and an optional source limited to the door's own.
+     * Rules for opening a conversation: an optional subject (the opener derives
+     * a missing one), body, a topic from `support.topics`, and an optional
+     * source limited to the door's own.
      *
      * @param  list<SupportConversationSource>  $sources  The sources this door accepts.
+     * @param  bool  $topicRequired  Whether the door demands a topic; Contact sales is filed under `sales` either way.
      * @return array<string, list<mixed>>
      */
-    public static function conversation(array $sources): array
+    public static function conversation(array $sources, bool $topicRequired = false): array
     {
         return [
             'subject' => [
-                'required',
+                'nullable',
                 'string',
                 'max:255',
             ],
             'body' => self::body(),
             'topic' => [
-                'sometimes',
+                $topicRequired
+                    ? 'required_unless:source,' . SupportConversationSource::CONTACT_SALES->value
+                    : 'sometimes',
                 'nullable',
                 'string',
-                Rule::in((array) config('magic-starter.support.topics', [])),
+                Rule::in(self::topics()),
             ],
             'source' => [
                 'sometimes',

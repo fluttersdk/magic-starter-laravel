@@ -386,6 +386,9 @@ class MagicStarterServiceProvider extends ServiceProvider
         // 3.7. Register package translations.
         $this->loadTranslationsFrom(__DIR__ . '/../lang', 'magic-starter');
 
+        // 3.71. Register package views: the staff thread of the Filament inbox lives here.
+        $this->loadViewsFrom(__DIR__ . '/../resources/views', 'magic-starter');
+
         // 4. Load package routes unless explicitly ignored.
         if (! MagicStarter::shouldIgnoreRoutes()) {
             $this->loadRoutesFrom(__DIR__ . '/routes/api.php');

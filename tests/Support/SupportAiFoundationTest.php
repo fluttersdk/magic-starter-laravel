@@ -358,6 +358,27 @@ class SupportAiFoundationTest extends TestCase
         $this->assertTrue(Validator::make([...$valid, 'subject' => str_repeat('a', 256)], $rules)->fails());
     }
 
+    public function test_a_published_support_block_without_topics_still_accepts_the_default_topics(): void
+    {
+        // A host that published the config before topics existed replaces the
+        // whole `support` block (the merge is shallow), so the key is absent.
+        $support = (array) config('magic-starter.support');
+        unset($support['topics']);
+        config(['magic-starter.support' => $support]);
+
+        $rules = SupportRules::conversation([
+            SupportConversationSource::IN_APP,
+        ], topicRequired: true);
+        $valid = [
+            'body' => 'My checks fail.',
+            'topic' => 'technical',
+        ];
+
+        $this->assertTrue(Validator::make($valid, $rules)->passes());
+        $this->assertTrue(Validator::make([...$valid, 'topic' => 'gossip'], $rules)->fails());
+        $this->assertSame(SupportRules::DEFAULT_TOPICS, SupportRules::topics());
+    }
+
     public function test_neither_ai_contract_is_bound_by_the_package(): void
     {
         config(['magic-starter.features' => [Features::support()]]);

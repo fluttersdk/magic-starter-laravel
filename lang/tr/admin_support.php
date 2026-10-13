@@ -11,6 +11,9 @@ return [
     'plural_model_label' => 'görüşmeler',
     'visitor' => 'ziyaretçi',
     'thread' => 'Görüşme',
+    'details' => 'Ayrıntılar',
+    'waiting' => ':time bekliyor',
+    'note_hidden' => 'müşteri göremez',
 
     'fields' => [
         'number' => 'Numara',
@@ -23,6 +26,10 @@ return [
         'team' => 'Ekip',
         'opened' => 'Açılış',
         'last_activity' => 'Son etkinlik',
+        'topic' => 'Konu başlığı',
+        'ai_turns' => 'Yapay zekâ turları',
+        'ai_failures' => 'Yapay zekâ hataları',
+        'handoff_reason' => 'Devir nedeni',
     ],
 
     'authors' => [
@@ -53,6 +60,17 @@ return [
             'high' => 'Yüksek',
             'urgent' => 'Acil',
         ],
+        'handoff_reason' => [
+            'human_requested' => 'Müşteri bir kişiyle görüşmek istedi',
+            'billing' => 'Faturalama',
+            'security' => 'Güvenlik',
+            'outage' => 'Kesinti bildirildi',
+            'low_confidence' => 'Düşük güven',
+            'failures' => 'Yapay zekâ tekrar tekrar başarısız oldu',
+            'anger' => 'Müşteri memnun değil',
+            'quota' => 'Yapay zekâ kotası doldu',
+            'unavailable' => 'Yapay zekâ kullanılamıyor',
+        ],
     ],
 
     'actions' => [
@@ -60,6 +78,12 @@ return [
             'label' => 'Yanıtla',
             'body' => 'Yanıt',
             'sent' => 'Yanıt gönderildi',
+        ],
+        'draft_reply' => [
+            'label' => 'Taslak yanıt',
+        ],
+        'summarize' => [
+            'label' => 'Özetle',
         ],
         'note' => [
             'label' => 'Not ekle',
@@ -76,6 +100,16 @@ return [
             'label' => 'Durumu veya önceliği değiştir',
             'updated' => 'Görüşme güncellendi',
         ],
+    ],
+
+    /*
+     * The AI summary card, a draft and the lines staff read while one is prepared.
+     */
+    'ai' => [
+        'summary' => 'Yapay zekâ özeti',
+        'confidence' => 'güven :value',
+        'draft_queued' => 'Taslak hazırlanıyor. Bir dakika sonra Taslak yanıt\'ı yeniden açın.',
+        'summarize_queued' => 'Özet hazırlanıyor ve görüşmede görünecek.',
     ],
 
     'refusals' => [

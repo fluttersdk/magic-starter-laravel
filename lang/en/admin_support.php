@@ -11,6 +11,9 @@ return [
     'plural_model_label' => 'conversations',
     'visitor' => 'visitor',
     'thread' => 'Conversation',
+    'details' => 'Details',
+    'waiting' => 'waiting :time',
+    'note_hidden' => 'customer cannot see',
 
     'fields' => [
         'number' => 'Number',
@@ -23,6 +26,10 @@ return [
         'team' => 'Team',
         'opened' => 'Opened',
         'last_activity' => 'Last activity',
+        'topic' => 'Topic',
+        'ai_turns' => 'AI turns',
+        'ai_failures' => 'AI failures',
+        'handoff_reason' => 'Handoff reason',
     ],
 
     'authors' => [
@@ -53,6 +60,17 @@ return [
             'high' => 'High',
             'urgent' => 'Urgent',
         ],
+        'handoff_reason' => [
+            'human_requested' => 'Customer asked for a person',
+            'billing' => 'Billing',
+            'security' => 'Security',
+            'outage' => 'Outage reported',
+            'low_confidence' => 'Low confidence',
+            'failures' => 'Repeated AI failures',
+            'anger' => 'Customer upset',
+            'quota' => 'AI quota spent',
+            'unavailable' => 'AI unavailable',
+        ],
     ],
 
     'actions' => [
@@ -60,6 +78,12 @@ return [
             'label' => 'Reply',
             'body' => 'Reply',
             'sent' => 'Reply sent',
+        ],
+        'draft_reply' => [
+            'label' => 'Draft reply',
+        ],
+        'summarize' => [
+            'label' => 'Summarize',
         ],
         'note' => [
             'label' => 'Add note',
@@ -76,6 +100,16 @@ return [
             'label' => 'Change status or priority',
             'updated' => 'Conversation updated',
         ],
+    ],
+
+    /*
+     * The AI summary card, a draft and the lines staff read while one is prepared.
+     */
+    'ai' => [
+        'summary' => 'AI summary',
+        'confidence' => 'confidence :value',
+        'draft_queued' => 'The draft is being prepared. Open Draft reply again in a minute.',
+        'summarize_queued' => 'The summary is being prepared and will appear in the thread.',
     ],
 
     'refusals' => [

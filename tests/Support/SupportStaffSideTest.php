@@ -381,12 +381,37 @@ class SupportStaffSideTest extends TestCase
             [
                 'conversation_id' => $conversation->getKey(),
                 'message_id' => $message->getKey(),
+                'action_url' => '/support/' . $conversation->getKey(),
             ],
             (array) $push->getData(),
         );
         $this->assertStringNotContainsString('Secret reply text.', json_encode($push, JSON_THROW_ON_ERROR));
         $this->assertStringNotContainsString('Secret reply text.', json_encode($database, JSON_THROW_ON_ERROR));
         $this->assertSame($conversation->getKey(), $database['conversation_id']);
+        $this->assertStringEndsWith((string) $conversation->getKey(), $database['action_url']);
+    }
+
+    public function test_the_reply_action_url_follows_the_configured_client_thread_path(): void
+    {
+        config()->set('magic-starter.support.client_thread_path', '/help/threads/{id}/view');
+        $opener = $this->createUser('ada@example.com');
+        $conversation = $this->createInAppConversation($opener);
+        $message = $conversation->messages()->create([
+            'sender_type' => SupportSenderType::STAFF,
+            'kind' => SupportMessageKind::MESSAGE,
+            'body' => 'Done.',
+        ]);
+
+        $notification = new SupportReplyNotification($message);
+
+        $this->assertSame(
+            '/help/threads/' . $conversation->getKey() . '/view',
+            $notification->toArray($opener)['action_url'],
+        );
+        $this->assertSame(
+            '/help/threads/' . $conversation->getKey() . '/view',
+            $notification->toOneSignal($opener)->getData()->action_url,
+        );
     }
 
     public function test_the_listener_tells_every_staff_recipient_with_ids_number_and_subject_only(): void

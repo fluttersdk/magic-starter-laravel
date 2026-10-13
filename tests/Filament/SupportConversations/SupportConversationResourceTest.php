@@ -6,6 +6,7 @@ use Filament\Notifications\Notification as FilamentNotification;
 use Filament\Panel;
 use FlutterSdk\MagicStarter\Actions\ChangeSupportConversation;
 use FlutterSdk\MagicStarter\Actions\ReplyToSupportConversation;
+use FlutterSdk\MagicStarter\Contracts\AssistsSupportStaff;
 use FlutterSdk\MagicStarter\Contracts\ChangesSupportConversations;
 use FlutterSdk\MagicStarter\Contracts\RepliesToSupport;
 use FlutterSdk\MagicStarter\Enums\SupportConversationSource;
@@ -20,10 +21,13 @@ use FlutterSdk\MagicStarter\Filament\MagicStarterPlugin;
 use FlutterSdk\MagicStarter\Filament\Resources\SupportConversations\Pages\ListSupportConversations;
 use FlutterSdk\MagicStarter\Filament\Resources\SupportConversations\Pages\ViewSupportConversation;
 use FlutterSdk\MagicStarter\Filament\Resources\SupportConversations\SupportConversationResource;
+use FlutterSdk\MagicStarter\Jobs\PrepareSupportStaffAssist;
 use FlutterSdk\MagicStarter\Models\SupportConversation;
 use FlutterSdk\MagicStarter\Models\SupportMessage;
 use FlutterSdk\MagicStarter\Notifications\SupportConversationNeedsStaffNotification;
 use FlutterSdk\MagicStarter\Notifications\SupportReplyNotification;
+use FlutterSdk\MagicStarter\Support\SupportAi\SupportStaffAssist;
+use FlutterSdk\MagicStarter\Support\SupportAi\SupportStaffAssistCache;
 use FlutterSdk\MagicStarter\Tests\Filament\FilamentTestCase;
 use FlutterSdk\MagicStarter\Tests\Fixtures\ConcreteAdminUser;
 use Illuminate\Contracts\Auth\Authenticatable;
@@ -31,8 +35,11 @@ use Illuminate\Support\Arr;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\Event;
 use Illuminate\Support\Facades\Notification;
+use Illuminate\Support\Facades\Queue;
 use Illuminate\Validation\ValidationException;
 use Livewire\Livewire;
+use RuntimeException;
+use Throwable;
 
 /**
  * The staff inbox: the list, the thread page and the four actions that answer
@@ -381,7 +388,7 @@ class SupportConversationResourceTest extends FilamentTestCase
             $this->actingAs($staff)->get('/admin/support-conversations/' . $conversation->getKey())
                 ->assertOk()
                 ->assertSee('Internal note')
-                ->assertSee('Customer');
+                ->assertSee('Priority');
         } finally {
             foreach ($this->hostGroups() as $group) {
                 @unlink("{$hostLang}/en/{$group}.php");
@@ -390,6 +397,186 @@ class SupportConversationResourceTest extends FilamentTestCase
             @rmdir($hostLang . '/en');
             @rmdir($hostLang);
         }
+    }
+
+    public function test_a_bubble_body_is_flush_with_its_element_and_a_note_is_marked_internal(): void
+    {
+        $conversation = $this->conversation($this->user('opener@example.com'));
+        $this->message($conversation, SupportSenderType::CUSTOMER, SupportMessageKind::MESSAGE, "Line one\nLine two");
+        $this->message($conversation, SupportSenderType::STAFF, SupportMessageKind::NOTE, 'Offer the annual plan');
+
+        $component = Livewire::actingAs($this->staff())
+            ->test(ViewSupportConversation::class, ['record' => $conversation->getKey()]);
+
+        preg_match_all('/class="msl-body"[^>]*>(.*?)<\/div>/s', $component->html(), $bodies);
+
+        $this->assertSame(["Line one\nLine two", 'Offer the annual plan'], $bodies[1]);
+        $component->assertSee('Internal note')->assertSee((string) __('magic-starter::admin_support.note_hidden'));
+    }
+
+    public function test_the_thread_marks_the_ai_and_draws_an_activity_line(): void
+    {
+        $conversation = $this->conversation($this->user('opener@example.com'));
+        $ai = $this->message($conversation, SupportSenderType::AI, SupportMessageKind::MESSAGE, 'You are on Pro.');
+        $ai->update(['meta' => ['confidence' => 0.82]]);
+        $this->message($conversation, SupportSenderType::SYSTEM, SupportMessageKind::ACTIVITY, 'Handed off to staff');
+
+        Livewire::actingAs($this->staff())->test(ViewSupportConversation::class, ['record' => $conversation->getKey()])
+            ->assertSee('You are on Pro.')
+            ->assertSee('confidence 0.82')
+            ->assertSee('Handed off to staff');
+    }
+
+    public function test_the_thread_section_polls_without_calling_the_model(): void
+    {
+        $spy = $this->spyAssist();
+        $this->app->instance(AssistsSupportStaff::class, $spy);
+        $conversation = $this->conversation($this->user('opener@example.com'));
+
+        Livewire::actingAs($this->staff())->test(ViewSupportConversation::class, ['record' => $conversation->getKey()])
+            ->assertSeeHtml('wire:poll.10s');
+
+        $this->assertSame(0, $spy->calls);
+    }
+
+    public function test_the_details_panel_names_the_topic_the_waiting_time_and_the_handoff(): void
+    {
+        $conversation = $this->conversation($this->user('opener@example.com'), [
+            'topic' => 'sales',
+            'ai_failures' => 2,
+            'handoff_reason' => 'human_requested',
+            'waiting_since' => now()->subMinutes(12),
+        ]);
+
+        Livewire::actingAs($this->staff())->test(ViewSupportConversation::class, ['record' => $conversation->getKey()])
+            ->assertSee('Sales')
+            ->assertSee('waiting 12m')
+            ->assertSee((string) __('magic-starter::admin_support.enums.handoff_reason.human_requested'));
+    }
+
+    public function test_pending_is_not_a_status_staff_can_pick(): void
+    {
+        $conversation = $this->conversation($this->user('opener@example.com'));
+
+        Livewire::actingAs($this->staff())->test(ViewSupportConversation::class, ['record' => $conversation->getKey()])
+            ->callAction('change', [
+                'status' => SupportConversationStatus::PENDING->value,
+                'priority' => SupportPriority::HIGH->value,
+            ])
+            ->assertHasActionErrors(['status']);
+
+        $this->assertSame(SupportConversationStatus::OPEN, $conversation->refresh()->status);
+    }
+
+    public function test_the_change_contract_refuses_pending_on_its_own(): void
+    {
+        $conversation = $this->conversation($this->user('opener@example.com'));
+
+        $this->expectException(ValidationException::class);
+
+        app(ChangesSupportConversations::class)->change($this->staff(), $conversation, [
+            'status' => SupportConversationStatus::PENDING->value,
+        ]);
+    }
+
+    public function test_the_ai_actions_are_absent_while_the_contract_is_unbound(): void
+    {
+        $conversation = $this->conversation($this->user('opener@example.com'));
+        app(SupportStaffAssistCache::class)->put($conversation, new SupportStaffAssist('Hidden summary.', 'Draft.'));
+
+        Livewire::actingAs($this->staff())->test(ViewSupportConversation::class, ['record' => $conversation->getKey()])
+            ->assertActionHidden('draft_reply')
+            ->assertActionHidden('summarize')
+            ->assertDontSee('Hidden summary.');
+    }
+
+    public function test_the_summary_card_reads_the_cache_and_never_calls_the_model(): void
+    {
+        $spy = $this->spyAssist();
+        $this->app->instance(AssistsSupportStaff::class, $spy);
+        $conversation = $this->conversation($this->user('opener@example.com'));
+        app(SupportStaffAssistCache::class)->put(
+            $conversation,
+            new SupportStaffAssist('Pro customer asks for SSO.', 'Draft'),
+        );
+
+        Livewire::actingAs($this->staff())->test(ViewSupportConversation::class, ['record' => $conversation->getKey()])
+            ->assertSee('Pro customer asks for SSO.');
+
+        $this->assertSame(0, $spy->calls);
+    }
+
+    public function test_draft_reply_opens_prefilled_from_the_cache_without_a_model_call(): void
+    {
+        Queue::fake();
+        $spy = $this->spyAssist();
+        $this->app->instance(AssistsSupportStaff::class, $spy);
+        $conversation = $this->conversation($this->user('opener@example.com'));
+        app(SupportStaffAssistCache::class)->put(
+            $conversation,
+            new SupportStaffAssist('Summary.', 'Happy to set up a call tomorrow.'),
+        );
+
+        Livewire::actingAs($this->staff())->test(ViewSupportConversation::class, ['record' => $conversation->getKey()])
+            ->mountAction('draft_reply')
+            ->assertActionDataSet(['body' => 'Happy to set up a call tomorrow.']);
+
+        $this->assertSame(0, $spy->calls);
+        Queue::assertNothingPushed();
+    }
+
+    public function test_draft_reply_with_an_empty_cache_opens_empty_queues_the_job_and_says_so(): void
+    {
+        Queue::fake();
+        $spy = $this->spyAssist(new RuntimeException('provider down'));
+        $this->app->instance(AssistsSupportStaff::class, $spy);
+        $conversation = $this->conversation($this->user('opener@example.com'));
+
+        Livewire::actingAs($this->staff())->test(ViewSupportConversation::class, ['record' => $conversation->getKey()])
+            ->mountAction('draft_reply')
+            ->assertActionDataSet(['body' => '']);
+
+        $this->assertSame(0, $spy->calls);
+        Queue::assertPushed(
+            PrepareSupportStaffAssist::class,
+            static fn (PrepareSupportStaffAssist $job): bool => (string) $job->conversationId
+                === (string) $conversation->getKey(),
+        );
+        FilamentNotification::assertNotified((string) __('magic-starter::admin_support.ai.draft_queued'));
+    }
+
+    public function test_a_draft_is_sent_only_after_staff_submit_the_reply_form(): void
+    {
+        Queue::fake();
+        Notification::fake();
+        $this->app->instance(AssistsSupportStaff::class, $this->spyAssist());
+        $conversation = $this->conversation($this->user('opener@example.com'));
+        app(SupportStaffAssistCache::class)->put($conversation, new SupportStaffAssist('Summary.', 'Draft text.'));
+
+        Livewire::actingAs($this->staff())->test(ViewSupportConversation::class, ['record' => $conversation->getKey()])
+            ->mountAction('draft_reply');
+
+        $this->assertSame(0, SupportMessage::query()->count());
+
+        Livewire::actingAs($this->staff())->test(ViewSupportConversation::class, ['record' => $conversation->getKey()])
+            ->callAction('draft_reply', ['body' => 'Edited draft.']);
+
+        $this->assertSame('Edited draft.', SupportMessage::query()->sole()->body);
+    }
+
+    public function test_summarize_queues_one_job_per_turn_and_notifies(): void
+    {
+        Queue::fake();
+        $this->app->instance(AssistsSupportStaff::class, $this->spyAssist());
+        $conversation = $this->conversation($this->user('opener@example.com'));
+
+        Livewire::actingAs($this->staff())
+            ->test(ViewSupportConversation::class, ['record' => $conversation->getKey()])
+            ->callAction('summarize')
+            ->callAction('summarize');
+
+        Queue::assertPushed(PrepareSupportStaffAssist::class, 1);
+        FilamentNotification::assertNotified((string) __('magic-starter::admin_support.ai.summarize_queued'));
     }
 
     public function test_the_turkish_inbox_file_has_the_keys_of_the_english_one(): void
@@ -435,6 +622,26 @@ class SupportConversationResourceTest extends FilamentTestCase
             'urgent',
             'feedback',
         ];
+    }
+
+    /**
+     * A staff assistant that counts every call, and answers or throws.
+     */
+    private function spyAssist(?Throwable $throws = null): object
+    {
+        return new class($throws) implements AssistsSupportStaff
+        {
+            public int $calls = 0;
+
+            public function __construct(private readonly ?Throwable $throws) {}
+
+            public function assist(SupportConversation $conversation): SupportStaffAssist
+            {
+                $this->calls++;
+
+                throw $this->throws ?? new RuntimeException('not expected');
+            }
+        };
     }
 
     private function staff(): ConcreteAdminUser
