@@ -559,8 +559,10 @@ class SupportConversationResourceTest extends FilamentTestCase
         Queue::assertNothingPushed();
     }
 
-    public function test_draft_reply_with_an_empty_cache_opens_empty_queues_the_job_and_says_so(): void
+    public function test_draft_reply_with_an_empty_cache_queues_the_job_says_so_and_opens_no_form(): void
     {
+        // An empty Draft reply form is Reply under another name; staff who want
+        // to write it themselves have Reply.
         Queue::fake();
         $spy = $this->spyAssist(new RuntimeException('provider down'));
         $this->app->instance(AssistsSupportStaff::class, $spy);
@@ -568,7 +570,7 @@ class SupportConversationResourceTest extends FilamentTestCase
 
         Livewire::actingAs($this->staff())->test(ViewSupportConversation::class, ['record' => $conversation->getKey()])
             ->mountAction('draft_reply')
-            ->assertActionDataSet(['body' => '']);
+            ->assertActionNotMounted('draft_reply');
 
         $this->assertSame(0, $spy->calls);
         Queue::assertPushed(

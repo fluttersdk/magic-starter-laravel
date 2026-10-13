@@ -8,6 +8,7 @@ use Filament\Forms\Components\Textarea;
 use Filament\Notifications\Notification;
 use Filament\Resources\Pages\ViewRecord;
 use Filament\Support\Colors\Color;
+use Filament\Support\Exceptions\Cancel;
 use Filament\Support\Icons\Heroicon;
 use FlutterSdk\MagicStarter\Contracts\AssistsSupportStaff;
 use FlutterSdk\MagicStarter\Contracts\ChangesSupportConversations;
@@ -70,7 +71,8 @@ class ViewSupportConversation extends ViewRecord
     }
 
     /**
-     * The reply form, opened with the cached draft. A miss opens it empty and asks for a draft in the background.
+     * The reply form, opened with the cached draft. A miss opens no form: it asks for a draft in the background and
+     * says so, since an empty draft form is only Reply under another name.
      */
     protected function draftReplyAction(): Action
     {
@@ -232,7 +234,10 @@ class ViewSupportConversation extends ViewRecord
     }
 
     /**
-     * The stored draft for this turn. With none stored, a draft is queued and staff are told, never waited on.
+     * The stored draft for this turn. With none stored, a draft is queued, staff are told, and the form is cancelled
+     * before it opens; nothing waits on a model.
+     *
+     * @throws Cancel on a miss, which Filament takes as "do not mount".
      */
     private function cachedDraft(): string
     {
@@ -249,7 +254,7 @@ class ViewSupportConversation extends ViewRecord
             ->info()
             ->send();
 
-        return '';
+        throw new Cancel;
     }
 
     /**
