@@ -29,6 +29,10 @@ All notable changes to this project will be documented in this file.
 - **Every `support.conversation.updated` frame is unique.** The payload gains `event_id`, a ULID: magic's Reverb driver drops a frame whose channel, event and payload it has already seen, so an id-only payload delivered only a conversation's first update. (`src/Events/SupportConversationUpdated.php`)
 - **The conversation list pages stably.** `last_activity_at` holds whole seconds, so ties are broken on the key and no row repeats or vanishes across pages. (`src/Http/Controllers/SupportConversationController.php`)
 
+### Fixed
+
+- **A guest's push-state report is answered and not recorded.** `POST devices/push-state` stored a `push_devices` row for every authenticated caller, guests included, so an app that opens a guest in the background on every launch left a row per install that nothing ever deletes, for a session nothing is sent to. A guest now gets the same 204 with nothing written, so the client's memo settles instead of retrying. (`src/Http/Controllers/PushDeviceController.php`)
+
 ### Upgrading
 
 - **Publish `add_ai_columns_to_support_tables.php` and run `php artisan migrate`.** Copy it from `vendor/fluttersdk/magic-starter-laravel/database/migrations/` into `database/migrations/` under a timestamp later than your latest migration. It is additive.
