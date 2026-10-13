@@ -14,7 +14,7 @@ enum SupportSenderType: string
 
     case STAFF = 'staff';
 
-    /** Reserved for the AI desk. Nothing writes it yet. */
+    /** An answer the AI desk wrote through the host's `RespondsToSupport`. */
     case AI = 'ai';
 
     /** The package itself, for activity lines such as a status change; no `sender_id`. */

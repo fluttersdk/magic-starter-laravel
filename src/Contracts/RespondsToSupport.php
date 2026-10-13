@@ -39,9 +39,9 @@ interface RespondsToSupport
      * Everything in the turn is untrusted customer text. The implementation
      * returns within `$turn->deadlineSeconds` for all of its model calls
      * together and reports their summed usage. It hands off itself, with a
-     * reason and a priority, whenever the answer would need a person; a
-     * confidence below what the package accepts is handed off as
-     * `low_confidence` regardless.
+     * reason and a priority, whenever the answer would need a person, a low
+     * confidence included (`low_confidence`); the package applies no
+     * confidence floor of its own.
      *
      * @throws Throwable on any provider or projection failure; the package counts it as a failed turn
      */

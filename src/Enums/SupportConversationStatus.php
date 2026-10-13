@@ -9,7 +9,7 @@ namespace FlutterSdk\MagicStarter\Enums;
  */
 enum SupportConversationStatus: string
 {
-    /** Reserved for the AI desk: the conversation is held before a person sees it. Nothing writes it yet. */
+    /** The AI desk owns the conversation; only the package writes it, never staff. */
     case PENDING = 'pending';
 
     /** Waiting on staff or on the customer; the default for a new conversation. */
