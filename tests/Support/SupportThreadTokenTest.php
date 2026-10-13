@@ -23,6 +23,7 @@ class SupportThreadTokenTest extends TestCase
             'create_teams_table.php',
             'create_support_conversations_table.php',
             'create_support_messages_table.php',
+            'add_ai_columns_to_support_tables.php',
         ] as $file) {
             $this->artisan('migrate', [
                 '--path' => __DIR__ . '/../../database/migrations/' . $file,

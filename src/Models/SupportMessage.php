@@ -20,6 +20,7 @@ use Illuminate\Support\Carbon;
  * @property string|int|null $sender_id
  * @property SupportMessageKind $kind
  * @property string $body
+ * @property array<string, mixed>|null $meta AI desk record (confidence, reason, tokens); never customer JSON.
  * @property Carbon|null $created_at
  * @property Carbon|null $updated_at
  * @property-read SupportConversation $conversation
@@ -29,6 +30,17 @@ class SupportMessage extends Model
 {
     use ConditionallyUsesUuids;
 
+    /**
+     * The kinds a customer may see. Listed rather than excluding the note, so a
+     * kind added later stays hidden until someone decides it is customer-visible.
+     *
+     * @var list<SupportMessageKind>
+     */
+    public const CUSTOMER_VISIBLE_KINDS = [
+        SupportMessageKind::MESSAGE,
+        SupportMessageKind::ACTIVITY,
+    ];
+
     /** @var list<string> */
     protected $fillable = [
         'conversation_id',
@@ -36,6 +48,7 @@ class SupportMessage extends Model
         'sender_id',
         'kind',
         'body',
+        'meta',
     ];
 
     /**
@@ -48,6 +61,7 @@ class SupportMessage extends Model
         return [
             'sender_type' => SupportSenderType::class,
             'kind' => SupportMessageKind::class,
+            'meta' => 'array',
         ];
     }
 
@@ -74,17 +88,24 @@ class SupportMessage extends Model
      * The messages a customer may see: everything but staff notes.
      *
      * The single source of that rule; every customer-facing read goes through
-     * it. It lists the visible kinds rather than excluding the note, so a kind
-     * added later stays hidden until someone decides it is customer-visible.
+     * it, through {@see self::CUSTOMER_VISIBLE_KINDS}.
      *
      * @param  Builder<static>  $query
      * @return Builder<static>
      */
     public function scopeCustomerVisible(Builder $query): Builder
     {
-        return $query->whereIn('kind', [
-            SupportMessageKind::MESSAGE->value,
-            SupportMessageKind::ACTIVITY->value,
-        ]);
+        return $query->whereIn('kind', array_map(
+            static fn (SupportMessageKind $kind): string => $kind->value,
+            self::CUSTOMER_VISIBLE_KINDS,
+        ));
+    }
+
+    /**
+     * Whether this loaded message is one a customer may see; the in-memory twin of `customerVisible()`.
+     */
+    public function isCustomerVisible(): bool
+    {
+        return in_array($this->kind, self::CUSTOMER_VISIBLE_KINDS, true);
     }
 }

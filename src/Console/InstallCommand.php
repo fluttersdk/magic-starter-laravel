@@ -158,6 +158,7 @@ class InstallCommand extends Command
         'support' => [
             'create_support_conversations_table.php',
             'create_support_messages_table.php',
+            'add_ai_columns_to_support_tables.php',
         ],
         // Entitlement provenance lands on whichever table
         // `magic-starter.billing.billable` names, which is `users` by default
