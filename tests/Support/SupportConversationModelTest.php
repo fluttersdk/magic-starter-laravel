@@ -2,6 +2,8 @@
 
 namespace FlutterSdk\MagicStarter\Tests\Support;
 
+use FlutterSdk\MagicStarter\Audit\Audit;
+use FlutterSdk\MagicStarter\Audit\Redactor;
 use FlutterSdk\MagicStarter\Enums\SupportConversationSource;
 use FlutterSdk\MagicStarter\Enums\SupportConversationStatus;
 use FlutterSdk\MagicStarter\Enums\SupportMessageKind;
@@ -12,8 +14,10 @@ use FlutterSdk\MagicStarter\Models\SupportConversation;
 use FlutterSdk\MagicStarter\Tests\Fixtures\ConcreteTeam;
 use FlutterSdk\MagicStarter\Tests\Fixtures\ConcreteUser;
 use FlutterSdk\MagicStarter\Tests\TestCase;
+use Illuminate\Foundation\Application;
 use Illuminate\Support\Facades\Schema;
 use Illuminate\Support\Str;
+use Orchestra\Testbench\Attributes\DefineEnvironment;
 use PHPUnit\Framework\Attributes\DataProvider;
 
 /**
@@ -22,6 +26,16 @@ use PHPUnit\Framework\Attributes\DataProvider;
  */
 class SupportConversationModelTest extends TestCase
 {
+    /**
+     * @param  Application  $app
+     */
+    protected function withAudit($app): void
+    {
+        $app['config']->set('magic-starter.features', [
+            Features::audit(),
+        ]);
+    }
+
     /**
      * @return array<string, array{bool}>
      */
@@ -141,6 +155,30 @@ class SupportConversationModelTest extends TestCase
             $visible,
         );
         $this->assertSame(3, $conversation->messages()->count());
+    }
+
+    #[DefineEnvironment('withAudit')]
+    public function test_the_audit_row_of_a_conversation_redacts_what_the_visitor_typed(): void
+    {
+        $this->migrateSupportTables();
+        (require __DIR__ . '/../../database/migrations/create_magic_starter_audits_table.php')->up();
+
+        $conversation = SupportConversation::create([
+            'email' => 'visitor@example.com',
+            'name' => 'Visitor',
+            'subject' => 'My card ending 4242 was charged twice',
+            'source' => SupportConversationSource::PUBLIC_FORM,
+        ]);
+
+        $audit = Audit::query()
+            ->where('auditable_type', $conversation->getMorphClass())
+            ->where('auditable_id', (string) $conversation->getKey())
+            ->where('event', 'created')
+            ->sole();
+
+        $this->assertSame(Redactor::PLACEHOLDER, $audit->new_values['subject']);
+        $this->assertSame(Redactor::PLACEHOLDER, $audit->new_values['email']);
+        $this->assertSame('public_form', $audit->new_values['source']);
     }
 
     public function test_has_support_features_is_false_until_the_flag_is_listed(): void

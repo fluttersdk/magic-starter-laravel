@@ -502,13 +502,20 @@ class SupportConversationResource extends MagicStarterResource
         };
         $name = static::senderName($message, $conversation, $variant);
         $time = static::messageTime($message);
+        // A customer line with no sender in a conversation that has an opener was written on the public link,
+        // before the address was linked to the account.
+        $sentAsVisitor = $variant === 'customer' && $message->sender_id === null && $conversation->user_id !== null;
 
         return [
             'variant' => $variant,
             'out' => in_array($variant, ['ai', 'staff', 'note'], true),
             'body' => $message->body,
             'avatar' => $variant === 'ai' ? "\u{2726}" : static::initials($name),
-            'chip' => $variant === 'ai' ? static::authorRole('ai') : null,
+            'chip' => match (true) {
+                $variant === 'ai' => static::authorRole('ai'),
+                $sentAsVisitor => static::authorRole('sent_as_visitor'),
+                default => null,
+            },
             'meta' => match ($variant) {
                 'ai' => array_values(array_filter([static::confidenceLabel($message), $time])),
                 'note' => [

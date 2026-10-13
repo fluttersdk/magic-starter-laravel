@@ -106,12 +106,11 @@ class PostCustomerSupportMessage implements PostsCustomerSupportMessages
         ));
 
         // 4. The responder answers a pending turn once it commits. Staff are
-        //    told once per wait: a signed-in opener writing again to a
-        //    conversation already waiting on them adds no alert. A visitor's
-        //    message alerts every time, as it always has.
+        //    told once per wait, whoever wrote: a message to a conversation
+        //    already waiting on staff adds no alert.
         if ($staysWithAi) {
             RespondToSupportConversation::dispatch($c->getKey(), $message->getKey());
-        } elseif ($user === null || ! $wasWaiting) {
+        } elseif (! $wasWaiting) {
             Event::dispatch(new SupportConversationNeedsStaff($c, 'customer_message'));
         }
 

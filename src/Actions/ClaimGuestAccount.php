@@ -5,7 +5,9 @@ namespace FlutterSdk\MagicStarter\Actions;
 use FlutterSdk\MagicStarter\Contracts\ClaimsGuestAccounts;
 use FlutterSdk\MagicStarter\Events\GuestClaimed;
 use FlutterSdk\MagicStarter\MagicStarter;
+use FlutterSdk\MagicStarter\Models\SupportConversation;
 use Illuminate\Contracts\Auth\Authenticatable;
+use Illuminate\Database\Eloquent\Model;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Event;
 use Illuminate\Support\Facades\Schema;
@@ -189,6 +191,7 @@ class ClaimGuestAccount implements ClaimsGuestAccounts
 
             // 3. Move the rows this package owns.
             $this->moveNotifications($locked, $target);
+            $this->moveSupportConversations($locked, $target);
 
             // 4. Hand the seam to the consumer. Synchronous and inside the
             //    transaction, so a listener that throws unwinds the whole claim
@@ -225,9 +228,10 @@ class ClaimGuestAccount implements ClaimsGuestAccounts
     /**
      * Move the guest's database notifications to the target.
      *
-     * The notifications table is the ONLY user-scoped table this package moves,
-     * and the other candidates are left alone for reasons rather than by
-     * oversight. Notification settings carry a unique key per type and channel,
+     * The notifications table and the support conversations
+     * ({@see self::moveSupportConversations()}) are the ONLY user-scoped tables
+     * this package moves, and the other candidates are left alone for reasons
+     * rather than by oversight. Notification settings carry a unique key per type and channel,
      * so moving a guest's defaults would collide with, and would be less
      * authoritative than, choices the account has already made. A guest's
      * personal team is not moved because the target already owns one, and a
@@ -255,6 +259,65 @@ class ClaimGuestAccount implements ClaimsGuestAccounts
                 'notifiable_id' => $target->getAuthIdentifier(),
                 'updated_at' => now(),
             ]);
+    }
+
+    /**
+     * Move the conversations the guest opened to the target, with the team they were written in.
+     *
+     * A conversation is read by its opener alone, so one left on the spent guest
+     * row would be unreachable for the person who wrote it. `team_id` records the
+     * team the opener was in; the guest's team is not the target's, so a
+     * conversation whose team the target does not belong to is filed under the
+     * target's current team (or none) instead, and one the target does belong to
+     * keeps it. Each row is saved through the model so the audit trail records the
+     * hand-over. The table is checked rather than assumed, as for notifications.
+     *
+     * @param  Authenticatable  $guest  The guest whose conversations move.
+     * @param  Authenticatable  $target  The account they move to.
+     */
+    private function moveSupportConversations(Authenticatable $guest, Authenticatable $target): void
+    {
+        if (! Schema::hasTable('support_conversations')) {
+            return;
+        }
+
+        $currentTeamId = $target->getAttribute('current_team_id');
+
+        SupportConversation::query()
+            ->where('user_id', $guest->getAuthIdentifier())
+            ->lockForUpdate()
+            ->get()
+            ->each(function (SupportConversation $conversation) use ($target, $currentTeamId): void {
+                $conversation->forceFill([
+                    'user_id' => $target->getAuthIdentifier(),
+                ]);
+
+                if ($conversation->team_id !== null && ! $this->belongsToTeam($target, $conversation->team_id)) {
+                    $conversation->forceFill([
+                        'team_id' => $currentTeamId,
+                    ]);
+                }
+
+                $conversation->save();
+            });
+    }
+
+    /**
+     * Determine whether the account owns or belongs to a team.
+     *
+     * `method_exists` rather than a plain call, as for guests: HasTeams is a
+     * trait the consumer applies to its own user model, and an account without
+     * it belongs to no team.
+     *
+     * @param  Authenticatable  $user  The account to judge.
+     * @param  string|int  $teamId  The team's key.
+     */
+    private function belongsToTeam(Authenticatable $user, string|int $teamId): bool
+    {
+        return method_exists($user, 'allTeams')
+            && $user->allTeams()->contains(
+                fn (Model $team): bool => (string) $team->getKey() === (string) $teamId,
+            );
     }
 
     /**

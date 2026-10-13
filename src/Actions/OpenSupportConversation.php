@@ -123,17 +123,8 @@ class OpenSupportConversation implements OpensSupportConversations
     {
         // 1. Validate, with the address the thread link will be mailed to.
         $validated = Validator::make($input, [
-            'email' => [
-                'required',
-                'string',
-                'email',
-                'max:255',
-            ],
-            'name' => [
-                'nullable',
-                'string',
-                'max:255',
-            ],
+            'email' => SupportRules::email(),
+            'name' => SupportRules::name(),
             ...SupportRules::conversation([
                 SupportConversationSource::PUBLIC_FORM,
                 SupportConversationSource::CONTACT_SALES,

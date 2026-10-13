@@ -11,6 +11,7 @@ use FlutterSdk\MagicStarter\Enums\SupportSenderType;
 use FlutterSdk\MagicStarter\Events\SupportConversationUpdated;
 use FlutterSdk\MagicStarter\Models\SupportConversation;
 use FlutterSdk\MagicStarter\Models\SupportMessage;
+use FlutterSdk\MagicStarter\Notifications\SupportReplyNotification;
 use FlutterSdk\MagicStarter\Support\SupportAi\HandoffClassifier;
 use FlutterSdk\MagicStarter\Support\SupportAi\ReplyGuard;
 use FlutterSdk\MagicStarter\Support\SupportAi\Reservation;
@@ -28,6 +29,7 @@ use Illuminate\Foundation\Queue\Queueable;
 use Illuminate\Queue\InteractsWithQueue;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Notification;
 use Throwable;
 
 /**
@@ -282,16 +284,25 @@ class RespondToSupportConversation implements ShouldQueue
             return;
         }
 
-        // 8. Persist the answer, and a handoff it asks for, in one transaction under the row lock; tell staff
-        //    or refresh the thread once it commits, and settle the tokens last, whatever happened before.
+        // 8. Persist the answer, and a handoff it asks for, in one transaction under the row lock; tell staff,
+        //    or tell the opener and refresh the thread, once it commits, and settle the tokens last, whatever
+        //    happened before.
         try {
-            if (! $this->persist($desk, $answer)) {
+            $message = $this->persist($desk, $answer);
+
+            if ($message === null) {
                 return;
             }
 
             if ($answer->handsOff()) {
                 $desk->announceHandoff($conversation);
             } else {
+                // The opener is told in app and by push, as for a staff reply; an outage of either must never
+                // fail an answer that is already stored.
+                rescue(
+                    static fn () => Notification::send($conversation->user, new SupportReplyNotification($message)),
+                    report: true,
+                );
                 rescue(static fn () => event(new SupportConversationUpdated($conversation)), report: true);
             }
         } finally {
@@ -364,18 +375,19 @@ class RespondToSupportConversation implements ShouldQueue
      * with nobody owing the customer a reply. Nothing is announced here; the
      * caller does that after the commit.
      *
-     * @return bool false when the turn moved on while the model was answering; nothing is written then
+     * @return SupportMessage|null the stored answer, or null when the turn moved on while the model was
+     *                             answering; nothing is written then
      */
-    private function persist(SupportHandoff $desk, SupportAnswer $answer): bool
+    private function persist(SupportHandoff $desk, SupportAnswer $answer): ?SupportMessage
     {
-        return DB::transaction(function () use ($desk, $answer): bool {
+        return DB::transaction(function () use ($desk, $answer): ?SupportMessage {
             $conversation = SupportConversation::query()->lockForUpdate()->find($this->conversationId);
 
             if (! $conversation instanceof SupportConversation || ! $this->owns($conversation)) {
-                return false;
+                return null;
             }
 
-            $conversation->messages()->create([
+            $message = $conversation->messages()->create([
                 'sender_type' => SupportSenderType::AI,
                 'sender_id' => null,
                 'kind' => SupportMessageKind::MESSAGE,
@@ -400,7 +412,7 @@ class RespondToSupportConversation implements ShouldQueue
                 $desk->moveToStaff($conversation, $answer->handoffReason, $answer->handoffPriority);
             }
 
-            return true;
+            return $message;
         });
     }
 

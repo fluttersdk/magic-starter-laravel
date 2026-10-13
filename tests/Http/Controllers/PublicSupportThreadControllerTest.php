@@ -227,6 +227,8 @@ class PublicSupportThreadControllerTest extends TestCase
     public function test_a_reply_through_a_live_token_reaches_staff_and_audits_without_the_token(): void
     {
         [$conversation, $token] = $this->threadWithToken();
+        // Staff answered, so the visitor's next line opens a new wait and alerts once.
+        $conversation->forceFill(['waiting_since' => null])->save();
 
         $response = $this->postJson("/support/public/thread/{$token}", [
             'body' => 'Any update?',

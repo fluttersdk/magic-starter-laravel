@@ -27,7 +27,11 @@ use Illuminate\Support\Facades\DB;
 class LinkSupportConversationsOnVerified
 {
     /**
-     * Link every unowned conversation whose address matches, case-insensitively.
+     * Link every unowned conversation whose address matches.
+     *
+     * An unowned row is only ever written by the public door, which lower-cases
+     * the address, so the account's address is lower-cased to meet it and the
+     * `email` index serves the lookup.
      */
     public function handle(Verified $event): void
     {
@@ -48,7 +52,7 @@ class LinkSupportConversationsOnVerified
         DB::transaction(function () use ($user, $email): void {
             $conversations = SupportConversation::query()
                 ->whereNull('user_id')
-                ->whereRaw('LOWER(email) = ?', [$email])
+                ->where('email', $email)
                 ->lockForUpdate()
                 ->get();
 

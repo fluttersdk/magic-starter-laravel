@@ -4,6 +4,7 @@ namespace FlutterSdk\MagicStarter\Tests\Support;
 
 use FlutterSdk\MagicStarter\Audit\Audit;
 use FlutterSdk\MagicStarter\Contracts\CreatesUsersFromProvider;
+use FlutterSdk\MagicStarter\Contracts\OpensSupportConversations;
 use FlutterSdk\MagicStarter\Enums\SupportConversationSource;
 use FlutterSdk\MagicStarter\Features;
 use FlutterSdk\MagicStarter\MagicStarter;
@@ -17,6 +18,7 @@ use Illuminate\Auth\Events\Registered;
 use Illuminate\Auth\Events\Verified;
 use Illuminate\Database\Schema\Blueprint;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Schema;
 use Laravel\Sanctum\SanctumServiceProvider;
 
@@ -145,6 +147,23 @@ class LinkSupportConversationsOnVerifiedTest extends TestCase
         $this->assertSame(1, Audit::query()->where('event', 'support.conversation_linked')->count());
     }
 
+    public function test_the_lookup_matches_the_stored_address_without_a_function_so_its_index_serves_it(): void
+    {
+        $conversation = $this->publicConversation('Ada@Example.com');
+        $user = $this->user('ada@example.com');
+
+        DB::enableQueryLog();
+        event(new Verified($user));
+
+        $lookups = collect(DB::getQueryLog())
+            ->pluck('query')
+            ->filter(fn (string $sql): bool => str_contains($sql, 'support_conversations') && str_contains($sql, 'email'));
+
+        $this->assertCount(1, $lookups);
+        $this->assertStringNotContainsString('lower(', strtolower((string) $lookups->first()));
+        $this->assertSame((string) $user->getKey(), (string) $conversation->refresh()->user_id);
+    }
+
     public function test_a_provider_verified_social_sign_up_links(): void
     {
         $conversation = $this->publicConversation('ada@example.com');
@@ -169,12 +188,15 @@ class LinkSupportConversationsOnVerifiedTest extends TestCase
         $this->assertNull($conversation->refresh()->user_id);
     }
 
+    /**
+     * Opened through the public door, which stores the address lower-cased.
+     */
     private function publicConversation(string $email): SupportConversation
     {
-        return SupportConversation::create([
+        return app(OpensSupportConversations::class)->openPublic([
             'email' => $email,
             'subject' => 'Question',
-            'source' => SupportConversationSource::PUBLIC_FORM,
+            'body' => 'Hello from the form.',
         ]);
     }
 

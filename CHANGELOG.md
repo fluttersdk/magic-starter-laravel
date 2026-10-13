@@ -4,6 +4,19 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Changed
+
+- **A visitor's message alerts staff once per wait, like a signed-in opener's.** A message to a conversation already waiting on staff fires no second `SupportConversationNeedsStaff`; a visitor's used to alert every time. (`src/Actions/PostCustomerSupportMessage.php`)
+- **The audit rows of a support conversation redact its `subject` and `email`.** The key stays and the value is `[redacted]`, so a subject a customer typed is not copied into the audit log. (`src/Models/SupportConversation.php`)
+- **`SupportRules::email()` and `name()`** are the one source of the visitor's address and name rules, read by the public form request and by `openPublic()`. (`src/Support/SupportRules.php`, `src/Http/Requests/StorePublicSupportConversationRequest.php`, `src/Actions/OpenSupportConversation.php`)
+- **Linking a verified address matches the stored address directly.** An unowned conversation is only written by the public door, which lower-cases the address, so the lookup no longer wraps `email` in `LOWER()` and the `email` index serves it. (`src/Listeners/LinkSupportConversationsOnVerified.php`)
+- **The staff thread marks a message sent as a visitor.** A customer message with no sender in a conversation that has an opener (written on the public link before the address was linked) carries a "Sent as a visitor" chip. (`src/Filament/Resources/SupportConversations/SupportConversationResource.php`, `lang/en/admin_support.php`, `lang/tr/admin_support.php`)
+
+### Fixed
+
+- **The opener is told when the AI desk answers.** A committed answer that does not hand off sends `SupportReplyNotification` for the stored AI message, as a staff reply does (database, push with the OneSignal feature, realtime); an outage of the notification is reported and never fails the answer. Before, the reply sat unread until the customer opened the thread. (`src/Jobs/RespondToSupportConversation.php`)
+- **Claiming a guest session moves its support conversations.** `support_conversations.user_id` moves to the account, and `team_id` to the account's current team when the account does not belong to the stored one. Before, a conversation the guest opened stayed on the spent guest row and was unreachable. (`src/Actions/ClaimGuestAccount.php`)
+
 ## [0.0.31] - 2026-10-13
 
 ### Added

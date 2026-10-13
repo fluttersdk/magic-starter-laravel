@@ -2,8 +2,12 @@
 
 namespace FlutterSdk\MagicStarter\Tests\Http\Controllers;
 
+use FlutterSdk\MagicStarter\Enums\SupportConversationSource;
 use FlutterSdk\MagicStarter\Events\GuestClaimed;
 use FlutterSdk\MagicStarter\MagicStarter;
+use FlutterSdk\MagicStarter\Models\SupportConversation;
+use FlutterSdk\MagicStarter\Tests\Fixtures\ConcreteTeam;
+use FlutterSdk\MagicStarter\Tests\Fixtures\ConcreteTeamUser;
 use FlutterSdk\MagicStarter\Tests\TestCase;
 use Illuminate\Database\Schema\Blueprint;
 use Illuminate\Support\Facades\DB;
@@ -52,6 +56,8 @@ class GuestClaimTest extends TestCase
         $app['config']->set('magic-starter.features', ['guest-auth', 'notifications']);
         $app['config']->set('auth.providers.users.model', GuestClaimTestUser::class);
         $app['config']->set('magic-starter.models.user', GuestClaimTestUser::class);
+        $app['config']->set('magic-starter.models.team', ConcreteTeam::class);
+        $app['config']->set('magic-starter.models.membership', ConcreteTeamUser::class);
     }
 
     protected function setUp(): void
@@ -70,6 +76,7 @@ class GuestClaimTest extends TestCase
             $table->char('phone_country', 2)->nullable();
             $table->string('locale')->default('en');
             $table->string('timezone')->default('UTC');
+            $table->string('current_team_id')->nullable();
             $table->string('profile_photo_path', 2048)->nullable();
             $table->timestamp('email_verified_at')->nullable();
             $table->timestamps();
@@ -95,6 +102,14 @@ class GuestClaimTest extends TestCase
             $table->boolean('is_guest')->default(false);
             $table->timestamps();
         });
+
+        foreach ([
+            'create_teams_table.php',
+            'create_team_user_table.php',
+            'create_support_conversations_table.php',
+        ] as $file) {
+            (require __DIR__ . '/../../../database/migrations/' . $file)->up();
+        }
 
         Schema::create('notifications', function (Blueprint $table): void {
             $table->uuid('id')->primary();
@@ -194,6 +209,26 @@ class GuestClaimTest extends TestCase
         return $owner === null ? null : (string) $owner;
     }
 
+    private function teamOwnedBy(GuestClaimTestUser $owner): ConcreteTeam
+    {
+        return ConcreteTeam::create([
+            'user_id' => $owner->getKey(),
+            'name' => 'Team of ' . $owner->getKey(),
+            'personal_team' => false,
+        ]);
+    }
+
+    private function conversationOf(string $userId, string|int $teamId): SupportConversation
+    {
+        return SupportConversation::create([
+            'user_id' => $userId,
+            'team_id' => $teamId,
+            'email' => 'opener@example.com',
+            'subject' => 'Question',
+            'source' => SupportConversationSource::IN_APP,
+        ]);
+    }
+
     // ------------------------------------------------------------------
     // Tests
     // ------------------------------------------------------------------
@@ -226,6 +261,54 @@ class GuestClaimTest extends TestCase
             return $event->guest->getAuthIdentifier() === $guest['user_id']
                 && $event->target->getAuthIdentifier() === $account['user']->getKey();
         });
+    }
+
+    /**
+     * A claim hands the guest's support conversations to the account, and a team the account is not in to its own.
+     */
+    public function test_a_claim_moves_the_guests_support_conversations_to_the_target(): void
+    {
+        $guest = $this->startGuestSession();
+        $account = $this->registeredAccount();
+        $accountTeam = $this->teamOwnedBy($account['user']);
+        $account['user']->forceFill(['current_team_id' => $accountTeam->getKey()])->save();
+        $guestTeam = $this->teamOwnedBy(GuestClaimTestUser::query()->findOrFail($guest['user_id']));
+        $stranger = $this->registeredAccount('stranger@example.com');
+
+        $moved = $this->conversationOf($guest['user_id'], $guestTeam->getKey());
+        $untouched = $this->conversationOf($stranger['user']->getKey(), $guestTeam->getKey());
+
+        $this->withToken($account['token'])
+            ->postJson('/auth/guest/claim', ['guest_token' => $guest['token']])
+            ->assertOk()
+            ->assertJsonPath('data.claimed', true);
+
+        $moved->refresh();
+        $this->assertSame($account['user']->getKey(), (string) $moved->user_id);
+        $this->assertSame((string) $accountTeam->getKey(), (string) $moved->team_id);
+        $this->assertSame($stranger['user']->getKey(), (string) $untouched->refresh()->user_id);
+        $this->assertSame((string) $guestTeam->getKey(), (string) $untouched->team_id);
+    }
+
+    /**
+     * A team the account already belongs to is the team the conversation was written in, so it stays.
+     */
+    public function test_a_claim_keeps_the_conversation_team_when_the_target_belongs_to_it(): void
+    {
+        $guest = $this->startGuestSession();
+        $account = $this->registeredAccount();
+        $accountTeam = $this->teamOwnedBy($account['user']);
+        $elsewhere = $this->teamOwnedBy($account['user']);
+        $account['user']->forceFill(['current_team_id' => $elsewhere->getKey()])->save();
+        $conversation = $this->conversationOf($guest['user_id'], $accountTeam->getKey());
+
+        $this->withToken($account['token'])
+            ->postJson('/auth/guest/claim', ['guest_token' => $guest['token']])
+            ->assertOk();
+
+        $conversation->refresh();
+        $this->assertSame($account['user']->getKey(), (string) $conversation->user_id);
+        $this->assertSame((string) $accountTeam->getKey(), (string) $conversation->team_id);
     }
 
     /**
@@ -546,6 +629,7 @@ final class GuestClaimTestUser extends \Illuminate\Foundation\Auth\User
     use \FlutterSdk\MagicStarter\Traits\HasGuestSupport;
     use \FlutterSdk\MagicStarter\Traits\HasNotifications;
     use \FlutterSdk\MagicStarter\Traits\HasProfilePhoto;
+    use \FlutterSdk\MagicStarter\Traits\HasTeams;
     use \Laravel\Sanctum\HasApiTokens;
 
     protected $table = 'users';

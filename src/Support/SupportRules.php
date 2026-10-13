@@ -60,6 +60,35 @@ final class SupportRules
     }
 
     /**
+     * Rules for the address a visitor's thread link is mailed to.
+     *
+     * @return list<string>
+     */
+    public static function email(): array
+    {
+        return [
+            'required',
+            'string',
+            'email',
+            'max:255',
+        ];
+    }
+
+    /**
+     * Rules for the optional name a visitor gives.
+     *
+     * @return list<string>
+     */
+    public static function name(): array
+    {
+        return [
+            'nullable',
+            'string',
+            'max:255',
+        ];
+    }
+
+    /**
      * Rules for opening a conversation: an optional subject (the opener derives
      * a missing one), body, a topic from `support.topics` no longer than its
      * column, and an optional source limited to the door's own.

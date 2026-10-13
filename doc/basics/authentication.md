@@ -469,7 +469,7 @@ One refusal for four causes, deliberately: the token names something that cannot
 
 The whole transfer runs in one database transaction.
 
-1. The package moves the rows it owns. That is the guest's database notifications, and nothing else: notification settings carry a unique key per type and channel, so a guest's defaults would collide with choices the account has already made; a personal team is not moved because the target already owns one; newsletter subscriptions are keyed on an email address a guest never had.
+1. The package moves the rows it owns. That is the guest's database notifications and support conversations, and nothing else (a conversation filed under a team the account does not belong to moves to the account's current team): notification settings carry a unique key per type and channel, so a guest's defaults would collide with choices the account has already made; a personal team is not moved because the target already owns one; newsletter subscriptions are keyed on an email address a guest never had.
 2. `FlutterSdk\MagicStarter\Events\GuestClaimed` is dispatched with both user models. This is the whole seam for your own data: reassign your tables from `$event->guest` to `$event->target` in a listener.
 3. The guest's tokens are deleted and its `device_id` is released. The row keeps `is_guest`, so a job pruning abandoned guests can still reclaim it; with no token, no device ID, no email and no password, nothing can authenticate as it again.
 

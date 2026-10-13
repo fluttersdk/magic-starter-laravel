@@ -74,7 +74,7 @@ What a customer reads back:
 - A message carries `kind` (`message` or `activity`) and `sender`: for staff the first name and profile photo, for the AI desk `support.ai.name`, otherwise null. A staff id, surname or email, and the `meta` the desk recorded, are never sent.
 - The reply notification carries `action_url`: `support.client_thread_path` with `{id}` replaced by the conversation key.
 
-A conversation belongs to its opener alone. When a visitor verifies an address that matches a public conversation, `LinkSupportConversationsOnVerified` hands it to their account.
+A conversation belongs to its opener alone. When a visitor verifies an address that matches a public conversation, `LinkSupportConversationsOnVerified` hands it to their account. When a guest session is claimed into an existing account (`POST auth/guest/claim`), the guest's conversations move to that account too, and a conversation whose team the account does not belong to is filed under the account's current team.
 
 ---
 
@@ -136,6 +136,8 @@ An eligible conversation starts `pending` instead of `open`, and `RespondToSuppo
 3. It calls `respond()` with a deadline of `support.ai.deadline_seconds` minus the seconds spent waiting for the conversation lock.
 4. `ReplyGuard` checks the answer. The reply is then written under a row lock, only while the turn is still owed, and `answered_message_id` is set; the conversation stays `pending` for the next customer message. When the answer asks for a person, the handoff (status, `waiting_since`, `handoff_reason`, priority and the handoff line) is written in that same transaction, so a committed answer can never be left pending; staff are alerted and the assist queued after the commit, and the tokens are settled last. An answer handed off as `unavailable` posts no reply of its own, only the handoff line.
 5. A new customer message starts its turn with `ai_failures` at `0`; a superseded turn's failures never count against the next one.
+
+An answer that stays with the AI desk tells the opener the way a staff reply does: a database notification (and push with the OneSignal feature) plus the realtime nudge. A failure to notify never fails the stored answer, and an answer that hands off notifies nobody, since the handoff line and the staff reply that follows are how the customer hears.
 
 A customer who writes again on a pending thread queues a new turn and alerts nobody. A staff reply takes a pending conversation from the AI desk: it becomes `open` in the same transaction, and a job mid-turn discards its answer. Staff can no longer set `pending` themselves; the panel does not offer it and `ChangesSupportConversations` refuses it.
 
@@ -232,7 +234,7 @@ A reply to a pending conversation takes it from the AI desk. A reply reaches the
 
 The package listens for `SupportConversationNeedsStaff` and alerts every staff recipient by database, mail and, with the OneSignal feature, push. The alert and the broadcast carry ids, never the text of a message; the push leaves the subject out as well.
 
-Staff are told once per wait. A customer message on a conversation the AI desk still owns alerts nobody, a signed-in opener writing again to a conversation already waiting on staff alerts nobody, and a visitor's message alerts every time. A handoff alerts once, for the caller that won it.
+Staff are told once per wait. A customer message on a conversation the AI desk still owns alerts nobody, a message, from an opener or a visitor, to a conversation already waiting on staff alerts nobody. A handoff alerts once, for the caller that won it.
 
 ---
 
