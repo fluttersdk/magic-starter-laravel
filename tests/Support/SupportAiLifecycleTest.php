@@ -25,6 +25,7 @@ use FlutterSdk\MagicStarter\MagicStarterServiceProvider;
 use FlutterSdk\MagicStarter\Models\SupportConversation;
 use FlutterSdk\MagicStarter\Models\SupportMessage;
 use FlutterSdk\MagicStarter\Notifications\SupportConversationNeedsStaffNotification;
+use FlutterSdk\MagicStarter\Notifications\SupportReplyNotification;
 use FlutterSdk\MagicStarter\Support\SupportAi\SupportAiQuota;
 use FlutterSdk\MagicStarter\Support\SupportAi\SupportAnswer;
 use FlutterSdk\MagicStarter\Support\SupportAi\SupportHandoff;
@@ -235,6 +236,26 @@ class SupportAiLifecycleTest extends TestCase
         $this->assertCount(1, $this->alerts('customer_message'));
     }
 
+    public function test_a_visitor_message_alerts_staff_once_per_wait(): void
+    {
+        config()->set('magic-starter.support.public.thread_url', 'https://app.example.com/support/{token}');
+        $conversation = app(OpensSupportConversations::class)->openPublic([
+            'email' => 'visitor@example.com',
+            'body' => 'Hello from the form.',
+        ]);
+
+        // 1. Still waiting on the opening alert: neither of the visitor's follow-ups alerts again.
+        $this->writeAsVisitor($conversation->refresh(), 'Anyone there?');
+        $this->writeAsVisitor($conversation->refresh(), 'Please?');
+        $this->assertCount(0, $this->alerts('customer_message'));
+
+        // 2. Staff answered, so the wait ended: the next message alerts once, and its follow-up does not.
+        app(RepliesToSupport::class)->reply($this->staff(), $conversation->refresh(), 'Looking into it.', false);
+        $this->writeAsVisitor($conversation->refresh(), 'Thanks, still broken.');
+        $this->writeAsVisitor($conversation->refresh(), 'Any news?');
+        $this->assertCount(1, $this->alerts('customer_message'));
+    }
+
     // -----------------------------------------------------------------
     // The responder job
     // -----------------------------------------------------------------
@@ -263,6 +284,63 @@ class SupportAiLifecycleTest extends TestCase
         $this->assertSame(SupportConversationStatus::PENDING, $conversation->status);
         Event::assertDispatched(SupportConversationUpdated::class);
         $this->assertTrue(Cache::lock('support-ai:' . $conversation->getKey(), 1)->get());
+    }
+
+    public function test_a_committed_answer_notifies_the_opener_with_the_stored_ai_message(): void
+    {
+        $this->bindResponder();
+        $customer = $this->customer();
+        $this->open($customer);
+
+        $this->runQueued();
+
+        $reply = $this->aiReplies()->sole();
+        Notification::assertSentToTimes($customer, SupportReplyNotification::class, 1);
+        Notification::assertSentTo(
+            $customer,
+            SupportReplyNotification::class,
+            fn (SupportReplyNotification $notification): bool => (string) $notification->message->getKey()
+                === (string) $reply->getKey()
+                && $notification->threadUrl === null,
+        );
+    }
+
+    public function test_a_claim_during_the_model_call_sends_the_notification_to_the_new_owner(): void
+    {
+        $guest = $this->customer('guest@example.com');
+        $owner = $this->customer('owner@example.com');
+        $conversation = null;
+        $this->bindResponder(function () use (&$conversation, $owner): SupportAnswer {
+            // A guest claim commits while the model thinks: the conversation changes hands.
+            SupportConversation::query()->whereKey($conversation->getKey())->update([
+                'user_id' => $owner->getKey(),
+            ]);
+
+            return new SupportAnswer('Your plan renews on the 1st.', 0.9, new SupportUsage(300, 100));
+        });
+        $conversation = $this->open($guest);
+
+        $this->runQueued();
+
+        Notification::assertSentToTimes($owner, SupportReplyNotification::class, 1);
+        Notification::assertNotSentTo($guest, SupportReplyNotification::class);
+    }
+
+    public function test_a_notification_outage_never_fails_a_committed_answer(): void
+    {
+        $this->bindResponder();
+        $customer = $this->customer();
+        $conversation = $this->open($customer);
+        Notification::shouldReceive('send')->once()->andThrow(new RuntimeException('push provider down'));
+
+        $this->runQueued();
+
+        $this->assertSame(1, $this->aiReplies()->count());
+        $this->assertSame(
+            (string) $conversation->refresh()->last_customer_message_id,
+            (string) $conversation->answered_message_id,
+        );
+        Event::assertDispatched(SupportConversationUpdated::class);
     }
 
     public function test_the_turn_carries_the_customer_visible_history_and_the_trigger(): void
@@ -528,7 +606,8 @@ class SupportAiLifecycleTest extends TestCase
             SupportHandoffReason::LOW_CONFIDENCE,
             SupportPriority::NORMAL,
         ));
-        $conversation = $this->open($this->customer());
+        $customer = $this->customer();
+        $conversation = $this->open($customer);
 
         $this->runQueued();
 
@@ -537,6 +616,7 @@ class SupportAiLifecycleTest extends TestCase
         $this->assertSame(SupportHandoffReason::LOW_CONFIDENCE, $conversation->handoff_reason);
         $this->assertSame(SupportConversationStatus::OPEN, $conversation->status);
         $this->assertSame(1, $this->handoffLines()->count());
+        Notification::assertNotSentTo($customer, SupportReplyNotification::class);
         $this->assertSame(
             (string) $conversation->last_customer_message_id,
             (string) $conversation->answered_message_id,
@@ -824,6 +904,11 @@ class SupportAiLifecycleTest extends TestCase
     private function write(SupportConversation $conversation, string $body, ConcreteUser $user): SupportMessage
     {
         return app(PostsCustomerSupportMessages::class)->post($conversation, $body, $user);
+    }
+
+    private function writeAsVisitor(SupportConversation $conversation, string $body): SupportMessage
+    {
+        return app(PostsCustomerSupportMessages::class)->post($conversation, $body, null);
     }
 
     /**

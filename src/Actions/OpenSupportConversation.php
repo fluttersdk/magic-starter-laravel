@@ -4,6 +4,7 @@ namespace FlutterSdk\MagicStarter\Actions;
 
 use FlutterSdk\MagicStarter\Audit\Auditor;
 use FlutterSdk\MagicStarter\Contracts\OpensSupportConversations;
+use FlutterSdk\MagicStarter\Contracts\PostsCustomerSupportMessages;
 use FlutterSdk\MagicStarter\Enums\SupportConversationSource;
 use FlutterSdk\MagicStarter\Enums\SupportConversationStatus;
 use FlutterSdk\MagicStarter\Enums\SupportMessageKind;
@@ -14,6 +15,7 @@ use FlutterSdk\MagicStarter\Models\SupportConversation;
 use FlutterSdk\MagicStarter\Support\SupportAi\SupportHandoff;
 use FlutterSdk\MagicStarter\Support\SupportRules;
 use Illuminate\Contracts\Auth\Authenticatable;
+use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\UniqueConstraintViolationException;
 use Illuminate\Support\Arr;
@@ -34,6 +36,13 @@ use Illuminate\Validation\ValidationException;
  *
  * A contact-sales conversation is always filed under the `sales` topic, and a
  * conversation opened without a subject gets the first line of its body.
+ *
+ * A signed-in opener who taps Contact sales again while a contact-sales
+ * conversation of theirs in their current team is not resolved continues it:
+ * the body becomes another customer message and the same conversation is
+ * returned. The host builds the AI's account context from the conversation's
+ * team, so another team's thread is never reused. In-app and public
+ * conversations are always new.
  *
  * A signed-in opener the AI desk answers (see {@see SupportHandoff::routesToAi()})
  * starts `pending`: the responder job is queued once the conversation commits
@@ -59,6 +68,7 @@ class OpenSupportConversation implements OpensSupportConversations
 
     public function __construct(
         private readonly SupportHandoff $desk,
+        private readonly PostsCustomerSupportMessages $messages,
     ) {}
 
     /**
@@ -66,7 +76,9 @@ class OpenSupportConversation implements OpensSupportConversations
      *
      * @param  array<string, mixed>  $input  topic (required unless the source is `contact_sales` or a subject is
      *                                       sent, then filed under `other`), body, an optional subject and an
-     *                                       optional source (`in_app` or `contact_sales`)
+     *                                       optional source (`in_app` or `contact_sales`); a contact-sales
+     *                                       thread that is continued keeps its own subject and topic, so a sent
+     *                                       subject is ignored then
      *
      * @throws ValidationException
      */
@@ -87,21 +99,33 @@ class OpenSupportConversation implements OpensSupportConversations
         $attributes = $user instanceof Model ? $user->getAttributes() : [];
         $toAi = $this->desk->routesToAi($user instanceof Model ? $user : null, $source);
 
-        $conversation = $this->create(
-            [
-                'user_id' => $user->getAuthIdentifier(),
-                'team_id' => $attributes['current_team_id'] ?? null,
-                'email' => $attributes['email'] ?? null,
-                'name' => $attributes['name'] ?? null,
-                ...$this->filing($validated, $source, fallbackTopic: self::FALLBACK_TOPIC),
-                'source' => $source,
-                'status' => $toAi ? SupportConversationStatus::PENDING : SupportConversationStatus::OPEN,
-            ],
-            $validated['body'],
-            $user,
-        );
+        $teamId = $attributes['current_team_id'] ?? null;
+        $fields = [
+            'user_id' => $user->getAuthIdentifier(),
+            'team_id' => $teamId,
+            'email' => $attributes['email'] ?? null,
+            'name' => $attributes['name'] ?? null,
+            ...$this->filing($validated, $source, fallbackTopic: self::FALLBACK_TOPIC),
+            'source' => $source,
+            'status' => $toAi ? SupportConversationStatus::PENDING : SupportConversationStatus::OPEN,
+        ];
 
-        // 3. A pending conversation goes to the responder once it commits; any other tells staff once.
+        // 3. Contact sales continues the opener's open thread of this team instead of filing a second one.
+        if ($source === SupportConversationSource::CONTACT_SALES && $user instanceof Model) {
+            [$conversation, $continued] = DB::transaction(
+                fn (): array => $this->continueOrCreate($user, $teamId, $fields, $validated['body']),
+            );
+
+            if ($continued) {
+                $this->messages->post($conversation, $validated['body'], $user);
+
+                return $conversation;
+            }
+        } else {
+            $conversation = $this->create($fields, $validated['body'], $user);
+        }
+
+        // 4. A pending conversation goes to the responder once it commits; any other tells staff once.
         if ($toAi) {
             RespondToSupportConversation::dispatch($conversation->getKey(), $conversation->last_customer_message_id);
         }
@@ -109,6 +133,43 @@ class OpenSupportConversation implements OpensSupportConversations
         $this->announce($conversation, $user, alertStaff: ! $toAi);
 
         return $conversation;
+    }
+
+    /**
+     * Find the opener's contact-sales conversation to continue, or create a new one.
+     *
+     * Runs inside the caller's transaction and locks the opener's own row first.
+     * That row always exists, so two taps at the same instant queue on it and the
+     * second finds the conversation the first created; a lock on
+     * `support_conversations` alone would lock nothing when no row matches yet.
+     *
+     * @param  array<string, mixed>  $fields
+     * @return array{0: SupportConversation, 1: bool} the conversation, and whether it already existed
+     */
+    private function continueOrCreate(Model&Authenticatable $user, mixed $teamId, array $fields, string $body): array
+    {
+        // 1. Serialise concurrent taps of one account on a row that is always there.
+        $user->newQuery()->whereKey($user->getKey())->lockForUpdate()->first();
+
+        // 2. The newest unresolved contact-sales thread of the team the opener is in now.
+        $existing = SupportConversation::query()
+            ->where('user_id', $user->getKey())
+            ->where('source', SupportConversationSource::CONTACT_SALES->value)
+            ->where('status', '!=', SupportConversationStatus::RESOLVED->value)
+            ->when(
+                $teamId === null,
+                fn (Builder $query) => $query->whereNull('team_id'),
+                fn (Builder $query) => $query->where('team_id', $teamId),
+            )
+            ->latest('last_activity_at')
+            ->first();
+
+        if ($existing instanceof SupportConversation) {
+            return [$existing, true];
+        }
+
+        // 3. Nothing to continue.
+        return [$this->create($fields, $body, $user), false];
     }
 
     /**
@@ -123,17 +184,8 @@ class OpenSupportConversation implements OpensSupportConversations
     {
         // 1. Validate, with the address the thread link will be mailed to.
         $validated = Validator::make($input, [
-            'email' => [
-                'required',
-                'string',
-                'email',
-                'max:255',
-            ],
-            'name' => [
-                'nullable',
-                'string',
-                'max:255',
-            ],
+            'email' => SupportRules::email(),
+            'name' => SupportRules::name(),
             ...SupportRules::conversation([
                 SupportConversationSource::PUBLIC_FORM,
                 SupportConversationSource::CONTACT_SALES,

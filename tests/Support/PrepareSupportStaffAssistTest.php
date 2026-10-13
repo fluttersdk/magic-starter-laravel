@@ -14,6 +14,7 @@ use FlutterSdk\MagicStarter\Support\SupportAi\SupportStaffAssistCache;
 use FlutterSdk\MagicStarter\Tests\TestCase;
 use Illuminate\Contracts\Container\Container;
 use Illuminate\Support\Facades\Log;
+use Illuminate\Support\Str;
 use RuntimeException;
 
 /**
@@ -114,7 +115,7 @@ class PrepareSupportStaffAssistTest extends TestCase
         $this->assertNull(app(SupportStaffAssistCache::class)->get($conversation));
 
         $this->bindAssist(new SupportStaffAssist('Summary.', 'Draft.'));
-        $gone = new PrepareSupportStaffAssist('missing-conversation');
+        $gone = new PrepareSupportStaffAssist((string) Str::uuid());
         $gone->handle(app(Container::class), app(SupportStaffAssistCache::class), app('log'));
 
         $this->assertNull(app(SupportStaffAssistCache::class)->get($conversation));

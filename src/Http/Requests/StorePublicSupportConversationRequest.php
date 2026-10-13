@@ -32,17 +32,8 @@ class StorePublicSupportConversationRequest extends FormRequest
     public function rules(): array
     {
         $rules = [
-            'email' => [
-                'required',
-                'string',
-                'email',
-                'max:255',
-            ],
-            'name' => [
-                'nullable',
-                'string',
-                'max:255',
-            ],
+            'email' => SupportRules::email(),
+            'name' => SupportRules::name(),
             ...SupportRules::conversation([
                 SupportConversationSource::PUBLIC_FORM,
                 SupportConversationSource::CONTACT_SALES,

@@ -17,9 +17,13 @@ use onesignal\client\model\LanguageStringMap;
 use onesignal\client\model\Notification as OneSignalNotification;
 
 /**
- * Tells the customer that staff answered their conversation.
+ * Tells the customer that their conversation was answered, by staff or by the AI desk.
  *
- * Two audiences, chosen by {@see ReplyToSupportConversation}: an opener with an
+ * Two senders build it: {@see ReplyToSupportConversation} for a staff reply, and
+ * `RespondToSupportConversation` for a committed AI answer that does not hand off.
+ *
+ * Two audiences, chosen by the staff reply action (the AI desk only answers a signed-in opener, so it
+ * always builds the in-app one): an opener with an
  * account is told in app (database) and by push, with generic text, ids and
  * the client route of the thread (`action_url`, from
  * `support.client_thread_path`) only, and reads the reply through the API; a visitor with no account gets a

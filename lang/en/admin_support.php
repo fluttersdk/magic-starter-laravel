@@ -39,6 +39,7 @@ return [
         'staff' => 'Staff',
         'ai' => 'AI',
         'system' => 'System',
+        'sent_as_visitor' => 'Sent as a visitor',
     ],
 
     'enums' => [

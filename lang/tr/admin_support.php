@@ -39,6 +39,7 @@ return [
         'staff' => 'Ekip üyesi',
         'ai' => 'Yapay zekâ',
         'system' => 'Sistem',
+        'sent_as_visitor' => 'Ziyaretçi olarak gönderildi',
     ],
 
     'enums' => [

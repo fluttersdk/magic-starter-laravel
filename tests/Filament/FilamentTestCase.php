@@ -80,19 +80,27 @@ abstract class FilamentTestCase extends TestCase
 
     /**
      * The package ships its migrations unprefixed, so the framework loader
-     * would sort `add_*` ahead of the `create_*` it alters. Creates run first.
+     * would sort `add_*` ahead of the `create_*` it alters. Creates run first,
+     * and the tables other tables point at ahead of them all: PostgreSQL
+     * enforces those foreign keys, which SQLite does not.
      */
     private function runPackageMigrations(): void
     {
+        $roots = ['create_users_table.php', 'create_teams_table.php'];
+        $rank = static function (string $file) use ($roots): array {
+            $name = basename($file);
+            $root = array_search($name, $roots, true);
+
+            return [
+                $root === false ? count($roots) : $root,
+                ! str_starts_with($name, 'create_'),
+                $file,
+            ];
+        };
+
         $files = glob(__DIR__ . '/../../database/migrations/*.php');
 
-        usort($files, static fn (string $a, string $b): int => [
-            ! str_starts_with(basename($a), 'create_'),
-            $a,
-        ] <=> [
-            ! str_starts_with(basename($b), 'create_'),
-            $b,
-        ]);
+        usort($files, static fn (string $a, string $b): int => $rank($a) <=> $rank($b));
 
         foreach ($files as $file) {
             (require $file)->up();

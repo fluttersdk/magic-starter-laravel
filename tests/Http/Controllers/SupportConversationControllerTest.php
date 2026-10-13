@@ -624,6 +624,73 @@ class SupportConversationControllerTest extends TestCase
             ->assertJsonPath('data.subject', 'Volume pricing?');
     }
 
+    public function test_a_second_contact_sales_tap_continues_the_open_conversation(): void
+    {
+        $opener = $this->user('opener@example.com', self::TEAM);
+        $this->actingAs($opener, 'sanctum');
+
+        $first = $this->openContactSales('Enterprise plan?');
+        $second = $this->openContactSales('Any volume discount?');
+
+        $this->assertSame($first, $second);
+        $this->assertSame(1, SupportConversation::query()->count());
+        $this->assertEqualsCanonicalizing(
+            [
+                'Enterprise plan?',
+                'Any volume discount?',
+            ],
+            SupportMessage::query()
+                ->where('conversation_id', $first)
+                ->where('sender_type', SupportSenderType::CUSTOMER->value)
+                ->pluck('body')
+                ->all(),
+        );
+    }
+
+    public function test_a_resolved_contact_sales_conversation_is_not_reused(): void
+    {
+        $opener = $this->user('opener@example.com', self::TEAM);
+        $this->actingAs($opener, 'sanctum');
+
+        $first = $this->openContactSales('Enterprise plan?');
+        SupportConversation::query()->findOrFail($first)->forceFill([
+            'status' => 'resolved',
+        ])->save();
+        $second = $this->openContactSales('Back again.');
+
+        $this->assertNotSame($first, $second);
+        $this->assertSame(2, SupportConversation::query()->count());
+    }
+
+    public function test_a_contact_sales_conversation_of_another_team_is_not_reused(): void
+    {
+        $opener = $this->user('opener@example.com', self::TEAM);
+        $this->actingAs($opener, 'sanctum');
+
+        $first = $this->openContactSales('Enterprise plan?');
+        $opener->forceFill([
+            'current_team_id' => self::OTHER_TEAM,
+        ])->save();
+        $second = $this->openContactSales('Now for my other team.');
+
+        $this->assertNotSame($first, $second);
+        $this->assertSame(self::OTHER_TEAM, (string) SupportConversation::query()->findOrFail($second)->team_id);
+        $this->assertSame(2, SupportConversation::query()->count());
+    }
+
+    public function test_an_in_app_open_never_reuses_a_conversation(): void
+    {
+        $opener = $this->user('opener@example.com', self::TEAM);
+        $this->actingAs($opener, 'sanctum');
+        $this->openContactSales('Enterprise plan?');
+
+        $first = $this->openInApp('My checks fail.');
+        $second = $this->openInApp('My checks fail again.');
+
+        $this->assertNotSame($first, $second);
+        $this->assertSame(3, SupportConversation::query()->count());
+    }
+
     public function test_the_public_door_needs_no_subject_or_topic(): void
     {
         $this->postJson('/support/public/conversations', [
@@ -736,6 +803,25 @@ class SupportConversationControllerTest extends TestCase
         ])->assertCreated()->json('data.id');
 
         return SupportConversation::query()->findOrFail($id);
+    }
+
+    /**
+     * Tap Contact sales as the acting user and answer the id the starter would navigate to.
+     */
+    private function openContactSales(string $body): string
+    {
+        return (string) $this->postJson('/support/conversations', [
+            'body' => $body,
+            'source' => 'contact_sales',
+        ])->assertCreated()->json('data.id');
+    }
+
+    private function openInApp(string $body): string
+    {
+        return (string) $this->postJson('/support/conversations', [
+            'topic' => 'technical',
+            'body' => $body,
+        ])->assertCreated()->json('data.id');
     }
 
     private function staffWrites(

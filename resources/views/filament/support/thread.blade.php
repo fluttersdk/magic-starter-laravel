@@ -27,6 +27,7 @@
     .msl-note .msl-bubble { background: var(--msl-note); border: 1px dashed var(--msl-note-edge); color: var(--msl-note-fg); border-radius: 10px; }
     .msl-meta { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; font-size: 12px; color: var(--msl-muted); }
     .msl-chip { padding: 1px 7px; border-radius: 6px; background: var(--msl-chip); color: var(--msl-wash-fg); font-weight: 600; font-size: 11px; }
+    .msl-customer .msl-chip { background: var(--msl-avatar); color: var(--msl-muted); }
     .msl-avatar { flex: none; width: 32px; height: 32px; border-radius: 9999px; display: flex; align-items: center; justify-content: center; font-size: 11px; font-weight: 700; background: var(--msl-avatar); }
     .msl-staff .msl-avatar, .msl-note .msl-avatar { background: var(--msl-avatar-staff); color: var(--msl-avatar-staff-fg); }
     .msl-ai .msl-avatar { background: var(--msl-avatar-ai); color: var(--msl-avatar-ai-fg); }
@@ -53,7 +54,7 @@
                     <div class="msl-bubble"><div class="msl-body">{{ $item['body'] }}</div></div>
                     <div class="msl-meta">
                         @if ($item['chip'] !== null)
-                            <span class="msl-chip">&#10022; {{ $item['chip'] }}</span>
+                            <span class="msl-chip">@if ($item['variant'] === 'ai')&#10022; @endif{{ $item['chip'] }}</span>
                         @endif
                         <span>{{ implode(' · ', $item['meta']) }}</span>
                     </div>

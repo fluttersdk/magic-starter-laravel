@@ -444,6 +444,37 @@ class SupportConversationResourceTest extends FilamentTestCase
             ->assertSee('Handed off to staff');
     }
 
+    public function test_a_message_a_linked_conversation_got_from_a_visitor_carries_a_chip_and_a_signed_in_one_does_not(): void
+    {
+        $opener = $this->user('opener@example.com');
+        $linked = $this->conversation($opener);
+        $linked->messages()->create([
+            'sender_type' => SupportSenderType::CUSTOMER,
+            'sender_id' => null,
+            'kind' => SupportMessageKind::MESSAGE,
+            'body' => 'Written before the account existed',
+        ]);
+        $linked->messages()->create([
+            'sender_type' => SupportSenderType::CUSTOMER,
+            'sender_id' => $opener->getKey(),
+            'kind' => SupportMessageKind::MESSAGE,
+            'body' => 'Written signed in',
+        ]);
+        $public = $this->conversation(null, ['email' => 'visitor@example.com']);
+        $this->message($public, SupportSenderType::CUSTOMER, SupportMessageKind::MESSAGE, 'Still a visitor');
+        $chip = (string) __('magic-starter::admin_support.authors.sent_as_visitor');
+
+        [$visitor, $signedIn] = SupportConversationResource::threadItems($linked);
+        [$stillVisitor] = SupportConversationResource::threadItems($public);
+
+        $this->assertSame('Sent as a visitor', $chip);
+        $this->assertSame($chip, $visitor['chip']);
+        $this->assertNull($signedIn['chip']);
+        $this->assertNull($stillVisitor['chip']);
+        Livewire::actingAs($this->staff())->test(ViewSupportConversation::class, ['record' => $linked->getKey()])
+            ->assertSee($chip);
+    }
+
     public function test_the_panel_and_the_customer_json_name_the_ai_the_same_way_when_the_name_is_blank(): void
     {
         config()->set('magic-starter.support.ai.name', '');

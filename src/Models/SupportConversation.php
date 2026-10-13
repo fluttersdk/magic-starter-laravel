@@ -2,6 +2,7 @@
 
 namespace FlutterSdk\MagicStarter\Models;
 
+use FlutterSdk\MagicStarter\Audit\Redactor;
 use FlutterSdk\MagicStarter\Enums\SupportConversationSource;
 use FlutterSdk\MagicStarter\Enums\SupportConversationStatus;
 use FlutterSdk\MagicStarter\Enums\SupportHandoffReason;
@@ -82,6 +83,18 @@ class SupportConversation extends Model
         'opener_seen_at',
         'staff_seen_at',
         'resolved_at',
+    ];
+
+    /**
+     * What the customer typed into the form: the audit rows (see {@see Redactor}) keep the key and drop the text,
+     * since a subject often carries what the customer would not want copied into a log.
+     *
+     * @var list<string>
+     */
+    protected array $auditExclude = [
+        'subject',
+        'email',
+        'name',
     ];
 
     /**
