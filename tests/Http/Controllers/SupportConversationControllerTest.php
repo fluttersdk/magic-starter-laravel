@@ -566,7 +566,9 @@ class SupportConversationControllerTest extends TestCase
         ])
             ->assertCreated()
             ->assertJsonPath('data.topic', 'billing')
-            ->assertJsonPath('data.subject', 'Billing: My card was declined.');
+            // The topic travels as its own field and tag; repeating it in the
+            // subject printed it twice on every list row.
+            ->assertJsonPath('data.subject', 'My card was declined.');
     }
 
     public function test_an_older_client_sending_a_subject_and_no_topic_is_filed_under_other(): void
@@ -619,7 +621,7 @@ class SupportConversationControllerTest extends TestCase
         ])
             ->assertCreated()
             ->assertJsonPath('data.topic', 'sales')
-            ->assertJsonPath('data.subject', 'Sales: Volume pricing?');
+            ->assertJsonPath('data.subject', 'Volume pricing?');
     }
 
     public function test_the_public_door_needs_no_subject_or_topic(): void

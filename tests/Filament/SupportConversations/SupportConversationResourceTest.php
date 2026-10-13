@@ -134,6 +134,20 @@ class SupportConversationResourceTest extends FilamentTestCase
             ->assertCanNotSeeTableRecords([$sales]);
     }
 
+    public function test_the_list_shows_and_filters_by_topic(): void
+    {
+        // A derived subject no longer carries the topic, so the table does.
+        $opener = $this->user('opener@example.com');
+        $billing = $this->conversation($opener, ['topic' => 'billing']);
+        $technical = $this->conversation($opener, ['topic' => 'technical']);
+
+        Livewire::actingAs($this->staff())->test(ListSupportConversations::class)
+            ->assertTableColumnFormattedStateSet('topic', (string) __('magic-starter::support.topics.billing'), $billing)
+            ->filterTable('topic', 'technical')
+            ->assertCanSeeTableRecords([$technical])
+            ->assertCanNotSeeTableRecords([$billing]);
+    }
+
     public function test_the_navigation_badge_counts_the_open_conversations(): void
     {
         $opener = $this->user('opener@example.com');

@@ -19,7 +19,6 @@ use Illuminate\Database\UniqueConstraintViolationException;
 use Illuminate\Support\Arr;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Event;
-use Illuminate\Support\Facades\Lang;
 use Illuminate\Support\Facades\Validator;
 use Illuminate\Support\Str;
 use Illuminate\Validation\ValidationException;
@@ -34,8 +33,7 @@ use Illuminate\Validation\ValidationException;
  * goes out with the first staff reply.
  *
  * A contact-sales conversation is always filed under the `sales` topic, and a
- * conversation opened without a subject gets one from its topic label and the
- * first line of its body.
+ * conversation opened without a subject gets the first line of its body.
  *
  * A signed-in opener the AI desk answers (see {@see SupportHandoff::routesToAi()})
  * starts `pending`: the responder job is queued once the conversation commits
@@ -170,8 +168,8 @@ class OpenSupportConversation implements OpensSupportConversations
      * The topic and subject a conversation is filed under.
      *
      * Contact sales is always `sales`, and a missing topic is `$fallbackTopic`.
-     * A missing subject is the topic label and the first line of the body, so
-     * the staff inbox still reads at a glance.
+     * A missing subject is the first line of the body; the topic is shown
+     * beside it everywhere, so it is not repeated inside it.
      *
      * @param  array<string, mixed>  $validated
      * @param  string|null  $fallbackTopic  The in-app door's `other`, for a client that sends only a subject;
@@ -196,18 +194,9 @@ class OpenSupportConversation implements OpensSupportConversations
             ];
         }
 
-        $firstLine = trim(Str::before(trim((string) $validated['body']), "\n"));
-        $label = match (true) {
-            $topic === null => null,
-            Lang::has('magic-starter::support.topics.' . $topic) => Lang::get(
-                'magic-starter::support.topics.' . $topic,
-            ),
-            default => Str::headline($topic),
-        };
-
         return [
             'topic' => $topic,
-            'subject' => Str::limit($label === null ? $firstLine : $label . ': ' . $firstLine, 80),
+            'subject' => Str::limit(trim(Str::before(trim((string) $validated['body']), "\n")), 80),
         ];
     }
 

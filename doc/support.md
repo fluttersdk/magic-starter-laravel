@@ -65,7 +65,7 @@ The public limits:
 
 The per-email cap bounds how much one address can put in front of staff, but it has a cost. The throttle counts a request before validation runs, so anyone who knows an address can use up its 3 for the day, and the owner of that address cannot open a public conversation until the next day. The owner can still sign in and write from the app, where the per-user limiter applies instead. An app that would rather not carry that cost can rebind `magic-starter-support-public` in its own service provider.
 
-Opening in the app now requires a `topic` from `support.topics` (32 characters at most, the width of its column). The server derives a missing `subject` from the topic label and the first line of the body (80 characters at most), and a `contact_sales` conversation is always filed under `sales`, so it needs no topic. A client older than the topic picker, which sends a `subject` and no `topic`, is still accepted and its conversation is filed under `other`. Rules for every door come from one place, `SupportRules`.
+Opening in the app now requires a `topic` from `support.topics` (32 characters at most, the width of its column). The server derives a missing `subject` from the first line of the body (80 characters at most; the topic travels beside it, as its own field and as a column and filter in the staff table), and a `contact_sales` conversation is always filed under `sales`, so it needs no topic. A client older than the topic picker, which sends a `subject` and no `topic`, is still accepted and its conversation is filed under `other`. Rules for every door come from one place, `SupportRules`.
 
 What a customer reads back:
 

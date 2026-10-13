@@ -28,6 +28,7 @@ use FlutterSdk\MagicStarter\Http\Resources\SupportMessageResource;
 use FlutterSdk\MagicStarter\Models\SupportConversation;
 use FlutterSdk\MagicStarter\Models\SupportMessage;
 use FlutterSdk\MagicStarter\Support\SupportAi\SupportStaffAssistCache;
+use FlutterSdk\MagicStarter\Support\SupportRules;
 use FlutterSdk\MagicStarter\Support\SupportStaffRecipients;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\Collection;
@@ -145,6 +146,12 @@ class SupportConversationResource extends MagicStarterResource
                     ->limit(60)
                     ->tooltip(static fn (SupportConversation $record): string => $record->subject)
                     ->searchable(),
+                TextColumn::make('topic')
+                    ->label(static::fieldLabel('topic'))
+                    ->badge()
+                    ->color('gray')
+                    ->formatStateUsing(static fn (string $state): string => static::topicLabel($state))
+                    ->placeholder(static::ABSENT),
                 TextColumn::make('source')
                     ->label(static::fieldLabel('source'))
                     ->formatStateUsing(
@@ -181,6 +188,13 @@ class SupportConversationResource extends MagicStarterResource
                     ->multiple()
                     ->options(static::enumOptions(SupportConversationStatus::cases()))
                     ->default(static::unresolvedStatuses()),
+                SelectFilter::make('topic')
+                    ->label(static::fieldLabel('topic'))
+                    ->options(static fn (): array => collect(SupportRules::topics())
+                        ->mapWithKeys(static fn (string $topic): array => [
+                            $topic => static::topicLabel($topic),
+                        ])
+                        ->all()),
                 SelectFilter::make('source')
                     ->label(static::fieldLabel('source'))
                     ->options(static::enumOptions(SupportConversationSource::cases())),
