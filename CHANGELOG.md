@@ -4,6 +4,10 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Fixed
+
+- **A guest's push-state report is answered and not recorded.** `POST devices/push-state` stored a `push_devices` row for every authenticated caller, guests included, so an app that opens a guest in the background on every launch left a row per install that nothing ever deletes, for a session nothing is sent to. A guest now gets the same 204 with nothing written, so the client's memo settles instead of retrying. (`src/Http/Controllers/PushDeviceController.php`)
+
 ## [0.0.30] - 2026-10-13
 
 ### Added
