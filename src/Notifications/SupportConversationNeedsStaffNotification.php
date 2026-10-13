@@ -5,9 +5,11 @@ namespace FlutterSdk\MagicStarter\Notifications;
 use Filament\Notifications\Notification as FilamentNotification;
 use FlutterSdk\MagicStarter\Enums\SupportHandoffReason;
 use FlutterSdk\MagicStarter\Features;
+use FlutterSdk\MagicStarter\Http\Resources\NotificationResource;
 use FlutterSdk\MagicStarter\Models\SupportConversation;
 use Illuminate\Bus\Queueable;
 use Illuminate\Contracts\Queue\ShouldQueue;
+use Illuminate\Notifications\Messages\BroadcastMessage;
 use Illuminate\Notifications\Messages\MailMessage;
 use Illuminate\Notifications\Notification;
 use Illuminate\Support\Facades\Lang;
@@ -45,16 +47,43 @@ class SupportConversationNeedsStaffNotification extends Notification implements 
      */
     public function via(mixed $notifiable): array
     {
+        // The broadcast is the live delivery of the database row, so it follows it.
         return Features::hasOnesignalFeatures()
             ? [
                 'database',
                 'mail',
                 'onesignal',
+                'broadcast',
             ]
             : [
                 'database',
                 'mail',
+                'broadcast',
             ];
+    }
+
+    /**
+     * The short name magic_notifications' bell listens for (`NotificationManager.realtimeEvent`); a client matches
+     * a frame by exact string, so Laravel's fully qualified default would never arrive.
+     */
+    public function broadcastAs(): string
+    {
+        return 'notification.created';
+    }
+
+    /**
+     * The frame, in the shape `GET /notifications` lists a row ({@see NotificationResource}); Laravel's default
+     * flattens the data, which the client cannot decode.
+     */
+    public function toBroadcast(mixed $notifiable): BroadcastMessage
+    {
+        return new BroadcastMessage([
+            'id' => $this->id,
+            'type' => class_basename(static::class),
+            'data' => $this->toDatabase($notifiable),
+            'created_at' => now()->toIso8601String(),
+            'read_at' => null,
+        ]);
     }
 
     /**

@@ -223,13 +223,14 @@ class SupportStaffSideTest extends TestCase
         $this->assertNotNull($conversation->first_reply_at);
         $this->assertNull($conversation->waiting_since);
 
-        // 2. The opener alone is told, in app and by push, never by mail.
+        // 2. The opener alone is told, in app (live too) and by push, never by mail.
         Notification::assertSentTo(
             $opener,
             SupportReplyNotification::class,
             fn (SupportReplyNotification $notification, array $channels): bool => $channels === [
                 'database',
                 'onesignal',
+                'broadcast',
             ],
         );
         Notification::assertSentTimes(SupportReplyNotification::class, 1);
@@ -484,6 +485,7 @@ class SupportStaffSideTest extends TestCase
                     'database',
                     'mail',
                     'onesignal',
+                    'broadcast',
                 ];
             },
         );
@@ -533,8 +535,43 @@ class SupportStaffSideTest extends TestCase
             fn (SupportConversationNeedsStaffNotification $notification, array $channels): bool => $channels === [
                 'database',
                 'mail',
+                'broadcast',
             ],
         );
+    }
+
+    public function test_the_in_app_rows_are_broadcast_live_in_the_shape_the_api_lists_them(): void
+    {
+        // magic_notifications' bell listens for `notification.created` and reads
+        // the frame as a `GET /notifications` row; without the broadcast the bell
+        // stayed stale until a reload, since a live socket stands the poll down.
+        $staff = $this->createUser('staff@example.com');
+        $opener = $this->createUser('ada@example.com');
+        $conversation = $this->createInAppConversation($opener);
+        $message = $conversation->messages()->create([
+            'sender_type' => SupportSenderType::STAFF,
+            'kind' => SupportMessageKind::MESSAGE,
+            'body' => 'Secret reply text.',
+        ]);
+
+        $reply = new SupportReplyNotification($message);
+        $alert = new SupportConversationNeedsStaffNotification($conversation, 'new');
+
+        foreach ([
+            [$reply, $opener, 'SupportReplyNotification', $reply->toArray($opener)],
+            [$alert, $staff, 'SupportConversationNeedsStaffNotification', $alert->toDatabase($staff)],
+        ] as [$notification, $notifiable, $type, $row]) {
+            $notification->id = (string) Str::uuid();
+            $frame = $notification->toBroadcast($notifiable)->data;
+
+            $this->assertSame('notification.created', $notification->broadcastAs());
+            $this->assertSame($notification->id, $frame['id']);
+            $this->assertSame($type, $frame['type']);
+            $this->assertSame($row, $frame['data']);
+            $this->assertNull($frame['read_at']);
+            $this->assertIsString($frame['created_at']);
+            $this->assertStringNotContainsString('Secret reply text.', (string) json_encode($frame));
+        }
     }
 
     private function createUser(string $email, bool $verified = true, bool $guest = false): ConcreteUser
