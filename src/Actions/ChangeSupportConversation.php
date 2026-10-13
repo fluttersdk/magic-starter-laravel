@@ -24,6 +24,7 @@ use Illuminate\Validation\ValidationException;
  *
  * Only those three keys are read; anything else in `$changes` is dropped by
  * the validation, so a change can never move a thread onto another account.
+ * `pending` is the AI desk's holding state and is never one staff can set.
  * The assignee has to be a support recipient. Resolving stamps `resolved_at`
  * and revokes the public link, so a resolved thread cannot be written to from
  * an old mail; leaving `resolved` clears the stamp.
@@ -40,7 +41,7 @@ class ChangeSupportConversation implements ChangesSupportConversations
         $validated = Validator::make($changes, [
             'status' => [
                 'sometimes',
-                Rule::enum(SupportConversationStatus::class),
+                Rule::enum(SupportConversationStatus::class)->except(SupportConversationStatus::PENDING),
             ],
             'priority' => [
                 'sometimes',

@@ -32,9 +32,11 @@ use FlutterSdk\MagicStarter\Tests\TestCase;
 use Illuminate\Broadcasting\BroadcastManager;
 use Illuminate\Contracts\Broadcasting\Broadcaster;
 use Illuminate\Notifications\AnonymousNotifiable;
+use Illuminate\Notifications\Events\BroadcastNotificationCreated;
 use Illuminate\Notifications\SendQueuedNotifications;
 use Illuminate\Support\Facades\Event;
 use Illuminate\Support\Facades\Notification;
+use Illuminate\Support\Str;
 use Illuminate\Support\Testing\Fakes\EventFake;
 use Illuminate\Validation\ValidationException;
 use RuntimeException;
@@ -57,6 +59,7 @@ class SupportStaffSideTest extends TestCase
             'add_guest_and_phone_fields_to_users_table.php',
             'create_support_conversations_table.php',
             'create_support_messages_table.php',
+            'add_ai_columns_to_support_tables.php',
         ] as $file) {
             $this->artisan('migrate', [
                 '--path' => __DIR__ . '/../../database/migrations/' . $file,
@@ -164,10 +167,26 @@ class SupportStaffSideTest extends TestCase
         $this->assertEquals($opener->getKey(), $changed->user_id);
         Event::assertDispatched(
             SupportConversationUpdated::class,
-            fn (SupportConversationUpdated $event): bool => $event->broadcastWith() === [
-                'conversation_id' => $conversation->getKey(),
-            ],
+            fn (SupportConversationUpdated $event): bool => array_keys($event->broadcastWith()) === [
+                'conversation_id',
+                'event_id',
+            ] && $event->broadcastWith()['conversation_id'] === $conversation->getKey(),
         );
+    }
+
+    public function test_two_updates_to_one_conversation_never_broadcast_the_same_payload(): void
+    {
+        // magic's Reverb driver drops a frame whose channel, event and payload
+        // it has already seen, so a payload of the id alone would deliver only
+        // a conversation's first update.
+        $conversation = $this->createInAppConversation($this->createUser('ada@example.com'));
+
+        $first = new SupportConversationUpdated($conversation);
+        $second = new SupportConversationUpdated($conversation);
+
+        $this->assertSame($first->broadcastWith()['conversation_id'], $second->broadcastWith()['conversation_id']);
+        $this->assertNotSame($first->broadcastWith(), $second->broadcastWith());
+        $this->assertSame($first->broadcastWith(), $first->broadcastWith());
     }
 
     public function test_a_note_reaches_no_customer_channel_and_no_broadcast(): void
@@ -205,13 +224,14 @@ class SupportStaffSideTest extends TestCase
         $this->assertNotNull($conversation->first_reply_at);
         $this->assertNull($conversation->waiting_since);
 
-        // 2. The opener alone is told, in app and by push, never by mail.
+        // 2. The opener alone is told, in app (live too) and by push, never by mail.
         Notification::assertSentTo(
             $opener,
             SupportReplyNotification::class,
             fn (SupportReplyNotification $notification, array $channels): bool => $channels === [
                 'database',
                 'onesignal',
+                'broadcast',
             ],
         );
         Notification::assertSentTimes(SupportReplyNotification::class, 1);
@@ -308,7 +328,7 @@ class SupportStaffSideTest extends TestCase
         $this->assertNull(SupportThreadToken::resolve($token));
     }
 
-    public function test_the_broadcast_is_named_and_addressed_to_the_opener_with_only_the_conversation_id(): void
+    public function test_the_broadcast_is_named_and_addressed_to_the_opener_with_only_the_conversation_and_event_ids(): void
     {
         $opener = $this->createUser('ada@example.com');
         $conversation = $this->createInAppConversation($opener);
@@ -319,9 +339,11 @@ class SupportStaffSideTest extends TestCase
         $this->assertSame(
             [
                 'conversation_id' => $conversation->getKey(),
+                'event_id' => $event->eventId,
             ],
             $event->broadcastWith(),
         );
+        $this->assertTrue(Str::isUlid($event->eventId));
         $channels = $event->broadcastOn();
         $this->assertCount(1, $channels);
         $this->assertSame('private-App.Models.User.' . $opener->getKey(), $channels[0]->name);
@@ -380,12 +402,37 @@ class SupportStaffSideTest extends TestCase
             [
                 'conversation_id' => $conversation->getKey(),
                 'message_id' => $message->getKey(),
+                'action_url' => '/support/' . $conversation->getKey(),
             ],
             (array) $push->getData(),
         );
         $this->assertStringNotContainsString('Secret reply text.', json_encode($push, JSON_THROW_ON_ERROR));
         $this->assertStringNotContainsString('Secret reply text.', json_encode($database, JSON_THROW_ON_ERROR));
         $this->assertSame($conversation->getKey(), $database['conversation_id']);
+        $this->assertStringEndsWith((string) $conversation->getKey(), $database['action_url']);
+    }
+
+    public function test_the_reply_action_url_follows_the_configured_client_thread_path(): void
+    {
+        config()->set('magic-starter.support.client_thread_path', '/help/threads/{id}/view');
+        $opener = $this->createUser('ada@example.com');
+        $conversation = $this->createInAppConversation($opener);
+        $message = $conversation->messages()->create([
+            'sender_type' => SupportSenderType::STAFF,
+            'kind' => SupportMessageKind::MESSAGE,
+            'body' => 'Done.',
+        ]);
+
+        $notification = new SupportReplyNotification($message);
+
+        $this->assertSame(
+            '/help/threads/' . $conversation->getKey() . '/view',
+            $notification->toArray($opener)['action_url'],
+        );
+        $this->assertSame(
+            '/help/threads/' . $conversation->getKey() . '/view',
+            $notification->toOneSignal($opener)->getData()->action_url,
+        );
     }
 
     public function test_the_listener_tells_every_staff_recipient_with_ids_number_and_subject_only(): void
@@ -439,6 +486,7 @@ class SupportStaffSideTest extends TestCase
                     'database',
                     'mail',
                     'onesignal',
+                    'broadcast',
                 ];
             },
         );
@@ -488,8 +536,50 @@ class SupportStaffSideTest extends TestCase
             fn (SupportConversationNeedsStaffNotification $notification, array $channels): bool => $channels === [
                 'database',
                 'mail',
+                'broadcast',
             ],
         );
+    }
+
+    public function test_the_in_app_rows_are_broadcast_live_in_the_shape_the_api_lists_them(): void
+    {
+        // magic_notifications' bell listens for `notification.created` and reads
+        // the frame as a `GET /notifications` row; without the broadcast the bell
+        // stayed stale until a reload, since a live socket stands the poll down.
+        $staff = $this->createUser('staff@example.com');
+        $opener = $this->createUser('ada@example.com');
+        $conversation = $this->createInAppConversation($opener);
+        $message = $conversation->messages()->create([
+            'sender_type' => SupportSenderType::STAFF,
+            'kind' => SupportMessageKind::MESSAGE,
+            'body' => 'Secret reply text.',
+        ]);
+
+        $reply = new SupportReplyNotification($message);
+        $alert = new SupportConversationNeedsStaffNotification($conversation, 'new');
+
+        foreach ([
+            [$reply, $opener, 'SupportReplyNotification', $reply->toArray($opener)],
+            [$alert, $staff, 'SupportConversationNeedsStaffNotification', $alert->toDatabase($staff)],
+        ] as [$notification, $notifiable, $type, $row]) {
+            $notification->id = (string) Str::uuid();
+            // What goes on the wire: Laravel's event merges `id` and `type` over
+            // the message, so reading `toBroadcast()` alone would miss a `type`
+            // replaced by the fully qualified class name.
+            $frame = (new BroadcastNotificationCreated(
+                $notifiable,
+                $notification,
+                $notification->toBroadcast($notifiable)->data,
+            ))->broadcastWith();
+
+            $this->assertSame('notification.created', $notification->broadcastAs());
+            $this->assertSame($notification->id, $frame['id']);
+            $this->assertSame($type, $frame['type']);
+            $this->assertSame($row, $frame['data']);
+            $this->assertNull($frame['read_at']);
+            $this->assertIsString($frame['created_at']);
+            $this->assertStringNotContainsString('Secret reply text.', (string) json_encode($frame));
+        }
     }
 
     private function createUser(string $email, bool $verified = true, bool $guest = false): ConcreteUser

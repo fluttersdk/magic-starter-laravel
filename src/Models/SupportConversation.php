@@ -4,6 +4,7 @@ namespace FlutterSdk\MagicStarter\Models;
 
 use FlutterSdk\MagicStarter\Enums\SupportConversationSource;
 use FlutterSdk\MagicStarter\Enums\SupportConversationStatus;
+use FlutterSdk\MagicStarter\Enums\SupportHandoffReason;
 use FlutterSdk\MagicStarter\Enums\SupportPriority;
 use FlutterSdk\MagicStarter\MagicStarter;
 use FlutterSdk\MagicStarter\Support\ConditionallyUsesUuids;
@@ -34,8 +35,12 @@ use Illuminate\Support\Carbon;
  * @property SupportConversationSource $source
  * @property SupportConversationStatus $status
  * @property SupportPriority $priority
+ * @property string|null $topic One of `support.topics`, or null when the opener picked none.
  * @property string|int|null $assignee_id
- * @property string|null $handoff_reason
+ * @property SupportHandoffReason|null $handoff_reason
+ * @property string|int|null $last_customer_message_id The newest customer message the AI desk owes an answer to.
+ * @property string|int|null $answered_message_id The customer message the AI desk last answered.
+ * @property int $ai_failures Failed AI turns, counted toward `support.ai.failures_before_handoff`.
  * @property Carbon|null $waiting_since
  * @property Carbon|null $first_reply_at
  * @property Carbon|null $last_activity_at
@@ -62,11 +67,15 @@ class SupportConversation extends Model
         'email',
         'name',
         'subject',
+        'topic',
         'source',
         'status',
         'priority',
         'assignee_id',
         'handoff_reason',
+        'last_customer_message_id',
+        'answered_message_id',
+        'ai_failures',
         'waiting_since',
         'first_reply_at',
         'last_activity_at',
@@ -113,6 +122,8 @@ class SupportConversation extends Model
             'source' => SupportConversationSource::class,
             'status' => SupportConversationStatus::class,
             'priority' => SupportPriority::class,
+            'handoff_reason' => SupportHandoffReason::class,
+            'ai_failures' => 'integer',
             'waiting_since' => 'datetime',
             'first_reply_at' => 'datetime',
             'last_activity_at' => 'datetime',

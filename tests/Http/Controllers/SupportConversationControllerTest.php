@@ -80,6 +80,7 @@ class SupportConversationControllerTest extends TestCase
         foreach ([
             'create_support_conversations_table.php',
             'create_support_messages_table.php',
+            'add_ai_columns_to_support_tables.php',
         ] as $file) {
             $migration = require __DIR__ . '/../../../database/migrations/' . $file;
             $migration->up();
@@ -175,6 +176,7 @@ class SupportConversationControllerTest extends TestCase
         $this->actingAs($opener, 'sanctum');
         $response = $this->postJson('/support/conversations', [
             'subject' => 'Checks fail',
+            'topic' => 'technical',
             'body' => 'My checks fail.',
             'team_id' => self::OTHER_TEAM,
             'user_id' => $other->getKey(),
@@ -184,6 +186,7 @@ class SupportConversationControllerTest extends TestCase
 
         $response->assertCreated()
             ->assertJsonPath('data.subject', 'Checks fail')
+            ->assertJsonPath('data.topic', 'technical')
             ->assertJsonPath('data.source', 'in_app')
             ->assertJsonPath('data.status', 'open')
             ->assertJsonPath('data.has_unread', false)
@@ -217,6 +220,7 @@ class SupportConversationControllerTest extends TestCase
 
         $this->postJson('/support/conversations', [
             'subject' => 'Pricing',
+            'topic' => 'sales',
             'body' => 'Enterprise plan?',
             'source' => 'public_form',
         ])->assertUnprocessable()->assertJsonValidationErrors('source');
@@ -233,6 +237,7 @@ class SupportConversationControllerTest extends TestCase
         $this->actingAs($opener, 'sanctum');
         $this->postJson('/support/conversations', [
             'subject' => 'Long',
+            'topic' => 'other',
             'body' => $tooLong,
         ])->assertUnprocessable()->assertJsonValidationErrors('body');
         $this->postJson("/support/conversations/{$conversation->getKey()}/messages", [
@@ -340,6 +345,296 @@ class SupportConversationControllerTest extends TestCase
         Carbon::setTestNow();
     }
 
+    public function test_a_note_newer_than_the_last_reply_is_never_the_list_preview_nor_anywhere_in_the_json(): void
+    {
+        $opener = $this->user('opener@example.com', self::TEAM);
+        $staff = $this->staffMember();
+        $conversation = $this->openAs($opener);
+
+        Carbon::setTestNow(now()->addMinute());
+        $this->staffWrites($conversation, SupportMessageKind::MESSAGE, 'Fixed on our side.', $staff);
+        Carbon::setTestNow(now()->addMinute());
+        $this->staffWrites($conversation, SupportMessageKind::NOTE, 'Internal: refund abuser?', $staff);
+
+        $this->actingAs($opener, 'sanctum');
+        $index = $this->getJson('/support/conversations');
+        $show = $this->getJson("/support/conversations/{$conversation->getKey()}");
+
+        $index->assertOk()
+            ->assertJsonPath('data.0.last_message.sender_type', 'staff')
+            ->assertJsonPath('data.0.last_message.sender_name', 'Grace')
+            ->assertJsonPath('data.0.last_message.body_preview', 'Fixed on our side.');
+        $this->assertSame(
+            [
+                'sender_type',
+                'sender_name',
+                'body_preview',
+                'created_at',
+            ],
+            array_keys($index->json('data.0.last_message')),
+        );
+        $show->assertOk()->assertJsonCount(2, 'data.messages');
+        $this->assertArrayNotHasKey('last_message', $show->json('data'));
+
+        foreach ([$index, $show] as $response) {
+            $content = (string) $response->getContent();
+            $this->assertStringNotContainsString('Internal', $content);
+            $this->assertStringNotContainsString('refund abuser', $content);
+        }
+
+        Carbon::setTestNow();
+    }
+
+    public function test_the_list_preview_skips_activity_lines_and_caps_the_body_at_140_characters(): void
+    {
+        $opener = $this->user('opener@example.com', self::TEAM);
+        $conversation = $this->openAs($opener);
+
+        Carbon::setTestNow(now()->addMinute());
+        $conversation->messages()->create([
+            'sender_type' => SupportSenderType::CUSTOMER,
+            'sender_id' => $opener->getKey(),
+            'kind' => SupportMessageKind::MESSAGE,
+            'body' => str_repeat('word ', 60),
+        ]);
+        Carbon::setTestNow(now()->addMinute());
+        $conversation->messages()->create([
+            'sender_type' => SupportSenderType::SYSTEM,
+            'kind' => SupportMessageKind::ACTIVITY,
+            'body' => 'Status changed to resolved.',
+        ]);
+
+        $this->actingAs($opener, 'sanctum');
+        $preview = $this->getJson('/support/conversations')->json('data.0.last_message');
+
+        $this->assertSame('customer', $preview['sender_type']);
+        $this->assertNull($preview['sender_name']);
+        $this->assertLessThanOrEqual(140, mb_strlen($preview['body_preview']));
+        $this->assertStringStartsWith('word word', $preview['body_preview']);
+        Carbon::setTestNow();
+    }
+
+    public function test_a_staff_sender_is_named_by_first_name_only_and_never_by_email(): void
+    {
+        $opener = $this->user('opener@example.com', self::TEAM);
+        $staff = $this->staffMember();
+        $conversation = $this->openAs($opener);
+        $this->staffWrites($conversation, SupportMessageKind::MESSAGE, 'On it.', $staff);
+        SupportMessage::query()->where('body', 'On it.')->update([
+            'meta' => json_encode([
+                'confidence' => 0.4,
+            ]),
+        ]);
+        $conversation->forceFill([
+            'assignee_id' => $staff->getKey(),
+            'handoff_reason' => 'low_confidence',
+        ])->save();
+
+        $this->actingAs($opener, 'sanctum');
+        $show = $this->getJson("/support/conversations/{$conversation->getKey()}");
+
+        $show->assertOk()
+            ->assertJsonPath('data.messages.0.kind', 'message')
+            ->assertJsonPath('data.messages.0.sender', null)
+            ->assertJsonPath('data.messages.1.sender.name', 'Grace')
+            ->assertJsonPath('data.messages.1.sender.avatar_url', null);
+        $content = (string) $show->getContent();
+        $this->assertStringNotContainsString('Hopper', $content);
+        $this->assertStringNotContainsString('grace@example.com', $content);
+        $this->assertStringNotContainsString('confidence', $content);
+        $this->assertStringNotContainsString('low_confidence', $content);
+        $this->assertResourceCarriesNoStaffOrTokenFields($show->json('data'));
+    }
+
+    public function test_an_ai_reply_is_named_by_the_configured_name_and_counts_as_unread(): void
+    {
+        $opener = $this->user('opener@example.com', self::TEAM);
+        $conversation = $this->openAs($opener);
+        Carbon::setTestNow(now()->addMinute());
+        $conversation->messages()->create([
+            'sender_type' => SupportSenderType::AI,
+            'kind' => SupportMessageKind::MESSAGE,
+            'body' => 'Your probe is fine.',
+        ]);
+
+        $this->actingAs($opener, 'sanctum');
+        $this->getJson("/support/conversations/{$conversation->getKey()}")
+            ->assertJsonPath('data.has_unread', true)
+            ->assertJsonPath('data.messages.1.sender.name', config('app.name') . ' AI')
+            ->assertJsonPath('data.messages.1.sender.avatar_url', null);
+
+        config()->set('magic-starter.support.ai.name', 'Ada');
+        $this->getJson('/support/conversations')
+            ->assertJsonPath('data.0.has_unread', true)
+            ->assertJsonPath('data.0.last_message.sender_type', 'ai')
+            ->assertJsonPath('data.0.last_message.sender_name', 'Ada');
+        Carbon::setTestNow();
+    }
+
+    public function test_awaiting_ai_and_waiting_on_team_are_read_from_the_columns(): void
+    {
+        $opener = $this->user('opener@example.com', self::TEAM);
+        $conversation = $this->openAs($opener);
+        $first = $conversation->messages()->sole();
+        $this->actingAs($opener, 'sanctum');
+        $url = "/support/conversations/{$conversation->getKey()}";
+
+        $this->getJson($url)
+            ->assertJsonPath('data.awaiting_ai', false)
+            ->assertJsonPath('data.waiting_on_team', true);
+
+        $conversation->forceFill([
+            'status' => 'pending',
+            'last_customer_message_id' => $first->getKey(),
+            'answered_message_id' => null,
+        ])->save();
+        $this->getJson($url)
+            ->assertJsonPath('data.awaiting_ai', true)
+            ->assertJsonPath('data.waiting_on_team', false);
+
+        $conversation->forceFill([
+            'answered_message_id' => $first->getKey(),
+        ])->save();
+        $this->getJson($url)->assertJsonPath('data.awaiting_ai', false);
+
+        $conversation->forceFill([
+            'status' => 'open',
+            'waiting_since' => null,
+        ])->save();
+        $this->getJson($url)
+            ->assertJsonPath('data.awaiting_ai', false)
+            ->assertJsonPath('data.waiting_on_team', false);
+    }
+
+    public function test_the_index_clamps_per_page_between_one_and_fifty_and_pages(): void
+    {
+        $opener = $this->user('opener@example.com', self::TEAM);
+        $this->openAs($opener);
+        $this->openAs($opener);
+        $this->actingAs($opener, 'sanctum');
+
+        $this->getJson('/support/conversations?per_page=500')
+            ->assertOk()
+            ->assertJsonPath('meta.per_page', 50)
+            ->assertJsonCount(2, 'data');
+        $this->getJson('/support/conversations?per_page=0')
+            ->assertJsonPath('meta.per_page', 1)
+            ->assertJsonPath('meta.last_page', 2)
+            ->assertJsonCount(1, 'data');
+        $this->getJson('/support/conversations')->assertJsonPath('meta.per_page', 15);
+        $this->getJson('/support/conversations?per_page=1&page=2')
+            ->assertJsonPath('meta.current_page', 2)
+            ->assertJsonCount(1, 'data');
+    }
+
+    public function test_the_index_pages_conversations_with_the_same_activity_second_in_a_stable_order(): void
+    {
+        $opener = $this->user('opener@example.com', self::TEAM);
+        $ids = collect([
+            $this->openAs($opener),
+            $this->openAs($opener),
+            $this->openAs($opener),
+        ])->map->getKey();
+        SupportConversation::query()->update([
+            'last_activity_at' => Carbon::parse('2026-10-13 12:05:54'),
+        ]);
+        $this->actingAs($opener, 'sanctum');
+
+        $paged = collect(range(1, 3))->map(
+            fn (int $page) => $this->getJson("/support/conversations?per_page=1&page={$page}")->json('data.0.id'),
+        );
+
+        $this->assertSame($ids->sortDesc()->values()->all(), $paged->all());
+    }
+
+    public function test_an_in_app_store_requires_a_configured_topic_and_derives_a_missing_subject(): void
+    {
+        $this->actingAs($this->user('opener@example.com', self::TEAM), 'sanctum');
+
+        $this->postJson('/support/conversations', [
+            'body' => 'My card was declined.',
+        ])->assertUnprocessable()->assertJsonValidationErrors('topic');
+        $this->postJson('/support/conversations', [
+            'topic' => 'gossip',
+            'body' => 'My card was declined.',
+        ])->assertUnprocessable()->assertJsonValidationErrors('topic');
+        $this->assertSame(0, SupportConversation::query()->count());
+
+        $this->postJson('/support/conversations', [
+            'topic' => 'billing',
+            'body' => "My card was declined.\nTwice today.",
+        ])
+            ->assertCreated()
+            ->assertJsonPath('data.topic', 'billing')
+            // The topic travels as its own field and tag; repeating it in the
+            // subject printed it twice on every list row.
+            ->assertJsonPath('data.subject', 'My card was declined.');
+    }
+
+    public function test_an_older_client_sending_a_subject_and_no_topic_is_filed_under_other(): void
+    {
+        $this->actingAs($this->user('opener@example.com', self::TEAM), 'sanctum');
+
+        $this->postJson('/support/conversations', [
+            'subject' => 'Checks fail',
+            'body' => 'My checks are red since noon.',
+        ])
+            ->assertCreated()
+            ->assertJsonPath('data.topic', 'other')
+            ->assertJsonPath('data.subject', 'Checks fail');
+    }
+
+    public function test_a_configured_topic_longer_than_its_column_is_refused(): void
+    {
+        $topic = str_repeat('t', 33);
+        config()->set('magic-starter.support.topics', [
+            'billing',
+            $topic,
+        ]);
+        $this->actingAs($this->user('opener@example.com', self::TEAM), 'sanctum');
+
+        $this->postJson('/support/conversations', [
+            'topic' => $topic,
+            'body' => 'Hello.',
+        ])->assertUnprocessable()->assertJsonValidationErrors('topic');
+        $this->assertSame(0, SupportConversation::query()->count());
+    }
+
+    public function test_contact_sales_is_filed_under_sales_whatever_topic_is_sent(): void
+    {
+        $this->actingAs($this->user('opener@example.com', self::TEAM), 'sanctum');
+
+        $this->postJson('/support/conversations', [
+            'body' => 'Enterprise plan?',
+            'source' => 'contact_sales',
+        ])->assertCreated()->assertJsonPath('data.topic', 'sales');
+        $this->postJson('/support/conversations', [
+            'topic' => 'billing',
+            'body' => 'Enterprise plan?',
+            'source' => 'contact_sales',
+        ])->assertCreated()->assertJsonPath('data.topic', 'sales');
+
+        $this->postJson('/support/public/conversations', [
+            'email' => 'visitor@example.com',
+            'body' => 'Volume pricing?',
+            'source' => 'contact_sales',
+        ])
+            ->assertCreated()
+            ->assertJsonPath('data.topic', 'sales')
+            ->assertJsonPath('data.subject', 'Volume pricing?');
+    }
+
+    public function test_the_public_door_needs_no_subject_or_topic(): void
+    {
+        $this->postJson('/support/public/conversations', [
+            'email' => 'visitor@example.com',
+            'body' => "Where is my invoice?\nThanks.",
+        ])
+            ->assertCreated()
+            ->assertJsonPath('data.topic', null)
+            ->assertJsonPath('data.subject', 'Where is my invoice?');
+    }
+
     public function test_the_routes_are_absent_with_the_feature_off(): void
     {
         $opener = $this->user('opener@example.com', self::TEAM);
@@ -420,6 +715,8 @@ class SupportConversationControllerTest extends TestCase
                 [
                     'id',
                     'sender_type',
+                    'kind',
+                    'sender',
                     'body',
                     'created_at',
                 ],
@@ -434,18 +731,33 @@ class SupportConversationControllerTest extends TestCase
 
         $id = $this->postJson('/support/conversations', [
             'subject' => 'Help',
+            'topic' => 'technical',
             'body' => 'Hello from ' . $user->email,
         ])->assertCreated()->json('data.id');
 
         return SupportConversation::query()->findOrFail($id);
     }
 
-    private function staffWrites(SupportConversation $conversation, SupportMessageKind $kind, string $body): void
-    {
+    private function staffWrites(
+        SupportConversation $conversation,
+        SupportMessageKind $kind,
+        string $body,
+        ?ConcreteUser $staff = null,
+    ): void {
         $conversation->messages()->create([
             'sender_type' => SupportSenderType::STAFF,
+            'sender_id' => $staff?->getKey(),
             'kind' => $kind,
             'body' => $body,
+        ]);
+    }
+
+    private function staffMember(): ConcreteUser
+    {
+        return ConcreteUser::create([
+            'name' => 'Grace Hopper',
+            'email' => 'grace@example.com',
+            'password' => 'secret',
         ]);
     }
 

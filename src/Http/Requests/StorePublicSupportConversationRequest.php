@@ -3,15 +3,16 @@
 namespace FlutterSdk\MagicStarter\Http\Requests;
 
 use FlutterSdk\MagicStarter\Enums\SupportConversationSource;
+use FlutterSdk\MagicStarter\Support\SupportRules;
 use Illuminate\Foundation\Http\FormRequest;
-use Illuminate\Validation\Rule;
 
 /**
  * A visitor with no account writing in through the public form.
  *
  * The adopter's `magic-starter.support.public.extra_rules` (a captcha, a
  * blocklist) are resolved from the container and run beside the package's own
- * rules, so a rule class may take constructor dependencies.
+ * rules, so a rule class may take constructor dependencies. The subject and
+ * the topic are optional; the action derives a missing subject.
  */
 class StorePublicSupportConversationRequest extends FormRequest
 {
@@ -42,23 +43,10 @@ class StorePublicSupportConversationRequest extends FormRequest
                 'string',
                 'max:255',
             ],
-            'subject' => [
-                'required',
-                'string',
-                'max:255',
-            ],
-            'body' => [
-                'required',
-                'string',
-                'max:' . (int) config('magic-starter.support.message_max_length', 2000),
-            ],
-            'source' => [
-                'sometimes',
-                Rule::enum(SupportConversationSource::class)->only([
-                    SupportConversationSource::PUBLIC_FORM,
-                    SupportConversationSource::CONTACT_SALES,
-                ]),
-            ],
+            ...SupportRules::conversation([
+                SupportConversationSource::PUBLIC_FORM,
+                SupportConversationSource::CONTACT_SALES,
+            ]),
         ];
 
         /** @var array<string, list<class-string>> $extra */

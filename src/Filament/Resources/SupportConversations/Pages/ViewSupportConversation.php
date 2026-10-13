@@ -5,8 +5,12 @@ namespace FlutterSdk\MagicStarter\Filament\Resources\SupportConversations\Pages;
 use Filament\Actions\Action;
 use Filament\Forms\Components\Select;
 use Filament\Forms\Components\Textarea;
+use Filament\Notifications\Notification;
 use Filament\Resources\Pages\ViewRecord;
+use Filament\Support\Colors\Color;
+use Filament\Support\Exceptions\Cancel;
 use Filament\Support\Icons\Heroicon;
+use FlutterSdk\MagicStarter\Contracts\AssistsSupportStaff;
 use FlutterSdk\MagicStarter\Contracts\ChangesSupportConversations;
 use FlutterSdk\MagicStarter\Contracts\RepliesToSupport;
 use FlutterSdk\MagicStarter\Enums\SupportConversationStatus;
@@ -14,13 +18,20 @@ use FlutterSdk\MagicStarter\Enums\SupportPriority;
 use FlutterSdk\MagicStarter\Filament\Resources\SupportConversations\SupportConversationResource;
 use FlutterSdk\MagicStarter\Filament\Resources\Teams\TeamResource;
 use FlutterSdk\MagicStarter\Filament\Support\ContractAction;
+use FlutterSdk\MagicStarter\Jobs\PrepareSupportStaffAssist;
 use FlutterSdk\MagicStarter\Models\SupportConversation;
+use FlutterSdk\MagicStarter\Support\SupportAi\SupportStaffAssistCache;
 
 /**
  * The thread page. Its header actions are how staff answer and triage, each one
  * a package contract run through {@see ContractAction} with the acting staff user.
  *
  * Opening the page marks the conversation seen by staff.
+ *
+ * Draft reply and Summarize exist only while the application binds
+ * {@see AssistsSupportStaff}. Neither calls it: Draft reply reads the cache when
+ * the modal opens and queues {@see PrepareSupportStaffAssist} when there is
+ * nothing to read, and the draft only pre-fills a form staff still submit.
  */
 class ViewSupportConversation extends ViewRecord
 {
@@ -46,6 +57,8 @@ class ViewSupportConversation extends ViewRecord
     {
         return [
             $this->replyAction(),
+            $this->draftReplyAction(),
+            $this->summarizeAction(),
             $this->noteAction(),
             $this->assignAction(),
             $this->changeAction(),
@@ -54,8 +67,51 @@ class ViewSupportConversation extends ViewRecord
 
     protected function replyAction(): Action
     {
-        return Action::make('reply')
-            ->label((string) __('magic-starter::admin_support.actions.reply.label'))
+        return $this->composeReplyAction('reply', 'reply')->color('success');
+    }
+
+    /**
+     * The reply form, opened with the cached draft. A miss opens no form: it asks for a draft in the background and
+     * says so, since an empty draft form is only Reply under another name.
+     */
+    protected function draftReplyAction(): Action
+    {
+        return $this->composeReplyAction('draft_reply', 'draft_reply')
+            ->icon(Heroicon::OutlinedSparkles)
+            ->color(Color::Violet)
+            ->visible(fn (): bool => $this->assistIsBound())
+            ->fillForm(fn (): array => [
+                'body' => $this->cachedDraft(),
+            ]);
+    }
+
+    protected function summarizeAction(): Action
+    {
+        return Action::make('summarize')
+            ->label((string) __('magic-starter::admin_support.actions.summarize.label'))
+            ->icon(Heroicon::OutlinedSparkles)
+            ->color(Color::Violet)
+            ->visible(fn (): bool => $this->assistIsBound())
+            ->action(function (): void {
+                $this->queueAssist();
+
+                Notification::make()
+                    ->title((string) __('magic-starter::admin_support.ai.summarize_queued'))
+                    ->success()
+                    ->send();
+            });
+    }
+
+    /**
+     * The reply form both Reply and Draft reply submit: one contract call, one audit event.
+     *
+     * @param  string  $name  The action name.
+     * @param  string  $labelKey  The `admin_support.actions.<key>` the button reads; the form copy is Reply's.
+     */
+    protected function composeReplyAction(string $name, string $labelKey): Action
+    {
+        return Action::make($name)
+            ->label((string) __("magic-starter::admin_support.actions.{$labelKey}.label"))
             ->icon(Heroicon::OutlinedPaperAirplane)
             ->schema([
                 $this->bodyField((string) __('magic-starter::admin_support.actions.reply.body')),
@@ -110,13 +166,15 @@ class ViewSupportConversation extends ViewRecord
             ->icon(Heroicon::OutlinedAdjustmentsHorizontal)
             ->color('gray')
             ->fillForm(fn (): array => [
-                'status' => $this->conversation()->status->value,
+                'status' => $this->conversation()->status === SupportConversationStatus::PENDING
+                    ? null
+                    : $this->conversation()->status->value,
                 'priority' => $this->conversation()->priority->value,
             ])
             ->schema([
                 Select::make('status')
                     ->label(SupportConversationResource::fieldLabel('status'))
-                    ->options(SupportConversationResource::enumOptions(SupportConversationStatus::cases()))
+                    ->options(SupportConversationResource::changeableStatusOptions())
                     ->required()
                     ->selectablePlaceholder(false),
                 Select::make('priority')
@@ -173,6 +231,45 @@ class ViewSupportConversation extends ViewRecord
         );
 
         $action->success();
+    }
+
+    /**
+     * The stored draft for this turn. With none stored, a draft is queued, staff are told, and the form is cancelled
+     * before it opens; nothing waits on a model.
+     *
+     * @throws Cancel on a miss, which Filament takes as "do not mount".
+     */
+    private function cachedDraft(): string
+    {
+        $stored = app(SupportStaffAssistCache::class)->get($this->conversation());
+
+        if ($stored !== null) {
+            return $stored['draft'];
+        }
+
+        $this->queueAssist();
+
+        Notification::make()
+            ->title((string) __('magic-starter::admin_support.ai.draft_queued'))
+            ->info()
+            ->send();
+
+        throw new Cancel;
+    }
+
+    /**
+     * Queue one assist for this turn; a second ask while one is queued or running adds nothing.
+     */
+    private function queueAssist(): void
+    {
+        if (app(SupportStaffAssistCache::class)->claim($this->conversation())) {
+            PrepareSupportStaffAssist::dispatch($this->conversation()->getKey());
+        }
+    }
+
+    private function assistIsBound(): bool
+    {
+        return app()->bound(AssistsSupportStaff::class);
     }
 
     private function conversation(): SupportConversation

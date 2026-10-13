@@ -26,19 +26,23 @@ use Illuminate\Http\Response;
 class SupportConversationController
 {
     /**
-     * List the caller's conversations, latest activity first.
+     * List the caller's conversations, latest activity first, `per_page`
+     * (clamped to 1..50, default 15) at a time from `page`.
      */
     public function index(Request $request): AnonymousResourceCollection
     {
-        $perPage = min(
-            (int) $request->input('per_page', 15),
-            100,
+        $perPage = max(
+            1,
+            min($request->integer('per_page', 15), 50),
         );
 
         $conversations = SupportConversationResource::forList(
             SupportConversation::query()->where('user_id', $request->user()->getAuthIdentifier()),
         )
             ->orderByDesc('last_activity_at')
+            // The column holds whole seconds, so a burst of turns ties; without the key the database may hand the
+            // same row to two pages and skip another.
+            ->orderByDesc('id')
             ->paginate($perPage);
 
         return SupportConversationResource::collection($conversations);

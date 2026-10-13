@@ -3,10 +3,13 @@
 namespace FlutterSdk\MagicStarter\Notifications;
 
 use Filament\Notifications\Notification as FilamentNotification;
+use FlutterSdk\MagicStarter\Enums\SupportHandoffReason;
 use FlutterSdk\MagicStarter\Features;
+use FlutterSdk\MagicStarter\Http\Resources\NotificationResource;
 use FlutterSdk\MagicStarter\Models\SupportConversation;
 use Illuminate\Bus\Queueable;
 use Illuminate\Contracts\Queue\ShouldQueue;
+use Illuminate\Notifications\Messages\BroadcastMessage;
 use Illuminate\Notifications\Messages\MailMessage;
 use Illuminate\Notifications\Notification;
 use Illuminate\Support\Facades\Lang;
@@ -30,7 +33,7 @@ class SupportConversationNeedsStaffNotification extends Notification implements 
     use Queueable;
 
     /**
-     * @param  string  $reason  `opened` or `customer_message`
+     * @param  string  $reason  `opened`, `customer_message` or `handoff`
      */
     public function __construct(
         public readonly SupportConversation $conversation,
@@ -44,16 +47,50 @@ class SupportConversationNeedsStaffNotification extends Notification implements 
      */
     public function via(mixed $notifiable): array
     {
+        // The broadcast is the live delivery of the database row, so it follows it.
         return Features::hasOnesignalFeatures()
             ? [
                 'database',
                 'mail',
                 'onesignal',
+                'broadcast',
             ]
             : [
                 'database',
                 'mail',
+                'broadcast',
             ];
+    }
+
+    /**
+     * The short name magic_notifications' bell listens for (`NotificationManager.realtimeEvent`); a client matches
+     * a frame by exact string, so Laravel's fully qualified default would never arrive.
+     */
+    public function broadcastAs(): string
+    {
+        return 'notification.created';
+    }
+
+    /**
+     * The frame's `type`, as `GET /notifications` answers it ({@see NotificationResource}). Laravel merges this over
+     * the message, and its default is the fully qualified class name.
+     */
+    public function broadcastType(): string
+    {
+        return class_basename(static::class);
+    }
+
+    /**
+     * The frame, in the shape `GET /notifications` lists a row ({@see NotificationResource}); Laravel's default
+     * flattens the data, which the client cannot decode. `id` and `type` are merged in by Laravel.
+     */
+    public function toBroadcast(mixed $notifiable): BroadcastMessage
+    {
+        return new BroadcastMessage([
+            'data' => $this->toDatabase($notifiable),
+            'created_at' => now()->toIso8601String(),
+            'read_at' => null,
+        ]);
     }
 
     /**
@@ -124,10 +161,20 @@ class SupportConversationNeedsStaffNotification extends Notification implements 
         ]);
     }
 
+    /**
+     * Why staff are told: a new conversation, a customer writing again, or the AI desk's handoff and its reason.
+     */
     private function reasonLine(): string
     {
-        return $this->reason === 'opened'
-            ? Lang::get('magic-starter::admin_support.notifications.staff.opened')
-            : Lang::get('magic-starter::admin_support.notifications.staff.customer_wrote');
+        return match ($this->reason) {
+            'opened' => Lang::get('magic-starter::admin_support.notifications.staff.opened'),
+            'handoff' => Lang::get('magic-starter::admin_support.notifications.staff.handoff', [
+                'reason' => Lang::get(
+                    'magic-starter::admin_support.enums.handoff_reason.'
+                    . ($this->conversation->handoff_reason ?? SupportHandoffReason::UNAVAILABLE)->value,
+                ),
+            ]),
+            default => Lang::get('magic-starter::admin_support.notifications.staff.customer_wrote'),
+        };
     }
 }

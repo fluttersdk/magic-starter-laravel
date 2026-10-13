@@ -3,14 +3,16 @@
 namespace FlutterSdk\MagicStarter\Http\Requests;
 
 use FlutterSdk\MagicStarter\Enums\SupportConversationSource;
+use FlutterSdk\MagicStarter\Support\SupportRules;
 use Illuminate\Foundation\Http\FormRequest;
-use Illuminate\Validation\Rule;
 
 /**
  * A signed-in user opening a support conversation.
  *
  * The owner and the team are never part of the request: the action takes both
- * from the auth context. The public form source belongs to the public door.
+ * from the auth context. The public form source belongs to the public door. A
+ * topic is required unless the source is contact sales, which the action files
+ * under `sales`; the subject is optional and derived by the action when absent.
  */
 class StoreSupportConversationRequest extends FormRequest
 {
@@ -29,24 +31,9 @@ class StoreSupportConversationRequest extends FormRequest
      */
     public function rules(): array
     {
-        return [
-            'subject' => [
-                'required',
-                'string',
-                'max:255',
-            ],
-            'body' => [
-                'required',
-                'string',
-                'max:' . (int) config('magic-starter.support.message_max_length', 2000),
-            ],
-            'source' => [
-                'sometimes',
-                Rule::enum(SupportConversationSource::class)->only([
-                    SupportConversationSource::IN_APP,
-                    SupportConversationSource::CONTACT_SALES,
-                ]),
-            ],
-        ];
+        return SupportRules::conversation([
+            SupportConversationSource::IN_APP,
+            SupportConversationSource::CONTACT_SALES,
+        ], topicRequired: true);
     }
 }

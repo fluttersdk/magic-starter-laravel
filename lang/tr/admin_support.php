@@ -11,6 +11,9 @@ return [
     'plural_model_label' => 'görüşmeler',
     'visitor' => 'ziyaretçi',
     'thread' => 'Görüşme',
+    'details' => 'Ayrıntılar',
+    'waiting' => ':time bekliyor',
+    'note_hidden' => 'müşteri göremez',
 
     'fields' => [
         'number' => 'Numara',
@@ -23,6 +26,10 @@ return [
         'team' => 'Ekip',
         'opened' => 'Açılış',
         'last_activity' => 'Son etkinlik',
+        'topic' => 'Konu başlığı',
+        'ai_turns' => 'Yapay zekâ turları',
+        'ai_failures' => 'Yapay zekâ hataları',
+        'handoff_reason' => 'Devir nedeni',
     ],
 
     'authors' => [
@@ -53,6 +60,17 @@ return [
             'high' => 'Yüksek',
             'urgent' => 'Acil',
         ],
+        'handoff_reason' => [
+            'human_requested' => 'Müşteri bir kişiyle görüşmek istedi',
+            'billing' => 'Faturalama',
+            'security' => 'Güvenlik',
+            'outage' => 'Kesinti bildirildi',
+            'low_confidence' => 'Düşük güven',
+            'failures' => 'Yapay zekâ tekrar tekrar başarısız oldu',
+            'anger' => 'Müşteri memnun değil',
+            'quota' => 'Yapay zekâ kotası doldu',
+            'unavailable' => 'Yapay zekâ kullanılamıyor',
+        ],
     ],
 
     'actions' => [
@@ -60,6 +78,12 @@ return [
             'label' => 'Yanıtla',
             'body' => 'Yanıt',
             'sent' => 'Yanıt gönderildi',
+        ],
+        'draft_reply' => [
+            'label' => 'Taslak yanıt',
+        ],
+        'summarize' => [
+            'label' => 'Özetle',
         ],
         'note' => [
             'label' => 'Not ekle',
@@ -78,6 +102,16 @@ return [
         ],
     ],
 
+    /*
+     * The AI summary card, a draft and the lines staff read while one is prepared.
+     */
+    'ai' => [
+        'summary' => 'Yapay zekâ özeti',
+        'confidence' => 'güven :value',
+        'draft_queued' => 'Taslak hazırlanıyor. Bir dakika sonra Taslak yanıt\'ı yeniden açın.',
+        'summarize_queued' => 'Özet hazırlanıyor ve görüşmede görünecek.',
+    ],
+
     'refusals' => [
         'assignee_not_staff' => 'Atanan kişi bir destek ekibi üyesi olmalıdır.',
         'thread_url_missing' => 'Ziyaretçiye yanıt vermeden önce MAGIC_STARTER_SUPPORT_THREAD_URL ayarlanmalıdır: '
@@ -92,6 +126,7 @@ return [
             'title' => 'Destek görüşmesi #:number',
             'opened' => 'Bir müşteri yeni bir görüşme başlattı.',
             'customer_wrote' => 'Bir müşteri yeniden yazdı ve yanıt bekliyor.',
+            'handoff' => 'Yapay zekâ masası bir görüşmeyi ekibe devretti: :reason.',
             'open_panel' => 'Yanıtlamak için yönetim panelini açın.',
         ],
         'reply' => [
