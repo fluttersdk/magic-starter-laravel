@@ -19,6 +19,4 @@ return [
         'handoff' => 'I have passed this conversation to our support team. A person will reply here.',
     ],
 
-    'expectation' => 'Our team usually replies within one business day.',
-
 ];

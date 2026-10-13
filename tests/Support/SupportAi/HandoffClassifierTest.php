@@ -85,6 +85,18 @@ class HandoffClassifierTest extends TestCase
                 'I think my account was hacked',
                 SupportHandoffReason::SECURITY,
             ],
+            'got hacked' => [
+                'We got hacked last night.',
+                SupportHandoffReason::SECURITY,
+            ],
+            'turkish hacked account' => [
+                'Hesabım hacklendi!',
+                SupportHandoffReason::SECURITY,
+            ],
+            'a breach in capitals' => [
+                'Was there a BREACH?',
+                SupportHandoffReason::SECURITY,
+            ],
             'turkish password reset' => [
                 'Şifremi sıfırlamak istiyorum',
                 SupportHandoffReason::SECURITY,
@@ -119,6 +131,18 @@ class HandoffClassifierTest extends TestCase
             ],
             'turkish outage' => [
                 'Sistem çöktü',
+                SupportHandoffReason::OUTAGE,
+            ],
+            'site down for me' => [
+                'The site is down for me since 9am.',
+                SupportHandoffReason::OUTAGE,
+            ],
+            'an outage on your end' => [
+                'Is there an outage on your end?',
+                SupportHandoffReason::OUTAGE,
+            ],
+            'turkish outage happening' => [
+                'Şu an kesinti var galiba',
                 SupportHandoffReason::OUTAGE,
             ],
             'english anger' => [
@@ -170,6 +194,15 @@ class HandoffClassifierTest extends TestCase
             ],
             'empty' => [
                 '',
+            ],
+            'a question about outage notifications' => [
+                'How do I get notified about an outage on my site?',
+            ],
+            'a turkish question about uninterrupted monitoring' => [
+                'Kesintisiz izleme için hangi planı seçmeliyim?',
+            ],
+            'a status page for a hackathon' => [
+                'Can I make a status page for my hackathon project?',
             ],
         ];
     }
@@ -234,6 +267,16 @@ class HandoffClassifierTest extends TestCase
         $verdict = (new HandoffClassifier)->classify('My account was hacked, I want a refund and a human!');
 
         $this->assertSame(SupportHandoffReason::SECURITY, $verdict['reason'] ?? null);
+    }
+
+    public function test_the_application_being_down_is_an_outage_in_both_languages(): void
+    {
+        config()->set('app.name', 'Acme Cloud');
+        $classifier = new HandoffClassifier;
+
+        $this->assertSame(SupportHandoffReason::OUTAGE, $classifier->classify('acme cloud is down')['reason'] ?? null);
+        $this->assertSame(SupportHandoffReason::OUTAGE, $classifier->classify('ACME CLOUD ÇÖKTÜ')['reason'] ?? null);
+        $this->assertNull($classifier->classify('Does Acme Cloud work with Slack?'));
     }
 
     public function test_the_term_lists_are_extendable_from_config(): void

@@ -65,7 +65,7 @@ The public limits:
 
 The per-email cap bounds how much one address can put in front of staff, but it has a cost. The throttle counts a request before validation runs, so anyone who knows an address can use up its 3 for the day, and the owner of that address cannot open a public conversation until the next day. The owner can still sign in and write from the app, where the per-user limiter applies instead. An app that would rather not carry that cost can rebind `magic-starter-support-public` in its own service provider.
 
-Opening in the app now requires a `topic` from `support.topics`. The server derives a missing `subject` from the topic label and the first line of the body (80 characters at most), and a `contact_sales` conversation is always filed under `sales`, so it needs no topic. Rules for every door come from one place, `SupportRules`.
+Opening in the app now requires a `topic` from `support.topics` (32 characters at most, the width of its column). The server derives a missing `subject` from the topic label and the first line of the body (80 characters at most), and a `contact_sales` conversation is always filed under `sales`, so it needs no topic. A client older than the topic picker, which sends a `subject` and no `topic`, is still accepted and its conversation is filed under `other`. Rules for every door come from one place, `SupportRules`.
 
 What a customer reads back:
 
@@ -89,12 +89,11 @@ A conversation belongs to its opener alone. When a visitor verifies an address t
 | `support.public.extra_rules` | `[]` | Field of the public form mapped to rule class names, for a captcha or a blocklist |
 | `support.topics` | `billing`, `technical`, `account`, `sales`, `other` | What an opener may file under; labels are `magic-starter::support.topics.<topic>` |
 | `support.client_thread_path` | `/support/{id}` | The in-app route of a thread, used for `action_url` |
-| `support.expectation` | `magic-starter::support.expectation` | Lang key of the line telling a customer when staff usually reply |
 | `support.ai.*` | see [The AI Desk](#the-ai-desk) | The AI desk's queue, timeouts, limits and quotas |
 
 Replying to a visitor refuses until `support.public.thread_url` is set, because the reply mail carries the link.
 
-> **A published config must add the new keys.** The package merges its config shallowly: a host that published `config/magic-starter.php` keeps its own whole `support` block, so `support.topics`, `support.client_thread_path`, `support.expectation` and the entire `support.ai` block are absent there. Copy them from the package config. Topics fall back to the defaults above, but a missing quota key reads as `0`, which refuses every turn: with the responder bound, each AI turn is handed to staff as `quota`.
+> **A published config must add the new keys.** The package merges its config shallowly: a host that published `config/magic-starter.php` keeps its own whole `support` block, so `support.topics`, `support.client_thread_path` and the entire `support.ai` block are absent there. Copy them from the package config. Topics fall back to the defaults above, `support.ai.pool_reservation_tokens` to `6000` and `support.ai.quotas.user_daily_tokens` to `60000`, but any other missing quota key reads as `0`, which refuses every turn: with the responder bound, each AI turn is handed to staff as `quota`. The `support.expectation` key and its `magic-starter::support.expectation` line are gone: nothing read them, and the client shows its own copy.
 
 ---
 
@@ -135,13 +134,16 @@ An eligible conversation starts `pending` instead of `open`, and `RespondToSuppo
 1. The job re-reads the conversation and acts only while it is `pending` and its trigger is still the newest unanswered customer message. A newer message, a staff reply or a handoff makes the job a no-op.
 2. It re-checks eligibility, then runs the deterministic pre-classifier (see below), then asks `pool()` and reserves quota.
 3. It calls `respond()` with a deadline of `support.ai.deadline_seconds` minus the seconds spent waiting for the conversation lock.
-4. `ReplyGuard` checks the answer. The reply is then written under a row lock, only while the turn is still owed, and `answered_message_id` is set; the conversation stays `pending` for the next customer message. When the answer asks for a person, the conversation is handed off in the same run.
+4. `ReplyGuard` checks the answer. The reply is then written under a row lock, only while the turn is still owed, and `answered_message_id` is set; the conversation stays `pending` for the next customer message. When the answer asks for a person, the handoff (status, `waiting_since`, `handoff_reason`, priority and the handoff line) is written in that same transaction, so a committed answer can never be left pending; staff are alerted and the assist queued after the commit, and the tokens are settled last. An answer handed off as `unavailable` posts no reply of its own, only the handoff line.
+5. A new customer message starts its turn with `ai_failures` at `0`; a superseded turn's failures never count against the next one.
 
 A customer who writes again on a pending thread queues a new turn and alerts nobody. A staff reply takes a pending conversation from the AI desk: it becomes `open` in the same transaction, and a job mid-turn discards its answer. Staff can no longer set `pending` themselves; the panel does not offer it and `ChangesSupportConversations` refuses it.
 
 ### Handoff
 
 A handoff moves a pending conversation to `open`, stamps `waiting_since` and `handoff_reason`, posts a customer-visible activity line ("I have passed this conversation to our support team..."), alerts staff once (`SupportConversationNeedsStaff` with reason `handoff`) and queues the staff assist when `AssistsSupportStaff` is bound. It is one conditional update on `status = pending`, takes no lock and is idempotent: exactly one caller wins, and only the winner posts the line and alerts.
+
+The staff assist queued on a handoff is a model call the customer's writing triggered, so it is metered like a turn: it is charged to the opener's turn, team, new-account and token counters and to the pool `pool()` names, under the turn id `assist:{last_customer_message_id}`. When the charge is refused, no responder is bound or `pool()` throws, the automatic assist is skipped. The panel's Summarize and an empty Draft reply are staff-initiated and stay unmetered. `PrepareSupportStaffAssist` waits up to 10 minutes for a worker, runs once (a run killed at its timeout is not repeated) and defaults to the `redis` connection and the `support` queue.
 
 | Reason | Set when |
 |--------|----------|
@@ -155,15 +157,15 @@ A handoff moves a pending conversation to `open`, stamps `waiting_since` and `ha
 | `quota` | A user, team, new-account or pool limit is spent |
 | `unavailable` | The opener lost eligibility, `pool()` threw, the job died for good or the sweeper found the turn unanswered |
 
-The pre-classifier matches a Turkish and English phrase table against a folded form of the text, before any model is called, over every customer message still unanswered. It over-matches on purpose. A host adds phrases, never replaces the table, with `support.ai.handoff_terms`: a map of reason (`security`, `outage`, `billing`, `anger`, `human_requested`) to a list of phrases.
+The pre-classifier matches a Turkish and English phrase table against a folded form of the text, before any model is called, over every customer message still unanswered. It over-matches on purpose, but `security` and `outage` entries are claims about the customer's account or this service ("got hacked", "hesabım hacklendi", "site down for me", "<app.name> is down", "<app.name> çöktü"), not topics, so "how do I get notified about an outage" or a status page for a hackathon stays with the AI. A host adds phrases, never replaces the table, with `support.ai.handoff_terms`: a map of reason (`security`, `outage`, `billing`, `anger`, `human_requested`) to a list of phrases. A phrase matches from a word start with any suffix; one ending in `$` stops at a word end.
 
 ### Reply Guard
 
-A reply that breaks a rule is not posted and counts as a failed turn: it is blank, longer than `support.ai.reply_max_length`, claims a completed action ("I have refunded", "your subscription has been cancelled"), links to a host that is neither the app's own nor in `support.ai.allowed_hosts` (compared exactly), asks for a password, code or card number, or carries a confidence outside 0 to 1. A failed turn is retried once by the queue and handed off as `failures` at `support.ai.failures_before_handoff`.
+A reply that breaks a rule is not posted and counts as a failed turn: it is blank, longer than `support.ai.reply_max_length`, claims a completed action ("I have refunded", "I went ahead and refunded", "the subscription is cancelled", "aboneliğiniz iptal edilmiştir"), links to a host that is neither the app's own nor in `support.ai.allowed_hosts` (compared exactly; a bare `label.tld` on any top-level domain counts, only a file name such as `config.php` does not), asks for a password, code or card number (a negation such as "never" excuses only the sentence it is in), or carries a confidence outside 0 to 1. A failed turn is retried once by the queue and handed off as `failures` at `support.ai.failures_before_handoff`.
 
 ### Quotas and Pools
 
-Each turn is charged against four counters, all dated per day: the opener's turns (`quotas.user_daily`), their team's turns (`quotas.team_daily`), a tighter turn count while the account verified its email less than `quotas.new_account_hours` ago (`quotas.new_account_daily`) and the tokens of the pool `pool()` named (`quotas.pools.free` or `quotas.pools.paid`). The pool is charged `max_tokens_per_turn` up front and settled to the real `usage` afterwards. A turn is charged once however often it is retried. A refused turn costs nothing and is handed off as `quota`. A limit that is missing reads as `0` and refuses.
+Each turn is charged against five counters, all dated per day: the opener's turns (`quotas.user_daily`), their team's turns (`quotas.team_daily`), a tighter turn count while the account verified its email less than `quotas.new_account_hours` ago (`quotas.new_account_daily`), the opener's own tokens (`quotas.user_daily_tokens`, default `60000`, so a few accounts cannot drain a shared pool) and the tokens of the pool `pool()` named (`quotas.pools.free` or `quotas.pools.paid`). Both token counters are charged `pool_reservation_tokens` (default `6000`, sized for prompt plus completion; `max_tokens_per_turn` caps only the completion) up front and settled to the real `usage` afterwards. A turn is charged once however often it is retried. A refused turn costs nothing and is handed off as `quota`. A turn, team or pool limit that is missing reads as `0` and refuses; the two token keys above fall back to their defaults.
 
 ### The Queue Chain
 

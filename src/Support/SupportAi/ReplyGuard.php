@@ -17,10 +17,15 @@ namespace FlutterSdk\MagicStarter\Support\SupportAi;
  * unsafe one costs trust), and the Turkish and English tables cover the same
  * three claims: a completed action, a foreign link, a credential request.
  *
- * Links: every web link, bare or scheme-less address and mail address on a
- * well-known top-level domain must have a host that equals `app.url`'s host or
- * is listed in `support.ai.allowed_hosts`, compared exactly (a subdomain is a
- * different host).
+ * Links: every web link, bare or scheme-less address and mail address, on any
+ * top-level domain of two letters or more, must have a host that equals
+ * `app.url`'s host or is listed in `support.ai.allowed_hosts`, compared exactly
+ * (a subdomain is a different host). Only a name ending in a file extension
+ * that is no top-level domain (`config.php`) is read as a file; a version such
+ * as `1.2` never looks like a host.
+ *
+ * A credential ask is advice rather than a request only when a negation sits
+ * in the same sentence.
  */
 final class ReplyGuard
 {
@@ -45,15 +50,34 @@ final class ReplyGuard
     private const ACTION_VERBS = 'cancell?ed|refunded|deleted|removed|changed|upgraded|downgraded|reset|disabled'
         . '|closed';
 
-    private const ACTION_ADVERBS = '(?:(?:just|already|now|also|successfully|gone\s+ahead\s+and)\s+)*';
+    private const ACTION_ADVERBS = '(?:(?:just|already|now|also|successfully|(?:gone|went)\s+ahead\s+and)\s+)*';
 
     /**
-     * Where a web link may start without a scheme: the TLDs a reply plausibly links to.
+     * The Turkish completed forms of the action stems, plain past (`edildi`) and formal past (`edilmiştir`).
      */
-    private const COMMON_TLDS = [
-        'com', 'net', 'org', 'io', 'co', 'app', 'dev', 'ai', 'info', 'biz', 'xyz', 'top', 'site', 'online',
-        'link', 'click', 'shop', 'store', 'live', 'cc', 'tk', 'ml', 'ga', 'cf', 'gq', 'ru', 'cn', 'tr', 'de',
-        'fr', 'uk', 'us',
+    private const ACTION_PARTICIPLES_TR = '(?:iptal|iade)\s+edil(?:di|mis(?:tir)?)|iade\s+yapil(?:di|mis(?:tir)?)'
+        . '|silin(?:di|mis(?:tir)?)|degistiril(?:di|mis(?:tir)?)|sifirlan(?:di|mis(?:tir)?)'
+        . '|kaldiril(?:di|mis(?:tir)?)';
+
+    /**
+     * File extensions that are not top-level domains, so `config.php` is a file name rather than a host.
+     */
+    private const FILE_EXTENSIONS = [
+        'php',
+        'html',
+        'htm',
+        'js',
+        'json',
+        'yaml',
+        'yml',
+        'xml',
+        'txt',
+        'csv',
+        'log',
+        'ini',
+        'env',
+        'conf',
+        'dart',
     ];
 
     private const ASK_VERBS_EN = 'send|share|give|provide|tell|type|enter|paste|forward|submit|input|read\s+out'
@@ -122,17 +146,18 @@ final class ReplyGuard
             // "I have issued a refund".
             '/\b(?:i|we)(?:\'ve|\s+have)?\s+' . $adverbs
                 . '(?:issued|processed|initiated|started)\s+(?:\w+\s+){0,2}(?:refund|cancell?ation|deletion)/',
-            // "Your subscription has been cancelled".
-            '/\byour\s+(?:\w+\s+){0,3}?(?:(?:has|have)\s+been|was|were|got|(?:is|are)\s+now)\s+(?:\w+ly\s+)?'
-                . '(?:' . $verbs . ')\b/',
-            // "iptal ettim", "iade edildi".
-            '/\b(?:iptal|iade)\s+(?:ettim|ettik|edildi|yaptim|yaptik)\b/',
+            // "Your subscription has been cancelled", "The subscription is cancelled".
+            '/\b(?:your|the)\s+(?:\w+\s+){0,3}?(?:(?:has|have)\s+been|was|were|got|(?:is|are)(?:\s+now)?)\s+'
+                . '(?:\w+ly\s+)?(?:' . $verbs . ')\b/',
+            // "iptal ettim", "iade edildi", "iadeniz yapılmıştır".
+            '/\b(?:iptal|iade)\w*\s+(?:ettim|ettik|edildi|edilmis(?:tir)?|yapildi|yapilmis(?:tir)?|yaptim'
+                . '|yaptik)\b/',
             // "sildim", "değiştirdim".
             '/\b(?:sildim|sildik|degistirdim|degistirdik|kaldirdim|kaldirdik|sifirladim|sifirladik|yukselttim'
                 . '|dusurdum)\b/',
-            // "Hesabınız silindi".
+            // "Hesabınız silindi", "Aboneliğiniz iptal edilmiştir".
             '/\b(?:hesabiniz|aboneliginiz|planiniz|paketiniz|odemeniz|kaydiniz)\s+(?:\w+\s+){0,2}'
-                . '(?:iptal\s+edildi|iade\s+edildi|silindi|degistirildi|sifirlandi)\b/',
+                . '(?:' . self::ACTION_PARTICIPLES_TR . ')\b/',
         ];
 
         foreach ($patterns as $pattern) {
@@ -179,19 +204,18 @@ final class ReplyGuard
         }
 
         preg_match_all(
-            '~(?<![\w.-])((?:[a-z0-9](?:[a-z0-9-]*[a-z0-9])?\.)+([a-z]{2,24}))(?![\w-])(/)?~i',
+            '~(?<![\w.-])((?:[a-z0-9](?:[a-z0-9-]*[a-z0-9])?\.)+([a-z]{2,24}))(?![\w-])~i',
             $rest,
             $bare,
             PREG_SET_ORDER,
         );
 
+        // 4. Any other `label.tld` is a host a customer can type in, whatever its top-level domain.
         foreach ($bare as $match) {
             $host = $this->normaliseHost($match[1]);
-            $looksLikeALink = isset($match[3])
-                || str_starts_with($host, 'www.')
-                || in_array(strtolower($match[2]), self::COMMON_TLDS, true);
+            $isFileName = in_array(strtolower($match[2]), self::FILE_EXTENSIONS, true);
 
-            if ($looksLikeALink && ! in_array($host, $allowed, true)) {
+            if (! $isFileName && ! in_array($host, $allowed, true)) {
                 return true;
             }
         }
@@ -250,13 +274,29 @@ final class ReplyGuard
         }
 
         foreach ($matches[0] as [$text, $offset]) {
-            $context = substr($folded, max(0, $offset - 50), 50 + strlen($text) + 12);
-
-            if (preg_match(self::NEGATION, $context) !== 1) {
+            if (preg_match(self::NEGATION, $this->sentenceAround($folded, $offset, strlen($text))) !== 1) {
                 return true;
             }
         }
 
         return false;
+    }
+
+    /**
+     * The sentence a match sits in, cut at `.`, `?`, `!` or a line break on either side.
+     *
+     * A negation only turns the ask it shares a sentence with into advice: "We never share data. Send me
+     * your password." is still a request.
+     *
+     * @param  int  $offset  Byte offset of the match in `$folded`.
+     * @param  int  $length  Byte length of the match.
+     */
+    private function sentenceAround(string $folded, int $offset, int $length): string
+    {
+        $before = substr($folded, 0, $offset);
+        $start = preg_match('/.*[.?!\n]/s', $before, $head) === 1 ? strlen($head[0]) : 0;
+        $end = strcspn($folded, ".?!\n", $offset + $length) + $offset + $length;
+
+        return substr($folded, $start, $end - $start);
     }
 }

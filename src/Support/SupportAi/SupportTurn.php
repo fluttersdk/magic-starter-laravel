@@ -42,7 +42,12 @@ final readonly class SupportTurn
             throw new InvalidArgumentException('A support turn answers a customer message.');
         }
 
-        foreach ([$trigger, ...$history] as $message) {
+        $messages = [
+            $trigger,
+            ...$history,
+        ];
+
+        foreach ($messages as $message) {
             if ((string) $message->conversation_id !== (string) $conversation->getKey()) {
                 throw new InvalidArgumentException('A support turn carries only its own conversation.');
             }

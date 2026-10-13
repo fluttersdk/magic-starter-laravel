@@ -22,6 +22,7 @@ use FlutterSdk\MagicStarter\Support\SupportAi\SupportUsage;
 use Illuminate\Contracts\Cache\LockTimeoutException;
 use Illuminate\Contracts\Container\Container;
 use Illuminate\Contracts\Queue\ShouldQueue;
+use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Foundation\Bus\Dispatchable;
 use Illuminate\Foundation\Queue\Queueable;
 use Illuminate\Queue\InteractsWithQueue;
@@ -48,6 +49,12 @@ use Throwable;
  * seconds goes back on the queue for 10. The lock outlives `$timeout`, so a
  * worker killed at the ceiling cannot leave two jobs inside; the predicate is
  * the backstop if a host shortens it.
+ *
+ * An answer that asks for a person is posted and handed off in the same
+ * transaction, under the same lock and predicate, and staff are told after the
+ * commit; the tokens are settled last, so a failure to settle cannot leave an
+ * answered turn pending. An answer handed off as `unavailable` posts nothing of
+ * its own: the handoff line already tells the customer.
  *
  * Nothing here reaches the customer as an error. A classifier hit, a refused
  * quota or an opener who lost eligibility hands the conversation to staff with
@@ -235,7 +242,7 @@ class RespondToSupportConversation implements ShouldQueue
             return;
         }
 
-        // 5. Ask, then let the guard refuse what may not reach a customer; either failure is a failed turn.
+        // 5. Ask; a responder that throws is a failed turn.
         try {
             $answer = $responder->respond(new SupportTurn(
                 conversation: $conversation,
@@ -251,26 +258,44 @@ class RespondToSupportConversation implements ShouldQueue
             return;
         }
 
+        // 6. A responder that could not answer says so in its reply, which the handoff line already says to
+        //    the customer: hand off only, and post nothing of its own.
+        if ($answer->handoffReason === SupportHandoffReason::UNAVAILABLE) {
+            try {
+                $desk->handoff(
+                    $conversation,
+                    SupportHandoffReason::UNAVAILABLE,
+                    $answer->handoffPriority,
+                    $this->triggerId,
+                );
+            } finally {
+                $quota->reconcile($reservation, $answer->usage);
+            }
+
+            return;
+        }
+
+        // 7. The guard refuses what may not reach a customer; a refusal is a failed turn.
         if ($guard->check($answer) !== null) {
             $this->failTurn($desk, $quota, $reservation, $answer->usage);
 
             return;
         }
 
-        // 6. Persist under the row lock, settle the tokens whether or not the answer was still wanted.
-        $posted = $this->persist($answer);
-        $quota->reconcile($reservation, $answer->usage);
+        // 8. Persist the answer, and a handoff it asks for, in one transaction under the row lock; tell staff
+        //    or refresh the thread once it commits, and settle the tokens last, whatever happened before.
+        try {
+            if (! $this->persist($desk, $answer)) {
+                return;
+            }
 
-        if (! $posted) {
-            return;
-        }
-
-        // 7. A handoff answer reaches staff with its reason; the handoff refreshes the thread itself.
-        $handedOff = $answer->handsOff()
-            && $desk->handoff($conversation, $answer->handoffReason, $answer->handoffPriority);
-
-        if (! $handedOff) {
-            rescue(static fn () => event(new SupportConversationUpdated($conversation)), report: true);
+            if ($answer->handsOff()) {
+                $desk->announceHandoff($conversation);
+            } else {
+                rescue(static fn () => event(new SupportConversationUpdated($conversation)), report: true);
+            }
+        } finally {
+            $quota->reconcile($reservation, $answer->usage);
         }
     }
 
@@ -291,10 +316,17 @@ class RespondToSupportConversation implements ShouldQueue
      */
     private function history(SupportConversation $conversation, SupportMessage $trigger): array
     {
+        // Strictly before the trigger in the thread's own order, created_at then id, so a message written in
+        // the same second after it is not read as history.
         return $conversation->messages()
             ->customerVisible()
-            ->whereKeyNot($trigger->getKey())
-            ->where('created_at', '<=', $trigger->created_at)
+            ->where(function (Builder $before) use ($trigger): void {
+                $before->where('created_at', '<', $trigger->created_at)
+                    ->orWhere(function (Builder $sameSecond) use ($trigger): void {
+                        $sameSecond->where('created_at', $trigger->created_at)
+                            ->where($trigger->getKeyName(), '<', $trigger->getKey());
+                    });
+            })
             ->orderByDesc('created_at')
             ->orderByDesc('id')
             ->limit(max(0, (int) config('magic-starter.support.ai.history_messages', 12)))
@@ -327,11 +359,16 @@ class RespondToSupportConversation implements ShouldQueue
     /**
      * Write the answer as the AI desk's message, only while the turn is still owed.
      *
+     * An answer that asks for a person hands off in the same transaction, under
+     * the same lock and predicate, so a committed answer is never left pending
+     * with nobody owing the customer a reply. Nothing is announced here; the
+     * caller does that after the commit.
+     *
      * @return bool false when the turn moved on while the model was answering; nothing is written then
      */
-    private function persist(SupportAnswer $answer): bool
+    private function persist(SupportHandoff $desk, SupportAnswer $answer): bool
     {
-        return DB::transaction(function () use ($answer): bool {
+        return DB::transaction(function () use ($desk, $answer): bool {
             $conversation = SupportConversation::query()->lockForUpdate()->find($this->conversationId);
 
             if (! $conversation instanceof SupportConversation || ! $this->owns($conversation)) {
@@ -357,6 +394,11 @@ class RespondToSupportConversation implements ShouldQueue
                 'ai_failures' => 0,
                 'last_activity_at' => now(),
             ])->save();
+
+            // The row was read pending under this transaction's lock, so the conditional flip is this turn's.
+            if ($answer->handsOff()) {
+                $desk->moveToStaff($conversation, $answer->handoffReason, $answer->handoffPriority);
+            }
 
             return true;
         });

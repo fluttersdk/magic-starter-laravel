@@ -14,6 +14,11 @@ use Illuminate\Validation\Rule;
 final class SupportRules
 {
     /**
+     * The width of the `topic` column; a topic a host adds to `support.topics` past it is refused.
+     */
+    public const TOPIC_MAX_LENGTH = 32;
+
+    /**
      * The topics a host gets when its published config predates `support.topics`.
      *
      * A published `support` block replaces the package's whole block (the
@@ -56,15 +61,26 @@ final class SupportRules
 
     /**
      * Rules for opening a conversation: an optional subject (the opener derives
-     * a missing one), body, a topic from `support.topics`, and an optional
-     * source limited to the door's own.
+     * a missing one), body, a topic from `support.topics` no longer than its
+     * column, and an optional source limited to the door's own.
      *
      * @param  list<SupportConversationSource>  $sources  The sources this door accepts.
-     * @param  bool  $topicRequired  Whether the door demands a topic; Contact sales is filed under `sales` either way.
+     * @param  bool  $topicRequired  Whether the door demands a topic or, from a client older than the topic
+     *                               picker, a subject. Contact sales is filed under `sales` either way, so its
+     *                               topic is not even read.
      * @return array<string, list<mixed>>
      */
     public static function conversation(array $sources, bool $topicRequired = false): array
     {
+        $topicPresence = $topicRequired
+            ? [
+                'exclude_if:source,' . SupportConversationSource::CONTACT_SALES->value,
+                'required_without:subject',
+            ]
+            : [
+                'sometimes',
+            ];
+
         return [
             'subject' => [
                 'nullable',
@@ -73,11 +89,10 @@ final class SupportRules
             ],
             'body' => self::body(),
             'topic' => [
-                $topicRequired
-                    ? 'required_unless:source,' . SupportConversationSource::CONTACT_SALES->value
-                    : 'sometimes',
+                ...$topicPresence,
                 'nullable',
                 'string',
+                'max:' . self::TOPIC_MAX_LENGTH,
                 Rule::in(self::topics()),
             ],
             'source' => [

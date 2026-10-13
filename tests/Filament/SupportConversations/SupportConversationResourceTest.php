@@ -21,6 +21,7 @@ use FlutterSdk\MagicStarter\Filament\MagicStarterPlugin;
 use FlutterSdk\MagicStarter\Filament\Resources\SupportConversations\Pages\ListSupportConversations;
 use FlutterSdk\MagicStarter\Filament\Resources\SupportConversations\Pages\ViewSupportConversation;
 use FlutterSdk\MagicStarter\Filament\Resources\SupportConversations\SupportConversationResource;
+use FlutterSdk\MagicStarter\Http\Resources\SupportMessageResource;
 use FlutterSdk\MagicStarter\Jobs\PrepareSupportStaffAssist;
 use FlutterSdk\MagicStarter\Models\SupportConversation;
 use FlutterSdk\MagicStarter\Models\SupportMessage;
@@ -33,11 +34,13 @@ use FlutterSdk\MagicStarter\Tests\Fixtures\ConcreteAdminUser;
 use Illuminate\Contracts\Auth\Authenticatable;
 use Illuminate\Support\Arr;
 use Illuminate\Support\Carbon;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Event;
 use Illuminate\Support\Facades\Notification;
 use Illuminate\Support\Facades\Queue;
 use Illuminate\Validation\ValidationException;
 use Livewire\Livewire;
+use ReflectionMethod;
 use RuntimeException;
 use Throwable;
 
@@ -425,6 +428,37 @@ class SupportConversationResourceTest extends FilamentTestCase
             ->assertSee('You are on Pro.')
             ->assertSee('confidence 0.82')
             ->assertSee('Handed off to staff');
+    }
+
+    public function test_the_panel_and_the_customer_json_name_the_ai_the_same_way_when_the_name_is_blank(): void
+    {
+        config()->set('magic-starter.support.ai.name', '');
+        config()->set('app.name', 'Acme');
+        $conversation = $this->conversation($this->user('opener@example.com'));
+        $ai = $this->message($conversation, SupportSenderType::AI, SupportMessageKind::MESSAGE, 'You are on Pro.');
+        $senderName = new ReflectionMethod(SupportConversationResource::class, 'senderName');
+
+        $this->assertSame('Acme AI', SupportMessageResource::aiName());
+        $this->assertSame(SupportMessageResource::aiName(), $senderName->invoke(null, $ai, $conversation, 'ai'));
+    }
+
+    public function test_the_details_panel_counts_the_ai_turns_once_per_render(): void
+    {
+        $conversation = $this->conversation($this->user('opener@example.com'));
+        $this->message($conversation, SupportSenderType::AI, SupportMessageKind::MESSAGE, 'You are on Pro.');
+        $staff = $this->staff();
+        DB::enableQueryLog();
+
+        Livewire::actingAs($staff)->test(ViewSupportConversation::class, ['record' => $conversation->getKey()])
+            ->assertSee((string) SupportConversationResource::fieldLabel('ai_turns'));
+
+        $counts = array_filter(
+            DB::getQueryLog(),
+            static fn (array $query): bool => str_contains($query['query'], 'count(*)')
+                && str_contains($query['query'], 'support_messages')
+                && str_contains($query['query'], 'sender_type'),
+        );
+        $this->assertCount(1, $counts);
     }
 
     public function test_the_thread_section_polls_without_calling_the_model(): void

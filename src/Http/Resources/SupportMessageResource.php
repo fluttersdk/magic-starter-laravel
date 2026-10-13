@@ -78,7 +78,13 @@ class SupportMessageResource extends JsonResource
         ];
     }
 
-    private static function aiName(): string
+    /**
+     * The AI desk's display name, the one rule the customer JSON and the staff panel share.
+     *
+     * `support.ai.name` when it is a non-empty string; otherwise, null or blank
+     * alike, the localized ":app AI".
+     */
+    public static function aiName(): string
     {
         $configured = config('magic-starter.support.ai.name');
 

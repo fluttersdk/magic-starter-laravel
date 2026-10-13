@@ -25,6 +25,7 @@ use FlutterSdk\MagicStarter\MagicStarterServiceProvider;
 use FlutterSdk\MagicStarter\Models\SupportConversation;
 use FlutterSdk\MagicStarter\Models\SupportMessage;
 use FlutterSdk\MagicStarter\Notifications\SupportConversationNeedsStaffNotification;
+use FlutterSdk\MagicStarter\Support\SupportAi\SupportAiQuota;
 use FlutterSdk\MagicStarter\Support\SupportAi\SupportAnswer;
 use FlutterSdk\MagicStarter\Support\SupportAi\SupportHandoff;
 use FlutterSdk\MagicStarter\Support\SupportAi\SupportStaffAssist;
@@ -640,6 +641,152 @@ class SupportAiLifecycleTest extends TestCase
         Event::assertDispatched(SupportConversationUpdated::class);
     }
 
+    public function test_a_handoff_the_ai_asked_for_holds_when_settling_its_tokens_throws(): void
+    {
+        $quota = Mockery::mock(SupportAiQuota::class, [app(RateLimiter::class)])->makePartial();
+        $quota->shouldReceive('reconcile')->andThrow(new RuntimeException('cache down'));
+        $this->app->instance(SupportAiQuota::class, $quota);
+        $this->bindResponder(fn (): SupportAnswer => new SupportAnswer(
+            'I am handing this to a colleague.',
+            0.4,
+            new SupportUsage(300, 100),
+            SupportHandoffReason::LOW_CONFIDENCE,
+            SupportPriority::NORMAL,
+        ));
+        $conversation = $this->open($this->customer());
+        [$job] = $this->queuedJobs();
+
+        // 1. The settle step throws after the answer committed.
+        try {
+            $this->runJob($job);
+            $this->fail('The reconcile failure should reach the queue.');
+        } catch (RuntimeException $exception) {
+            $this->assertSame('cache down', $exception->getMessage());
+        }
+
+        // 2. The queue's retry and its final failure find the turn answered and handed off.
+        $this->runJob($job);
+        $job->failed(new RuntimeException('gave up'));
+
+        $conversation->refresh();
+        $this->assertSame(SupportConversationStatus::OPEN, $conversation->status);
+        $this->assertSame(SupportHandoffReason::LOW_CONFIDENCE, $conversation->handoff_reason);
+        $this->assertNotNull($conversation->waiting_since);
+        $this->assertSame(1, $this->aiReplies()->count());
+        $this->assertSame(1, $this->handoffLines()->count());
+        $this->assertCount(1, $this->alerts('handoff'));
+    }
+
+    public function test_an_unavailable_answer_hands_off_without_posting_its_reply(): void
+    {
+        $this->bindResponder(fn (): SupportAnswer => new SupportAnswer(
+            'Our assistant is unavailable, a colleague will reply.',
+            0.0,
+            new SupportUsage(300, 100),
+            SupportHandoffReason::UNAVAILABLE,
+            SupportPriority::NORMAL,
+        ));
+        $conversation = $this->open($this->customer());
+
+        $this->runQueued();
+
+        $conversation->refresh();
+        $this->assertSame(0, $this->aiReplies()->count());
+        $this->assertSame(1, $this->handoffLines()->count());
+        $this->assertSame(SupportConversationStatus::OPEN, $conversation->status);
+        $this->assertSame(SupportHandoffReason::UNAVAILABLE, $conversation->handoff_reason);
+        $this->assertCount(1, $this->alerts('handoff'));
+    }
+
+    public function test_a_new_customer_message_starts_its_turn_with_no_failures(): void
+    {
+        $this->bindResponder();
+        $customer = $this->customer();
+        $conversation = $this->open($customer);
+        $conversation->forceFill(['ai_failures' => 1])->save();
+
+        $this->write($conversation, 'One more thing.', $customer);
+
+        $this->assertSame(0, $conversation->refresh()->ai_failures);
+    }
+
+    public function test_the_history_leaves_out_a_message_written_in_the_same_second_after_the_trigger(): void
+    {
+        Carbon::setTestNow('2026-10-13 10:00:00');
+        $responder = $this->bindResponder();
+        $conversation = $this->open($this->customer());
+        $conversation->messages()->create([
+            'sender_type' => SupportSenderType::AI,
+            'kind' => SupportMessageKind::MESSAGE,
+            'body' => 'Written after the trigger.',
+        ]);
+
+        $this->runQueued();
+
+        $this->assertSame([], $responder->turns[0]->history);
+    }
+
+    // -----------------------------------------------------------------
+    // The metered staff assist on a handoff
+    // -----------------------------------------------------------------
+
+    public function test_the_automatic_assist_on_a_classifier_handoff_is_charged_to_the_openers_quota(): void
+    {
+        $this->bindResponder();
+        $this->bindAssist();
+        $customer = $this->customer();
+        $conversation = $this->open($customer, 'I want a refund.');
+
+        $this->runQueued();
+
+        Queue::assertPushed(PrepareSupportStaffAssist::class);
+        $this->assertSame(1, app(RateLimiter::class)->attempts(
+            sprintf('magic-starter:support-ai:user:%s:%s', $customer->getKey(), now()->format('Y-m-d')),
+        ));
+        $this->assertIsArray(Cache::get(sprintf(
+            'magic-starter:support-ai:turn:%s:assist:%s',
+            $conversation->getKey(),
+            $conversation->last_customer_message_id,
+        )));
+    }
+
+    public function test_the_automatic_assist_is_skipped_when_the_quota_refuses_it(): void
+    {
+        config()->set('magic-starter.support.ai.quotas.user_daily', 0);
+        $this->bindResponder();
+        $this->bindAssist();
+        $conversation = $this->open($this->customer());
+
+        $this->runQueued();
+
+        $this->assertSame(SupportHandoffReason::QUOTA, $conversation->refresh()->handoff_reason);
+        Queue::assertNotPushed(PrepareSupportStaffAssist::class);
+    }
+
+    public function test_the_automatic_assist_is_skipped_when_the_responder_cannot_name_a_pool(): void
+    {
+        $this->bindResponder(pool: fn (): SupportAiPool => throw new RuntimeException('plan unreadable'));
+        $this->bindAssist();
+        $conversation = $this->open($this->customer());
+
+        $this->runQueued();
+
+        $this->assertSame(SupportHandoffReason::UNAVAILABLE, $conversation->refresh()->handoff_reason);
+        Queue::assertNotPushed(PrepareSupportStaffAssist::class);
+    }
+
+    public function test_the_automatic_assist_is_skipped_when_no_responder_is_bound(): void
+    {
+        $this->bindResponder();
+        $this->bindAssist();
+        $conversation = $this->open($this->customer());
+        $this->app->offsetUnset(RespondsToSupport::class);
+
+        $this->assertTrue(app(SupportHandoff::class)->handoff($conversation, SupportHandoffReason::UNAVAILABLE));
+
+        Queue::assertNotPushed(PrepareSupportStaffAssist::class);
+    }
+
     // -----------------------------------------------------------------
     // Helpers
     // -----------------------------------------------------------------
@@ -647,9 +794,9 @@ class SupportAiLifecycleTest extends TestCase
     /**
      * Bind a responder that records each turn and answers through `$respond`, or with a fixed safe answer.
      */
-    private function bindResponder(?Closure $respond = null): FakeSupportResponder
+    private function bindResponder(?Closure $respond = null, ?Closure $pool = null): FakeSupportResponder
     {
-        $responder = new FakeSupportResponder($respond);
+        $responder = new FakeSupportResponder($respond, $pool);
         $this->app->instance(RespondsToSupport::class, $responder);
 
         return $responder;
@@ -768,6 +915,7 @@ class FakeSupportResponder implements RespondsToSupport
 
     public function __construct(
         private readonly ?Closure $respond = null,
+        private readonly ?Closure $pool = null,
     ) {}
 
     public function respond(SupportTurn $turn): SupportAnswer
@@ -784,6 +932,10 @@ class FakeSupportResponder implements RespondsToSupport
 
     public function pool(SupportConversation $conversation): SupportAiPool
     {
+        if ($this->pool !== null) {
+            return ($this->pool)($conversation);
+        }
+
         return SupportAiPool::FREE;
     }
 }

@@ -549,6 +549,35 @@ class SupportConversationControllerTest extends TestCase
             ->assertJsonPath('data.subject', 'Billing: My card was declined.');
     }
 
+    public function test_an_older_client_sending_a_subject_and_no_topic_is_filed_under_other(): void
+    {
+        $this->actingAs($this->user('opener@example.com', self::TEAM), 'sanctum');
+
+        $this->postJson('/support/conversations', [
+            'subject' => 'Checks fail',
+            'body' => 'My checks are red since noon.',
+        ])
+            ->assertCreated()
+            ->assertJsonPath('data.topic', 'other')
+            ->assertJsonPath('data.subject', 'Checks fail');
+    }
+
+    public function test_a_configured_topic_longer_than_its_column_is_refused(): void
+    {
+        $topic = str_repeat('t', 33);
+        config()->set('magic-starter.support.topics', [
+            'billing',
+            $topic,
+        ]);
+        $this->actingAs($this->user('opener@example.com', self::TEAM), 'sanctum');
+
+        $this->postJson('/support/conversations', [
+            'topic' => $topic,
+            'body' => 'Hello.',
+        ])->assertUnprocessable()->assertJsonValidationErrors('topic');
+        $this->assertSame(0, SupportConversation::query()->count());
+    }
+
     public function test_contact_sales_is_filed_under_sales_whatever_topic_is_sent(): void
     {
         $this->actingAs($this->user('opener@example.com', self::TEAM), 'sanctum');

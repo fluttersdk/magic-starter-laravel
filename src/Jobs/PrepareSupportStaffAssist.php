@@ -17,16 +17,19 @@ use Throwable;
  * Asks {@see AssistsSupportStaff} for a conversation's summary and reply draft
  * and stores both for the panel to read.
  *
- * Queued by the Summarize action, by an empty Draft reply and by the handoff,
- * never run while a staff member waits: the Reply modal only reads what this
- * stored. It runs once (`$tries = 1`) because a second model call for the same
- * turn is cost and no new answer; staff ask again. A contract that throws, or
- * is no longer bound, leaves nothing stored and the panel as it is without AI.
- * The failure is logged and never reaches staff.
+ * Queued by the Summarize action, by an empty Draft reply and by the handoff
+ * (which charges it to the opener's quota first), never run while a staff
+ * member waits: the Reply modal only reads what this stored. It runs once
+ * (`$tries = 1`, `$failOnTimeout`) because a second model call for the same
+ * turn is cost and no new answer; staff ask again. A busy queue has
+ * {@see self::RETRY_WINDOW_MINUTES} minutes to start it. A contract that
+ * throws, or is no longer bound, leaves nothing stored and the panel as it is
+ * without AI. The failure is logged and never reaches staff.
  *
  * `$timeout` is the hard ceiling (`support.ai.job_timeout`), kept above the
  * model's own deadline and below the worker's, as `config/magic-starter.php`
- * documents for the AI desk.
+ * documents for the AI desk. It runs on the responder's connection and queue,
+ * `redis` and `support` when the host's config has no `support.ai` block.
  */
 class PrepareSupportStaffAssist implements ShouldQueue
 {
@@ -34,9 +37,19 @@ class PrepareSupportStaffAssist implements ShouldQueue
     use Queueable;
 
     /**
+     * Minutes after dispatch a busy queue still starts the job; past them it fails without a model call.
+     */
+    public const RETRY_WINDOW_MINUTES = 10;
+
+    /**
      * One attempt: staff ask again rather than the queue repeating a model call.
      */
     public int $tries = 1;
+
+    /**
+     * A run the worker killed at `$timeout` fails for good instead of starting again inside the retry window.
+     */
+    public bool $failOnTimeout = true;
 
     /**
      * Seconds before the worker kills the run; set from `support.ai.job_timeout`.
@@ -50,8 +63,8 @@ class PrepareSupportStaffAssist implements ShouldQueue
         public readonly int|string $conversationId,
     ) {
         $this->timeout = (int) config('magic-starter.support.ai.job_timeout', $this->timeout);
-        $this->onConnection(config('magic-starter.support.ai.connection'));
-        $this->onQueue(config('magic-starter.support.ai.queue'));
+        $this->onConnection(config('magic-starter.support.ai.connection', 'redis'));
+        $this->onQueue(RespondToSupportConversation::queueName());
     }
 
     /**
@@ -82,21 +95,25 @@ class PrepareSupportStaffAssist implements ShouldQueue
     }
 
     /**
-     * Past this moment the queue drops the job rather than starting it late.
+     * Past this moment the queue fails the job rather than starting it late.
      */
     public function retryUntil(): DateTimeInterface
     {
-        return now()->addSeconds($this->timeout);
+        return now()->addMinutes(self::RETRY_WINDOW_MINUTES);
     }
 
     /**
-     * Reached only when the worker killed the run at the ceiling; the panel stays as it was.
+     * Reached when the worker killed the run at `$timeout` or the job waited past its retry window; the panel
+     * stays as it was.
      */
     public function failed(?Throwable $exception): void
     {
-        logger()->warning('The support staff assist was killed at its ceiling.', [
-            'conversation_id' => $this->conversationId,
-            'exception' => $exception !== null ? $exception::class : null,
-        ]);
+        logger()->warning(
+            'The support staff assist never finished: it timed out or waited past its retry window.',
+            [
+                'conversation_id' => $this->conversationId,
+                'exception' => $exception !== null ? $exception::class : null,
+            ],
+        );
     }
 }

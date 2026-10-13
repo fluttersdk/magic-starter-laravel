@@ -12,18 +12,25 @@ use Illuminate\Support\Facades\Cache;
 /**
  * The AI desk's spend ledger: who may use it at all, and how much of the day is left.
  *
- * A turn is allowed only when four counters have room, each a dated key kept
+ * A turn is allowed only when five counters have room, each a dated key kept
  * with the atomic {@see RateLimiter::increment()} (the same shape as a daily
  * budget guard): the opener's turns, their team's turns, a tighter turn count
  * while the account is younger than `new_account_hours` since it verified its
- * email, and the tokens of the day's pool the host picked for the
- * conversation. The pool is charged `max_tokens_per_turn` up front and
+ * email, the opener's own tokens (`user_daily_tokens`, so a few accounts cannot
+ * drain a shared pool) and the tokens of the day's pool the host picked for
+ * the conversation. Both token counters are charged
+ * `pool_reservation_tokens` up front, sized for prompt plus completion, and
  * {@see self::reconcile()}d to the real tokens afterwards.
  *
  * Every counter decides on its own post-increment value, never on a prior read,
  * so two workers racing the last unit cannot both win; a refusal hands back
  * whatever the earlier counters were charged. Limits come from
- * `support.ai.quotas`; a limit that is missing reads as zero, which refuses.
+ * `support.ai.quotas`; a turn, team or pool limit that is missing reads as
+ * zero, which refuses. The two keys added after the first release,
+ * `pool_reservation_tokens` and `quotas.user_daily_tokens`, fall back to
+ * {@see self::DEFAULT_POOL_RESERVATION_TOKENS} and
+ * {@see self::DEFAULT_USER_DAILY_TOKENS}, because a host's published config
+ * replaces the whole `support` block and would otherwise refuse every turn.
  *
  * One turn is charged once however often it is reserved: the first outcome
  * (granted or refused) is recorded under the conversation and turn id and every
@@ -40,6 +47,16 @@ class SupportAiQuota
     private const DECAY_SECONDS = 90_000;
 
     private const LOCK_SECONDS = 10;
+
+    /**
+     * Tokens a turn reserves when the host's config predates `support.ai.pool_reservation_tokens`.
+     */
+    public const DEFAULT_POOL_RESERVATION_TOKENS = 6000;
+
+    /**
+     * One opener's daily tokens when the host's config predates `support.ai.quotas.user_daily_tokens`.
+     */
+    public const DEFAULT_USER_DAILY_TOKENS = 60000;
 
     public function __construct(
         private readonly RateLimiter $limiter,
@@ -86,6 +103,7 @@ class SupportAiQuota
                             pool: SupportAiPool::from($record['pool']),
                             tokens: $record['tokens'],
                             day: $record['day'],
+                            userId: $record['user'],
                         )
                         : null;
                 }
@@ -97,6 +115,7 @@ class SupportAiQuota
                     'pool' => $pool->value,
                     'tokens' => $reservation->tokens ?? 0,
                     'day' => $reservation->day ?? '',
+                    'user' => $reservation->userId ?? '',
                     'reconciled' => false,
                 ], self::DECAY_SECONDS);
 
@@ -106,7 +125,7 @@ class SupportAiQuota
     }
 
     /**
-     * Settle a turn's pool charge to the tokens it really used.
+     * Settle a turn's token charges, the pool's and the opener's, to the tokens it really used.
      *
      * Adjusts the day the tokens were reserved on, once: a second call for the
      * same reservation changes nothing. A failed turn reports zero usage to
@@ -130,6 +149,11 @@ class SupportAiQuota
                 if ($delta !== 0) {
                     $this->limiter->increment(
                         $this->poolKey($reservation->pool, $reservation->day),
+                        self::DECAY_SECONDS,
+                        $delta,
+                    );
+                    $this->limiter->increment(
+                        $this->key('tokens', $reservation->userId, $reservation->day),
                         self::DECAY_SECONDS,
                         $delta,
                     );
@@ -157,29 +181,57 @@ class SupportAiQuota
         }
 
         $day = $this->today();
-        $tokens = (int) config('magic-starter.support.ai.max_tokens_per_turn', 0);
+        $userId = (string) $user->getKey();
+        $tokens = (int) config(
+            'magic-starter.support.ai.pool_reservation_tokens',
+            self::DEFAULT_POOL_RESERVATION_TOKENS,
+        );
 
         // 1. The ceilings in the order they are cheapest to explain to a customer.
         $ceilings = [
-            [$this->key('user', $user->getKey(), $day), 1, $this->limit('user_daily')],
+            [
+                $this->key('user', $userId, $day),
+                1,
+                $this->limit('user_daily'),
+            ],
         ];
 
         if ($conversation->team_id !== null) {
-            $ceilings[] = [$this->key('team', $conversation->team_id, $day), 1, $this->limit('team_daily')];
+            $ceilings[] = [
+                $this->key('team', $conversation->team_id, $day),
+                1,
+                $this->limit('team_daily'),
+            ];
         }
 
         if ($this->isNewAccount($user)) {
-            $ceilings[] = [$this->key('new', $user->getKey(), $day), 1, $this->limit('new_account_daily')];
+            $ceilings[] = [
+                $this->key('new', $userId, $day),
+                1,
+                $this->limit('new_account_daily'),
+            ];
         }
 
-        $ceilings[] = [$this->poolKey($pool, $day), $tokens, $this->limit('pools.' . $pool->value)];
+        $ceilings[] = [
+            $this->key('tokens', $userId, $day),
+            $tokens,
+            $this->limit('user_daily_tokens', self::DEFAULT_USER_DAILY_TOKENS),
+        ];
+        $ceilings[] = [
+            $this->poolKey($pool, $day),
+            $tokens,
+            $this->limit('pools.' . $pool->value),
+        ];
 
         // 2. Each counter decides on its own post-increment value.
         $charged = [];
 
         foreach ($ceilings as [$key, $amount, $limit]) {
             $count = $this->limiter->increment($key, self::DECAY_SECONDS, $amount);
-            $charged[] = [$key, $amount];
+            $charged[] = [
+                $key,
+                $amount,
+            ];
 
             if ($count > $limit) {
                 // 3. A refused turn costs nothing anywhere.
@@ -191,7 +243,14 @@ class SupportAiQuota
             }
         }
 
-        return new Reservation($conversationId, $turnId, $pool, $tokens, $day);
+        return new Reservation(
+            conversationId: $conversationId,
+            turnId: $turnId,
+            pool: $pool,
+            tokens: $tokens,
+            day: $day,
+            userId: $userId,
+        );
     }
 
     /**
@@ -205,9 +264,12 @@ class SupportAiQuota
         return $verifiedAt !== null && Carbon::parse($verifiedAt)->gt(now()->subHours($hours));
     }
 
-    private function limit(string $name): int
+    /**
+     * @param  int  $default  What a host config without this key reads as; zero refuses.
+     */
+    private function limit(string $name, int $default = 0): int
     {
-        return (int) config('magic-starter.support.ai.quotas.' . $name, 0);
+        return (int) config('magic-starter.support.ai.quotas.' . $name, $default);
     }
 
     private function today(): string
@@ -229,25 +291,4 @@ class SupportAiQuota
     {
         return sprintf('magic-starter:support-ai:turn:%s:%s', $conversationId, $turnId);
     }
-}
-
-/**
- * What {@see SupportAiQuota::reserve()} charged for one turn, and the handle to settle it.
- *
- * It names the day the tokens were reserved on, so a reconcile that lands after
- * midnight still adjusts that day's pool.
- */
-final readonly class Reservation
-{
-    /**
-     * @param  int  $tokens  Tokens reserved from the pool, the model's per-turn ceiling.
-     * @param  string  $day  The `Y-m-d` the counters were charged on.
-     */
-    public function __construct(
-        public string $conversationId,
-        public string $turnId,
-        public SupportAiPool $pool,
-        public int $tokens,
-        public string $day,
-    ) {}
 }

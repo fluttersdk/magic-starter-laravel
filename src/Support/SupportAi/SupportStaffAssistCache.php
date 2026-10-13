@@ -60,15 +60,18 @@ final class SupportStaffAssistCache
     /**
      * Take the right to queue this turn's assist; false while one is already queued or running.
      *
-     * Held for the job's timeout at most, so a job that died without releasing
-     * it cannot block a retry for longer than the job could have run.
+     * Held for the job's retry window plus its timeout at most: long enough to
+     * cover a job still waiting in a busy queue, and no longer than a job that
+     * died without releasing it could have taken to start and run.
      */
     public function claim(SupportConversation $conversation): bool
     {
         return $this->cache->add(
             $this->key($conversation) . ':queued',
             true,
-            now()->addSeconds((int) config('magic-starter.support.ai.job_timeout', 90)),
+            now()
+                ->addMinutes(PrepareSupportStaffAssist::RETRY_WINDOW_MINUTES)
+                ->addSeconds((int) config('magic-starter.support.ai.job_timeout', 90)),
         );
     }
 

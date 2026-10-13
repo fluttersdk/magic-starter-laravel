@@ -20,6 +20,7 @@ use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Lang;
+use Throwable;
 
 /**
  * Where a conversation goes between the AI desk and staff.
@@ -32,7 +33,10 @@ use Illuminate\Support\Facades\Lang;
  * UPDATE on `status = pending`, and the database decides the race: exactly one
  * caller changes the row, and only that caller posts the customer-visible
  * handoff line, alerts staff and queues the staff assist. Every other caller
- * changes nothing and is told so.
+ * changes nothing and is told so. The responder, whose answer can itself ask
+ * for a person, runs the same write inside its own transaction
+ * ({@see self::moveToStaff()}) and announces after the commit
+ * ({@see self::announceHandoff()}).
  */
 final class SupportHandoff
 {
@@ -86,47 +90,91 @@ final class SupportHandoff
     ): bool {
         // 1. The conditional update decides the winner; the line commits with it, so a loser never sees a
         //    conversation that is open without its line.
-        $won = DB::transaction(function () use ($conversation, $reason, $priority, $turn): bool {
-            $now = now();
-
-            $changed = $this->pendingQuery($conversation, $turn)->update([
-                'status' => SupportConversationStatus::OPEN->value,
-                'waiting_since' => $now,
-                'handoff_reason' => $reason->value,
-                'last_activity_at' => $now,
-                'updated_at' => $now,
-                ...($priority !== null ? ['priority' => $priority->value] : []),
-            ]);
-
-            if ($changed !== 1) {
-                return false;
-            }
-
-            $conversation->messages()->create([
-                'sender_type' => SupportSenderType::SYSTEM,
-                'sender_id' => null,
-                'kind' => SupportMessageKind::ACTIVITY,
-                'body' => Lang::get('magic-starter::support.ai.handoff', [], $this->locale($conversation)),
-            ]);
-
-            return true;
-        });
+        $won = DB::transaction(fn (): bool => $this->moveToStaff($conversation, $reason, $priority, $turn));
 
         if (! $won) {
             return false;
         }
 
-        // 2. Staff hear of it once, the opener's thread refetches to show the line, and the assist is
-        //    prepared before anyone opens the Reply modal.
+        // 2. Only the winner tells anyone.
+        $this->announceHandoff($conversation);
+
+        return true;
+    }
+
+    /**
+     * The write half of a handoff: flip a pending conversation to `open` and post the customer-visible line.
+     *
+     * Runs inside the caller's transaction, so a caller that already holds the
+     * row under `lockForUpdate` (the responder persisting an answer that asks
+     * for a person) commits the answer and the handoff together. One
+     * conditional UPDATE on `status = pending` still decides the winner, so a
+     * lock-free {@see self::handoff()} racing it changes nothing. Tells nobody:
+     * the winner calls {@see self::announceHandoff()} once the transaction
+     * commits.
+     *
+     * @param  int|string|null  $turn  As in {@see self::handoff()}.
+     * @return bool Whether this call changed the conversation and posted the line.
+     */
+    public function moveToStaff(
+        SupportConversation $conversation,
+        SupportHandoffReason $reason,
+        ?SupportPriority $priority = null,
+        int|string|null $turn = null,
+    ): bool {
+        $now = now();
+
+        $changed = $this->pendingQuery($conversation, $turn)->update([
+            'status' => SupportConversationStatus::OPEN->value,
+            'waiting_since' => $now,
+            'handoff_reason' => $reason->value,
+            'last_activity_at' => $now,
+            'updated_at' => $now,
+            ...($priority !== null ? ['priority' => $priority->value] : []),
+        ]);
+
+        if ($changed !== 1) {
+            return false;
+        }
+
+        $conversation->messages()->create([
+            'sender_type' => SupportSenderType::SYSTEM,
+            'sender_id' => null,
+            'kind' => SupportMessageKind::ACTIVITY,
+            'body' => Lang::get('magic-starter::support.ai.handoff', [], $this->locale($conversation)),
+        ]);
+
+        return true;
+    }
+
+    /**
+     * The tell half of a handoff, for the caller that won {@see self::moveToStaff()}, after its commit.
+     *
+     * Staff hear of it once, the opener's thread refetches to show the line,
+     * and the staff assist is prepared before anyone opens the Reply modal.
+     * That automatic assist is a model call the customer's own writing
+     * triggered, so it is charged to their quota like a turn, under the turn
+     * id `assist:{last_customer_message_id}`; a refused charge, an unbound
+     * responder or one that cannot name the pool skips it, and staff can still
+     * ask for it with Summarize.
+     */
+    public function announceHandoff(SupportConversation $conversation): void
+    {
         $conversation->refresh();
         $this->events->dispatch(new SupportConversationNeedsStaff($conversation, 'handoff'));
         rescue(fn () => $this->events->dispatch(new SupportConversationUpdated($conversation)), report: true);
 
-        if ($this->container->bound(AssistsSupportStaff::class) && $this->assists->claim($conversation)) {
-            PrepareSupportStaffAssist::dispatch($conversation->getKey());
+        if (! $this->container->bound(AssistsSupportStaff::class) || ! $this->assists->claim($conversation)) {
+            return;
         }
 
-        return true;
+        if (! $this->chargeAssist($conversation)) {
+            $this->assists->release($conversation);
+
+            return;
+        }
+
+        PrepareSupportStaffAssist::dispatch($conversation->getKey());
     }
 
     /**
@@ -137,6 +185,28 @@ final class SupportHandoff
         $locale = $conversation->user?->getAttribute('locale');
 
         return is_string($locale) && $locale !== '' ? $locale : (string) config('app.locale', 'en');
+    }
+
+    /**
+     * Reserve the automatic assist against the opener's quota and the pool the responder names.
+     */
+    private function chargeAssist(SupportConversation $conversation): bool
+    {
+        if (! $this->container->bound(RespondsToSupport::class)) {
+            return false;
+        }
+
+        try {
+            $pool = $this->container->make(RespondsToSupport::class)->pool($conversation);
+        } catch (Throwable $exception) {
+            report($exception);
+
+            return false;
+        }
+
+        $turn = 'assist:' . $conversation->last_customer_message_id;
+
+        return $this->quota->reserve($conversation, $turn, $pool) !== null;
     }
 
     /**

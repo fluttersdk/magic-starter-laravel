@@ -53,6 +53,12 @@ class OpenSupportConversation implements OpensSupportConversations
      */
     private const INSERT_ATTEMPTS = 3;
 
+    /**
+     * Where an in-app conversation sent with a subject and no topic is filed: what a client older than
+     * the topic picker sends.
+     */
+    private const FALLBACK_TOPIC = 'other';
+
     public function __construct(
         private readonly SupportHandoff $desk,
     ) {}
@@ -60,8 +66,9 @@ class OpenSupportConversation implements OpensSupportConversations
     /**
      * Open a conversation for a signed-in user.
      *
-     * @param  array<string, mixed>  $input  topic (required unless the source is `contact_sales`), body, an optional
-     *                                       subject and an optional source (`in_app` or `contact_sales`)
+     * @param  array<string, mixed>  $input  topic (required unless the source is `contact_sales` or a subject is
+     *                                       sent, then filed under `other`), body, an optional subject and an
+     *                                       optional source (`in_app` or `contact_sales`)
      *
      * @throws ValidationException
      */
@@ -88,7 +95,7 @@ class OpenSupportConversation implements OpensSupportConversations
                 'team_id' => $attributes['current_team_id'] ?? null,
                 'email' => $attributes['email'] ?? null,
                 'name' => $attributes['name'] ?? null,
-                ...$this->filing($validated, $source),
+                ...$this->filing($validated, $source, fallbackTopic: self::FALLBACK_TOPIC),
                 'source' => $source,
                 'status' => $toAi ? SupportConversationStatus::PENDING : SupportConversationStatus::OPEN,
             ],
@@ -162,17 +169,23 @@ class OpenSupportConversation implements OpensSupportConversations
     /**
      * The topic and subject a conversation is filed under.
      *
-     * Contact sales is always `sales`. A missing subject is the topic label and
-     * the first line of the body, so the staff inbox still reads at a glance.
+     * Contact sales is always `sales`, and a missing topic is `$fallbackTopic`.
+     * A missing subject is the topic label and the first line of the body, so
+     * the staff inbox still reads at a glance.
      *
      * @param  array<string, mixed>  $validated
+     * @param  string|null  $fallbackTopic  The in-app door's `other`, for a client that sends only a subject;
+     *                                      the public door keeps a missing topic missing.
      * @return array{topic: string|null, subject: string}
      */
-    private function filing(array $validated, SupportConversationSource $source): array
-    {
+    private function filing(
+        array $validated,
+        SupportConversationSource $source,
+        ?string $fallbackTopic = null,
+    ): array {
         $topic = $source === SupportConversationSource::CONTACT_SALES
             ? 'sales'
-            : Arr::get($validated, 'topic');
+            : Arr::get($validated, 'topic') ?? $fallbackTopic;
 
         $subject = Arr::get($validated, 'subject');
 
@@ -186,7 +199,9 @@ class OpenSupportConversation implements OpensSupportConversations
         $firstLine = trim(Str::before(trim((string) $validated['body']), "\n"));
         $label = match (true) {
             $topic === null => null,
-            Lang::has('magic-starter::support.topics.' . $topic) => Lang::get('magic-starter::support.topics.' . $topic),
+            Lang::has('magic-starter::support.topics.' . $topic) => Lang::get(
+                'magic-starter::support.topics.' . $topic,
+            ),
             default => Str::headline($topic),
         };
 
@@ -228,6 +243,7 @@ class OpenSupportConversation implements OpensSupportConversations
 
             $conversation->forceFill([
                 'last_customer_message_id' => $message->getKey(),
+                'ai_failures' => 0,
             ])->save();
 
             return $conversation;

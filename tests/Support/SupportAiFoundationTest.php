@@ -400,7 +400,7 @@ class SupportAiFoundationTest extends TestCase
             config('magic-starter.support.topics'),
         );
         $this->assertSame('/support/{id}', config('magic-starter.support.client_thread_path'));
-        $this->assertSame('magic-starter::support.expectation', config('magic-starter.support.expectation'));
+        $this->assertArrayNotHasKey('expectation', config('magic-starter.support'));
         $this->assertNull(config('magic-starter.support.ai.name'));
         $this->assertSame('redis', config('magic-starter.support.ai.connection'));
         $this->assertSame('support', config('magic-starter.support.ai.queue'));
@@ -410,12 +410,14 @@ class SupportAiFoundationTest extends TestCase
         $this->assertSame(12, config('magic-starter.support.ai.history_messages'));
         $this->assertSame(1500, config('magic-starter.support.ai.reply_max_length'));
         $this->assertSame(1200, config('magic-starter.support.ai.max_tokens_per_turn'));
+        $this->assertSame(6000, config('magic-starter.support.ai.pool_reservation_tokens'));
         $this->assertSame(2, config('magic-starter.support.ai.failures_before_handoff'));
         $this->assertSame(5, config('magic-starter.support.ai.sweep_after_minutes'));
         $this->assertSame([], config('magic-starter.support.ai.allowed_hosts'));
         $this->assertSame(
             [
                 'user_daily' => 20,
+                'user_daily_tokens' => 60000,
                 'team_daily' => 40,
                 'new_account_daily' => 5,
                 'new_account_hours' => 24,
@@ -442,13 +444,15 @@ class SupportAiFoundationTest extends TestCase
                 'support.topics.other',
                 'support.ai.name',
                 'support.ai.handoff',
-                'support.expectation',
             ] as $key) {
                 $this->assertTrue(
                     Lang::hasForLocale('magic-starter::' . $key, $locale),
                     "Missing {$locale} line magic-starter::{$key}.",
                 );
             }
+
+            // Read nowhere, and it contradicted the client's own copy.
+            $this->assertFalse(Lang::hasForLocale('magic-starter::support.expectation', $locale));
         }
 
         $this->assertSame('Acme AI', Lang::get('magic-starter::support.ai.name', ['app' => 'Acme'], 'en'));

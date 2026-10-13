@@ -136,6 +136,48 @@ class PrepareSupportStaffAssistTest extends TestCase
         $job->failed(new RuntimeException('killed'));
     }
 
+    public function test_a_busy_queue_has_ten_minutes_to_start_it_and_a_killed_run_is_not_repeated(): void
+    {
+        $job = new PrepareSupportStaffAssist('1');
+
+        $this->assertEqualsWithDelta(now()->addMinutes(10)->getTimestamp(), $job->retryUntil()->getTimestamp(), 2);
+        $this->assertTrue($job->failOnTimeout);
+    }
+
+    public function test_the_claim_outlives_a_job_still_waiting_in_a_busy_queue(): void
+    {
+        $conversation = $this->conversation();
+        $cache = app(SupportStaffAssistCache::class);
+
+        $this->assertTrue($cache->claim($conversation));
+        $this->travel(5)->minutes();
+
+        $this->assertFalse($cache->claim($conversation));
+    }
+
+    public function test_a_host_config_without_the_ai_block_queues_it_on_redis_and_the_support_queue(): void
+    {
+        config()->set('magic-starter.support', []);
+
+        $job = new PrepareSupportStaffAssist('1');
+
+        $this->assertSame('redis', $job->connection);
+        $this->assertSame('support', $job->queue);
+    }
+
+    public function test_a_job_that_failed_for_good_logs_that_it_never_finished(): void
+    {
+        Log::spy();
+
+        (new PrepareSupportStaffAssist('1'))->failed(new RuntimeException('expired'));
+
+        Log::shouldHaveReceived('warning')->once()->withArgs(
+            static fn (string $message, array $context): bool => $message
+                === 'The support staff assist never finished: it timed out or waited past its retry window.'
+                && $context['exception'] === RuntimeException::class,
+        );
+    }
+
     private function runJob(SupportConversation $conversation): void
     {
         (new PrepareSupportStaffAssist($conversation->getKey()))->handle(

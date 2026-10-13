@@ -93,6 +93,8 @@ class PostCustomerSupportMessage implements PostsCustomerSupportMessages
                     'last_activity_at' => $now,
                     'opener_seen_at' => $now,
                     'last_customer_message_id' => $message->getKey(),
+                    // A new turn starts clean: a superseded turn's failures are not this one's.
+                    'ai_failures' => 0,
                 ])->save();
 
                 return [

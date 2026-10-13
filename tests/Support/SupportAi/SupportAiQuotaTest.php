@@ -5,11 +5,13 @@ namespace FlutterSdk\MagicStarter\Tests\Support\SupportAi;
 use FlutterSdk\MagicStarter\Enums\SupportAiPool;
 use FlutterSdk\MagicStarter\Enums\SupportConversationSource;
 use FlutterSdk\MagicStarter\Models\SupportConversation;
+use FlutterSdk\MagicStarter\Support\SupportAi\Reservation;
 use FlutterSdk\MagicStarter\Support\SupportAi\SupportAiQuota;
 use FlutterSdk\MagicStarter\Support\SupportAi\SupportUsage;
 use FlutterSdk\MagicStarter\Tests\Fixtures\ConcreteUser;
 use FlutterSdk\MagicStarter\Tests\TestCase;
 use Illuminate\Support\Carbon;
+use ReflectionClass;
 
 /**
  * Locks the AI quota ledger: who may spend at all, the four daily ceilings,
@@ -37,7 +39,7 @@ class SupportAiQuotaTest extends TestCase
             ]);
         }
 
-        config()->set('magic-starter.support.ai.max_tokens_per_turn', 1200);
+        config()->set('magic-starter.support.ai.pool_reservation_tokens', 1200);
         config()->set('magic-starter.support.ai.quotas', [
             'user_daily' => 20,
             'team_daily' => 40,
@@ -352,6 +354,90 @@ class SupportAiQuotaTest extends TestCase
         // Today's pool was never touched by the old turn: exactly one turn fits.
         $this->assertNotNull($quota->reserve($conversation, 'turn-2', SupportAiPool::FREE));
         $this->assertNull($quota->reserve($conversation, 'turn-3', SupportAiPool::FREE));
+    }
+
+    public function test_the_pool_is_reserved_at_pool_reservation_tokens_not_the_completion_cap(): void
+    {
+        config()->set('magic-starter.support.ai.max_tokens_per_turn', 1200);
+        config()->set('magic-starter.support.ai.pool_reservation_tokens', 3000);
+        $this->setPools(free: 6000);
+        $conversation = $this->createConversation($this->createUser());
+        $quota = $this->quota();
+
+        $this->assertSame(3000, $quota->reserve($conversation, 'turn-1', SupportAiPool::FREE)?->tokens);
+        $this->assertNotNull($quota->reserve($conversation, 'turn-2', SupportAiPool::FREE));
+        $this->assertNull($quota->reserve($conversation, 'turn-3', SupportAiPool::FREE));
+    }
+
+    public function test_a_host_config_without_the_new_keys_reserves_6000_and_caps_a_user_at_60000(): void
+    {
+        config()->set('magic-starter.support.ai', [
+            'quotas' => [
+                'user_daily' => 20,
+                'team_daily' => 40,
+                'new_account_daily' => 5,
+                'new_account_hours' => 24,
+                'pools' => [
+                    'free' => 1000000,
+                    'paid' => 1000000,
+                ],
+            ],
+        ]);
+        $conversation = $this->createConversation($this->createUser());
+        $quota = $this->quota();
+
+        for ($turn = 1; $turn <= 10; $turn++) {
+            $this->assertSame(
+                6000,
+                $quota->reserve($conversation, 'turn-' . $turn, SupportAiPool::FREE)?->tokens,
+                'turn ' . $turn . ' should be granted',
+            );
+        }
+
+        $this->assertNull($quota->reserve($conversation, 'turn-11', SupportAiPool::FREE));
+    }
+
+    public function test_one_user_cannot_drain_the_shared_pool_past_user_daily_tokens(): void
+    {
+        config()->set('magic-starter.support.ai.quotas.user_daily_tokens', 2500);
+        $quota = $this->quota();
+        $heavy = $this->createConversation($this->createUser());
+        $other = $this->createConversation($this->createUser());
+
+        $first = $quota->reserve($heavy, 'turn-1', SupportAiPool::FREE);
+        $this->assertNotNull($first);
+        $this->assertNotNull($quota->reserve($heavy, 'turn-2', SupportAiPool::FREE));
+        $this->assertNull($quota->reserve($heavy, 'turn-3', SupportAiPool::FREE));
+        $this->assertNotNull($quota->reserve($other, 'turn-1', SupportAiPool::FREE));
+
+        // Settling the first turn at 100 tokens gives 1100 back to the user's own ceiling too: 1300 + 1200 fits.
+        $quota->reconcile($first, new SupportUsage(promptTokens: 60, completionTokens: 40));
+
+        $this->assertNotNull($quota->reserve($heavy, 'turn-4', SupportAiPool::FREE));
+    }
+
+    public function test_a_refusal_by_the_user_token_ceiling_hands_back_the_user_turn(): void
+    {
+        config()->set('magic-starter.support.ai.quotas.user_daily_tokens', 1200);
+        $this->setQuotas(userDaily: 2);
+        $conversation = $this->createConversation($this->createUser());
+        $quota = $this->quota();
+
+        $first = $quota->reserve($conversation, 'turn-1', SupportAiPool::FREE);
+        $this->assertNotNull($first);
+        $this->assertNull($quota->reserve($conversation, 'turn-2', SupportAiPool::FREE));
+
+        $quota->reconcile($first, new SupportUsage(promptTokens: 0, completionTokens: 0));
+
+        $this->assertNotNull($quota->reserve($conversation, 'turn-3', SupportAiPool::FREE));
+    }
+
+    public function test_the_reservation_lives_in_its_own_file_for_the_authoritative_classmap(): void
+    {
+        $file = (new ReflectionClass(Reservation::class))->getFileName();
+
+        $this->assertIsString($file);
+        $this->assertSame('Reservation.php', basename($file));
     }
 
     private function quota(): SupportAiQuota

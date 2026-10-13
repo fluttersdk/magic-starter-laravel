@@ -19,6 +19,4 @@ return [
         'handoff' => 'Bu görüşmeyi destek ekibimize aktardım. Bir ekip arkadaşımız size buradan yanıt verecek.',
     ],
 
-    'expectation' => 'Ekibimiz genellikle bir iş günü içinde yanıt verir.',
-
 ];

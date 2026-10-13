@@ -21,7 +21,9 @@ use FlutterSdk\MagicStarter\Enums\SupportPriority;
  * `support.ai.handoff_terms`: a map of {@see SupportHandoffReason} value to a
  * list of extra phrases, folded the same way, for the reasons this table
  * decides (`security`, `outage`, `billing`, `anger`, `human_requested`); any
- * other key is ignored.
+ * other key is ignored. A phrase ending in `$` matches only up to a word end.
+ * The application's own name (`app.name`) being down or crashed (`çöktü`) is
+ * an outage too.
  *
  * It over-matches on purpose. A false positive costs one human answer; a false
  * negative lets the AI field a refund, a breach or an outage.
@@ -31,18 +33,27 @@ final class HandoffClassifier
     /**
      * Phrases per reason, already in folded form (lowercase, ASCII Turkish letters), most serious reason first.
      *
+     * Security and outage entries are claims about the customer's account or
+     * this service, not topics: "how do I get notified about an outage" is a
+     * question for the AI. A trailing `$` ends a phrase at a word end, so
+     * `hacked$` does not find `hackathon`.
+     *
      * @var array<string, list<string>>
      */
     private const TERMS = [
         'security' => [
-            'hack',
-            'compromised',
-            'breach',
+            'hacked$',
+            'hacker$',
+            'hackers$',
+            'hackle',
+            'compromised$',
+            'breach$',
+            'breached$',
             'stolen account',
             'someone logged in',
             'unauthorized access',
             'unauthorised access',
-            'phishing',
+            'phishing$',
             'reset my password',
             'reset password',
             'password reset',
@@ -66,7 +77,15 @@ final class HandoffClassifier
             'dolandir',
         ],
         'outage' => [
-            'outage',
+            'outage on your end',
+            'outage on your side',
+            'you have an outage',
+            'you are having an outage',
+            'are you having an outage',
+            'site down for me',
+            'site is down for me',
+            'is down for me',
+            'down for everyone',
             'your service is down',
             'your platform is down',
             'your site is down',
@@ -88,7 +107,9 @@ final class HandoffClassifier
             'sistem coktu',
             'platform coktu',
             'hizmet verilmiyor',
-            'kesinti',
+            'kesinti var',
+            'kesinti yasaniyor',
+            'kesinti yasiyor',
             'hicbir sey calismiyor',
             'veri kaybi',
             'verilerim kayb',
@@ -287,6 +308,17 @@ final class HandoffClassifier
     private function terms(): array
     {
         $terms = self::TERMS;
+        $app = self::fold((string) config('app.name', ''));
+
+        if ($app !== '') {
+            array_push(
+                $terms['outage'],
+                $app . ' is down',
+                $app . ' coktu',
+                $app . ' calismiyor',
+            );
+        }
+
         $extra = config('magic-starter.support.ai.handoff_terms', []);
 
         foreach (is_array($extra) ? $extra : [] as $reason => $phrases) {
@@ -307,13 +339,18 @@ final class HandoffClassifier
     }
 
     /**
-     * Whether any phrase starts at a word start of the folded text.
+     * Whether any phrase starts at a word start of the folded text, and ends at a word end when it asks to.
      *
      * @param  list<string>  $terms
      */
     private function mentions(string $folded, array $terms): bool
     {
-        $alternatives = implode('|', array_map(fn (string $term): string => preg_quote($term, '/'), $terms));
+        $alternatives = implode('|', array_map(
+            static fn (string $term): string => str_ends_with($term, '$')
+                ? preg_quote(substr($term, 0, -1), '/') . '(?![\p{L}\p{N}])'
+                : preg_quote($term, '/'),
+            $terms,
+        ));
 
         return preg_match('/(?<![\p{L}\p{N}])(?:' . $alternatives . ')/u', $folded) === 1;
     }

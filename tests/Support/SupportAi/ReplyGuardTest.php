@@ -68,6 +68,12 @@ class ReplyGuardTest extends TestCase
             'the customer did the action' => [
                 'If you changed the interval, the next check uses it.',
             ],
+            'a version number is not a link' => [
+                'This works since version 1.2 of the agent.',
+            ],
+            'a file name is not a link' => [
+                'Open config.php and set the interval there.',
+            ],
         ];
     }
 
@@ -127,6 +133,26 @@ class ReplyGuardTest extends TestCase
                 'Planınızı değiştirdim.',
                 ReplyGuard::ACTION_CLAIM,
             ],
+            'turkish formal past cancel' => [
+                'Aboneliğiniz iptal edilmiştir.',
+                ReplyGuard::ACTION_CLAIM,
+            ],
+            'turkish formal past refund in capitals' => [
+                'İADENİZ YAPILMIŞTIR.',
+                ReplyGuard::ACTION_CLAIM,
+            ],
+            'turkish formal past deletion' => [
+                'Hesabınız silinmiştir.',
+                ReplyGuard::ACTION_CLAIM,
+            ],
+            'a passive claim about the subscription' => [
+                'Done! The subscription is cancelled.',
+                ReplyGuard::ACTION_CLAIM,
+            ],
+            'went ahead and' => [
+                'I went ahead and refunded the charge.',
+                ReplyGuard::ACTION_CLAIM,
+            ],
             'foreign host' => [
                 'Please sign in at https://evil.example/x to continue.',
                 ReplyGuard::FOREIGN_LINK,
@@ -171,6 +197,10 @@ class ReplyGuardTest extends TestCase
                 'Write to billing@evil.com for that.',
                 ReplyGuard::FOREIGN_LINK,
             ],
+            'a bare host on an unlisted top-level domain' => [
+                'Please visit evil.zip to restore access.',
+                ReplyGuard::FOREIGN_LINK,
+            ],
             'password ask' => [
                 'send me your password',
                 ReplyGuard::CREDENTIAL_REQUEST,
@@ -205,6 +235,14 @@ class ReplyGuardTest extends TestCase
             ],
             'turkish card ask' => [
                 'Kart numaranızı paylaşır mısınız?',
+                ReplyGuard::CREDENTIAL_REQUEST,
+            ],
+            'a negation in the sentence before the ask' => [
+                "Don't worry about it. Please send me your password so I can check.",
+                ReplyGuard::CREDENTIAL_REQUEST,
+            ],
+            'a never in the sentence before the ask' => [
+                'We never share data. Send me your password.',
                 ReplyGuard::CREDENTIAL_REQUEST,
             ],
             'over the length cap' => [

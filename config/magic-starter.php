@@ -76,8 +76,6 @@ return [
     | `topics` lists what an opener may file a conversation under; the labels
     | are `magic-starter::support.topics.<topic>`. `client_thread_path` is the
     | in-app route of a thread; `{id}` is replaced with the conversation key.
-    | `expectation` is the lang key of the line telling a customer when staff
-    | usually reply.
     |
     | `ai` tunes the AI desk, which is off until the application binds
     | `RespondsToSupport`. `name` is the sender name customers see; null reads
@@ -91,8 +89,13 @@ return [
     | a turn still unanswered after `sweep_after_minutes` is handed off by the
     | sweeper. `allowed_hosts` lists the hosts a reply may link to; any other
     | link rejects the reply. `quotas` caps AI turns per user and per team a
-    | day, a tighter cap for an account younger than `new_account_hours`, and
-    | the tokens a day each pool (`free`, `paid`) may spend across all teams.
+    | day, a tighter cap for an account younger than `new_account_hours`, the
+    | tokens one user may spend a day (`user_daily_tokens`), and the tokens a
+    | day each pool (`free`, `paid`) may spend across all teams. A turn
+    | reserves `pool_reservation_tokens` (prompt and completion together) from
+    | the user's tokens and the pool up front and settles to what it used. The
+    | staff assist queued on a handoff is charged the same way, as one turn;
+    | the panel's Summarize button is not.
     |
     */
 
@@ -115,8 +118,6 @@ return [
 
         'client_thread_path' => '/support/{id}',
 
-        'expectation' => 'magic-starter::support.expectation',
-
         'ai' => [
             'name' => null,
             'connection' => 'redis',
@@ -127,11 +128,13 @@ return [
             'history_messages' => 12,
             'reply_max_length' => 1500,
             'max_tokens_per_turn' => 1200,
+            'pool_reservation_tokens' => 6000,
             'failures_before_handoff' => 2,
             'sweep_after_minutes' => 5,
             'allowed_hosts' => [],
             'quotas' => [
                 'user_daily' => 20,
+                'user_daily_tokens' => 60000,
                 'team_daily' => 40,
                 'new_account_daily' => 5,
                 'new_account_hours' => 24,

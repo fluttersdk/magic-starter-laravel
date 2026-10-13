@@ -24,6 +24,7 @@ use FlutterSdk\MagicStarter\Enums\SupportSenderType;
 use FlutterSdk\MagicStarter\Filament\Resources\MagicStarterResource;
 use FlutterSdk\MagicStarter\Filament\Resources\SupportConversations\Pages\ListSupportConversations;
 use FlutterSdk\MagicStarter\Filament\Resources\SupportConversations\Pages\ViewSupportConversation;
+use FlutterSdk\MagicStarter\Http\Resources\SupportMessageResource;
 use FlutterSdk\MagicStarter\Models\SupportConversation;
 use FlutterSdk\MagicStarter\Models\SupportMessage;
 use FlutterSdk\MagicStarter\Support\SupportAi\SupportStaffAssistCache;
@@ -32,6 +33,7 @@ use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\Collection;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Support\Str;
+use WeakMap;
 
 /**
  * The staff inbox: every recorded conversation, answered from the panel.
@@ -68,6 +70,13 @@ class SupportConversationResource extends MagicStarterResource
     protected static string|BackedEnum|null $navigationIcon = Heroicon::OutlinedChatBubbleLeftRight;
 
     protected static ?string $recordTitleAttribute = 'subject';
+
+    /**
+     * {@see self::aiTurns()} per record instance.
+     *
+     * @var WeakMap<SupportConversation, int>|null
+     */
+    protected static ?WeakMap $aiTurns = null;
 
     protected static function resolveModel(): string
     {
@@ -446,11 +455,17 @@ class SupportConversationResource extends MagicStarterResource
     }
 
     /**
-     * How many AI messages the thread carries.
+     * How many AI messages the thread carries, counted once per record instance.
+     *
+     * The details entry reads it for its visibility and its state, so a render
+     * would otherwise count twice. Keyed weakly by the record, so a poll, which
+     * hydrates a fresh record, counts again and nothing outlives the request.
      */
     protected static function aiTurns(SupportConversation $conversation): int
     {
-        return $conversation->messages()
+        static::$aiTurns ??= new WeakMap;
+
+        return static::$aiTurns[$conversation] ??= $conversation->messages()
             ->where('sender_type', SupportSenderType::AI->value)
             ->where('kind', SupportMessageKind::MESSAGE->value)
             ->count();
@@ -503,8 +518,7 @@ class SupportConversationResource extends MagicStarterResource
         string $variant,
     ): string {
         if ($variant === 'ai') {
-            return (string) (config('magic-starter.support.ai.name')
-                ?? __('magic-starter::support.ai.name', ['app' => config('app.name')]));
+            return SupportMessageResource::aiName();
         }
 
         $name = $message->sender?->getAttribute('name');
