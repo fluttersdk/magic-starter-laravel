@@ -126,6 +126,7 @@ return [
             'title' => 'Support conversation #:number',
             'opened' => 'A customer opened a new conversation.',
             'customer_wrote' => 'A customer wrote again and is waiting for an answer.',
+            'handoff' => 'The AI desk handed a conversation to staff: :reason.',
             'open_panel' => 'Open the admin panel to answer it.',
         ],
         'reply' => [

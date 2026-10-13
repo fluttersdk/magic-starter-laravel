@@ -4,12 +4,14 @@ namespace FlutterSdk\MagicStarter\Actions;
 
 use FlutterSdk\MagicStarter\Audit\Auditor;
 use FlutterSdk\MagicStarter\Contracts\RepliesToSupport;
+use FlutterSdk\MagicStarter\Enums\SupportConversationStatus;
 use FlutterSdk\MagicStarter\Enums\SupportMessageKind;
 use FlutterSdk\MagicStarter\Enums\SupportSenderType;
 use FlutterSdk\MagicStarter\Events\SupportConversationUpdated;
 use FlutterSdk\MagicStarter\Models\SupportConversation;
 use FlutterSdk\MagicStarter\Models\SupportMessage;
 use FlutterSdk\MagicStarter\Notifications\SupportReplyNotification;
+use FlutterSdk\MagicStarter\Support\SupportRules;
 use FlutterSdk\MagicStarter\Support\SupportThreadToken;
 use Illuminate\Contracts\Auth\Authenticatable;
 use Illuminate\Support\Facades\DB;
@@ -22,7 +24,8 @@ use Illuminate\Validation\ValidationException;
  * Records a staff reply or an internal note and tells the customer about a reply.
  *
  * A note is written, audited and nothing else: no notification, no mail, no
- * broadcast, and it answers no wait. A reply answers the wait and reaches the
+ * broadcast, and it answers no wait. A reply answers the wait, takes a pending
+ * conversation from the AI desk (it becomes `open`), and reaches the
  * customer by exactly one route: an opener with an account by database and
  * push plus a realtime nudge, a visitor with no account by a mail carrying a
  * newly minted thread link, which retires the link in every earlier mail.
@@ -35,11 +38,7 @@ class ReplyToSupportConversation implements RepliesToSupport
         Validator::make([
             'body' => $body,
         ], [
-            'body' => [
-                'required',
-                'string',
-                'max:' . (int) config('magic-starter.support.message_max_length', 2000),
-            ],
+            'body' => SupportRules::body(),
         ])->validate();
 
         // 2. A visitor's reply is only useful with a link to follow, so a
@@ -47,7 +46,10 @@ class ReplyToSupportConversation implements RepliesToSupport
         $mailsVisitor = ! $note && $c->user_id === null;
         $threadUrl = $mailsVisitor ? $this->threadUrlTemplate() : null;
 
-        // 3. Record the message, and for a reply, answer the wait.
+        // 3. Record the message, and for a reply, answer the wait. A reply to a
+        //    pending conversation takes it from the AI desk in the same
+        //    transaction, so a responder job mid-turn finds it open and discards
+        //    its answer.
         $message = DB::transaction(function () use ($staff, $c, $body, $note): SupportMessage {
             /** @var SupportMessage $message */
             $message = $c->messages()->create([
@@ -58,6 +60,10 @@ class ReplyToSupportConversation implements RepliesToSupport
             ]);
 
             if (! $note) {
+                if ($c->status === SupportConversationStatus::PENDING) {
+                    $c->status = SupportConversationStatus::OPEN;
+                }
+
                 $c->first_reply_at ??= now();
                 $c->waiting_since = null;
                 $c->last_activity_at = now();

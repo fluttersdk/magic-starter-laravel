@@ -13,6 +13,8 @@ use FlutterSdk\MagicStarter\Console\PruneAuditsCommand;
 use FlutterSdk\MagicStarter\Console\PruneBillingRecordsCommand;
 use FlutterSdk\MagicStarter\Console\PurgeDeletedUsersCommand;
 use FlutterSdk\MagicStarter\Console\ReconcileBillingEntitlements;
+use FlutterSdk\MagicStarter\Console\SupportDoctorCommand;
+use FlutterSdk\MagicStarter\Console\SweepSupportConversationsCommand;
 use FlutterSdk\MagicStarter\Support\FrontendUrl;
 use Illuminate\Auth\Events\Registered;
 use Illuminate\Auth\Events\Verified;
@@ -381,6 +383,9 @@ class MagicStarterServiceProvider extends ServiceProvider
                 Events\SupportConversationNeedsStaff::class,
                 Listeners\NotifyStaffOfSupportConversation::class,
             );
+
+            // No pending conversation waits forever; see scheduleSupportSweep().
+            $this->scheduleSupportSweep();
         }
 
         // 3.7. Register package translations.
@@ -450,6 +455,14 @@ class MagicStarterServiceProvider extends ServiceProvider
 
                 $this->schedulePruneBillingRecords();
                 $this->scheduleExpireBillingGrants();
+            }
+
+            // The AI desk's sweeper and doctor, with the feature like its routes.
+            if (Features::hasSupportFeatures()) {
+                $this->commands([
+                    SweepSupportConversationsCommand::class,
+                    SupportDoctorCommand::class,
+                ]);
             }
 
             // Filament is an optional dependency: its commands exist only where it
@@ -750,6 +763,29 @@ class MagicStarterServiceProvider extends ServiceProvider
             $schedule->command(PruneBillingRecordsCommand::NAME)
                 ->name(PruneBillingRecordsCommand::NAME)
                 ->daily()
+                ->withoutOverlapping()
+                ->onOneServer();
+        });
+    }
+
+    /**
+     * Put `magic-starter:support:sweep` on the schedule, every minute.
+     *
+     * Registered by the package for the reason the reconciler is (see
+     * {@see self::scheduleEntitlementReconciler()}): a pending conversation
+     * whose responder job died is only ever handed to staff by this sweep, so
+     * a host that forgot to schedule it would leave customers waiting on
+     * nobody. Every minute because the sweep's own threshold is counted in
+     * minutes. `withoutOverlapping()` and `onOneServer()` keep two sweeps off
+     * one conversation; the handoff is idempotent anyway, so a fleet that
+     * cannot share a lock only repeats an update that changes nothing.
+     */
+    private function scheduleSupportSweep(): void
+    {
+        $this->callAfterResolving(Schedule::class, function (Schedule $schedule): void {
+            $schedule->command(SweepSupportConversationsCommand::NAME)
+                ->name(SweepSupportConversationsCommand::NAME)
+                ->everyMinute()
                 ->withoutOverlapping()
                 ->onOneServer();
         });

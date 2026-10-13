@@ -3,6 +3,7 @@
 namespace FlutterSdk\MagicStarter\Notifications;
 
 use Filament\Notifications\Notification as FilamentNotification;
+use FlutterSdk\MagicStarter\Enums\SupportHandoffReason;
 use FlutterSdk\MagicStarter\Features;
 use FlutterSdk\MagicStarter\Models\SupportConversation;
 use Illuminate\Bus\Queueable;
@@ -30,7 +31,7 @@ class SupportConversationNeedsStaffNotification extends Notification implements 
     use Queueable;
 
     /**
-     * @param  string  $reason  `opened` or `customer_message`
+     * @param  string  $reason  `opened`, `customer_message` or `handoff`
      */
     public function __construct(
         public readonly SupportConversation $conversation,
@@ -124,10 +125,20 @@ class SupportConversationNeedsStaffNotification extends Notification implements 
         ]);
     }
 
+    /**
+     * Why staff are told: a new conversation, a customer writing again, or the AI desk's handoff and its reason.
+     */
     private function reasonLine(): string
     {
-        return $this->reason === 'opened'
-            ? Lang::get('magic-starter::admin_support.notifications.staff.opened')
-            : Lang::get('magic-starter::admin_support.notifications.staff.customer_wrote');
+        return match ($this->reason) {
+            'opened' => Lang::get('magic-starter::admin_support.notifications.staff.opened'),
+            'handoff' => Lang::get('magic-starter::admin_support.notifications.staff.handoff', [
+                'reason' => Lang::get(
+                    'magic-starter::admin_support.enums.handoff_reason.'
+                    . ($this->conversation->handoff_reason ?? SupportHandoffReason::UNAVAILABLE)->value,
+                ),
+            ]),
+            default => Lang::get('magic-starter::admin_support.notifications.staff.customer_wrote'),
+        };
     }
 }

@@ -5,10 +5,13 @@ namespace FlutterSdk\MagicStarter\Actions;
 use FlutterSdk\MagicStarter\Audit\Auditor;
 use FlutterSdk\MagicStarter\Contracts\OpensSupportConversations;
 use FlutterSdk\MagicStarter\Enums\SupportConversationSource;
+use FlutterSdk\MagicStarter\Enums\SupportConversationStatus;
 use FlutterSdk\MagicStarter\Enums\SupportMessageKind;
 use FlutterSdk\MagicStarter\Enums\SupportSenderType;
 use FlutterSdk\MagicStarter\Events\SupportConversationNeedsStaff;
+use FlutterSdk\MagicStarter\Jobs\RespondToSupportConversation;
 use FlutterSdk\MagicStarter\Models\SupportConversation;
+use FlutterSdk\MagicStarter\Support\SupportAi\SupportHandoff;
 use FlutterSdk\MagicStarter\Support\SupportRules;
 use Illuminate\Contracts\Auth\Authenticatable;
 use Illuminate\Database\Eloquent\Model;
@@ -33,6 +36,11 @@ use Illuminate\Validation\ValidationException;
  * A contact-sales conversation is always filed under the `sales` topic, and a
  * conversation opened without a subject gets one from its topic label and the
  * first line of its body.
+ *
+ * A signed-in opener the AI desk answers (see {@see SupportHandoff::routesToAi()})
+ * starts `pending`: the responder job is queued once the conversation commits
+ * and staff hear of it only on a handoff. Every other conversation starts
+ * `open` and alerts staff, as it always has.
  */
 class OpenSupportConversation implements OpensSupportConversations
 {
@@ -44,6 +52,10 @@ class OpenSupportConversation implements OpensSupportConversations
      * the second; a retry reads the new maximum.
      */
     private const INSERT_ATTEMPTS = 3;
+
+    public function __construct(
+        private readonly SupportHandoff $desk,
+    ) {}
 
     /**
      * Open a conversation for a signed-in user.
@@ -66,8 +78,9 @@ class OpenSupportConversation implements OpensSupportConversations
 
         // 2. The opener, and the team they were in, come from the account. The
         //    raw attributes are read because `current_team_id` only exists with
-        //    the teams feature.
+        //    the teams feature. Whether the AI desk answers is decided once, here.
         $attributes = $user instanceof Model ? $user->getAttributes() : [];
+        $toAi = $this->desk->routesToAi($user instanceof Model ? $user : null, $source);
 
         $conversation = $this->create(
             [
@@ -77,13 +90,18 @@ class OpenSupportConversation implements OpensSupportConversations
                 'name' => $attributes['name'] ?? null,
                 ...$this->filing($validated, $source),
                 'source' => $source,
+                'status' => $toAi ? SupportConversationStatus::PENDING : SupportConversationStatus::OPEN,
             ],
             $validated['body'],
             $user,
         );
 
-        // 3. Tell staff once, now that the conversation exists for good.
-        $this->announce($conversation, $user);
+        // 3. A pending conversation goes to the responder once it commits; any other tells staff once.
+        if ($toAi) {
+            RespondToSupportConversation::dispatch($conversation->getKey(), $conversation->last_customer_message_id);
+        }
+
+        $this->announce($conversation, $user, alertStaff: ! $toAi);
 
         return $conversation;
     }
@@ -201,12 +219,16 @@ class OpenSupportConversation implements OpensSupportConversations
                 'opener_seen_at' => $now,
             ]);
 
-            $conversation->messages()->create([
+            $message = $conversation->messages()->create([
                 'sender_type' => SupportSenderType::CUSTOMER,
                 'sender_id' => $sender?->getAuthIdentifier(),
                 'kind' => SupportMessageKind::MESSAGE,
                 'body' => $body,
             ]);
+
+            $conversation->forceFill([
+                'last_customer_message_id' => $message->getKey(),
+            ])->save();
 
             return $conversation;
         };
@@ -222,9 +244,14 @@ class OpenSupportConversation implements OpensSupportConversations
         }
     }
 
-    private function announce(SupportConversation $conversation, ?Authenticatable $opener): void
-    {
-        Event::dispatch(new SupportConversationNeedsStaff($conversation, 'opened'));
+    private function announce(
+        SupportConversation $conversation,
+        ?Authenticatable $opener,
+        bool $alertStaff = true,
+    ): void {
+        if ($alertStaff) {
+            Event::dispatch(new SupportConversationNeedsStaff($conversation, 'opened'));
+        }
 
         Auditor::record(
             'support.conversation_opened',

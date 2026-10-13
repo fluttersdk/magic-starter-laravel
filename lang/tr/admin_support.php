@@ -126,6 +126,7 @@ return [
             'title' => 'Destek görüşmesi #:number',
             'opened' => 'Bir müşteri yeni bir görüşme başlattı.',
             'customer_wrote' => 'Bir müşteri yeniden yazdı ve yanıt bekliyor.',
+            'handoff' => 'Yapay zekâ masası bir görüşmeyi ekibe devretti: :reason.',
             'open_panel' => 'Yanıtlamak için yönetim panelini açın.',
         ],
         'reply' => [

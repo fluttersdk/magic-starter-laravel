@@ -8,10 +8,14 @@ use FlutterSdk\MagicStarter\Enums\SupportConversationStatus;
 use FlutterSdk\MagicStarter\Enums\SupportMessageKind;
 use FlutterSdk\MagicStarter\Enums\SupportSenderType;
 use FlutterSdk\MagicStarter\Events\SupportConversationNeedsStaff;
+use FlutterSdk\MagicStarter\Jobs\RespondToSupportConversation;
 use FlutterSdk\MagicStarter\Models\SupportConversation;
 use FlutterSdk\MagicStarter\Models\SupportMessage;
+use FlutterSdk\MagicStarter\Support\SupportAi\SupportHandoff;
+use FlutterSdk\MagicStarter\Support\SupportRules;
 use Illuminate\Auth\Access\AuthorizationException;
 use Illuminate\Contracts\Auth\Authenticatable;
+use Illuminate\Database\Eloquent\Model;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Event;
 use Illuminate\Support\Facades\Validator;
@@ -23,10 +27,16 @@ use Illuminate\Validation\ValidationException;
  * The poster must be the opener: the same account, or no account on either
  * side for a visitor on the public link. Anyone else is answered as if the
  * conversation did not exist. A message puts the conversation back in front of
- * staff, reopening one that was snoozed or resolved.
+ * staff, reopening one that was snoozed or resolved, and alerts them unless it
+ * was already waiting on them. A pending conversation the AI desk still
+ * answers stays pending instead, and the message queues the responder.
  */
 class PostCustomerSupportMessage implements PostsCustomerSupportMessages
 {
+    public function __construct(
+        private readonly SupportHandoff $desk,
+    ) {}
+
     /**
      * Append the customer's message to the thread.
      *
@@ -48,20 +58,26 @@ class PostCustomerSupportMessage implements PostsCustomerSupportMessages
                 'body' => $body,
             ],
             [
-                'body' => [
-                    'required',
-                    'string',
-                    'max:' . (int) config('magic-starter.support.message_max_length', 2000),
-                ],
+                'body' => SupportRules::body(),
             ],
         )->validate();
 
-        // 3. Record the message and move the conversation back onto staff's plate.
-        //    The model listener is silenced: a visitor's request url carries the
-        //    thread token, and its rows would copy that url into their context.
-        $message = Auditor::withoutAuditing(fn (): SupportMessage => DB::transaction(
-            function () use ($c, $body, $user): SupportMessage {
+        // 3. Record the message, and decide from the locked row who answers it:
+        //    the AI desk keeps a pending conversation it still answers, anything
+        //    else goes back onto staff's plate. The model listener is silenced:
+        //    a visitor's request url carries the thread token, and its rows
+        //    would copy that url into their context.
+        $toAi = $this->desk->routesToAi($user instanceof Model ? $user : null, $c->source);
+
+        [$message, $staysWithAi, $wasWaiting] = Auditor::withoutAuditing(fn (): array => DB::transaction(
+            function () use ($c, $body, $user, $toAi): array {
                 $now = now();
+                $c->setRawAttributes(
+                    SupportConversation::query()->lockForUpdate()->findOrFail($c->getKey())->getAttributes(),
+                    true,
+                );
+                $staysWithAi = $toAi && $c->status === SupportConversationStatus::PENDING;
+                $wasWaiting = $c->status === SupportConversationStatus::OPEN && $c->waiting_since !== null;
 
                 $message = $c->messages()->create([
                     'sender_type' => SupportSenderType::CUSTOMER,
@@ -71,21 +87,33 @@ class PostCustomerSupportMessage implements PostsCustomerSupportMessages
                 ]);
 
                 $c->forceFill([
-                    'status' => SupportConversationStatus::OPEN,
+                    'status' => $staysWithAi ? SupportConversationStatus::PENDING : SupportConversationStatus::OPEN,
                     'resolved_at' => null,
                     'waiting_since' => $c->waiting_since ?? $now,
                     'last_activity_at' => $now,
                     'opener_seen_at' => $now,
+                    'last_customer_message_id' => $message->getKey(),
                 ])->save();
 
-                return $message;
+                return [
+                    $message,
+                    $staysWithAi,
+                    $wasWaiting,
+                ];
             },
         ));
 
-        // 4. Tell staff once, and record the one event in place of the silenced
-        //    model rows, without the url for the same reason.
-        Event::dispatch(new SupportConversationNeedsStaff($c, 'customer_message'));
+        // 4. The responder answers a pending turn once it commits. Staff are
+        //    told once per wait: a signed-in opener writing again to a
+        //    conversation already waiting on them adds no alert. A visitor's
+        //    message alerts every time, as it always has.
+        if ($staysWithAi) {
+            RespondToSupportConversation::dispatch($c->getKey(), $message->getKey());
+        } elseif ($user === null || ! $wasWaiting) {
+            Event::dispatch(new SupportConversationNeedsStaff($c, 'customer_message'));
+        }
 
+        // 5. Record the one event in place of the silenced model rows, without the url for the same reason.
         Auditor::record(
             'support.customer_message',
             $c,
