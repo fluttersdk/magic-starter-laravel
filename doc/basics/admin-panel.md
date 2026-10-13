@@ -127,6 +127,10 @@ Set every option before `->plugin()`. Filament registers the plugin the moment i
 
 `horizon()`, `pulse()` and `telescope()` throw a `LogicException` when their package is not installed.
 
+### Time zone
+
+The panel shows times in the signed-in staff user's `timezone` attribute. A user whose `timezone` is empty or `UTC` (the column's default, which says nothing was chosen) sees `magic-starter.admin.timezone` (`MAGIC_STARTER_ADMIN_TIMEZONE`), and without that, `app.timezone`. Stored timestamps stay in UTC. An explicit `->timezone()` on a column still wins.
+
 ---
 
 <a name="what-the-panel-contains"></a>

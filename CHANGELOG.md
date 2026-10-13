@@ -4,6 +4,10 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Added
+
+- **The panel shows times in the staff user's timezone.** `MagicStarterPlugin::boot()` sets `FilamentTimezone` to the signed-in user's `timezone` unless it is empty or `UTC`, then to the new `magic-starter.admin.timezone` (`MAGIC_STARTER_ADMIN_TIMEZONE`), then to `app.timezone`. Before, every `dateTime()` column and entry showed UTC. (`src/Filament/MagicStarterPlugin.php`, `config/magic-starter.php`, `doc/basics/admin-panel.md`)
+
 ### Changed
 
 - **A visitor's message alerts staff once per wait, like a signed-in opener's.** A message to a conversation already waiting on staff fires no second `SupportConversationNeedsStaff`; a visitor's used to alert every time. (`src/Actions/PostCustomerSupportMessage.php`)
