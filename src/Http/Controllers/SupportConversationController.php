@@ -40,6 +40,9 @@ class SupportConversationController
             SupportConversation::query()->where('user_id', $request->user()->getAuthIdentifier()),
         )
             ->orderByDesc('last_activity_at')
+            // The column holds whole seconds, so a burst of turns ties; without the key the database may hand the
+            // same row to two pages and skip another.
+            ->orderByDesc('id')
             ->paginate($perPage);
 
         return SupportConversationResource::collection($conversations);

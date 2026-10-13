@@ -527,6 +527,26 @@ class SupportConversationControllerTest extends TestCase
             ->assertJsonCount(1, 'data');
     }
 
+    public function test_the_index_pages_conversations_with_the_same_activity_second_in_a_stable_order(): void
+    {
+        $opener = $this->user('opener@example.com', self::TEAM);
+        $ids = collect([
+            $this->openAs($opener),
+            $this->openAs($opener),
+            $this->openAs($opener),
+        ])->map->getKey();
+        SupportConversation::query()->update([
+            'last_activity_at' => Carbon::parse('2026-10-13 12:05:54'),
+        ]);
+        $this->actingAs($opener, 'sanctum');
+
+        $paged = collect(range(1, 3))->map(
+            fn (int $page) => $this->getJson("/support/conversations?per_page=1&page={$page}")->json('data.0.id'),
+        );
+
+        $this->assertSame($ids->sortDesc()->values()->all(), $paged->all());
+    }
+
     public function test_an_in_app_store_requires_a_configured_topic_and_derives_a_missing_subject(): void
     {
         $this->actingAs($this->user('opener@example.com', self::TEAM), 'sanctum');

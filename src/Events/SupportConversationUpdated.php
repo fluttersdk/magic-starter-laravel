@@ -5,22 +5,30 @@ namespace FlutterSdk\MagicStarter\Events;
 use FlutterSdk\MagicStarter\Models\SupportConversation;
 use Illuminate\Broadcasting\PrivateChannel;
 use Illuminate\Contracts\Broadcasting\ShouldBroadcast;
+use Illuminate\Support\Str;
 
 /**
  * Staff changed a conversation the opener can see: a reply, a status, a
  * priority or an assignee.
  *
  * A nudge to refetch, not a copy of the change: the payload is the
- * conversation id and nothing else, so no message text and no staff note ever
- * crosses the socket, and the client reads the thread through the API that
- * already applies the opener-only rule. Only a conversation with an opener
- * account is broadcast; a visitor on the public link has no channel.
+ * conversation id plus a per-event id and nothing else, so no message text and
+ * no staff note ever crosses the socket, and the client reads the thread
+ * through the API that already applies the opener-only rule. Only a
+ * conversation with an opener account is broadcast; a visitor on the public
+ * link has no channel.
+ *
+ * The event id is load-bearing: magic's Reverb driver drops a frame whose
+ * channel, event and payload it has already seen, so with the conversation id
+ * alone every update after a conversation's first would be discarded.
  */
 class SupportConversationUpdated implements ShouldBroadcast
 {
     public readonly string|int $conversationId;
 
     public readonly string|int|null $openerId;
+
+    public readonly string $eventId;
 
     /**
      * @param  SupportConversation  $conversation  one with an opener (`user_id` set)
@@ -29,6 +37,7 @@ class SupportConversationUpdated implements ShouldBroadcast
     {
         $this->conversationId = $conversation->getKey();
         $this->openerId = $conversation->user_id;
+        $this->eventId = (string) Str::ulid();
     }
 
     public function broadcastAs(): string
@@ -49,12 +58,13 @@ class SupportConversationUpdated implements ShouldBroadcast
     }
 
     /**
-     * @return array{conversation_id: string|int}
+     * @return array{conversation_id: string|int, event_id: string}
      */
     public function broadcastWith(): array
     {
         return [
             'conversation_id' => $this->conversationId,
+            'event_id' => $this->eventId,
         ];
     }
 }

@@ -35,6 +35,7 @@ use Illuminate\Notifications\AnonymousNotifiable;
 use Illuminate\Notifications\SendQueuedNotifications;
 use Illuminate\Support\Facades\Event;
 use Illuminate\Support\Facades\Notification;
+use Illuminate\Support\Str;
 use Illuminate\Support\Testing\Fakes\EventFake;
 use Illuminate\Validation\ValidationException;
 use RuntimeException;
@@ -165,10 +166,26 @@ class SupportStaffSideTest extends TestCase
         $this->assertEquals($opener->getKey(), $changed->user_id);
         Event::assertDispatched(
             SupportConversationUpdated::class,
-            fn (SupportConversationUpdated $event): bool => $event->broadcastWith() === [
-                'conversation_id' => $conversation->getKey(),
-            ],
+            fn (SupportConversationUpdated $event): bool => array_keys($event->broadcastWith()) === [
+                'conversation_id',
+                'event_id',
+            ] && $event->broadcastWith()['conversation_id'] === $conversation->getKey(),
         );
+    }
+
+    public function test_two_updates_to_one_conversation_never_broadcast_the_same_payload(): void
+    {
+        // magic's Reverb driver drops a frame whose channel, event and payload
+        // it has already seen, so a payload of the id alone would deliver only
+        // a conversation's first update.
+        $conversation = $this->createInAppConversation($this->createUser('ada@example.com'));
+
+        $first = new SupportConversationUpdated($conversation);
+        $second = new SupportConversationUpdated($conversation);
+
+        $this->assertSame($first->broadcastWith()['conversation_id'], $second->broadcastWith()['conversation_id']);
+        $this->assertNotSame($first->broadcastWith(), $second->broadcastWith());
+        $this->assertSame($first->broadcastWith(), $first->broadcastWith());
     }
 
     public function test_a_note_reaches_no_customer_channel_and_no_broadcast(): void
@@ -309,7 +326,7 @@ class SupportStaffSideTest extends TestCase
         $this->assertNull(SupportThreadToken::resolve($token));
     }
 
-    public function test_the_broadcast_is_named_and_addressed_to_the_opener_with_only_the_conversation_id(): void
+    public function test_the_broadcast_is_named_and_addressed_to_the_opener_with_only_the_conversation_and_event_ids(): void
     {
         $opener = $this->createUser('ada@example.com');
         $conversation = $this->createInAppConversation($opener);
@@ -320,9 +337,11 @@ class SupportStaffSideTest extends TestCase
         $this->assertSame(
             [
                 'conversation_id' => $conversation->getKey(),
+                'event_id' => $event->eventId,
             ],
             $event->broadcastWith(),
         );
+        $this->assertTrue(Str::isUlid($event->eventId));
         $channels = $event->broadcastOn();
         $this->assertCount(1, $channels);
         $this->assertSame('private-App.Models.User.' . $opener->getKey(), $channels[0]->name);
