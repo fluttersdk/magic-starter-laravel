@@ -2,6 +2,7 @@
 
 namespace FlutterSdk\MagicStarter\Http\Requests;
 
+use Closure;
 use Illuminate\Foundation\Http\FormRequest;
 
 /**
@@ -29,6 +30,12 @@ class SubmitSupportFeedbackRequest extends FormRequest
         return [
             'score' => [
                 'nullable',
+                // `integer` alone reads a JSON true as 1, which would file a low score.
+                static function (string $attribute, mixed $value, Closure $fail): void {
+                    if (is_bool($value)) {
+                        $fail('validation.integer')->translate();
+                    }
+                },
                 'integer',
                 'between:0,10',
             ],

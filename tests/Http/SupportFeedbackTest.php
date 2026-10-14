@@ -271,6 +271,9 @@ class SupportFeedbackTest extends TestCase
 
         $this->postJson('/support/feedback', ['score' => 11])->assertJsonValidationErrors('score');
         $this->postJson('/support/feedback', ['score' => -1])->assertJsonValidationErrors('score');
+        // A JSON boolean is not a score, though `integer` alone reads true as 1.
+        $this->postJson('/support/feedback', ['score' => true])->assertJsonValidationErrors('score');
+        $this->postJson('/support/feedback', ['score' => false])->assertJsonValidationErrors('score');
         $this->postJson('/support/feedback', ['score' => 8, 'comment' => str_repeat('a', 2001)])
             ->assertJsonValidationErrors('comment');
 
