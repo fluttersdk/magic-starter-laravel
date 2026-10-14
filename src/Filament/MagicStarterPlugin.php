@@ -7,6 +7,7 @@ use Filament\Contracts\Plugin;
 use Filament\Models\Contracts\FilamentUser;
 use Filament\Navigation\NavigationItem;
 use Filament\Panel;
+use Filament\Support\Facades\FilamentTimezone;
 use Filament\Support\Icons\Heroicon;
 use FlutterSdk\MagicStarter\Features;
 use FlutterSdk\MagicStarter\Filament\Auth\TwoFactorAuthentication;
@@ -289,7 +290,37 @@ class MagicStarterPlugin implements Plugin
         $this->registerOperations($panel);
     }
 
-    public function boot(Panel $panel): void {}
+    /**
+     * Show times in the signed-in staff user's timezone, else the admin default.
+     */
+    public function boot(Panel $panel): void
+    {
+        // A closure, so the user is read per render and never at boot, when nobody is signed in.
+        FilamentTimezone::set(fn (): string => $this->resolveTimezone($panel));
+    }
+
+    /**
+     * The staff user's own `timezone` unless it is empty or a default that says
+     * nothing was chosen (the column's `UTC`, or `magic-starter.defaults.timezone`
+     * that registration falls back to); then `magic-starter.admin.timezone`; then
+     * `app.timezone`.
+     */
+    protected function resolveTimezone(Panel $panel): string
+    {
+        $own = data_get($panel->auth()->user(), 'timezone');
+        $unchosen = [
+            'UTC',
+            config('magic-starter.defaults.timezone', 'UTC'),
+        ];
+
+        if (filled($own) && ! in_array($own, $unchosen, true)) {
+            return $own;
+        }
+
+        $admin = config('magic-starter.admin.timezone');
+
+        return filled($admin) ? $admin : config('app.timezone');
+    }
 
     /**
      * Link and summarise the enabled tools, then put them behind the panel gate.

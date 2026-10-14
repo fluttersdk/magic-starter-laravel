@@ -207,6 +207,9 @@ return [
         // The host the generated admin panel answers on; null serves it on a path.
         'host' => env('MAGIC_STARTER_ADMIN_HOST'),
 
+        // The timezone the panel shows times in for staff who have not chosen one; null follows app.timezone.
+        'timezone' => env('MAGIC_STARTER_ADMIN_TIMEZONE'),
+
         'emails' => array_values(array_filter(array_map(
             'trim',
             explode(',', (string) env('MAGIC_STARTER_ADMIN_EMAILS', '')),
