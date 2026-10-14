@@ -2,6 +2,7 @@
 
 namespace FlutterSdk\MagicStarter\Http\Requests;
 
+use FlutterSdk\MagicStarter\Features;
 use FlutterSdk\MagicStarter\Support\SupportRules;
 use Illuminate\Foundation\Http\FormRequest;
 
@@ -9,8 +10,9 @@ use Illuminate\Foundation\Http\FormRequest;
  * A customer's message on an existing conversation, signed in or through the
  * public thread link.
  *
- * Only the body is read: who wrote it and what kind of entry it is are decided
- * by the action, never by the request.
+ * Only the body is read, and on the signed-in route the `attachments` that
+ * make it optional: who wrote it and what kind of entry it is are decided by
+ * the action, never by the request. The public thread takes no files.
  */
 class StoreSupportMessageRequest extends FormRequest
 {
@@ -29,8 +31,8 @@ class StoreSupportMessageRequest extends FormRequest
      */
     public function rules(): array
     {
-        return [
-            'body' => SupportRules::body(),
-        ];
+        return SupportRules::message(
+            attachments: Features::hasSupportAttachmentsFeatures() && $this->route('conversation') !== null,
+        );
     }
 }

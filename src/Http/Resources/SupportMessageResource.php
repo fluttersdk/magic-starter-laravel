@@ -4,6 +4,7 @@ namespace FlutterSdk\MagicStarter\Http\Resources;
 
 use FlutterSdk\MagicStarter\Enums\SupportSenderType;
 use FlutterSdk\MagicStarter\Models\SupportMessage;
+use FlutterSdk\MagicStarter\Models\SupportMessageAttachment;
 use Illuminate\Http\Request;
 use Illuminate\Http\Resources\Json\JsonResource;
 use Illuminate\Support\Facades\Lang;
@@ -16,10 +17,31 @@ use Illuminate\Support\Str;
  * a customer may see: a staff member's first name and photo, never their id,
  * surname or email. The AI desk record in `meta` never leaves the server.
  *
+ * `attachments` is present only once the signed-in customer's controller
+ * calls {@see self::withAttachments()}: the public thread link is a bearer
+ * credential in a mailbox, so its payload never names a file.
+ *
  * @mixin SupportMessage
  */
 class SupportMessageResource extends JsonResource
 {
+    /**
+     * Whether `attachments` is serialised; set only on the signed-in path.
+     */
+    private bool $withAttachments = false;
+
+    /**
+     * Serialise the message's files, each with its API-relative `url`.
+     *
+     * The caller loads `attachments` first, so a thread costs one query for all of them.
+     */
+    public function withAttachments(bool $withAttachments = true): static
+    {
+        $this->withAttachments = $withAttachments;
+
+        return $this;
+    }
+
     /**
      * Transform the resource into an array.
      *
@@ -34,6 +56,33 @@ class SupportMessageResource extends JsonResource
             'sender' => self::senderOf($this->resource),
             'body' => $this->body,
             'created_at' => $this->created_at?->toIso8601String(),
+            'attachments' => $this->when(
+                $this->withAttachments,
+                fn (): array => $this->resource->attachments
+                    ->map(static fn (SupportMessageAttachment $attachment): array => self::attachment($attachment))
+                    ->values()
+                    ->all(),
+            ),
+        ];
+    }
+
+    /**
+     * One file as the customer sees it; `url` is relative to the API base.
+     *
+     * @return array{id: mixed, name: string, mime: string, size: int, width: int|null, height: int|null,
+     *               kind: string, url: string}
+     */
+    private static function attachment(SupportMessageAttachment $attachment): array
+    {
+        return [
+            'id' => $attachment->id,
+            'name' => $attachment->original_name,
+            'mime' => $attachment->mime,
+            'size' => $attachment->size,
+            'width' => $attachment->width,
+            'height' => $attachment->height,
+            'kind' => $attachment->mime === 'application/pdf' ? 'pdf' : 'image',
+            'url' => "support/conversations/{$attachment->conversation_id}/attachments/{$attachment->id}",
         ];
     }
 

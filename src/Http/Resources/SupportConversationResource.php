@@ -30,6 +30,9 @@ use Illuminate\Support\Str;
  * desk has not answered yet; `waiting_on_team` an open one still waiting on a
  * person.
  *
+ * Each message carries its `attachments` only after {@see self::withAttachments()},
+ * which the signed-in customer's controller calls and the public thread never does.
+ *
  * @mixin SupportConversation
  */
 class SupportConversationResource extends JsonResource
@@ -38,6 +41,11 @@ class SupportConversationResource extends JsonResource
      * The longest `last_message.body_preview`, in characters, the `...` included.
      */
     private const PREVIEW_LENGTH = 140;
+
+    /**
+     * Whether the thread's messages serialise their files.
+     */
+    private bool $withAttachments = false;
 
     /**
      * Add the unread flag and, once the rows are read, each row's newest
@@ -57,20 +65,32 @@ class SupportConversationResource extends JsonResource
 
     /**
      * Load the unread flag and the customer-visible thread onto one conversation.
+     *
+     * @param  bool  $attachments  also load each message's files, for {@see self::withAttachments()}
      */
-    public static function forThread(SupportConversation $conversation): SupportConversation
+    public static function forThread(SupportConversation $conversation, bool $attachments = false): SupportConversation
     {
         return $conversation
             ->loadExists(self::unreadFlag())
             ->load([
-                'messages' => function (HasMany $query): void {
+                'messages' => function (HasMany $query) use ($attachments): void {
                     /** @var HasMany<SupportMessage, SupportConversation> $query */
                     $query->customerVisible()
-                        ->with('sender')
+                        ->with($attachments ? ['sender', 'attachments'] : ['sender'])
                         ->orderBy('created_at')
                         ->orderBy('id');
                 },
             ]);
+    }
+
+    /**
+     * Serialise each message's files; the thread must come from {@see self::forThread()} with `$attachments`.
+     */
+    public function withAttachments(): static
+    {
+        $this->withAttachments = true;
+
+        return $this;
     }
 
     /**
@@ -99,7 +119,11 @@ class SupportConversationResource extends JsonResource
                 $this->resource->relationLoaded('lastMessage'),
                 fn (): ?array => self::preview($this->resource->getRelation('lastMessage')),
             ),
-            'messages' => SupportMessageResource::collection($this->whenLoaded('messages')),
+            'messages' => $this->whenLoaded('messages', fn (): array => $this->resource->messages
+                ->map(fn (SupportMessage $message): SupportMessageResource => (new SupportMessageResource($message))
+                    ->withAttachments($this->withAttachments))
+                ->values()
+                ->all()),
         ];
     }
 

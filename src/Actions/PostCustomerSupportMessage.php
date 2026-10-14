@@ -30,6 +30,11 @@ use Illuminate\Validation\ValidationException;
  * staff, reopening one that was snoozed or resolved, and alerts them unless it
  * was already waiting on them. A pending conversation the AI desk still
  * answers stays pending instead, and the message queues the responder.
+ *
+ * The body is capped here but may be blank: whether one is required is the
+ * door's call, and a message of files alone has none. The files themselves are
+ * written by {@see StoreSupportAttachments} in the caller's transaction, which
+ * the responder waits for, since it is queued after commit.
  */
 class PostCustomerSupportMessage implements PostsCustomerSupportMessages
 {
@@ -52,13 +57,13 @@ class PostCustomerSupportMessage implements PostsCustomerSupportMessages
             throw (new AuthorizationException)->asNotFound();
         }
 
-        // 2. Validate the body against the configured cap.
+        // 2. Validate the body against the configured cap; the door decides whether it may be blank.
         Validator::make(
             [
                 'body' => $body,
             ],
             [
-                'body' => SupportRules::body(),
+                'body' => SupportRules::body(required: false),
             ],
         )->validate();
 

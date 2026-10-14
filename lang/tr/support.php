@@ -14,6 +14,10 @@ return [
         'other' => 'Diğer',
     ],
 
+    'attachments' => [
+        'daily_limit' => 'Bugünkü ek sınırına ulaştınız. Lütfen yarın tekrar deneyin.',
+    ],
+
     'ai' => [
         'name' => ':app Yapay Zekâ Asistanı',
         'handoff' => 'Bu görüşmeyi destek ekibimize aktardım. Bir ekip arkadaşımız size buradan yanıt verecek.',
