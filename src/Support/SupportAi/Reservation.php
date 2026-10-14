@@ -15,7 +15,8 @@ final readonly class Reservation
 {
     /**
      * @param  string  $userId  The opener whose daily token ceiling was charged.
-     * @param  int  $tokens  Tokens reserved from the pool and the user's ceiling, `support.ai.pool_reservation_tokens`.
+     * @param  int  $tokens  Tokens reserved from the pool and the user's ceiling: `support.ai.pool_reservation_tokens`
+     *                       plus `support.ai.image_reservation_tokens` for each image the turn carries.
      * @param  string  $day  The `Y-m-d` the counters were charged on.
      */
     public function __construct(

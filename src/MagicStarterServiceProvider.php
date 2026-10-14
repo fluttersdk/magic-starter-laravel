@@ -922,7 +922,15 @@ class MagicStarterServiceProvider extends ServiceProvider
         // polls every 30 seconds.
         RateLimiter::for('magic-starter-support', function ($request) {
             $caller = $request->user()?->getAuthIdentifier() ?: $request->ip();
-            $writes = $request->isMethod('POST') && ! str_ends_with($request->path(), '/seen');
+            $path = $request->path();
+
+            // A thread of images fetches each file as it scrolls, so files ride
+            // their own bucket and cannot starve the thread's own polling.
+            if (str_contains($path, '/attachments/')) {
+                return Limit::perMinute(120)->by('file|' . $caller);
+            }
+
+            $writes = $request->isMethod('POST') && ! str_ends_with($path, '/seen');
 
             return $writes
                 ? Limit::perMinute(6)->by('write|' . $caller)

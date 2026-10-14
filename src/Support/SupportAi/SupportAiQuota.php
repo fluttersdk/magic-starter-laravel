@@ -20,6 +20,7 @@ use Illuminate\Support\Facades\Cache;
  * drain a shared pool) and the tokens of the day's pool the host picked for
  * the conversation. Both token counters are charged
  * `pool_reservation_tokens` up front, sized for prompt plus completion, and
+ * `image_reservation_tokens` more for each image the turn sends, then
  * {@see self::reconcile()}d to the real tokens afterwards.
  *
  * Every counter decides on its own post-increment value, never on a prior read,
@@ -29,7 +30,8 @@ use Illuminate\Support\Facades\Cache;
  * zero, which refuses. The two keys added after the first release,
  * `pool_reservation_tokens` and `quotas.user_daily_tokens`, fall back to
  * {@see self::DEFAULT_POOL_RESERVATION_TOKENS} and
- * {@see self::DEFAULT_USER_DAILY_TOKENS}, because a host's published config
+ * {@see self::DEFAULT_USER_DAILY_TOKENS}, as does `image_reservation_tokens`
+ * to {@see self::DEFAULT_IMAGE_RESERVATION_TOKENS}, because a host's published config
  * replaces the whole `support` block and would otherwise refuse every turn.
  *
  * One turn is charged once however often it is reserved: the first outcome
@@ -52,6 +54,11 @@ class SupportAiQuota
      * Tokens a turn reserves when the host's config predates `support.ai.pool_reservation_tokens`.
      */
     public const DEFAULT_POOL_RESERVATION_TOKENS = 6000;
+
+    /**
+     * Tokens one image adds to a reservation when the host's config predates `support.ai.image_reservation_tokens`.
+     */
+    public const DEFAULT_IMAGE_RESERVATION_TOKENS = 1600;
 
     /**
      * One opener's daily tokens when the host's config predates `support.ai.quotas.user_daily_tokens`.
@@ -82,17 +89,23 @@ class SupportAiQuota
      *
      * @param  string  $turnId  Stable for the turn across retries, e.g. the customer message id.
      * @param  SupportAiPool  $pool  The pool the host resolved for this conversation.
+     * @param  int  $images  Images the turn sends to the model; each raises the reservation by
+     *                       `support.ai.image_reservation_tokens`.
      * @return Reservation|null Null when the turn is refused; the same reservation on every retry of a granted turn.
      */
-    public function reserve(SupportConversation $conversation, string $turnId, SupportAiPool $pool): ?Reservation
-    {
+    public function reserve(
+        SupportConversation $conversation,
+        string $turnId,
+        SupportAiPool $pool,
+        int $images = 0,
+    ): ?Reservation {
         $conversationId = (string) $conversation->getKey();
         $recordKey = $this->recordKey($conversationId, $turnId);
 
         // 1. One decision per turn: a retry reads it back instead of charging again.
         return Cache::lock($recordKey . ':lock', self::LOCK_SECONDS)->block(
             self::LOCK_SECONDS,
-            function () use ($conversation, $conversationId, $turnId, $pool, $recordKey): ?Reservation {
+            function () use ($conversation, $conversationId, $turnId, $pool, $images, $recordKey): ?Reservation {
                 $record = Cache::get($recordKey);
 
                 if (is_array($record)) {
@@ -108,7 +121,7 @@ class SupportAiQuota
                         : null;
                 }
 
-                $reservation = $this->charge($conversation, $conversationId, $turnId, $pool);
+                $reservation = $this->charge($conversation, $conversationId, $turnId, $pool, $images);
 
                 Cache::put($recordKey, [
                     'granted' => $reservation !== null,
@@ -173,6 +186,7 @@ class SupportAiQuota
         string $conversationId,
         string $turnId,
         SupportAiPool $pool,
+        int $images,
     ): ?Reservation {
         $user = $conversation->user;
 
@@ -185,6 +199,9 @@ class SupportAiQuota
         $tokens = (int) config(
             'magic-starter.support.ai.pool_reservation_tokens',
             self::DEFAULT_POOL_RESERVATION_TOKENS,
+        ) + $images * (int) config(
+            'magic-starter.support.ai.image_reservation_tokens',
+            self::DEFAULT_IMAGE_RESERVATION_TOKENS,
         );
 
         // 1. The ceilings in the order they are cheapest to explain to a customer.

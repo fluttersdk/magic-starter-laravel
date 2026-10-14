@@ -9,6 +9,8 @@ use FlutterSdk\MagicStarter\Features;
 use FlutterSdk\MagicStarter\Models\NewsletterSubscriber;
 use FlutterSdk\MagicStarter\Models\NotificationSetting;
 use FlutterSdk\MagicStarter\Models\SocialAccount;
+use FlutterSdk\MagicStarter\Models\SupportConversation;
+use FlutterSdk\MagicStarter\Models\SupportMessageAttachment;
 use FlutterSdk\MagicStarter\Social\AppleProviderFactory;
 use FlutterSdk\MagicStarter\Support\OwnedTeams;
 use Illuminate\Contracts\Auth\Authenticatable;
@@ -33,8 +35,11 @@ use Illuminate\Validation\ValidationException;
  *
  * Everything in the database runs in one transaction, so a team refused half
  * way (its billing guard) rolls back the teams already deleted and leaves the
- * account whole. The Apple revocations and the profile photo cannot be rolled
- * back, so they run only after that transaction commits.
+ * account whole. The Apple revocations, the profile photo and the files of the
+ * user's support conversations cannot be rolled back, so they run only after
+ * that transaction commits. The conversations and their attachment rows go by
+ * database cascade, which fires no model event, so the file paths are read
+ * before the account row is deleted.
  */
 class DeleteUser implements DeletesUsers
 {
@@ -59,7 +64,7 @@ class DeleteUser implements DeletesUsers
      */
     public function delete(Authenticatable $user): void
     {
-        [$appleAccounts, $photoPath] = DB::transaction(function () use ($user): array {
+        [$appleAccounts, $photoPath, $supportFiles] = DB::transaction(function () use ($user): array {
             // 1. A shared team would take other people's data with it, and a
             //    subscription on the user's own row would keep charging nobody.
             $this->refuseUnlessDeletable($user);
@@ -82,16 +87,18 @@ class DeleteUser implements DeletesUsers
             // 5. What the package stored about the person outside the user row.
             $this->eraseNotificationData($user);
 
-            // 6. The account itself.
+            // 6. The account itself, its support files located before the cascade takes their rows.
             $user->tokens()->delete();
 
             $photoPath = empty($user->profile_photo_path) ? null : (string) $user->profile_photo_path;
+            $supportFiles = $this->supportAttachmentFiles($user);
 
             $user->delete();
 
             return [
                 $appleAccounts,
                 $photoPath,
+                $supportFiles,
             ];
         });
 
@@ -100,7 +107,7 @@ class DeleteUser implements DeletesUsers
         //    for an account that then survives cannot be restored. Apple review
         //    requires the revocation; the factory reports a failure instead of
         //    throwing, so it cannot undo the deletion.
-        DB::afterCommit(function () use ($appleAccounts, $photoPath): void {
+        DB::afterCommit(function () use ($appleAccounts, $photoPath, $supportFiles): void {
             foreach ($appleAccounts as $account) {
                 $this->apple->revoke($account);
             }
@@ -108,7 +115,46 @@ class DeleteUser implements DeletesUsers
             if ($photoPath !== null) {
                 Storage::disk(config('magic-starter.profile_photo_disk', 'public'))->delete($photoPath);
             }
+
+            foreach ($supportFiles as $disk => $paths) {
+                Storage::disk($disk)->delete($paths);
+            }
         });
+    }
+
+    /**
+     * The disk and path of every file on the user's support conversations, grouped by disk.
+     *
+     * Read only when the table exists: an application that never ran the
+     * attachment migration has none.
+     *
+     * @return array<string, list<string>>
+     */
+    protected function supportAttachmentFiles(Authenticatable $user): array
+    {
+        $attachment = new SupportMessageAttachment;
+
+        if (! Schema::hasTable($attachment->getTable())) {
+            return [];
+        }
+
+        $files = [];
+
+        SupportMessageAttachment::query()
+            ->whereIn(
+                'conversation_id',
+                SupportConversation::query()->select('id')->where('user_id', $user->getAuthIdentifier()),
+            )
+            ->toBase()
+            ->get([
+                'disk',
+                'path',
+            ])
+            ->each(function (object $row) use (&$files): void {
+                $files[(string) $row->disk][] = (string) $row->path;
+            });
+
+        return $files;
     }
 
     /**

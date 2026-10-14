@@ -2,8 +2,10 @@
 
 namespace FlutterSdk\MagicStarter\Http\Controllers;
 
+use FlutterSdk\MagicStarter\Actions\StoreSupportAttachments;
 use FlutterSdk\MagicStarter\Contracts\OpensSupportConversations;
 use FlutterSdk\MagicStarter\Contracts\PostsCustomerSupportMessages;
+use FlutterSdk\MagicStarter\Features;
 use FlutterSdk\MagicStarter\Http\Requests\StoreSupportConversationRequest;
 use FlutterSdk\MagicStarter\Http\Requests\StoreSupportMessageRequest;
 use FlutterSdk\MagicStarter\Http\Resources\SupportConversationResource;
@@ -15,13 +17,16 @@ use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Http\Resources\Json\AnonymousResourceCollection;
 use Illuminate\Http\Response;
+use Illuminate\Support\Facades\DB;
 
 /**
  * A signed-in customer's own support conversations.
  *
  * Every lookup is scoped to `user_id` of the caller, so a conversation someone
  * else opened, a team mate's included, answers 404 exactly like one that does
- * not exist.
+ * not exist. With the `support-attachments` feature every message this
+ * controller returns carries its files, and with `support-csat` every
+ * conversation its rating; the public thread carries neither.
  */
 class SupportConversationController
 {
@@ -45,7 +50,12 @@ class SupportConversationController
             ->orderByDesc('id')
             ->paginate($perPage);
 
-        return SupportConversationResource::collection($conversations);
+        $resources = SupportConversationResource::collection($conversations);
+        $resources->collection->each(
+            static fn (SupportConversationResource $resource): SupportConversationResource => $resource->withRating(),
+        );
+
+        return $resources;
     }
 
     /**
@@ -58,7 +68,7 @@ class SupportConversationController
             $request->validated(),
         );
 
-        return (new SupportConversationResource(SupportConversationResource::forThread($conversation)))
+        return self::thread($conversation)
             ->response()
             ->setStatusCode(201);
     }
@@ -68,23 +78,38 @@ class SupportConversationController
      */
     public function show(Request $request, string $conversation): SupportConversationResource
     {
-        return new SupportConversationResource(
-            SupportConversationResource::forThread($this->findOwned($request, $conversation)),
-        );
+        return self::thread(self::findOwned($request, $conversation));
     }
 
     /**
-     * Add the caller's message to one of their conversations.
+     * Add the caller's message, with any files, to one of their conversations.
+     *
+     * The files are checked and admitted before the message is posted, so a
+     * refused file posts nothing and alerts nobody; the message and its files
+     * then commit together.
      */
     public function storeMessage(StoreSupportMessageRequest $request, string $conversation): JsonResponse
     {
-        $message = app(PostsCustomerSupportMessages::class)->post(
-            $this->findOwned($request, $conversation),
-            $request->validated('body'),
-            $request->user(),
-        );
+        $owned = self::findOwned($request, $conversation);
+        $user = $request->user();
+        $attachments = app(StoreSupportAttachments::class);
+        $files = $attachments->prepare($user, (array) $request->validated('attachments', []));
 
-        return (new SupportMessageResource($message))
+        $message = DB::transaction(function () use ($owned, $request, $user, $attachments, $files) {
+            $message = app(PostsCustomerSupportMessages::class)->post(
+                $owned,
+                (string) $request->validated('body'),
+                $user,
+            );
+            $attachments->store($message, $files, $user);
+
+            return $message;
+        });
+
+        $withAttachments = Features::hasSupportAttachmentsFeatures();
+
+        return (new SupportMessageResource($withAttachments ? $message->load('attachments') : $message))
+            ->withAttachments($withAttachments)
             ->response()
             ->setStatusCode(201);
     }
@@ -96,7 +121,7 @@ class SupportConversationController
      */
     public function seen(Request $request, string $conversation): Response
     {
-        $this->findOwned($request, $conversation)
+        self::findOwned($request, $conversation)
             ->forceFill([
                 'opener_seen_at' => now(),
             ])
@@ -106,14 +131,31 @@ class SupportConversationController
     }
 
     /**
+     * The thread as the signed-in customer reads it: their rating, and each message's files when the feature is on.
+     *
+     * The caller has already proved the conversation is the customer's own; {@see SupportRatingController} answers
+     * through it too.
+     */
+    public static function thread(SupportConversation $conversation): SupportConversationResource
+    {
+        $withAttachments = Features::hasSupportAttachmentsFeatures();
+        $resource = (new SupportConversationResource(
+            SupportConversationResource::forThread($conversation, attachments: $withAttachments),
+        ))->withRating();
+
+        return $withAttachments ? $resource->withAttachments() : $resource;
+    }
+
+    /**
      * The caller's conversation by key, or a 404.
      *
      * The key's shape is checked first: PostgreSQL refuses to compare a uuid
      * column with a string that is not one, which would surface as a 500.
+     * {@see SupportAttachmentController} reaches a file through it too.
      *
      * @throws ModelNotFoundException<SupportConversation>
      */
-    private function findOwned(Request $request, string $id): SupportConversation
+    public static function findOwned(Request $request, string $id): SupportConversation
     {
         if (! TeamKey::looksLikeOne($id)) {
             throw (new ModelNotFoundException)->setModel(SupportConversation::class, [

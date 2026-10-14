@@ -5,6 +5,8 @@ namespace FlutterSdk\MagicStarter\Tests\Http\Controllers;
 use Closure;
 use FlutterSdk\MagicStarter\Audit\Audit;
 use FlutterSdk\MagicStarter\Enums\SupportConversationSource;
+use FlutterSdk\MagicStarter\Enums\SupportConversationStatus;
+use FlutterSdk\MagicStarter\Enums\SupportCsatRating;
 use FlutterSdk\MagicStarter\Enums\SupportMessageKind;
 use FlutterSdk\MagicStarter\Enums\SupportSenderType;
 use FlutterSdk\MagicStarter\Events\SupportConversationNeedsStaff;
@@ -80,6 +82,7 @@ class PublicSupportThreadControllerTest extends TestCase
             'create_support_conversations_table.php',
             'create_support_messages_table.php',
             'add_ai_columns_to_support_tables.php',
+            'add_feedback_columns_to_support_conversations_table.php',
             'create_magic_starter_audits_table.php',
         ] as $file) {
             $migration = require __DIR__ . '/../../../database/migrations/' . $file;
@@ -222,6 +225,33 @@ class PublicSupportThreadControllerTest extends TestCase
             ->assertJsonCount(2, 'data.messages');
         $this->assertStringNotContainsString('Internal', (string) $response->getContent());
         $this->assertStringNotContainsString($token, (string) $response->getContent());
+    }
+
+    public function test_the_public_payload_carries_no_rating_even_with_the_csat_feature(): void
+    {
+        config()->set('magic-starter.features', [
+            Features::support(),
+            Features::supportCsat(),
+        ]);
+        $created = $this->submit()->assertCreated();
+        $this->assertArrayNotHasKey('rating', (array) $created->json('data'));
+        $this->assertArrayNotHasKey('can_rate', (array) $created->json('data'));
+
+        $conversation = SupportConversation::query()->sole();
+        $conversation->forceFill([
+            'status' => SupportConversationStatus::RESOLVED,
+            'resolved_at' => now(),
+            'csat_rating' => SupportCsatRating::DOWN,
+            'csat_comment' => 'Slow.',
+            'csat_rated_at' => now(),
+        ])->save();
+        $token = SupportThreadToken::mint($conversation);
+
+        $response = $this->getJson("/support/public/thread/{$token}")->assertOk();
+
+        $this->assertArrayNotHasKey('rating', (array) $response->json('data'));
+        $this->assertArrayNotHasKey('can_rate', (array) $response->json('data'));
+        $this->assertStringNotContainsString('Slow.', (string) $response->getContent());
     }
 
     public function test_a_reply_through_a_live_token_reaches_staff_and_audits_without_the_token(): void

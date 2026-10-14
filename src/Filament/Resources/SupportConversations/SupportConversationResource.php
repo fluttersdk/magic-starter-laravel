@@ -5,9 +5,11 @@ namespace FlutterSdk\MagicStarter\Filament\Resources\SupportConversations;
 use BackedEnum;
 use Carbon\CarbonInterface;
 use Filament\Actions\ViewAction;
+use Filament\Facades\Filament;
 use Filament\Infolists\Components\TextEntry;
 use Filament\Infolists\Components\ViewEntry;
 use Filament\Schemas\Components\Grid;
+use Filament\Schemas\Components\Group;
 use Filament\Schemas\Components\Section;
 use Filament\Schemas\Schema;
 use Filament\Support\Icons\Heroicon;
@@ -17,22 +19,27 @@ use Filament\Tables\Table;
 use FlutterSdk\MagicStarter\Contracts\AssistsSupportStaff;
 use FlutterSdk\MagicStarter\Enums\SupportConversationSource;
 use FlutterSdk\MagicStarter\Enums\SupportConversationStatus;
+use FlutterSdk\MagicStarter\Enums\SupportCsatRating;
 use FlutterSdk\MagicStarter\Enums\SupportHandoffReason;
 use FlutterSdk\MagicStarter\Enums\SupportMessageKind;
 use FlutterSdk\MagicStarter\Enums\SupportPriority;
 use FlutterSdk\MagicStarter\Enums\SupportSenderType;
+use FlutterSdk\MagicStarter\Features;
 use FlutterSdk\MagicStarter\Filament\Resources\MagicStarterResource;
 use FlutterSdk\MagicStarter\Filament\Resources\SupportConversations\Pages\ListSupportConversations;
 use FlutterSdk\MagicStarter\Filament\Resources\SupportConversations\Pages\ViewSupportConversation;
+use FlutterSdk\MagicStarter\Filament\Resources\SupportConversations\Schemas\CustomerContextPanel;
 use FlutterSdk\MagicStarter\Http\Resources\SupportMessageResource;
 use FlutterSdk\MagicStarter\Models\SupportConversation;
 use FlutterSdk\MagicStarter\Models\SupportMessage;
+use FlutterSdk\MagicStarter\Models\SupportMessageAttachment;
 use FlutterSdk\MagicStarter\Support\SupportAi\SupportStaffAssistCache;
 use FlutterSdk\MagicStarter\Support\SupportRules;
 use FlutterSdk\MagicStarter\Support\SupportStaffRecipients;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\Collection;
 use Illuminate\Database\Eloquent\Model;
+use Illuminate\Support\Carbon;
 use Illuminate\Support\Str;
 use WeakMap;
 
@@ -44,6 +51,8 @@ use WeakMap;
  * piece of text, the customer's and the staff's, is rendered escaped. The thread
  * is drawn by `magic-starter::filament.support.thread`; the AI summary on it is
  * read from {@see SupportStaffAssistCache} and never asked of a model here.
+ * A file in the thread is read through the panel's own authenticated route,
+ * never a customer url or a signed one.
  *
  * Every string is a namespaced `magic-starter::admin_support` entry, never a bare
  * literal key: a dot-less key without a JSON line is read as a group name, so an
@@ -67,6 +76,11 @@ class SupportConversationResource extends MagicStarterResource
         SupportPriority::class => 'priority',
         SupportHandoffReason::class => 'handoff_reason',
     ];
+
+    /**
+     * The CSAT filter's value for a conversation nobody rated.
+     */
+    protected const UNRATED = 'none';
 
     protected static string|BackedEnum|null $navigationIcon = Heroicon::OutlinedChatBubbleLeftRight;
 
@@ -172,6 +186,13 @@ class SupportConversationResource extends MagicStarterResource
                 TextColumn::make('assignee.name')
                     ->label(static::fieldLabel('assignee'))
                     ->placeholder(static::ABSENT),
+                TextColumn::make('csat_rating')
+                    ->label(static::fieldLabel('csat'))
+                    ->badge()
+                    ->formatStateUsing(static fn (SupportCsatRating $state): string => static::csatLabel($state))
+                    ->color(static fn (SupportCsatRating $state): string => static::csatColor($state))
+                    ->placeholder(static::ABSENT)
+                    ->visible(static fn (): bool => Features::hasSupportCsatFeatures()),
                 TextColumn::make('email')
                     ->label(static::fieldLabel('opener'))
                     ->state(static fn (SupportConversation $record): string => static::openerLabel($record))
@@ -201,6 +222,14 @@ class SupportConversationResource extends MagicStarterResource
                 SelectFilter::make('assignee_id')
                     ->label(static::fieldLabel('assignee'))
                     ->options(static fn (): array => static::staffOptions()),
+                SelectFilter::make('csat')
+                    ->label(static::fieldLabel('csat'))
+                    ->options(static fn (): array => static::csatOptions())
+                    ->query(static fn (Builder $query, array $data): Builder => static::whereCsat(
+                        $query,
+                        $data['value'] ?? null,
+                    ))
+                    ->visible(static fn (): bool => Features::hasSupportCsatFeatures()),
             ])
             ->recordActions([
                 ViewAction::make(),
@@ -234,9 +263,12 @@ class SupportConversationResource extends MagicStarterResource
                                 ])
                                 ->poll('10s'),
                         ]),
-                    Section::make((string) __('magic-starter::admin_support.details'))
-                        ->columnSpan(1)
-                        ->schema(static::detailEntries()),
+                    Group::make([
+                        Section::make((string) __('magic-starter::admin_support.details'))
+                            ->schema(static::detailEntries()),
+                        CustomerContextPanel::make(),
+                    ])
+                        ->columnSpan(1),
                 ]),
         ]);
     }
@@ -307,7 +339,8 @@ class SupportConversationResource extends MagicStarterResource
     /**
      * The thread as the Blade draws it: one plain array per bubble or event line, notes included.
      *
-     * @return list<array{variant: string, out: bool, body: string, avatar: string, chip: ?string, meta: list<string>}>
+     * @return list<array{variant: string, out: bool, body: string, avatar: string, chip: ?string, meta: list<string>,
+     *                    attachments: list<array{name: string, url: string, image: bool, origin: string}>}>
      */
     public static function threadItems(SupportConversation $conversation): array
     {
@@ -361,7 +394,10 @@ class SupportConversationResource extends MagicStarterResource
     protected static function thread(SupportConversation $conversation): Collection
     {
         return $conversation->messages()
-            ->with('sender')
+            ->with([
+                'sender',
+                'attachments',
+            ])
             ->orderBy('created_at')
             ->orderBy('id')
             ->get();
@@ -437,7 +473,100 @@ class SupportConversationResource extends MagicStarterResource
             TextEntry::make('created_at')
                 ->label(static::fieldLabel('opened'))
                 ->dateTime(),
+            TextEntry::make('respond_by')
+                ->label(static::fieldLabel('respond_by'))
+                ->state(static fn (SupportConversation $record): ?Carbon => static::respondBy($record))
+                ->dateTime()
+                ->visible(static fn (SupportConversation $record): bool => static::respondBy($record) !== null),
+            TextEntry::make('response_overdue')
+                ->hiddenLabel()
+                ->badge()
+                ->color('danger')
+                ->state((string) __('magic-starter::admin_support.overdue'))
+                ->visible(static fn (SupportConversation $record): bool => static::isResponseOverdue($record)),
+            TextEntry::make('csat_rating')
+                ->label(static::fieldLabel('csat'))
+                ->badge()
+                ->formatStateUsing(static fn (SupportCsatRating $state): string => static::csatLabel($state))
+                ->color(static fn (SupportCsatRating $state): string => static::csatColor($state))
+                ->visible(static fn (SupportConversation $record): bool => Features::hasSupportCsatFeatures()
+                    && $record->csat_rating !== null),
+            TextEntry::make('csat_comment')
+                ->label(static::fieldLabel('csat_comment'))
+                ->visible(static fn (SupportConversation $record): bool => Features::hasSupportCsatFeatures()
+                    && filled($record->csat_comment)),
         ];
+    }
+
+    /**
+     * When a conversation the feedback card opened must be answered by:
+     * `support.feedback.response_hours` after it opened. Null for any other source.
+     */
+    public static function respondBy(SupportConversation $conversation): ?Carbon
+    {
+        if ($conversation->source !== SupportConversationSource::FEEDBACK || $conversation->created_at === null) {
+            return null;
+        }
+
+        return $conversation->created_at->copy()->addHours(
+            (int) config('magic-starter.support.feedback.response_hours', 48),
+        );
+    }
+
+    /**
+     * Past its respond-by time with no staff reply yet, which is what `first_reply_at` records.
+     */
+    protected static function isResponseOverdue(SupportConversation $conversation): bool
+    {
+        $respondBy = static::respondBy($conversation);
+
+        return $respondBy !== null && $conversation->first_reply_at === null && $respondBy->isPast();
+    }
+
+    /**
+     * The CSAT filter's choices: each rating, then "not rated".
+     *
+     * @return array<string, string>
+     */
+    protected static function csatOptions(): array
+    {
+        $options = [];
+
+        foreach (SupportCsatRating::cases() as $rating) {
+            $options[$rating->value] = static::csatLabel($rating);
+        }
+
+        $options[static::UNRATED] = (string) __('magic-starter::admin_support.csat.none');
+
+        return $options;
+    }
+
+    /**
+     * @param  Builder<SupportConversation>  $query
+     * @return Builder<SupportConversation>
+     */
+    protected static function whereCsat(Builder $query, ?string $value): Builder
+    {
+        if ($value === static::UNRATED) {
+            return $query->whereNull('csat_rating');
+        }
+
+        $rating = $value === null ? null : SupportCsatRating::tryFrom($value);
+
+        return $rating === null ? $query : $query->where('csat_rating', $rating->value);
+    }
+
+    protected static function csatLabel(SupportCsatRating $rating): string
+    {
+        return (string) __("magic-starter::admin_support.csat.{$rating->value}");
+    }
+
+    protected static function csatColor(SupportCsatRating $rating): string
+    {
+        return match ($rating) {
+            SupportCsatRating::UP => 'success',
+            SupportCsatRating::DOWN => 'danger',
+        };
     }
 
     /**
@@ -488,7 +617,8 @@ class SupportConversationResource extends MagicStarterResource
     /**
      * One message as the Blade needs it: which bubble, which side, and the line under it.
      *
-     * @return array{variant: string, out: bool, body: string, avatar: string, chip: ?string, meta: list<string>}
+     * @return array{variant: string, out: bool, body: string, avatar: string, chip: ?string, meta: list<string>,
+     *               attachments: list<array{name: string, url: string, image: bool, origin: string}>}
      */
     protected static function threadItem(SupportMessage $message, SupportConversation $conversation): array
     {
@@ -527,6 +657,30 @@ class SupportConversationResource extends MagicStarterResource
                 'event' => [$time],
                 default => [$name, $time],
             },
+            'attachments' => $message->attachments
+                ->map(static fn (SupportMessageAttachment $file): array => static::attachmentItem($file))
+                ->values()
+                ->all(),
+        ];
+    }
+
+    /**
+     * One file as the thread draws it, read through the panel route rather than any customer url.
+     *
+     * `origin` lets the thread tell the screenshot the app captured from a file the customer chose to send.
+     *
+     * @return array{name: string, url: string, image: bool, origin: string}
+     */
+    protected static function attachmentItem(SupportMessageAttachment $file): array
+    {
+        return [
+            'name' => $file->original_name,
+            'url' => (string) Filament::getCurrentOrDefaultPanel()?->route('magic-starter.support-attachment', [
+                'conversation' => $file->conversation_id,
+                'attachment' => $file->getKey(),
+            ]),
+            'image' => str_starts_with($file->mime, 'image/'),
+            'origin' => $file->origin->value,
         ];
     }
 

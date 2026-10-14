@@ -4,6 +4,7 @@ namespace FlutterSdk\MagicStarter\Jobs;
 
 use DateTimeInterface;
 use FlutterSdk\MagicStarter\Contracts\RespondsToSupport;
+use FlutterSdk\MagicStarter\Enums\SupportAttachmentOrigin;
 use FlutterSdk\MagicStarter\Enums\SupportConversationStatus;
 use FlutterSdk\MagicStarter\Enums\SupportHandoffReason;
 use FlutterSdk\MagicStarter\Enums\SupportMessageKind;
@@ -11,6 +12,7 @@ use FlutterSdk\MagicStarter\Enums\SupportSenderType;
 use FlutterSdk\MagicStarter\Events\SupportConversationUpdated;
 use FlutterSdk\MagicStarter\Models\SupportConversation;
 use FlutterSdk\MagicStarter\Models\SupportMessage;
+use FlutterSdk\MagicStarter\Models\SupportMessageAttachment;
 use FlutterSdk\MagicStarter\Notifications\SupportReplyNotification;
 use FlutterSdk\MagicStarter\Support\SupportAi\HandoffClassifier;
 use FlutterSdk\MagicStarter\Support\SupportAi\ReplyGuard;
@@ -20,6 +22,7 @@ use FlutterSdk\MagicStarter\Support\SupportAi\SupportAnswer;
 use FlutterSdk\MagicStarter\Support\SupportAi\SupportHandoff;
 use FlutterSdk\MagicStarter\Support\SupportAi\SupportTurn;
 use FlutterSdk\MagicStarter\Support\SupportAi\SupportUsage;
+use FlutterSdk\MagicStarter\Support\SupportAttachmentResponse;
 use Illuminate\Contracts\Cache\LockTimeoutException;
 use Illuminate\Contracts\Container\Container;
 use Illuminate\Contracts\Queue\ShouldQueue;
@@ -215,8 +218,14 @@ class RespondToSupportConversation implements ShouldQueue
 
         // 3. The deterministic classifier reads every message the desk still owes an answer to, before any
         //    model is called: a breach reported one message before a "hello?" is still a breach.
+        //    A trigger that is only files has no question for the model, so it goes to staff here too.
         $history = $this->history($conversation, $trigger);
-        $verdict = $classifier->classify($this->unansweredText($history, $trigger));
+        $uploads = $this->uploads($trigger);
+        $verdict = $classifier->classify(
+            $this->unansweredText($history, $trigger),
+            attachmentOnly: ($uploads['images'] !== [] || $uploads['pdfs'] > 0)
+                && trim((string) $trigger->body) === '',
+        );
 
         if ($verdict !== null) {
             $desk->handoff($conversation, $verdict['reason'], $verdict['priority'], $this->triggerId);
@@ -236,7 +245,12 @@ class RespondToSupportConversation implements ShouldQueue
             return;
         }
 
-        $reservation = $quota->reserve($conversation, (string) $this->triggerId, $pool);
+        $reservation = $quota->reserve(
+            $conversation,
+            (string) $this->triggerId,
+            $pool,
+            images: count($uploads['images']),
+        );
 
         if ($reservation === null) {
             $desk->handoff($conversation, SupportHandoffReason::QUOTA, turn: $this->triggerId);
@@ -252,6 +266,8 @@ class RespondToSupportConversation implements ShouldQueue
                 history: $history,
                 locale: $desk->locale($conversation),
                 deadlineSeconds: max(1, (int) config('magic-starter.support.ai.deadline_seconds', 75) - $waitedSeconds),
+                images: $uploads['images'],
+                pdfCount: $uploads['pdfs'],
             ));
         } catch (Throwable $exception) {
             report($exception);
@@ -349,6 +365,40 @@ class RespondToSupportConversation implements ShouldQueue
             ->reverse()
             ->values()
             ->all();
+    }
+
+    /**
+     * The files the customer uploaded with the trigger, split into what the model may see and what it may only be told.
+     *
+     * Only the trigger's own `upload` files count: the auto screenshot, staff files and anything on an earlier
+     * message stay out. An image is a disk and a path, never bytes; the responder reads it if its provider can.
+     *
+     * @return array{images: list<array{disk: string, path: string, mime: string}>, pdfs: int}
+     */
+    private function uploads(SupportMessage $trigger): array
+    {
+        $uploads = $trigger->attachments()
+            ->where('origin', SupportAttachmentOrigin::UPLOAD->value)
+            ->orderBy('created_at')
+            ->orderBy('id')
+            ->get();
+
+        return [
+            'images' => $uploads
+                ->filter(static fn (SupportMessageAttachment $file): bool => in_array(
+                    $file->mime,
+                    SupportAttachmentResponse::IMAGE_MIMES,
+                    true,
+                ))
+                ->map(static fn (SupportMessageAttachment $file): array => [
+                    'disk' => $file->disk,
+                    'path' => $file->path,
+                    'mime' => $file->mime,
+                ])
+                ->values()
+                ->all(),
+            'pdfs' => $uploads->where('mime', SupportAttachmentResponse::PDF)->count(),
+        ];
     }
 
     /**

@@ -4,6 +4,8 @@ namespace FlutterSdk\MagicStarter\Audit;
 
 use FlutterSdk\MagicStarter\MagicStarter;
 use FlutterSdk\MagicStarter\Models\BillingEvent;
+use FlutterSdk\MagicStarter\Models\SupportFeedback;
+use FlutterSdk\MagicStarter\Models\SupportMessageAttachment;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\Pivot;
 use Illuminate\Support\Facades\DB;
@@ -121,7 +123,9 @@ class ModelAuditListener
      * Models the trail never records.
      *
      * The audit model and the billing history are histories already: auditing
-     * either would copy every row into the trail.
+     * either would copy every row into the trail. The support attachment rows
+     * carry no `user_id`, so an erasure could not find their audit copies, and
+     * the feedback comments are customer text the trail does not need.
      *
      * Pivots and the membership model are skipped because a pivot has no key of
      * its own in integer mode (`Pivot::$incrementing` is false), so its row
@@ -134,7 +138,11 @@ class ModelAuditListener
             return true;
         }
 
-        if ($model instanceof Audit || $model instanceof BillingEvent || $model instanceof Pivot) {
+        if ($model instanceof Audit
+            || $model instanceof BillingEvent
+            || $model instanceof SupportMessageAttachment
+            || $model instanceof SupportFeedback
+            || $model instanceof Pivot) {
             return true;
         }
 

@@ -3,6 +3,7 @@
 namespace FlutterSdk\MagicStarter\Http\Requests;
 
 use FlutterSdk\MagicStarter\Enums\SupportConversationSource;
+use FlutterSdk\MagicStarter\Features;
 use FlutterSdk\MagicStarter\Support\SupportRules;
 use Illuminate\Foundation\Http\FormRequest;
 
@@ -13,6 +14,8 @@ use Illuminate\Foundation\Http\FormRequest;
  * from the auth context. The public form source belongs to the public door. A
  * topic is required unless the source is contact sales, which the action files
  * under `sales`; the subject is optional and derived by the action when absent.
+ * Files make the body optional (the `support-attachments` feature); the app's
+ * screenshot and `client_context` are read only with `support-diagnostics`.
  */
 class StoreSupportConversationRequest extends FormRequest
 {
@@ -31,9 +34,14 @@ class StoreSupportConversationRequest extends FormRequest
      */
     public function rules(): array
     {
-        return SupportRules::conversation([
-            SupportConversationSource::IN_APP,
-            SupportConversationSource::CONTACT_SALES,
-        ], topicRequired: true);
+        return SupportRules::conversation(
+            [
+                SupportConversationSource::IN_APP,
+                SupportConversationSource::CONTACT_SALES,
+            ],
+            topicRequired: true,
+            attachments: Features::hasSupportAttachmentsFeatures(),
+            diagnostics: Features::hasSupportDiagnosticsFeatures(),
+        );
     }
 }

@@ -5,6 +5,7 @@ namespace FlutterSdk\MagicStarter\Models;
 use FlutterSdk\MagicStarter\Audit\Redactor;
 use FlutterSdk\MagicStarter\Enums\SupportConversationSource;
 use FlutterSdk\MagicStarter\Enums\SupportConversationStatus;
+use FlutterSdk\MagicStarter\Enums\SupportCsatRating;
 use FlutterSdk\MagicStarter\Enums\SupportHandoffReason;
 use FlutterSdk\MagicStarter\Enums\SupportPriority;
 use FlutterSdk\MagicStarter\MagicStarter;
@@ -48,6 +49,12 @@ use Illuminate\Support\Carbon;
  * @property Carbon|null $opener_seen_at
  * @property Carbon|null $staff_seen_at
  * @property Carbon|null $resolved_at
+ * @property SupportCsatRating|null $csat_rating The opener's rating of the current resolution.
+ * @property string|null $csat_comment
+ * @property Carbon|null $csat_rated_at
+ * @property string|int|null $csat_assignee_id Who held the conversation when it was rated.
+ * @property Carbon|null $csat_alerted_at When staff were told about a thumbs-down.
+ * @property array<string, string>|null $client_context What the app sent: route, version, platform, locale.
  * @property string|null $thread_token_hash
  * @property int $thread_token_version
  * @property Carbon|null $thread_token_expires_at
@@ -83,11 +90,18 @@ class SupportConversation extends Model
         'opener_seen_at',
         'staff_seen_at',
         'resolved_at',
+        'csat_rating',
+        'csat_comment',
+        'csat_rated_at',
+        'csat_assignee_id',
+        'csat_alerted_at',
+        'client_context',
     ];
 
     /**
-     * What the customer typed into the form: the audit rows (see {@see Redactor}) keep the key and drop the text,
-     * since a subject often carries what the customer would not want copied into a log.
+     * What the customer typed into the form, or their app sent about them: the audit rows (see {@see Redactor}) keep
+     * the key and drop the value, since a subject often carries what the customer would not want copied into a log,
+     * and the client context names their route, device and locale.
      *
      * @var list<string>
      */
@@ -95,6 +109,8 @@ class SupportConversation extends Model
         'subject',
         'email',
         'name',
+        'csat_comment',
+        'client_context',
     ];
 
     /**
@@ -143,6 +159,10 @@ class SupportConversation extends Model
             'opener_seen_at' => 'datetime',
             'staff_seen_at' => 'datetime',
             'resolved_at' => 'datetime',
+            'csat_rating' => SupportCsatRating::class,
+            'csat_rated_at' => 'datetime',
+            'csat_alerted_at' => 'datetime',
+            'client_context' => 'array',
             'thread_token_version' => 'integer',
             'thread_token_expires_at' => 'datetime',
         ];
@@ -187,5 +207,15 @@ class SupportConversation extends Model
     public function messages(): HasMany
     {
         return $this->hasMany(SupportMessage::class, 'conversation_id');
+    }
+
+    /**
+     * Every file stored on the conversation, across all of its messages.
+     *
+     * @return HasMany<SupportMessageAttachment, $this>
+     */
+    public function attachments(): HasMany
+    {
+        return $this->hasMany(SupportMessageAttachment::class, 'conversation_id');
     }
 }

@@ -3,6 +3,8 @@
 namespace FlutterSdk\MagicStarter\Filament\Resources\SupportConversations\Pages;
 
 use Filament\Actions\Action;
+use Filament\Forms\Components\BaseFileUpload;
+use Filament\Forms\Components\FileUpload;
 use Filament\Forms\Components\Select;
 use Filament\Forms\Components\Textarea;
 use Filament\Notifications\Notification;
@@ -10,17 +12,27 @@ use Filament\Resources\Pages\ViewRecord;
 use Filament\Support\Colors\Color;
 use Filament\Support\Exceptions\Cancel;
 use Filament\Support\Icons\Heroicon;
+use FlutterSdk\MagicStarter\Actions\StoreSupportAttachments;
 use FlutterSdk\MagicStarter\Contracts\AssistsSupportStaff;
 use FlutterSdk\MagicStarter\Contracts\ChangesSupportConversations;
 use FlutterSdk\MagicStarter\Contracts\RepliesToSupport;
+use FlutterSdk\MagicStarter\Enums\SupportAttachmentOrigin;
 use FlutterSdk\MagicStarter\Enums\SupportConversationStatus;
 use FlutterSdk\MagicStarter\Enums\SupportPriority;
+use FlutterSdk\MagicStarter\Features;
 use FlutterSdk\MagicStarter\Filament\Resources\SupportConversations\SupportConversationResource;
 use FlutterSdk\MagicStarter\Filament\Resources\Teams\TeamResource;
 use FlutterSdk\MagicStarter\Filament\Support\ContractAction;
 use FlutterSdk\MagicStarter\Jobs\PrepareSupportStaffAssist;
 use FlutterSdk\MagicStarter\Models\SupportConversation;
+use FlutterSdk\MagicStarter\Models\SupportMessage;
 use FlutterSdk\MagicStarter\Support\SupportAi\SupportStaffAssistCache;
+use FlutterSdk\MagicStarter\Support\SupportAttachmentResponse;
+use Illuminate\Support\Arr;
+use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Str;
+use Illuminate\Validation\ValidationException;
+use Livewire\Features\SupportFileUploads\TemporaryUploadedFile;
 
 /**
  * The thread page. Its header actions are how staff answer and triage, each one
@@ -32,10 +44,28 @@ use FlutterSdk\MagicStarter\Support\SupportAi\SupportStaffAssistCache;
  * {@see AssistsSupportStaff}. Neither calls it: Draft reply reads the cache when
  * the modal opens and queues {@see PrepareSupportStaffAssist} when there is
  * nothing to read, and the draft only pre-fills a form staff still submit.
+ *
+ * A reply may carry files, offered only on a conversation with an opener
+ * account: a visitor's thread is a mailed link that never shows a file. Each
+ * file is handed to {@see StoreSupportAttachments} as it is saved, so it gets
+ * the customer path's validation and re-encode, and is written onto the reply
+ * in the transaction that records it.
  */
 class ViewSupportConversation extends ViewRecord
 {
     protected static string $resource = SupportConversationResource::class;
+
+    /**
+     * Files prepared during this request, keyed by the token their upload's state was set to.
+     *
+     * Protected, so Livewire never sends it to the browser or reads it back: a
+     * token only resolves in the request that prepared it, and any other string
+     * a tampered form submits finds nothing.
+     *
+     * @var array<string, list<array{origin: SupportAttachmentOrigin, name: string, mime: string, extension: string,
+     *                                contents: string, width: int|null, height: int|null}>>
+     */
+    protected array $stagedAttachments = [];
 
     /**
      * Stamped without model events: reading a thread is not an edit, and an
@@ -115,11 +145,16 @@ class ViewSupportConversation extends ViewRecord
             ->icon(Heroicon::OutlinedPaperAirplane)
             ->schema([
                 $this->bodyField((string) __('magic-starter::admin_support.actions.reply.body')),
+                $this->attachmentsField(),
             ])
             ->successNotificationTitle((string) __('magic-starter::admin_support.actions.reply.sent'))
-            ->action(
-                fn (array $data, Action $action) => $this->post($action, $data['body'], false, 'support.replied'),
-            );
+            ->action(fn (array $data, Action $action) => $this->post(
+                $action,
+                $data['body'],
+                false,
+                'support.replied',
+                $this->takeStagedAttachments($data['attachments'] ?? []),
+            ));
     }
 
     protected function noteAction(): Action
@@ -199,13 +234,100 @@ class ViewSupportConversation extends ViewRecord
     }
 
     /**
-     * A reply, or an internal note, as the acting staff user.
+     * The reply's files. The panel's own type and size checks only shape the picker;
+     * {@see StoreSupportAttachments} is what admits a file.
      */
-    protected function post(Action $action, string $body, bool $note, string $event): void
+    protected function attachmentsField(): FileUpload
+    {
+        return FileUpload::make('attachments')
+            ->label((string) __('magic-starter::admin_support.attachments.label'))
+            ->multiple()
+            ->maxFiles((int) config('magic-starter.support.attachments.max_files', 3))
+            ->maxSize((int) config('magic-starter.support.attachments.max_kb', 5120))
+            ->acceptedFileTypes(SupportAttachmentResponse::MIMES)
+            ->visible(fn (): bool => Features::hasSupportAttachmentsFeatures()
+                && $this->conversation()->user_id !== null)
+            ->saveUploadedFileUsing(
+                fn (BaseFileUpload $component, TemporaryUploadedFile $file): string => $this->stageAttachment(
+                    $component,
+                    $file,
+                ),
+            );
+    }
+
+    /**
+     * Validate and re-encode one uploaded file now, before Filament deletes its temporary copy.
+     *
+     * @return string the token the field's state holds in place of the file
+     *
+     * @throws ValidationException a refusal, keyed to the field so the form shows it there
+     */
+    protected function stageAttachment(BaseFileUpload $component, TemporaryUploadedFile $file): string
+    {
+        try {
+            $prepared = app(StoreSupportAttachments::class)->prepare(
+                TeamResource::actor(),
+                [
+                    $file,
+                ],
+                origin: SupportAttachmentOrigin::STAFF,
+            );
+        } catch (ValidationException $exception) {
+            throw ValidationException::withMessages([
+                $component->getStatePath() => Arr::flatten($exception->errors()),
+            ]);
+        }
+
+        $token = (string) Str::uuid();
+        $this->stagedAttachments[$token] = $prepared;
+
+        return $token;
+    }
+
+    /**
+     * The prepared files behind the submitted tokens; a token this request did not stage is dropped.
+     *
+     * @param  array<array-key, mixed>  $tokens
+     * @return list<array{origin: SupportAttachmentOrigin, name: string, mime: string, extension: string,
+     *                    contents: string, width: int|null, height: int|null}>
+     */
+    protected function takeStagedAttachments(array $tokens): array
+    {
+        $prepared = [];
+
+        foreach ($tokens as $token) {
+            if (is_string($token) && isset($this->stagedAttachments[$token])) {
+                array_push($prepared, ...$this->stagedAttachments[$token]);
+            }
+        }
+
+        $this->stagedAttachments = [];
+
+        return $prepared;
+    }
+
+    /**
+     * A reply, or an internal note, as the acting staff user, with the reply's files.
+     *
+     * The files are written onto the message the contract returns, in one
+     * transaction with it, so a refused reply or a failed write keeps neither.
+     *
+     * @param  list<array{origin: SupportAttachmentOrigin, name: string, mime: string, extension: string,
+     *                    contents: string, width: int|null, height: int|null}>  $attachments  from
+     *                                                                       {@see self::stageAttachment()}
+     */
+    protected function post(Action $action, string $body, bool $note, string $event, array $attachments = []): void
     {
         ContractAction::run(
             $action,
-            fn () => app(RepliesToSupport::class)->reply(TeamResource::actor(), $this->conversation(), $body, $note),
+            fn (): SupportMessage => DB::transaction(function () use ($body, $note, $attachments): SupportMessage {
+                $staff = TeamResource::actor();
+                $message = app(RepliesToSupport::class)->reply($staff, $this->conversation(), $body, $note);
+
+                app(StoreSupportAttachments::class)->store($message, $attachments, $staff);
+
+                return $message;
+            }),
             $event,
             $this->conversation(),
         );

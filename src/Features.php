@@ -138,6 +138,38 @@ class Features
     }
 
     /**
+     * Enable the customer satisfaction rating of a resolved support conversation.
+     */
+    public static function supportCsat(): string
+    {
+        return 'support-csat';
+    }
+
+    /**
+     * Enable the in-app 0-10 feedback card.
+     */
+    public static function supportFeedback(): string
+    {
+        return 'support-feedback';
+    }
+
+    /**
+     * Enable image and PDF attachments on support messages.
+     */
+    public static function supportAttachments(): string
+    {
+        return 'support-attachments';
+    }
+
+    /**
+     * Enable the client info and auto screenshot a support conversation carries.
+     */
+    public static function supportDiagnostics(): string
+    {
+        return 'support-diagnostics';
+    }
+
+    /**
      * Determine whether the given feature is enabled.
      */
     public static function enabled(string $feature): bool
@@ -271,6 +303,38 @@ class Features
     public static function hasSupportFeatures(): bool
     {
         return static::enabled(static::support());
+    }
+
+    /**
+     * Determine whether the support satisfaction rating is enabled.
+     */
+    public static function hasSupportCsatFeatures(): bool
+    {
+        return static::enabled(static::supportCsat());
+    }
+
+    /**
+     * Determine whether the in-app feedback card is enabled.
+     */
+    public static function hasSupportFeedbackFeatures(): bool
+    {
+        return static::enabled(static::supportFeedback());
+    }
+
+    /**
+     * Determine whether support attachments are enabled.
+     */
+    public static function hasSupportAttachmentsFeatures(): bool
+    {
+        return static::enabled(static::supportAttachments());
+    }
+
+    /**
+     * Determine whether support client diagnostics are enabled.
+     */
+    public static function hasSupportDiagnosticsFeatures(): bool
+    {
+        return static::enabled(static::supportDiagnostics());
     }
 
     /**

@@ -19,6 +19,26 @@ final class SupportRules
     public const TOPIC_MAX_LENGTH = 32;
 
     /**
+     * The `client_context` keys a conversation keeps; any other key the app sends is dropped.
+     *
+     * @var list<string>
+     */
+    public const CLIENT_CONTEXT_KEYS = [
+        'route',
+        'app_version',
+        'build_number',
+        'platform',
+        'os_version',
+        'locale',
+        'timezone',
+    ];
+
+    /**
+     * The longest `client_context` value, in characters.
+     */
+    public const CLIENT_CONTEXT_MAX_LENGTH = 120;
+
+    /**
      * The topics a host gets when its published config predates `support.topics`.
      *
      * A published `support` block replaces the package's whole block (the
@@ -48,15 +68,67 @@ final class SupportRules
     /**
      * Rules for a message body, capped at `support.message_max_length` characters.
      *
+     * @param  bool  $required  false where the caller decides whether a body is needed: a message of files
+     *                          alone has none
      * @return list<string>
      */
-    public static function body(): array
+    public static function body(bool $required = true): array
     {
         return [
-            'required',
+            $required ? 'required' : 'nullable',
             'string',
             'max:' . (int) config('magic-starter.support.message_max_length', 2000),
         ];
+    }
+
+    /**
+     * Rules for a customer's message that may carry files instead of text:
+     * the body is required only without `attachments`, with the attachment
+     * rules beside it.
+     *
+     * @return array<string, list<mixed>>
+     */
+    public static function message(bool $attachments): array
+    {
+        if (! $attachments) {
+            return [
+                'body' => self::body(),
+            ];
+        }
+
+        return [
+            'body' => self::bodyBesideFiles(),
+            ...SupportAttachmentRules::attachments(),
+        ];
+    }
+
+    /**
+     * Rules for the app's description of where the customer wrote from: each
+     * allowlisted key an optional string of at most
+     * {@see self::CLIENT_CONTEXT_MAX_LENGTH} characters.
+     *
+     * @return array<string, list<mixed>>
+     */
+    public static function clientContext(): array
+    {
+        $rules = [
+            'client_context' => [
+                'sometimes',
+                'nullable',
+                'array',
+            ],
+        ];
+
+        foreach (self::CLIENT_CONTEXT_KEYS as $key) {
+            $rules["client_context.{$key}"] = [
+                'sometimes',
+                'nullable',
+                'string',
+                'max:' . self::CLIENT_CONTEXT_MAX_LENGTH,
+            ];
+        }
+
+        return $rules;
     }
 
     /**
@@ -97,10 +169,16 @@ final class SupportRules
      * @param  bool  $topicRequired  Whether the door demands a topic or, from a client older than the topic
      *                               picker, a subject. Contact sales is filed under `sales` either way, so its
      *                               topic is not even read.
+     * @param  bool  $attachments  Whether the door takes `attachments`, which make the body optional.
+     * @param  bool  $diagnostics  Whether the door takes the app's `screenshot` and `client_context`.
      * @return array<string, list<mixed>>
      */
-    public static function conversation(array $sources, bool $topicRequired = false): array
-    {
+    public static function conversation(
+        array $sources,
+        bool $topicRequired = false,
+        bool $attachments = false,
+        bool $diagnostics = false,
+    ): array {
         $topicPresence = $topicRequired
             ? [
                 'exclude_if:source,' . SupportConversationSource::CONTACT_SALES->value,
@@ -116,7 +194,7 @@ final class SupportRules
                 'string',
                 'max:255',
             ],
-            'body' => self::body(),
+            'body' => $attachments ? self::bodyBesideFiles() : self::body(),
             'topic' => [
                 ...$topicPresence,
                 'nullable',
@@ -128,6 +206,21 @@ final class SupportRules
                 'sometimes',
                 Rule::enum(SupportConversationSource::class)->only($sources),
             ],
+            ...($attachments ? SupportAttachmentRules::attachments() : []),
+            ...($diagnostics ? [...SupportAttachmentRules::screenshot(), ...self::clientContext()] : []),
+        ];
+    }
+
+    /**
+     * A body that may be left out when files are sent, capped like any other.
+     *
+     * @return list<string>
+     */
+    private static function bodyBesideFiles(): array
+    {
+        return [
+            'required_without:attachments',
+            ...self::body(required: false),
         ];
     }
 }

@@ -86,7 +86,16 @@ abstract class FilamentTestCase extends TestCase
      */
     private function runPackageMigrations(): void
     {
-        $roots = ['create_users_table.php', 'create_teams_table.php'];
+        // Tables other tables point at, in dependency order. Alphabetical order
+        // alone puts `create_support_message_attachments` before
+        // `create_support_messages` (`_` sorts before `s`), which SQLite accepts
+        // and PostgreSQL refuses, since the foreign key names a missing table.
+        $roots = [
+            'create_users_table.php',
+            'create_teams_table.php',
+            'create_support_conversations_table.php',
+            'create_support_messages_table.php',
+        ];
         $rank = static function (string $file) use ($roots): array {
             $name = basename($file);
             $root = array_search($name, $roots, true);
