@@ -29,6 +29,11 @@ use Illuminate\Validation\ValidationException;
  * customer by exactly one route: an opener with an account by database and
  * push plus a realtime nudge, a visitor with no account by a mail carrying a
  * newly minted thread link, which retires the link in every earlier mail.
+ *
+ * The customer is told only once the reply commits, including a transaction
+ * the caller holds open around this call: the panel stores a staff reply's
+ * files in that transaction after the reply returns, and a push or a realtime
+ * nudge sent sooner would send the app to read a message that is not there.
  */
 class ReplyToSupportConversation implements RepliesToSupport
 {
@@ -86,21 +91,29 @@ class ReplyToSupportConversation implements RepliesToSupport
             return $message;
         }
 
-        // 4. Reach the customer by the one route their conversation has.
+        // 4. Reach the customer by the one route their conversation has, once the reply has committed.
+        DB::afterCommit(fn () => $this->tellCustomer($c, $message, $threadUrl));
+
+        return $message;
+    }
+
+    /**
+     * Mail a visitor a fresh thread link, or tell an opener with an account by notification and a realtime nudge.
+     */
+    private function tellCustomer(SupportConversation $c, SupportMessage $message, ?string $threadUrl): void
+    {
         if ($threadUrl !== null) {
             $link = str_replace('{token}', rawurlencode(SupportThreadToken::mint($c)), $threadUrl);
 
             Notification::route('mail', $c->email)->notify(new SupportReplyNotification($message, $link));
 
-            return $message;
+            return;
         }
 
         Notification::send($c->user, new SupportReplyNotification($message));
 
-        // 5. A realtime outage must never fail a reply that is already stored.
+        // A realtime outage must never fail a reply that is already stored.
         rescue(static fn () => event(new SupportConversationUpdated($c)), report: true);
-
-        return $message;
     }
 
     /**

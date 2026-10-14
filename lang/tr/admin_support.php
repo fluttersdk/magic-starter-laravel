@@ -14,6 +14,7 @@ return [
     'details' => 'Ayrıntılar',
     'waiting' => ':time bekliyor',
     'note_hidden' => 'müşteri göremez',
+    'overdue' => 'Gecikti',
 
     'fields' => [
         'number' => 'Numara',
@@ -30,6 +31,9 @@ return [
         'ai_turns' => 'Yapay zekâ turları',
         'ai_failures' => 'Yapay zekâ hataları',
         'handoff_reason' => 'Devir nedeni',
+        'csat' => 'Değerlendirme',
+        'csat_comment' => 'Değerlendirme yorumu',
+        'respond_by' => 'Son yanıt zamanı',
     ],
 
     'authors' => [
@@ -111,6 +115,66 @@ return [
         'confidence' => 'güven :value',
         'draft_queued' => 'Taslak hazırlanıyor. Bir dakika sonra Taslak yanıt\'ı yeniden açın.',
         'summarize_queued' => 'Özet hazırlanıyor ve görüşmede görünecek.',
+    ],
+
+    /*
+     * The customer's rating of a resolved conversation.
+     */
+    'csat' => [
+        'up' => 'Beğendi',
+        'down' => 'Beğenmedi',
+        'none' => 'Değerlendirilmedi',
+    ],
+
+    /*
+     * Files in the thread and on a staff reply. A PDF is the customer's file and is never opened in the panel.
+     */
+    'attachments' => [
+        'label' => 'Ekler',
+        'untrusted_pdf' => 'PDF indir (güvenilmeyen dosya)',
+    ],
+
+    /*
+     * The customer context beside the thread: what the app sent, what the host app knows, recent account activity.
+     */
+    'context' => [
+        'title' => 'Müşteri bilgileri',
+        'client' => 'Uygulama bilgisi',
+        'customer' => 'Hesap',
+        'activity' => 'Son etkinlikler',
+        'no_activity' => 'Kayıtlı etkinlik yok.',
+        'client_keys' => [
+            'route' => 'Ekran',
+            'app_version' => 'Uygulama sürümü',
+            'build_number' => 'Derleme',
+            'platform' => 'Platform',
+            'os_version' => 'İşletim sistemi sürümü',
+            'locale' => 'Dil',
+            'timezone' => 'Saat dilimi',
+        ],
+    ],
+
+    /*
+     * The read-only list of in-app 0-10 feedback answers.
+     */
+    'feedback' => [
+        'navigation_label' => 'Geri bildirimler',
+        'model_label' => 'geri bildirim',
+        'plural_model_label' => 'geri bildirimler',
+        'dismissed' => 'Kapatıldı',
+        'columns' => [
+            'score' => 'Puan',
+            'comment' => 'Yorum',
+            'user' => 'Kullanıcı',
+            'conversation' => 'Görüşme',
+            'created_at' => 'Tarih',
+        ],
+        'bands' => [
+            'detractor' => '0 ile 6 arası',
+            'passive' => '7 ile 8 arası',
+            'promoter' => '9 ile 10 arası',
+            'dismissed' => 'Kapatıldı',
+        ],
     ],
 
     'refusals' => [

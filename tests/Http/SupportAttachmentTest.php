@@ -2,6 +2,7 @@
 
 namespace FlutterSdk\MagicStarter\Tests\Http;
 
+use FlutterSdk\MagicStarter\Actions\StoreSupportAttachments;
 use FlutterSdk\MagicStarter\Contracts\DeletesUsers;
 use FlutterSdk\MagicStarter\Enums\SupportAttachmentOrigin;
 use FlutterSdk\MagicStarter\Events\SupportConversationNeedsStaff;
@@ -357,6 +358,25 @@ class SupportAttachmentTest extends TestCase
             ],
         ])->assertCreated();
         $this->assertCount(3, $this->storedFiles());
+    }
+
+    public function test_staff_files_are_exempt_from_the_daily_allowance(): void
+    {
+        config()->set('magic-starter.support.attachments.daily_files', 1);
+        $staff = $this->user('staff@example.com');
+        $action = app(StoreSupportAttachments::class);
+
+        $prepared = $action->prepare(
+            $staff,
+            [
+                $this->upload('a.png', $this->png()),
+                $this->upload('b.png', $this->png()),
+            ],
+            null,
+            SupportAttachmentOrigin::STAFF,
+        );
+
+        $this->assertCount(2, $prepared);
     }
 
     public function test_the_daily_byte_cap_refuses_the_next_upload(): void

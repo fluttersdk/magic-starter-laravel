@@ -112,7 +112,8 @@ class StoreSupportAttachments
         }
 
         // 3. The allowance counts what would be stored, so a re-encode that shrinks a photo costs less.
-        $this->assertWithinAllowance($sender, $prepared);
+        //    Staff files are exempt: the allowance caps what a customer can push onto the disk.
+        $this->assertWithinAllowance($sender, $this->countable($prepared));
 
         return $prepared;
     }
@@ -165,8 +166,24 @@ class StoreSupportAttachments
         }
 
         DB::afterCommit(function () use ($sender, $prepared): void {
-            $this->countAgainstAllowance($sender, $prepared);
+            $this->countAgainstAllowance($sender, $this->countable($prepared));
         });
+    }
+
+    /**
+     * The prepared files that count against a daily allowance: every one but a staff file.
+     *
+     * @param  list<array{origin: SupportAttachmentOrigin, name: string, mime: string, extension: string,
+     *                    contents: string, width: int|null, height: int|null}>  $prepared
+     * @return list<array{origin: SupportAttachmentOrigin, name: string, mime: string, extension: string,
+     *                    contents: string, width: int|null, height: int|null}>
+     */
+    private function countable(array $prepared): array
+    {
+        return array_values(array_filter(
+            $prepared,
+            static fn (array $file): bool => $file['origin'] !== SupportAttachmentOrigin::STAFF,
+        ));
     }
 
     /**

@@ -17,9 +17,11 @@ use FlutterSdk\MagicStarter\Filament\Pages\Dashboard;
 use FlutterSdk\MagicStarter\Filament\Widgets\HorizonStatusWidget;
 use FlutterSdk\MagicStarter\Filament\Widgets\PulseSummaryWidget;
 use FlutterSdk\MagicStarter\Filament\Widgets\StarterStatsWidget;
+use FlutterSdk\MagicStarter\Http\Controllers\Admin\SupportAttachmentPanelController;
 use FlutterSdk\MagicStarter\MagicStarter;
 use Illuminate\Contracts\Auth\Access\Gate;
 use Illuminate\Contracts\Foundation\Application;
+use Illuminate\Support\Facades\Route;
 use Laravel\Horizon\Horizon;
 use Laravel\Pulse\Pulse;
 use Laravel\Telescope\Telescope;
@@ -288,6 +290,16 @@ class MagicStarterPlugin implements Plugin
 
         // 4. The operations tools the app opted into.
         $this->registerOperations($panel);
+
+        // 5. Staff read support files through the panel session, never a signed url.
+        if (Features::hasSupportFeatures()) {
+            $panel->authenticatedRoutes(static function (): void {
+                Route::get(
+                    'magic-starter/support-attachments/{conversation}/{attachment}',
+                    [SupportAttachmentPanelController::class, 'show'],
+                )->name('magic-starter.support-attachment');
+            });
+        }
     }
 
     /**
@@ -451,6 +463,8 @@ class MagicStarterPlugin implements Plugin
             'audits' => 'FlutterSdk\\MagicStarter\\Filament\\Resources\\Audits\\AuditResource',
             'support' => 'FlutterSdk\\MagicStarter\\Filament\\Resources\\SupportConversations\\'
                 . 'SupportConversationResource',
+            'support_feedback' => 'FlutterSdk\\MagicStarter\\Filament\\Resources\\SupportFeedback\\'
+                . 'SupportFeedbackResource',
             ...$this->resources,
         ];
 
@@ -483,6 +497,7 @@ class MagicStarterPlugin implements Plugin
             'newsletter_subscribers' => Features::hasNewsletterSubscriptionFeatures(),
             'audits' => Features::hasAuditFeatures(),
             'support' => Features::hasSupportFeatures(),
+            'support_feedback' => Features::hasSupportFeatures() && Features::hasSupportFeedbackFeatures(),
             default => true,
         };
     }

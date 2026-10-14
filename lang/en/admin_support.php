@@ -14,6 +14,7 @@ return [
     'details' => 'Details',
     'waiting' => 'waiting :time',
     'note_hidden' => 'customer cannot see',
+    'overdue' => 'Overdue',
 
     'fields' => [
         'number' => 'Number',
@@ -30,6 +31,9 @@ return [
         'ai_turns' => 'AI turns',
         'ai_failures' => 'AI failures',
         'handoff_reason' => 'Handoff reason',
+        'csat' => 'Rating',
+        'csat_comment' => 'Rating comment',
+        'respond_by' => 'Respond by',
     ],
 
     'authors' => [
@@ -111,6 +115,66 @@ return [
         'confidence' => 'confidence :value',
         'draft_queued' => 'The draft is being prepared. Open Draft reply again in a minute.',
         'summarize_queued' => 'The summary is being prepared and will appear in the thread.',
+    ],
+
+    /*
+     * The customer's rating of a resolved conversation.
+     */
+    'csat' => [
+        'up' => 'Thumbs up',
+        'down' => 'Thumbs down',
+        'none' => 'Not rated',
+    ],
+
+    /*
+     * Files in the thread and on a staff reply. A PDF is the customer's file and is never opened in the panel.
+     */
+    'attachments' => [
+        'label' => 'Attachments',
+        'untrusted_pdf' => 'Download PDF (untrusted)',
+    ],
+
+    /*
+     * The customer context beside the thread: what the app sent, what the host app knows, recent account activity.
+     */
+    'context' => [
+        'title' => 'Customer context',
+        'client' => 'Client info',
+        'customer' => 'Account',
+        'activity' => 'Recent activity',
+        'no_activity' => 'No recorded activity.',
+        'client_keys' => [
+            'route' => 'Screen',
+            'app_version' => 'App version',
+            'build_number' => 'Build',
+            'platform' => 'Platform',
+            'os_version' => 'OS version',
+            'locale' => 'Locale',
+            'timezone' => 'Timezone',
+        ],
+    ],
+
+    /*
+     * The read-only list of in-app 0-10 feedback answers.
+     */
+    'feedback' => [
+        'navigation_label' => 'Feedback',
+        'model_label' => 'feedback answer',
+        'plural_model_label' => 'feedback answers',
+        'dismissed' => 'Dismissed',
+        'columns' => [
+            'score' => 'Score',
+            'comment' => 'Comment',
+            'user' => 'User',
+            'conversation' => 'Conversation',
+            'created_at' => 'Date',
+        ],
+        'bands' => [
+            'detractor' => '0 to 6',
+            'passive' => '7 to 8',
+            'promoter' => '9 to 10',
+            'dismissed' => 'Dismissed',
+        ],
     ],
 
     'refusals' => [

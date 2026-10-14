@@ -6,7 +6,8 @@
     A body is escaped and set on one line with no whitespace around the echo: the
     element uses `white-space: pre-line`, so any indentation would render as text.
 
-    @var list<array{variant: string, out: bool, body: string, avatar: string, chip: ?string, meta: list<string>}> $items
+    @var list<array{variant: string, out: bool, body: string, avatar: string, chip: ?string, meta: list<string>,
+                    attachments: list<array{name: string, url: string, image: bool}>}> $items
     @var array{text: string, age: string}|null $summary
 --}}
 <style>
@@ -32,6 +33,10 @@
     .msl-staff .msl-avatar, .msl-note .msl-avatar { background: var(--msl-avatar-staff); color: var(--msl-avatar-staff-fg); }
     .msl-ai .msl-avatar { background: var(--msl-avatar-ai); color: var(--msl-avatar-ai-fg); }
     .msl-event { display: flex; align-items: center; gap: 10px; font-size: 12px; color: var(--msl-muted); }
+    .msl-files { display: flex; flex-wrap: wrap; gap: 6px; }
+    .msl-out .msl-files { justify-content: flex-end; }
+    .msl-file-image img { display: block; max-width: 220px; max-height: 160px; border-radius: 8px; border: 1px solid var(--msl-rule); object-fit: cover; }
+    .msl-file-pdf { padding: 6px 10px; border-radius: 8px; border: 1px dashed var(--msl-note-edge); font-size: 12px; overflow-wrap: anywhere; }
     .msl-event::before, .msl-event::after { content: ""; flex: 1; height: 1px; background: var(--msl-rule); }
     @media (max-width: 1023px) { .msl-stack { max-width: 85%; } }
 </style>
@@ -52,6 +57,9 @@
                 @endunless
                 <div class="msl-stack">
                     <div class="msl-bubble"><div class="msl-body">{{ $item['body'] }}</div></div>
+                    @if ($item['attachments'] !== [])
+                        @include('magic-starter::filament.support.attachments', ['attachments' => $item['attachments']])
+                    @endif
                     <div class="msl-meta">
                         @if ($item['chip'] !== null)
                             <span class="msl-chip">@if ($item['variant'] === 'ai')&#10022; @endif{{ $item['chip'] }}</span>
