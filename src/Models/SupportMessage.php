@@ -2,6 +2,7 @@
 
 namespace FlutterSdk\MagicStarter\Models;
 
+use FlutterSdk\MagicStarter\Audit\Redactor;
 use FlutterSdk\MagicStarter\Enums\SupportMessageKind;
 use FlutterSdk\MagicStarter\Enums\SupportSenderType;
 use FlutterSdk\MagicStarter\MagicStarter;
@@ -52,6 +53,16 @@ class SupportMessage extends Model
         'kind',
         'body',
         'meta',
+    ];
+
+    /**
+     * What a customer or a staff member wrote: the audit rows (see {@see Redactor}) keep the key and drop the value,
+     * as {@see SupportConversation} does for the subject, since a reply carries what nobody wants copied into a log.
+     *
+     * @var list<string>
+     */
+    protected array $auditExclude = [
+        'body',
     ];
 
     /**
