@@ -19,6 +19,8 @@
     },
     "require": {
         "php": "^8.2",
+        "ext-exif": "*",
+        "ext-gd": "*",
         "bacon/bacon-qr-code": "^3.0",
         "firebase/php-jwt": "^7.0",
         "illuminate/auth": "^12.0|^13.0",

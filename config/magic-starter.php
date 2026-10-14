@@ -97,6 +97,20 @@ return [
     | staff assist queued on a handoff is charged the same way, as one turn;
     | the panel's Summarize button is not.
     |
+    | `attachments` bounds the files a message may carry (the `support-attachments`
+    | feature): the private `disk` they are stored on, at most `max_files` of
+    | `max_kb` kilobytes each and of the listed `types`; an image is refused
+    | past `max_edge` pixels on a side or `max_pixels` in total, and is stored
+    | re-encoded with its long edge capped at `stored_max_edge`. `daily_files` and
+    | `daily_kb` cap what one user may store a day, and a signed PDF link lives
+    | `link_ttl_seconds`.
+    |
+    | `feedback` paces the in-app 0-10 card (the `support-feedback` feature):
+    | asked of an account at least `min_account_days` old, no more than once per
+    | `interval_days`. A score up to `low_score_max` opens or continues a
+    | conversation, at most `low_score_daily` new ones per user a day, and
+    | `response_hours` is the time staff have to answer it.
+    |
     */
 
     'support' => [
@@ -117,6 +131,33 @@ return [
         ],
 
         'client_thread_path' => '/support/{id}',
+
+        'attachments' => [
+            'disk' => 'local',
+            'max_files' => 3,
+            'max_kb' => 5120,
+            'types' => [
+                'jpg',
+                'jpeg',
+                'png',
+                'webp',
+                'pdf',
+            ],
+            'max_edge' => 8000,
+            'max_pixels' => 40000000,
+            'stored_max_edge' => 2048,
+            'daily_files' => 30,
+            'daily_kb' => 102400,
+            'link_ttl_seconds' => 60,
+        ],
+
+        'feedback' => [
+            'min_account_days' => 14,
+            'interval_days' => 90,
+            'low_score_max' => 6,
+            'response_hours' => 48,
+            'low_score_daily' => 1,
+        ],
 
         'ai' => [
             'name' => null,

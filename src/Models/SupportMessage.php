@@ -7,8 +7,10 @@ use FlutterSdk\MagicStarter\Enums\SupportSenderType;
 use FlutterSdk\MagicStarter\MagicStarter;
 use FlutterSdk\MagicStarter\Support\ConditionallyUsesUuids;
 use Illuminate\Database\Eloquent\Builder;
+use Illuminate\Database\Eloquent\Collection;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
+use Illuminate\Database\Eloquent\Relations\HasMany;
 use Illuminate\Support\Carbon;
 
 /**
@@ -25,6 +27,7 @@ use Illuminate\Support\Carbon;
  * @property Carbon|null $updated_at
  * @property-read SupportConversation $conversation
  * @property-read Model|null $sender
+ * @property-read Collection<int, SupportMessageAttachment> $attachments
  */
 class SupportMessage extends Model
 {
@@ -82,6 +85,16 @@ class SupportMessage extends Model
     public function sender(): BelongsTo
     {
         return $this->belongsTo(MagicStarter::userModel(), 'sender_id');
+    }
+
+    /**
+     * The files stored on this message.
+     *
+     * @return HasMany<SupportMessageAttachment, $this>
+     */
+    public function attachments(): HasMany
+    {
+        return $this->hasMany(SupportMessageAttachment::class, 'message_id');
     }
 
     /**
