@@ -182,6 +182,32 @@ class SupportConversationModelTest extends TestCase
         $this->assertSame('public_form', $audit->new_values['source']);
     }
 
+    #[DefineEnvironment('withAudit')]
+    public function test_the_audit_rows_of_a_message_redact_its_body(): void
+    {
+        $this->migrateSupportTables();
+        (require __DIR__ . '/../../database/migrations/create_magic_starter_audits_table.php')->up();
+        $message = $this->createPublicConversation()->messages()->create([
+            'sender_type' => SupportSenderType::CUSTOMER,
+            'kind' => SupportMessageKind::MESSAGE,
+            'body' => 'My card ending 4242 was charged twice',
+        ]);
+
+        $message->update([
+            'body' => 'My card ending 4242 was charged three times',
+        ]);
+
+        $audits = Audit::query()
+            ->where('auditable_type', $message->getMorphClass())
+            ->where('auditable_id', (string) $message->getKey())
+            ->get()
+            ->keyBy('event');
+        $this->assertSame(Redactor::PLACEHOLDER, $audits['created']->new_values['body']);
+        $this->assertSame('message', $audits['created']->new_values['kind']);
+        $this->assertSame(Redactor::PLACEHOLDER, $audits['updated']->old_values['body']);
+        $this->assertSame(Redactor::PLACEHOLDER, $audits['updated']->new_values['body']);
+    }
+
     public function test_has_support_features_is_false_until_the_flag_is_listed(): void
     {
         config(['magic-starter.features' => []]);
