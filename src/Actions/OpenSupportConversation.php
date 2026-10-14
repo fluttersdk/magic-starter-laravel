@@ -146,7 +146,14 @@ class OpenSupportConversation implements OpensSupportConversations
         // 4. Contact sales continues the opener's open thread of this team instead of filing a second one.
         if ($source === SupportConversationSource::CONTACT_SALES && $user instanceof Model) {
             [$conversation, $continued] = DB::transaction(
-                fn (): array => $this->continueOrCreate($user, $teamId, $fields, $body, $files),
+                fn (): array => $this->continueOrCreate(
+                    $user,
+                    $teamId,
+                    $fields,
+                    $body,
+                    $files,
+                    SupportConversationSource::CONTACT_SALES,
+                ),
             );
 
             if ($continued) {
@@ -171,32 +178,52 @@ class OpenSupportConversation implements OpensSupportConversations
     }
 
     /**
-     * Find the opener's contact-sales conversation to continue, or create a new one.
+     * Find the opener's unresolved conversation of one source to continue, or create a new one.
      *
      * Runs inside the caller's transaction and locks the opener's own row first.
      * That row always exists, so two taps at the same instant queue on it and the
      * second finds the conversation the first created; a lock on
      * `support_conversations` alone would lock nothing when no row matches yet.
+     * Contact sales and the in-app feedback card both come through here.
      *
      * @param  array<string, mixed>  $fields
      * @param  list<array{origin: SupportAttachmentOrigin, name: string, mime: string, extension: string,
      *                    contents: string, width: int|null, height: int|null}>  $files  stored only on a new one
      * @return array{0: SupportConversation, 1: bool} the conversation, and whether it already existed
      */
-    private function continueOrCreate(
+    public function continueOrCreate(
         Model&Authenticatable $user,
         mixed $teamId,
         array $fields,
         string $body,
         array $files,
+        SupportConversationSource $source,
     ): array {
         // 1. Serialise concurrent taps of one account on a row that is always there.
         $user->newQuery()->whereKey($user->getKey())->lockForUpdate()->first();
 
-        // 2. The newest unresolved contact-sales thread of the team the opener is in now.
-        $existing = SupportConversation::query()
+        // 2. The newest unresolved thread of this source in the team the opener is in now.
+        $existing = $this->continuable($user, $teamId, $source);
+
+        if ($existing instanceof SupportConversation) {
+            return [$existing, true];
+        }
+
+        // 3. Nothing to continue.
+        return [$this->create($fields, $body, $user, $files), false];
+    }
+
+    /**
+     * The opener's newest unresolved conversation of `$source` in the team they are in now, or null.
+     */
+    public function continuable(
+        Model&Authenticatable $user,
+        mixed $teamId,
+        SupportConversationSource $source,
+    ): ?SupportConversation {
+        return SupportConversation::query()
             ->where('user_id', $user->getKey())
-            ->where('source', SupportConversationSource::CONTACT_SALES->value)
+            ->where('source', $source->value)
             ->where('status', '!=', SupportConversationStatus::RESOLVED->value)
             ->when(
                 $teamId === null,
@@ -205,13 +232,6 @@ class OpenSupportConversation implements OpensSupportConversations
             )
             ->latest('last_activity_at')
             ->first();
-
-        if ($existing instanceof SupportConversation) {
-            return [$existing, true];
-        }
-
-        // 3. Nothing to continue.
-        return [$this->create($fields, $body, $user, $files), false];
     }
 
     /**

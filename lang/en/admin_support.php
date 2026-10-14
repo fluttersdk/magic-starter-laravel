@@ -128,6 +128,8 @@ return [
             'opened' => 'A customer opened a new conversation.',
             'customer_wrote' => 'A customer wrote again and is waiting for an answer.',
             'handoff' => 'The AI desk handed a conversation to staff: :reason.',
+            'negative_rating' => 'A customer rated a resolved conversation thumbs down.',
+            'feedback' => 'A customer left a low score in the in-app feedback.',
             'open_panel' => 'Open the admin panel to answer it.',
         ],
         'reply' => [

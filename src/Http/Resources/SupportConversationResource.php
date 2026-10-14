@@ -6,6 +6,7 @@ use Closure;
 use FlutterSdk\MagicStarter\Enums\SupportConversationStatus;
 use FlutterSdk\MagicStarter\Enums\SupportMessageKind;
 use FlutterSdk\MagicStarter\Enums\SupportSenderType;
+use FlutterSdk\MagicStarter\Features;
 use FlutterSdk\MagicStarter\Models\SupportConversation;
 use FlutterSdk\MagicStarter\Models\SupportMessage;
 use Illuminate\Database\Eloquent\Builder;
@@ -29,6 +30,9 @@ use Illuminate\Support\Str;
  * `awaiting_ai` is a pending conversation whose newest customer message the AI
  * desk has not answered yet; `waiting_on_team` an open one still waiting on a
  * person.
+ *
+ * With the `support-csat` feature the opener also reads `rating` (the last one given, kept until a new one
+ * overwrites it) and `can_rate`, true while the conversation is resolved and unrated for this resolution.
  *
  * Each message carries its `attachments` only after {@see self::withAttachments()},
  * which the signed-in customer's controller calls and the public thread never does.
@@ -115,6 +119,8 @@ class SupportConversationResource extends JsonResource
                 && $this->last_customer_message_id !== null
                 && (string) $this->last_customer_message_id !== (string) $this->answered_message_id,
             'waiting_on_team' => $this->status === SupportConversationStatus::OPEN && $this->waiting_since !== null,
+            'rating' => $this->when(Features::hasSupportCsatFeatures(), fn (): ?array => $this->rating()),
+            'can_rate' => $this->when(Features::hasSupportCsatFeatures(), fn (): bool => $this->canRate()),
             'last_message' => $this->when(
                 $this->resource->relationLoaded('lastMessage'),
                 fn (): ?array => self::preview($this->resource->getRelation('lastMessage')),
@@ -125,6 +131,34 @@ class SupportConversationResource extends JsonResource
                 ->values()
                 ->all()),
         ];
+    }
+
+    /**
+     * The opener's rating as last given, or null before any.
+     *
+     * @return array{value: string|null, comment: string|null, rated_at: string}|null
+     */
+    private function rating(): ?array
+    {
+        if ($this->csat_rated_at === null) {
+            return null;
+        }
+
+        return [
+            'value' => $this->csat_rating?->value,
+            'comment' => $this->csat_comment,
+            'rated_at' => $this->csat_rated_at->toIso8601String(),
+        ];
+    }
+
+    /**
+     * Whether the opener may rate now: the conversation is resolved and not yet rated for this resolution.
+     */
+    private function canRate(): bool
+    {
+        return $this->status === SupportConversationStatus::RESOLVED
+            && ($this->csat_rated_at === null
+                || ($this->resolved_at !== null && $this->csat_rated_at->lt($this->resolved_at)));
     }
 
     /**

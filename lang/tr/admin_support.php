@@ -128,6 +128,8 @@ return [
             'opened' => 'Bir müşteri yeni bir görüşme başlattı.',
             'customer_wrote' => 'Bir müşteri yeniden yazdı ve yanıt bekliyor.',
             'handoff' => 'Yapay zekâ masası bir görüşmeyi ekibe devretti: :reason.',
+            'negative_rating' => 'Bir müşteri çözülmüş bir görüşmeyi olumsuz puanladı.',
+            'feedback' => 'Bir müşteri uygulama içi geri bildirimde düşük puan verdi.',
             'open_panel' => 'Yanıtlamak için yönetim panelini açın.',
         ],
         'reply' => [

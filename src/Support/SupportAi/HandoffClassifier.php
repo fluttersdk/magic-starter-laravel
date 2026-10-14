@@ -240,25 +240,30 @@ final class HandoffClassifier
     /**
      * Whether the message must go to a person, and why.
      *
+     * @param  bool  $attachmentOnly  The trigger is files (images or PDFs) with no text of its own. A phrase
+     *                                above still wins, but with none the turn is a person's: a file with no
+     *                                question gives the model nothing to answer, and the desk will not guess.
      * @return array{reason: SupportHandoffReason, priority: SupportPriority}|null Null when the AI may answer.
      */
-    public function classify(string $text): ?array
+    public function classify(string $text, bool $attachmentOnly = false): ?array
     {
         $folded = self::fold($text);
-
-        if ($folded === '') {
-            return null;
-        }
-
         $shouting = preg_match(self::SHOUTING, $text) === 1;
 
-        foreach ($this->terms() as $reason => $terms) {
+        foreach ($folded === '' ? [] : $this->terms() as $reason => $terms) {
             if ($this->mentions($folded, $terms) || ($shouting && $reason === 'anger')) {
                 return [
                     'reason' => SupportHandoffReason::from($reason),
                     'priority' => self::PRIORITIES[$reason],
                 ];
             }
+        }
+
+        if ($attachmentOnly) {
+            return [
+                'reason' => SupportHandoffReason::LOW_CONFIDENCE,
+                'priority' => SupportPriority::NORMAL,
+            ];
         }
 
         return null;

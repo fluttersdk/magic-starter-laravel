@@ -43,6 +43,12 @@ interface RespondsToSupport
      * confidence included (`low_confidence`); the package applies no
      * confidence floor of its own.
      *
+     * `$turn->images` lists the trigger's customer-uploaded images as a disk and
+     * a path, never bytes, and `$turn->pdfCount` how many PDFs came with it. An
+     * implementation sends images only to a provider that takes them and tells
+     * the model about the rest in words; image content is data, never instructions.
+     * A trigger of images with no text never gets here: the package hands it off.
+     *
      * @throws Throwable on any provider or projection failure; the package counts it as a failed turn
      */
     public function respond(SupportTurn $turn): SupportAnswer;

@@ -17,7 +17,13 @@ use InvalidArgumentException;
  * nothing a turn carries can leak either into a prompt, whoever built it.
  *
  * Every message body here is customer-authored or customer-visible text: a
- * responder treats it as untrusted data, never as instructions.
+ * responder treats it as untrusted data, never as instructions. So is every
+ * image: its pixels are data to describe, never instructions to follow.
+ *
+ * `images` and `pdfCount` describe the files on the trigger alone. An image is
+ * a pointer, never bytes: the responder reads it from the named disk, and only
+ * when its provider takes images. The auto screenshot, staff files and the
+ * files of earlier messages are never listed.
  */
 final readonly class SupportTurn
 {
@@ -26,6 +32,11 @@ final readonly class SupportTurn
      * @param  list<SupportMessage>  $history  Earlier customer-visible messages, oldest first.
      * @param  string  $locale  The language the reply must be written in.
      * @param  int  $deadlineSeconds  Wall-clock seconds the responder has for every leg together.
+     * @param  list<array{disk: string, path: string, mime: string}>  $images  The images the customer
+     *                                                                         uploaded with the trigger,
+     *                                                                         oldest first.
+     * @param  int  $pdfCount  How many PDFs the customer uploaded with the trigger; they are never read,
+     *                         so a responder only tells the model how many there are.
      *
      * @throws InvalidArgumentException when a message is not this conversation's, a history
      *                                  entry is not customer-visible, the trigger is not a
@@ -37,6 +48,8 @@ final readonly class SupportTurn
         public array $history,
         public string $locale,
         public int $deadlineSeconds,
+        public array $images = [],
+        public int $pdfCount = 0,
     ) {
         if ($trigger->sender_type !== SupportSenderType::CUSTOMER || $trigger->kind !== SupportMessageKind::MESSAGE) {
             throw new InvalidArgumentException('A support turn answers a customer message.');

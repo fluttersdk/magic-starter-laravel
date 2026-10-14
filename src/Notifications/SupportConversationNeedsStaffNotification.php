@@ -33,7 +33,7 @@ class SupportConversationNeedsStaffNotification extends Notification implements 
     use Queueable;
 
     /**
-     * @param  string  $reason  `opened`, `customer_message` or `handoff`
+     * @param  string  $reason  `opened`, `customer_message`, `handoff`, `negative_rating` or `feedback`
      */
     public function __construct(
         public readonly SupportConversation $conversation,
@@ -162,7 +162,8 @@ class SupportConversationNeedsStaffNotification extends Notification implements 
     }
 
     /**
-     * Why staff are told: a new conversation, a customer writing again, or the AI desk's handoff and its reason.
+     * Why staff are told: a new conversation, a customer writing again, the AI desk's handoff and its reason, a
+     * thumbs-down or a low feedback score. None of them carries what the customer wrote.
      */
     private function reasonLine(): string
     {
@@ -174,6 +175,8 @@ class SupportConversationNeedsStaffNotification extends Notification implements 
                     . ($this->conversation->handoff_reason ?? SupportHandoffReason::UNAVAILABLE)->value,
                 ),
             ]),
+            'negative_rating' => Lang::get('magic-starter::admin_support.notifications.staff.negative_rating'),
+            'feedback' => Lang::get('magic-starter::admin_support.notifications.staff.feedback'),
             default => Lang::get('magic-starter::admin_support.notifications.staff.customer_wrote'),
         };
     }

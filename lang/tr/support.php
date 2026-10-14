@@ -18,6 +18,15 @@ return [
         'daily_limit' => 'Bugünkü ek sınırına ulaştınız. Lütfen yarın tekrar deneyin.',
     ],
 
+    'rating' => [
+        'not_resolved' => 'Yalnızca çözülmüş bir görüşme puanlanabilir.',
+    ],
+
+    'feedback' => [
+        'subject' => 'Geri bildirim: :score/10',
+        'no_comment' => 'Puan :score/10, yorum yok',
+    ],
+
     'ai' => [
         'name' => ':app Yapay Zekâ Asistanı',
         'handoff' => 'Bu görüşmeyi destek ekibimize aktardım. Bir ekip arkadaşımız size buradan yanıt verecek.',

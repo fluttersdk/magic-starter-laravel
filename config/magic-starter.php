@@ -93,8 +93,9 @@ return [
     | tokens one user may spend a day (`user_daily_tokens`), and the tokens a
     | day each pool (`free`, `paid`) may spend across all teams. A turn
     | reserves `pool_reservation_tokens` (prompt and completion together) from
-    | the user's tokens and the pool up front and settles to what it used. The
-    | staff assist queued on a handoff is charged the same way, as one turn;
+    | the user's tokens and the pool up front and settles to what it used, plus
+    | `image_reservation_tokens` for each image the customer attached to the
+    | message it answers. The staff assist queued on a handoff is charged the same way, as one turn;
     | the panel's Summarize button is not.
     |
     | `attachments` bounds the files a message may carry (the `support-attachments`
@@ -170,6 +171,7 @@ return [
             'reply_max_length' => 1500,
             'max_tokens_per_turn' => 1200,
             'pool_reservation_tokens' => 6000,
+            'image_reservation_tokens' => 1600,
             'failures_before_handoff' => 2,
             'sweep_after_minutes' => 5,
             'allowed_hosts' => [],

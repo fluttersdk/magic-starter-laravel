@@ -14,6 +14,8 @@ use FlutterSdk\MagicStarter\Features;
 use FlutterSdk\MagicStarter\Http\Controllers\PublicSupportThreadController;
 use FlutterSdk\MagicStarter\Http\Controllers\SupportAttachmentController;
 use FlutterSdk\MagicStarter\Http\Controllers\SupportConversationController;
+use FlutterSdk\MagicStarter\Http\Controllers\SupportFeedbackController;
+use FlutterSdk\MagicStarter\Http\Controllers\SupportRatingController;
 use Illuminate\Support\Facades\Route;
 
 Route::prefix((string) config('magic-starter.route_prefix', ''))
@@ -30,6 +32,15 @@ Route::prefix((string) config('magic-starter.route_prefix', ''))
                     'storeMessage',
                 ]);
                 Route::post('conversations/{conversation}/seen', [SupportConversationController::class, 'seen']);
+
+                if (Features::hasSupportCsatFeatures()) {
+                    Route::post('conversations/{conversation}/rating', [SupportRatingController::class, 'store']);
+                }
+
+                if (Features::hasSupportFeedbackFeatures()) {
+                    Route::get('feedback', [SupportFeedbackController::class, 'show']);
+                    Route::post('feedback', [SupportFeedbackController::class, 'store']);
+                }
 
                 if (Features::hasSupportAttachmentsFeatures()) {
                     Route::get('conversations/{conversation}/attachments/{attachment}', [
