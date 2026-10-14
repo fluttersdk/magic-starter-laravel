@@ -10,8 +10,11 @@ use Illuminate\Validation\Rules\File;
  * The one source of the validation rules for a file sent to support.
  *
  * The type is sniffed from the bytes (`File::types`) and the client's extension
- * must agree (`extensions`), so neither an SVG nor an HTML page passes under a
- * `.png` name. An image's size is read from its header with `getimagesize()`,
+ * must be an allowed one (`extensions`), so neither an SVG nor an HTML page
+ * passes under a `.png` name. The two are checked apart, each against the whole
+ * list, so {@see self::sameFamily()} then holds the sniffed type and the
+ * extension to one family: a PDF named `.png`, or an image named `.pdf`, is
+ * refused. An image's size is read from its header with `getimagesize()`,
  * which decodes no pixel, and refused past `support.attachments.max_edge` on a
  * side or `max_pixels` in total; `bail` keeps a file of the wrong type from
  * reaching that check at all.
@@ -96,8 +99,36 @@ final class SupportAttachmentRules
             File::types($types)
                 ->extensions($types)
                 ->max((int) config('magic-starter.support.attachments.max_kb', 5120)),
+            self::sameFamily($types),
             self::withinPixelBounds(),
         ];
+    }
+
+    /**
+     * Refuse a file whose sniffed type and client extension name different families, image or PDF.
+     *
+     * @param  list<string>  $types
+     * @return Closure(string, mixed, Closure): void
+     */
+    private static function sameFamily(array $types): Closure
+    {
+        return static function (string $attribute, mixed $value, Closure $fail) use ($types): void {
+            if (! $value instanceof UploadedFile) {
+                return;
+            }
+
+            $isPdf = $value->getMimeType() === SupportAttachmentResponse::PDF;
+
+            if ($isPdf === (strtolower($value->getClientOriginalExtension()) === 'pdf')) {
+                return;
+            }
+
+            $fail('validation.extensions')->translate([
+                'values' => $isPdf ? 'pdf' : implode(', ', array_diff($types, [
+                    'pdf',
+                ])),
+            ]);
+        };
     }
 
     /**

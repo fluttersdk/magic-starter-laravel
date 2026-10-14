@@ -340,7 +340,7 @@ class SupportConversationResource extends MagicStarterResource
      * The thread as the Blade draws it: one plain array per bubble or event line, notes included.
      *
      * @return list<array{variant: string, out: bool, body: string, avatar: string, chip: ?string, meta: list<string>,
-     *                    attachments: list<array{name: string, url: string, image: bool}>}>
+     *                    attachments: list<array{name: string, url: string, image: bool, origin: string}>}>
      */
     public static function threadItems(SupportConversation $conversation): array
     {
@@ -618,7 +618,7 @@ class SupportConversationResource extends MagicStarterResource
      * One message as the Blade needs it: which bubble, which side, and the line under it.
      *
      * @return array{variant: string, out: bool, body: string, avatar: string, chip: ?string, meta: list<string>,
-     *               attachments: list<array{name: string, url: string, image: bool}>}
+     *               attachments: list<array{name: string, url: string, image: bool, origin: string}>}
      */
     protected static function threadItem(SupportMessage $message, SupportConversation $conversation): array
     {
@@ -667,7 +667,9 @@ class SupportConversationResource extends MagicStarterResource
     /**
      * One file as the thread draws it, read through the panel route rather than any customer url.
      *
-     * @return array{name: string, url: string, image: bool}
+     * `origin` lets the thread tell the screenshot the app captured from a file the customer chose to send.
+     *
+     * @return array{name: string, url: string, image: bool, origin: string}
      */
     protected static function attachmentItem(SupportMessageAttachment $file): array
     {
@@ -678,6 +680,7 @@ class SupportConversationResource extends MagicStarterResource
                 'attachment' => $file->getKey(),
             ]),
             'image' => str_starts_with($file->mime, 'image/'),
+            'origin' => $file->origin->value,
         ];
     }
 

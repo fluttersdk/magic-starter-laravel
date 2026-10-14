@@ -112,11 +112,16 @@ class PostCustomerSupportMessage implements PostsCustomerSupportMessages
 
         // 4. The responder answers a pending turn once it commits. Staff are
         //    told once per wait, whoever wrote: a message to a conversation
-        //    already waiting on staff adds no alert.
+        //    already waiting on staff adds no alert. The alert also waits for
+        //    the caller's transaction, which stores the message's files after
+        //    this returns, and is dropped if that rolls back; with none open
+        //    it fires at once.
         if ($staysWithAi) {
             RespondToSupportConversation::dispatch($c->getKey(), $message->getKey());
         } elseif (! $wasWaiting) {
-            Event::dispatch(new SupportConversationNeedsStaff($c, 'customer_message'));
+            DB::afterCommit(static function () use ($c): void {
+                Event::dispatch(new SupportConversationNeedsStaff($c, 'customer_message'));
+            });
         }
 
         // 5. Record the one event in place of the silenced model rows, without the url for the same reason.

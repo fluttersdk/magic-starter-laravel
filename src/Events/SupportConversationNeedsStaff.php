@@ -12,7 +12,8 @@ use FlutterSdk\MagicStarter\Models\SupportConversation;
  * already waiting on staff fires nothing, and a handoff fires only for the
  * caller that won it. On `handoff` the conversation's `handoff_reason` says why.
  * `negative_rating` fires once per resolution, when the opener rates it down,
- * and `feedback` when a low in-app feedback score opens or continues one.
+ * and `feedback` when a low in-app feedback score opens a new one; a score that
+ * continues an open feedback conversation alerts as `customer_message`.
  *
  * The seam a staff alert hooks into; the package itself sends nothing from it.
  */

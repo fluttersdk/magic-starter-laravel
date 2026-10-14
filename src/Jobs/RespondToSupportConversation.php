@@ -22,6 +22,7 @@ use FlutterSdk\MagicStarter\Support\SupportAi\SupportAnswer;
 use FlutterSdk\MagicStarter\Support\SupportAi\SupportHandoff;
 use FlutterSdk\MagicStarter\Support\SupportAi\SupportTurn;
 use FlutterSdk\MagicStarter\Support\SupportAi\SupportUsage;
+use FlutterSdk\MagicStarter\Support\SupportAttachmentResponse;
 use Illuminate\Contracts\Cache\LockTimeoutException;
 use Illuminate\Contracts\Container\Container;
 use Illuminate\Contracts\Queue\ShouldQueue;
@@ -88,17 +89,6 @@ class RespondToSupportConversation implements ShouldQueue
      * Minutes after dispatch past which the queue stops retrying and {@see self::failed()} hands off.
      */
     public const RETRY_WINDOW_MINUTES = 10;
-
-    /**
-     * The mime types the upload pipeline stores an image as, and so the only ones a turn may carry.
-     *
-     * @var list<string>
-     */
-    private const IMAGE_MIMES = [
-        'image/jpeg',
-        'image/png',
-        'image/webp',
-    ];
 
     /**
      * Two attempts at a turn. `retryUntil()` takes precedence in the worker, so a release for a busy
@@ -397,7 +387,7 @@ class RespondToSupportConversation implements ShouldQueue
             'images' => $uploads
                 ->filter(static fn (SupportMessageAttachment $file): bool => in_array(
                     $file->mime,
-                    self::IMAGE_MIMES,
+                    SupportAttachmentResponse::IMAGE_MIMES,
                     true,
                 ))
                 ->map(static fn (SupportMessageAttachment $file): array => [
@@ -407,7 +397,7 @@ class RespondToSupportConversation implements ShouldQueue
                 ])
                 ->values()
                 ->all(),
-            'pdfs' => $uploads->where('mime', 'application/pdf')->count(),
+            'pdfs' => $uploads->where('mime', SupportAttachmentResponse::PDF)->count(),
         ];
     }
 

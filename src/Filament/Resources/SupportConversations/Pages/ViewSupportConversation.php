@@ -27,6 +27,7 @@ use FlutterSdk\MagicStarter\Jobs\PrepareSupportStaffAssist;
 use FlutterSdk\MagicStarter\Models\SupportConversation;
 use FlutterSdk\MagicStarter\Models\SupportMessage;
 use FlutterSdk\MagicStarter\Support\SupportAi\SupportStaffAssistCache;
+use FlutterSdk\MagicStarter\Support\SupportAttachmentResponse;
 use Illuminate\Support\Arr;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Str;
@@ -243,13 +244,9 @@ class ViewSupportConversation extends ViewRecord
             ->multiple()
             ->maxFiles((int) config('magic-starter.support.attachments.max_files', 3))
             ->maxSize((int) config('magic-starter.support.attachments.max_kb', 5120))
-            ->acceptedFileTypes([
-                'image/png',
-                'image/jpeg',
-                'image/webp',
-                'application/pdf',
-            ])
-            ->visible(fn (): bool => Features::hasSupportAttachmentsFeatures() && $this->conversation()->user_id !== null)
+            ->acceptedFileTypes(SupportAttachmentResponse::MIMES)
+            ->visible(fn (): bool => Features::hasSupportAttachmentsFeatures()
+                && $this->conversation()->user_id !== null)
             ->saveUploadedFileUsing(
                 fn (BaseFileUpload $component, TemporaryUploadedFile $file): string => $this->stageAttachment(
                     $component,
@@ -316,7 +313,8 @@ class ViewSupportConversation extends ViewRecord
      * transaction with it, so a refused reply or a failed write keeps neither.
      *
      * @param  list<array{origin: SupportAttachmentOrigin, name: string, mime: string, extension: string,
-     *                    contents: string, width: int|null, height: int|null}>  $attachments  from {@see self::stageAttachment()}
+     *                    contents: string, width: int|null, height: int|null}>  $attachments  from
+     *                                                                       {@see self::stageAttachment()}
      */
     protected function post(Action $action, string $body, bool $note, string $event, array $attachments = []): void
     {

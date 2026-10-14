@@ -46,15 +46,21 @@ class RateSupportConversation
                 ]);
             }
 
+            // A row with no `resolved_at` has no newer resolution to alert for, so an existing alert stands.
             $alert = $rating === SupportCsatRating::DOWN
-                && ($locked->csat_alerted_at === null || $locked->csat_alerted_at->lt($locked->resolved_at ?? now()));
+                && ($locked->csat_alerted_at === null
+                    || ($locked->resolved_at !== null && $locked->csat_alerted_at->lt($locked->resolved_at)));
 
             $locked->forceFill([
                 'csat_rating' => $rating,
                 'csat_comment' => $comment,
                 'csat_rated_at' => now(),
                 'csat_assignee_id' => $locked->assignee_id,
-                ...($alert ? ['csat_alerted_at' => now()] : []),
+                ...($alert
+                    ? [
+                        'csat_alerted_at' => now(),
+                    ]
+                    : []),
             ])->save();
 
             return [

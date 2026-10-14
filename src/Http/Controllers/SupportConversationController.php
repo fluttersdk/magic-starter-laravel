@@ -25,7 +25,8 @@ use Illuminate\Support\Facades\DB;
  * Every lookup is scoped to `user_id` of the caller, so a conversation someone
  * else opened, a team mate's included, answers 404 exactly like one that does
  * not exist. With the `support-attachments` feature every message this
- * controller returns carries its files; the public thread never does.
+ * controller returns carries its files, and with `support-csat` every
+ * conversation its rating; the public thread carries neither.
  */
 class SupportConversationController
 {
@@ -49,7 +50,12 @@ class SupportConversationController
             ->orderByDesc('id')
             ->paginate($perPage);
 
-        return SupportConversationResource::collection($conversations);
+        $resources = SupportConversationResource::collection($conversations);
+        $resources->collection->each(
+            static fn (SupportConversationResource $resource): SupportConversationResource => $resource->withRating(),
+        );
+
+        return $resources;
     }
 
     /**
@@ -62,7 +68,7 @@ class SupportConversationController
             $request->validated(),
         );
 
-        return $this->thread($conversation)
+        return self::thread($conversation)
             ->response()
             ->setStatusCode(201);
     }
@@ -72,7 +78,7 @@ class SupportConversationController
      */
     public function show(Request $request, string $conversation): SupportConversationResource
     {
-        return $this->thread(self::findOwned($request, $conversation));
+        return self::thread(self::findOwned($request, $conversation));
     }
 
     /**
@@ -125,14 +131,17 @@ class SupportConversationController
     }
 
     /**
-     * The thread as the signed-in customer reads it, with each message's files when the feature is on.
+     * The thread as the signed-in customer reads it: their rating, and each message's files when the feature is on.
+     *
+     * The caller has already proved the conversation is the customer's own; {@see SupportRatingController} answers
+     * through it too.
      */
-    private function thread(SupportConversation $conversation): SupportConversationResource
+    public static function thread(SupportConversation $conversation): SupportConversationResource
     {
         $withAttachments = Features::hasSupportAttachmentsFeatures();
-        $resource = new SupportConversationResource(
+        $resource = (new SupportConversationResource(
             SupportConversationResource::forThread($conversation, attachments: $withAttachments),
-        );
+        ))->withRating();
 
         return $withAttachments ? $resource->withAttachments() : $resource;
     }

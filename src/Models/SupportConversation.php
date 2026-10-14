@@ -99,8 +99,9 @@ class SupportConversation extends Model
     ];
 
     /**
-     * What the customer typed into the form: the audit rows (see {@see Redactor}) keep the key and drop the text,
-     * since a subject often carries what the customer would not want copied into a log.
+     * What the customer typed into the form, or their app sent about them: the audit rows (see {@see Redactor}) keep
+     * the key and drop the value, since a subject often carries what the customer would not want copied into a log,
+     * and the client context names their route, device and locale.
      *
      * @var list<string>
      */
@@ -109,6 +110,7 @@ class SupportConversation extends Model
         'email',
         'name',
         'csat_comment',
+        'client_context',
     ];
 
     /**

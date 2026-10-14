@@ -132,6 +132,7 @@ return [
     'attachments' => [
         'label' => 'Attachments',
         'untrusted_pdf' => 'Download PDF (untrusted)',
+        'auto_screenshot' => 'Screenshot captured by the app',
     ],
 
     /*

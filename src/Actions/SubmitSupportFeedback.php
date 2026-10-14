@@ -32,8 +32,9 @@ use Illuminate\Support\Facades\Lang;
  * conversation or opens one at high priority; the AI desk never answers it,
  * since its source is not one the desk takes. At most `low_score_daily` new
  * ones are opened per account per day, after which a low score is kept with
- * no conversation unless one is still open to continue. Each such score alerts
- * staff with the reason `feedback`.
+ * no conversation unless one is still open to continue. A new one alerts staff
+ * with the reason `feedback`; a continued one alerts as any customer message
+ * does, once per wait, with `customer_message`.
  */
 class SubmitSupportFeedback
 {

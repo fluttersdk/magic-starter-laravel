@@ -9,6 +9,7 @@ use FlutterSdk\MagicStarter\Audit\Audit;
 use FlutterSdk\MagicStarter\Contracts\DescribesSupportCustomer;
 use FlutterSdk\MagicStarter\Features;
 use FlutterSdk\MagicStarter\MagicStarter;
+use FlutterSdk\MagicStarter\Models\PushDevice;
 use FlutterSdk\MagicStarter\Models\SupportConversation;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\Model;
@@ -18,7 +19,7 @@ use Throwable;
  * The "Customer context" section beside the thread: what the app sent with the
  * conversation, what the host app says about the customer through
  * {@see DescribesSupportCustomer} when it binds one, and the opener's latest
- * audit rows.
+ * audit rows, push device heartbeats left out.
  *
  * Everything shown is read for the conversation's own opener and no one else.
  * An audit row is the opener's when the opener acted (a user actor with the
@@ -34,6 +35,9 @@ final class CustomerContextPanel
      */
     public const ACTIVITY_LIMIT = 20;
 
+    /**
+     * The section for the view page, shown while there is an opener, client info or a bound host description.
+     */
     public static function make(): Section
     {
         return Section::make((string) __('magic-starter::admin_support.context.title'))
@@ -137,6 +141,7 @@ final class CustomerContextPanel
         /** @var Model $user */
         $user = new $userModel;
         $userType = $user->getMorphClass();
+        $pushDeviceType = (new PushDevice)->getMorphClass();
         $timezone = FilamentTimezone::get();
 
         return Audit::query()
@@ -147,6 +152,11 @@ final class CustomerContextPanel
                         ->where('actor_id', $opener))
                     ->orWhere('related_user_id', $opener);
             })
+            // A push device's heartbeat rewrites its row every few minutes and would fill the window on its own;
+            // it says nothing staff need about the customer.
+            ->where(static fn (Builder $query): Builder => $query
+                ->whereNull('auditable_type')
+                ->orWhere('auditable_type', '!=', $pushDeviceType))
             ->latest('created_at')
             ->limit(self::ACTIVITY_LIMIT)
             ->get()

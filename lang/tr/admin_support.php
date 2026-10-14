@@ -132,6 +132,7 @@ return [
     'attachments' => [
         'label' => 'Ekler',
         'untrusted_pdf' => 'PDF indir (güvenilmeyen dosya)',
+        'auto_screenshot' => 'Uygulamanın aldığı ekran görüntüsü',
     ],
 
     /*

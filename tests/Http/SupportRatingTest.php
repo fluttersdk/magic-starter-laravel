@@ -205,6 +205,25 @@ class SupportRatingTest extends TestCase
         $this->assertCount(2, $this->alerts());
     }
 
+    public function test_a_thumbs_down_on_a_resolution_with_no_timestamp_alerts_only_once(): void
+    {
+        $opener = $this->customer('opener@example.com');
+        $conversation = $this->conversation($opener, SupportConversationStatus::RESOLVED);
+        // A row resolved before `resolved_at` was stamped, already alerted on.
+        $conversation->forceFill([
+            'resolved_at' => null,
+            'csat_alerted_at' => now()->subHour(),
+        ])->save();
+
+        $this->actingAs($opener, 'sanctum');
+        $this->postJson("/support/conversations/{$conversation->getKey()}/rating", [
+            'rating' => 'down',
+        ])->assertOk();
+
+        $this->assertCount(0, $this->alerts());
+        $this->assertSame(SupportCsatRating::DOWN, $conversation->refresh()->csat_rating);
+    }
+
     public function test_a_thumbs_up_never_alerts_staff(): void
     {
         $opener = $this->customer('opener@example.com');

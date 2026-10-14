@@ -134,6 +134,8 @@ return [
         'client_thread_path' => '/support/{id}',
 
         'attachments' => [
+            // A `local` disk needs `'serve' => true` only if the host calls temporaryUrl() on it elsewhere; the
+            // package's own PDF link is a signed route of its own and does not depend on it.
             'disk' => 'local',
             'max_files' => 3,
             'max_kb' => 5120,

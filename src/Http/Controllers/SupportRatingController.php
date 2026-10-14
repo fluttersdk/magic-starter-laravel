@@ -17,12 +17,12 @@ class SupportRatingController
      */
     public function store(RateSupportConversationRequest $request, string $conversation): SupportConversationResource
     {
-        app(RateSupportConversation::class)->rate(
+        $rated = app(RateSupportConversation::class)->rate(
             SupportConversationController::findOwned($request, $conversation),
             SupportCsatRating::from($request->validated('rating')),
             $request->validated('comment'),
         );
 
-        return app(SupportConversationController::class)->show($request, $conversation);
+        return SupportConversationController::thread($rated);
     }
 }

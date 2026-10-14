@@ -26,6 +26,7 @@ use Illuminate\Support\Facades\Event;
 use Illuminate\Support\Facades\Notification;
 use Illuminate\Support\Facades\Schema;
 use Illuminate\Support\Facades\Storage;
+use Illuminate\Support\Facades\URL;
 use Illuminate\Testing\TestResponse;
 use Laravel\Sanctum\HasApiTokens;
 use Laravel\Sanctum\SanctumServiceProvider;
@@ -309,6 +310,33 @@ class SupportAttachmentTest extends TestCase
         $this->assertGreaterThan($bottomRed + 100, $bottomBlue);
     }
 
+    public function test_a_large_rotated_jpeg_is_capped_and_turned_upright(): void
+    {
+        config()->set('magic-starter.support.attachments.stored_max_edge', 50);
+        $opener = $this->user('opener@example.com');
+
+        $this->actingAs($opener, 'sanctum');
+        $this->postJson('/support/conversations', [
+            'topic' => 'technical',
+            'body' => 'Photo.',
+            'attachments' => [
+                $this->upload('photo.jpg', $this->jpegWithExif(1200, 600)),
+            ],
+        ])->assertCreated();
+
+        $attachment = SupportMessageAttachment::query()->sole();
+        $image = imagecreatefromstring((string) Storage::disk('local')->get($attachment->path));
+
+        // 1200x600 landscape with orientation 6: portrait once upright, capped at 50 on the long edge.
+        $this->assertInstanceOf(GdImage::class, $image);
+        $this->assertSame([25, 50], [imagesx($image), imagesy($image)]);
+        $this->assertSame([25, 50], [$attachment->width, $attachment->height]);
+        [$topRed, , $topBlue] = $this->rgb($image, 12, 6);
+        [$bottomRed, , $bottomBlue] = $this->rgb($image, 12, 44);
+        $this->assertGreaterThan($topBlue + 100, $topRed);
+        $this->assertGreaterThan($bottomRed + 100, $bottomBlue);
+    }
+
     public function test_four_files_are_refused(): void
     {
         $opener = $this->user('opener@example.com');
@@ -489,7 +517,7 @@ class SupportAttachmentTest extends TestCase
         $this->get("/support/conversations/{$first->getKey()}/attachments/not-a-key")->assertNotFound();
     }
 
-    public function test_the_link_endpoint_answers_a_short_lived_url_for_a_pdf_and_refuses_an_image(): void
+    public function test_the_pdf_link_is_a_signed_url_that_downloads_without_a_bearer(): void
     {
         $opener = $this->user('opener@example.com');
         $conversation = $this->openWithFiles($opener, [
@@ -506,9 +534,154 @@ class SupportAttachmentTest extends TestCase
             ->json('url');
 
         $this->assertIsString($url);
-        $this->assertStringContainsString($pdf->path, $url);
-        $this->assertStringContainsString('expiration=' . now()->addSeconds(60)->getTimestamp(), $url);
+        $this->assertStringContainsString("/support/attachments/{$pdf->getKey()}/download?", $url);
+        $this->assertStringContainsString('expires=' . now()->addSeconds(60)->getTimestamp(), $url);
+        $this->assertStringContainsString('signature=', $url);
+        $this->assertStringNotContainsString($pdf->path, $url);
         $this->postJson("{$base}/{$image->getKey()}/link")->assertNotFound();
+
+        // The signature is the whole credential: nobody is signed in when a system viewer follows it.
+        $this->app['auth']->forgetGuards();
+        $response = $this->get($url);
+
+        $response->assertOk()
+            ->assertHeader('Content-Type', 'application/pdf')
+            ->assertHeader('X-Content-Type-Options', 'nosniff');
+        $this->assertStringStartsWith('attachment', (string) $response->headers->get('Content-Disposition'));
+        $this->assertStringContainsString('invoice.pdf', (string) $response->headers->get('Content-Disposition'));
+        $this->assertStringContainsString('private', (string) $response->headers->get('Cache-Control'));
+        $this->assertStringContainsString('no-store', (string) $response->headers->get('Cache-Control'));
+        $this->assertSame(Storage::disk('local')->get($pdf->path), $response->streamedContent());
+    }
+
+    public function test_a_tampered_or_expired_download_signature_is_refused(): void
+    {
+        $opener = $this->user('opener@example.com');
+        $conversation = $this->openWithFiles($opener, [
+            $this->upload('invoice.pdf', $this->pdf()),
+            $this->upload('other.pdf', $this->pdf(16)),
+        ]);
+        [$pdf, $other] = SupportMessageAttachment::query()->orderBy('original_name')->get()->all();
+        $this->freezeSecond();
+        $url = (string) $this->postJson(
+            "/support/conversations/{$conversation->getKey()}/attachments/{$pdf->getKey()}/link",
+        )->json('url');
+        $this->app['auth']->forgetGuards();
+
+        $this->get($url)->assertOk();
+        $this->get(str_replace((string) $pdf->getKey(), (string) $other->getKey(), $url))->assertForbidden();
+        $this->get(preg_replace('/expires=\d+/', 'expires=' . now()->addDay()->getTimestamp(), $url))
+            ->assertForbidden();
+        $this->get(strtok($url, '?'))->assertForbidden();
+
+        $this->travel(61)->seconds();
+        $this->get($url)->assertForbidden();
+    }
+
+    public function test_a_signed_download_of_an_image_or_a_malformed_key_is_not_found(): void
+    {
+        $opener = $this->user('opener@example.com');
+        $this->openWithFiles($opener, [
+            $this->upload('chart.png', $this->png()),
+        ]);
+        $image = SupportMessageAttachment::query()->sole();
+        $signed = static fn (string $attachment): string => URL::temporarySignedRoute(
+            'magic-starter.support.attachment-download',
+            now()->addMinute(),
+            [
+                'attachment' => $attachment,
+            ],
+        );
+
+        $this->get($signed((string) $image->getKey()))->assertNotFound();
+        $this->get($signed('not-a-key'))->assertNotFound();
+    }
+
+    public function test_a_pdf_named_png_and_a_png_named_pdf_are_refused(): void
+    {
+        $opener = $this->user('opener@example.com');
+
+        $this->actingAs($opener, 'sanctum');
+        $this->postJson('/support/conversations', [
+            'topic' => 'technical',
+            'body' => 'Chart attached.',
+            'attachments' => [
+                $this->upload('chart.png', $this->pdf()),
+            ],
+        ])->assertUnprocessable()->assertJsonValidationErrors('attachments.0');
+
+        $this->postJson('/support/conversations', [
+            'topic' => 'technical',
+            'body' => 'Invoice attached.',
+            'attachments' => [
+                $this->upload('invoice.pdf', $this->png()),
+            ],
+        ])->assertUnprocessable()->assertJsonValidationErrors('attachments.0');
+
+        $this->assertSame(0, SupportConversation::query()->count());
+        $this->assertSame([], $this->storedFiles());
+    }
+
+    public function test_the_auto_screenshot_does_not_count_against_the_daily_allowance(): void
+    {
+        config()->set('magic-starter.features', [
+            Features::support(),
+            Features::supportAttachments(),
+            Features::supportDiagnostics(),
+        ]);
+        config()->set('magic-starter.support.attachments.daily_files', 1);
+        $opener = $this->user('opener@example.com');
+
+        $this->actingAs($opener, 'sanctum');
+        $response = $this->postJson('/support/conversations', [
+            'topic' => 'technical',
+            'body' => 'Broken page.',
+            'screenshot' => $this->upload('screenshot.png', $this->png()),
+            'attachments' => [
+                $this->upload('chart.png', $this->png()),
+            ],
+        ]);
+
+        $response->assertCreated();
+        $this->assertCount(2, $this->storedFiles());
+
+        // The one upload used the allowance; the screenshot did not.
+        $this->postJson("/support/conversations/{$response->json('data.id')}/messages", [
+            'body' => 'One more.',
+            'attachments' => [
+                $this->upload('more.png', $this->png()),
+            ],
+        ])->assertUnprocessable()->assertJsonValidationErrors('attachments');
+    }
+
+    public function test_a_message_whose_files_fail_to_store_alerts_nobody(): void
+    {
+        $opener = $this->user('opener@example.com');
+        $conversation = $this->openWithFiles($opener, []);
+        // Staff answered, so the next customer line starts a new wait and would alert.
+        $conversation->forceFill([
+            'waiting_since' => null,
+        ])->save();
+        Event::fake([
+            SupportConversationNeedsStaff::class,
+        ]);
+        $this->app->instance(StoreSupportAttachments::class, new class extends StoreSupportAttachments
+        {
+            public function store(SupportMessage $message, array $prepared, Authenticatable $sender): void
+            {
+                throw new RuntimeException('The disk is full.');
+            }
+        });
+
+        $this->postJson("/support/conversations/{$conversation->getKey()}/messages", [
+            'body' => 'Here is the chart.',
+            'attachments' => [
+                $this->upload('chart.png', $this->png()),
+            ],
+        ])->assertServerError();
+
+        $this->assertSame(1, SupportMessage::query()->count(), 'The message rolled back with its files.');
+        Event::assertNotDispatched(SupportConversationNeedsStaff::class);
     }
 
     public function test_client_context_is_allowlisted_and_its_route_loses_query_and_fragment(): void
@@ -749,15 +922,16 @@ class SupportAttachmentTest extends TestCase
     }
 
     /**
-     * An 80x40 JPEG, red on the left half and blue on the right, whose EXIF says
+     * A JPEG, red on the left half and blue on the right, whose EXIF says
      * orientation 6 (display rotated a quarter turn clockwise) and carries a GPS block.
      */
-    private function jpegWithExif(): string
+    private function jpegWithExif(int $width = 80, int $height = 40): string
     {
-        $image = imagecreatetruecolor(80, 40);
+        $image = imagecreatetruecolor($width, $height);
         $this->assertInstanceOf(GdImage::class, $image);
-        imagefilledrectangle($image, 0, 0, 39, 39, (int) imagecolorallocate($image, 255, 0, 0));
-        imagefilledrectangle($image, 40, 0, 79, 39, (int) imagecolorallocate($image, 0, 0, 255));
+        $half = intdiv($width, 2);
+        imagefilledrectangle($image, 0, 0, $half - 1, $height - 1, (int) imagecolorallocate($image, 255, 0, 0));
+        imagefilledrectangle($image, $half, 0, $width - 1, $height - 1, (int) imagecolorallocate($image, 0, 0, 255));
         ob_start();
         imagejpeg($image, null, 95);
         $jpeg = (string) ob_get_clean();

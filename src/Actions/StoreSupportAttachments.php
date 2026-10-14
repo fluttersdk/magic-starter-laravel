@@ -5,6 +5,7 @@ namespace FlutterSdk\MagicStarter\Actions;
 use ErrorException;
 use FlutterSdk\MagicStarter\Enums\SupportAttachmentOrigin;
 use FlutterSdk\MagicStarter\Models\SupportMessage;
+use FlutterSdk\MagicStarter\Support\SupportAttachmentResponse;
 use FlutterSdk\MagicStarter\Support\SupportAttachmentRules;
 use GdImage;
 use Illuminate\Contracts\Auth\Authenticatable;
@@ -34,12 +35,10 @@ use RuntimeException;
  * display text only.
  *
  * The daily allowance (`daily_files` files and `daily_kb` kilobytes per user
- * and application day) is a cache counter, raised once the message commits. Two
- * uploads racing the last slot may both pass; the support write limiter keeps
- * that overshoot to a handful of files.
- *
- * A PDF is read through a short-lived `temporaryUrl()`. On a `local` disk that
- * needs `'serve' => true` in the disk's config, or Laravel refuses to build one.
+ * and application day) is a cache counter, raised once the message commits. It
+ * counts only what the customer picked: the app's own screenshot and staff
+ * files are exempt. Two uploads racing the last slot may both pass; the support
+ * write limiter keeps that overshoot to a handful of files.
  */
 class StoreSupportAttachments
 {
@@ -73,7 +72,8 @@ class StoreSupportAttachments
      *
      * @param  Authenticatable  $sender  whose daily allowance the files count against
      * @param  array<int, mixed>  $files  the `attachments` the sender picked
-     * @param  UploadedFile|null  $screenshot  the app's capture, stored as {@see SupportAttachmentOrigin::AUTO_SCREENSHOT}
+     * @param  UploadedFile|null  $screenshot  the app's capture, stored as
+     *                                         {@see SupportAttachmentOrigin::AUTO_SCREENSHOT}
      * @param  SupportAttachmentOrigin  $origin  where `$files` came from
      * @return list<array{origin: SupportAttachmentOrigin, name: string, mime: string, extension: string,
      *                    contents: string, width: int|null, height: int|null}>
@@ -112,7 +112,7 @@ class StoreSupportAttachments
         }
 
         // 3. The allowance counts what would be stored, so a re-encode that shrinks a photo costs less.
-        //    Staff files are exempt: the allowance caps what a customer can push onto the disk.
+        //    Only the customer's own picks count: the allowance caps what a customer chooses to push onto the disk.
         $this->assertWithinAllowance($sender, $this->countable($prepared));
 
         return $prepared;
@@ -171,7 +171,9 @@ class StoreSupportAttachments
     }
 
     /**
-     * The prepared files that count against a daily allowance: every one but a staff file.
+     * The prepared files that count against a daily allowance: the customer's uploads alone.
+     *
+     * The app's screenshot is not the customer's choice and staff files are not the customer's at all.
      *
      * @param  list<array{origin: SupportAttachmentOrigin, name: string, mime: string, extension: string,
      *                    contents: string, width: int|null, height: int|null}>  $prepared
@@ -182,7 +184,7 @@ class StoreSupportAttachments
     {
         return array_values(array_filter(
             $prepared,
-            static fn (array $file): bool => $file['origin'] !== SupportAttachmentOrigin::STAFF,
+            static fn (array $file): bool => $file['origin'] === SupportAttachmentOrigin::UPLOAD,
         ));
     }
 
@@ -196,11 +198,11 @@ class StoreSupportAttachments
     {
         $name = $this->displayName($file);
 
-        if ($file->getMimeType() === 'application/pdf') {
+        if ($file->getMimeType() === SupportAttachmentResponse::PDF) {
             return [
                 'origin' => $origin,
                 'name' => $name,
-                'mime' => 'application/pdf',
+                'mime' => SupportAttachmentResponse::PDF,
                 'extension' => 'pdf',
                 'contents' => (string) file_get_contents($file->getRealPath()),
                 'width' => null,
@@ -216,7 +218,7 @@ class StoreSupportAttachments
     }
 
     /**
-     * Decode, turn upright, cap and re-encode one image in its own format.
+     * Decode, cap, turn upright and re-encode one image in its own format.
      *
      * @return array{mime: string, extension: string, contents: string, width: int, height: int}
      *
@@ -234,13 +236,16 @@ class StoreSupportAttachments
 
         $image = $this->decode($file, $attribute);
 
-        // 2. Apply the orientation the camera recorded, since the EXIF that carried it is about to go.
+        // 2. Cap the long edge first: a quarter turn keeps the long edge, so the rotation below copies the small
+        //    image rather than the full-size one.
+        $image = $this->capped($image, (int) config('magic-starter.support.attachments.stored_max_edge', 2048));
+
+        // 3. Apply the orientation the camera recorded, since the EXIF that carried it is about to go.
         if ($type === IMAGETYPE_JPEG) {
             $image = $this->upright($image, $this->orientation($file));
         }
 
-        // 3. Cap the long edge, then write the pixels alone in the original format.
-        $image = $this->capped($image, (int) config('magic-starter.support.attachments.stored_max_edge', 2048));
+        // 4. Write the pixels alone in the original format.
         [$mime, $extension] = self::IMAGE_FORMATS[$type];
 
         return [
@@ -268,8 +273,6 @@ class StoreSupportAttachments
         if (! $image instanceof GdImage) {
             throw $this->unreadable($attribute);
         }
-
-        imagepalettetotruecolor($image);
 
         return $image;
     }
@@ -323,7 +326,10 @@ class StoreSupportAttachments
     }
 
     /**
-     * The image scaled down so its long edge is at most `$maxEdge`, transparency kept.
+     * The image in true colour with its long edge at most `$maxEdge`, transparency kept.
+     *
+     * A palette image within the cap is converted in place; one past it is
+     * converted by the resample into a true-colour canvas, with no full-size copy.
      */
     private function capped(GdImage $image, int $maxEdge): GdImage
     {
@@ -331,6 +337,8 @@ class StoreSupportAttachments
         $height = imagesy($image);
 
         if (max($width, $height) <= $maxEdge) {
+            imagepalettetotruecolor($image);
+
             return $image;
         }
 

@@ -31,11 +31,12 @@ use Illuminate\Support\Str;
  * desk has not answered yet; `waiting_on_team` an open one still waiting on a
  * person.
  *
- * With the `support-csat` feature the opener also reads `rating` (the last one given, kept until a new one
- * overwrites it) and `can_rate`, true while the conversation is resolved and unrated for this resolution.
+ * With the `support-csat` feature and after {@see self::withRating()} the opener also reads `rating` (the last one
+ * given, kept until a new one overwrites it) and `can_rate`, true while the conversation is resolved and unrated for
+ * this resolution.
  *
- * Each message carries its `attachments` only after {@see self::withAttachments()},
- * which the signed-in customer's controller calls and the public thread never does.
+ * Each message carries its `attachments` only after {@see self::withAttachments()}. Both are called by the signed-in
+ * customer's controller and never by the public thread, whose link may have been forwarded.
  *
  * @mixin SupportConversation
  */
@@ -50,6 +51,11 @@ class SupportConversationResource extends JsonResource
      * Whether the thread's messages serialise their files.
      */
     private bool $withAttachments = false;
+
+    /**
+     * Whether `rating` and `can_rate` are serialised.
+     */
+    private bool $withRating = false;
 
     /**
      * Add the unread flag and, once the rows are read, each row's newest
@@ -80,7 +86,14 @@ class SupportConversationResource extends JsonResource
                 'messages' => function (HasMany $query) use ($attachments): void {
                     /** @var HasMany<SupportMessage, SupportConversation> $query */
                     $query->customerVisible()
-                        ->with($attachments ? ['sender', 'attachments'] : ['sender'])
+                        ->with($attachments
+                            ? [
+                                'sender',
+                                'attachments',
+                            ]
+                            : [
+                                'sender',
+                            ])
                         ->orderBy('created_at')
                         ->orderBy('id');
                 },
@@ -93,6 +106,16 @@ class SupportConversationResource extends JsonResource
     public function withAttachments(): static
     {
         $this->withAttachments = true;
+
+        return $this;
+    }
+
+    /**
+     * Serialise `rating` and `can_rate` while the `support-csat` feature is on; for the signed-in opener only.
+     */
+    public function withRating(): static
+    {
+        $this->withRating = true;
 
         return $this;
     }
@@ -119,8 +142,8 @@ class SupportConversationResource extends JsonResource
                 && $this->last_customer_message_id !== null
                 && (string) $this->last_customer_message_id !== (string) $this->answered_message_id,
             'waiting_on_team' => $this->status === SupportConversationStatus::OPEN && $this->waiting_since !== null,
-            'rating' => $this->when(Features::hasSupportCsatFeatures(), fn (): ?array => $this->rating()),
-            'can_rate' => $this->when(Features::hasSupportCsatFeatures(), fn (): bool => $this->canRate()),
+            'rating' => $this->when($this->showsRating(), fn (): ?array => $this->rating()),
+            'can_rate' => $this->when($this->showsRating(), fn (): bool => $this->canRate()),
             'last_message' => $this->when(
                 $this->resource->relationLoaded('lastMessage'),
                 fn (): ?array => self::preview($this->resource->getRelation('lastMessage')),
@@ -131,6 +154,11 @@ class SupportConversationResource extends JsonResource
                 ->values()
                 ->all()),
         ];
+    }
+
+    private function showsRating(): bool
+    {
+        return $this->withRating && Features::hasSupportCsatFeatures();
     }
 
     /**

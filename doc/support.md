@@ -71,6 +71,7 @@ Signed in (`auth:sanctum`, throttle `magic-starter-support`):
 | POST | `{prefix}/support/feedback` | Answer or dismiss the card (`support-feedback`) |
 | GET | `{prefix}/support/conversations/{conversation}/attachments/{attachment}` | Read one file (`support-attachments`) |
 | POST | `{prefix}/support/conversations/{conversation}/attachments/{attachment}/link` | A 60 second signed url to a PDF (`support-attachments`) |
+| GET | `{prefix}/support/attachments/{attachment}/download` | The PDF behind a signed link, as a download; the signature is the credential, no bearer (`support-attachments`) |
 
 Public, no account (throttle `magic-starter-support-public`). The thread token is the only credential and an unknown, replaced, revoked or expired one answers 404:
 
@@ -234,7 +235,7 @@ POST {prefix}/support/conversations/{conversation}/rating
 ```
 
 - The answer is 422 unless the conversation is `resolved`.
-- The conversation resource gains `rating` (`value`, `comment`, `rated_at`, or `null` before any) and `can_rate`, true while the conversation is resolved and not yet rated for this resolution. Neither field is sent with the feature off.
+- The conversation resource gains `rating` (`value`, `comment`, `rated_at`, or `null` before any) and `can_rate`, true while the conversation is resolved and not yet rated for this resolution. Neither field is sent with the feature off, nor ever on the public thread link.
 - Rating again within one resolution overwrites the first rating. Reopening and resolving again opens a new resolution that can be rated anew. The row keeps who held the conversation when it was rated (`csat_assignee_id`).
 - A thumbs down tells staff once per resolution, under a row lock, with `SupportConversationNeedsStaff` and the reason `negative_rating`; changing the vote inside the same resolution never alerts a second time. The alert carries no comment.
 
@@ -279,9 +280,9 @@ With `support-attachments` on, a customer message carries images and PDFs. Send 
 | `support.attachments.daily_kb` | `102400` | Kilobytes one user may store a day |
 | `support.attachments.link_ttl_seconds` | `60` | Life of a signed PDF link |
 
-`SupportAttachmentRules` is the one source of the checks, and `StoreSupportAttachments` the one write path, for the customer and for staff. The type is sniffed from the bytes and the extension must agree, so an SVG, an HTML page or an Office file never passes under a `.png` name. An image's size is read from its header with `getimagesize()` before any pixel is decoded, and refused past `max_edge` or `max_pixels`. Every file is validated and every image re-encoded before the message exists, so a refused file posts nothing and alerts nobody. Errors come back as 422 keyed `attachments.N` (or `attachments`, for the daily allowance).
+`SupportAttachmentRules` is the one source of the checks, and `StoreSupportAttachments` the one write path, for the customer and for staff. The type is sniffed from the bytes and the extension must be an allowed one, so an SVG, an HTML page or an Office file never passes under a `.png` name; the two must also name the same family, so a PDF named `.png`, or an image named `.pdf`, is refused. An image's size is read from its header with `getimagesize()` before any pixel is decoded, and refused past `max_edge` or `max_pixels`. Every file is validated and every image re-encoded before the message exists, so a refused file posts nothing and alerts nobody. Errors come back as 422 keyed `attachments.N` (or `attachments`, for the daily allowance).
 
-An image is turned upright from its EXIF orientation and re-encoded with GD in its own format, which drops every metadata block (GPS included), with its long edge capped at `stored_max_edge`. A PDF is kept byte for byte. A file lands on `support.attachments.disk` under a generated name; the sender's name is display text only. The daily allowance is a cache counter checked before anything is stored and raised once the message commits.
+An image has its long edge capped at `stored_max_edge` first, so the rest works on the small copy, then is turned upright from its EXIF orientation and re-encoded with GD in its own format, which drops every metadata block (GPS included). A PDF is kept byte for byte. A file lands on `support.attachments.disk` under a generated name; the sender's name is display text only. The daily allowance is a cache counter checked before anything is stored and raised once the message commits. It counts only the files the customer picked: the app's `auto_screenshot` and staff files are exempt.
 
 ### Serving
 
@@ -289,7 +290,8 @@ A message in the customer's thread (never in the public thread) carries `attachm
 
 - `GET support/conversations/{c}/attachments/{a}` streams the file with the bearer token as the read credential. An image is sent inline and a PDF with `Content-Disposition: attachment`; both carry the stored `Content-Type`, `X-Content-Type-Options: nosniff` and `Cache-Control: private, no-store`. The opener's own conversation is the only way in: a team mate, a stranger, a file of another conversation or a file on a staff note answers 404.
 - `POST support/conversations/{c}/attachments/{a}/link` answers `{"url": ...}`, a signed url that lives `link_ttl_seconds`, for a client that must hand a PDF to a system viewer. An image has no link (404). A signed url is never the customer's read credential.
-- On a `local` disk, `temporaryUrl()` works only when the disk is configured with `'serve' => true` in `config/filesystems.php`; without it the link endpoint fails.
+- The url points at `GET support/attachments/{a}/download` (named `magic-starter.support.attachment-download`), behind Laravel's `signed` middleware and no bearer: the signature is the credential. It streams the PDF with `Content-Disposition: attachment`, `X-Content-Type-Options: nosniff` and `Cache-Control: private, no-store`, so it never opens inline. A tampered or expired signature answers 403; an image, or a file on a staff note, 404.
+- The link is the package's own signed route, not the disk's `temporaryUrl()`, so a `local` disk needs `'serve' => true` only if the host calls `temporaryUrl()` on it elsewhere.
 
 ### Cleanup
 
@@ -336,9 +338,9 @@ The plugin mounts the **Support inbox** under the key `support`; `withoutResourc
 With the extra features on, the panel also carries:
 
 - **Rating**: a column and a filter for the thumbs rating of a resolved conversation (`support-csat`).
-- **Attachments**: files in the thread, images shown and PDFs offered as downloads, and a staff upload on a reply that goes through the same validation and storage as the customer's, with the origin `staff`. The attach control is hidden when the conversation has no opener (`support-attachments`).
+- **Attachments**: files in the thread, images shown and PDFs offered as downloads, the screenshot the app captured captioned "Screenshot captured by the app" so it is not mistaken for a file the customer chose, and a staff upload on a reply that goes through the same validation and storage as the customer's, with the origin `staff`. The attach control is hidden when the conversation has no opener (`support-attachments`).
 - **Feedback**: a feedback list of every score and dismissal, and a respond-by on a feedback conversation from `support.feedback.response_hours` (`support-feedback`).
-- **Customer context**: a panel beside the thread with the client info the app sent, the opener's recent audit rows and, when the host binds `DescribesSupportCustomer`, the host's own section.
+- **Customer context**: a panel beside the thread with the client info the app sent, the opener's latest 20 audit rows and, when the host binds `DescribesSupportCustomer`, the host's own section. Push device rows are left out of the audit list: their heartbeat updates would fill it on their own.
 
 `DescribesSupportCustomer` is optional and ships with no default implementation and no binding, like `AssistsSupportStaff`. `describe(SupportConversation): array` returns label to value pairs (a plan, usage, a region) for staff to read. It reads only what the opener's own account holds, returns nothing secret, and may throw: the panel then shows no host section and every other part works.
 

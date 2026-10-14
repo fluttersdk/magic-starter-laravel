@@ -28,6 +28,7 @@ use FlutterSdk\MagicStarter\Filament\Resources\SupportConversations\Pages\ViewSu
 use FlutterSdk\MagicStarter\Filament\Resources\SupportConversations\SupportConversationResource;
 use FlutterSdk\MagicStarter\Http\Resources\SupportMessageResource;
 use FlutterSdk\MagicStarter\Jobs\PrepareSupportStaffAssist;
+use FlutterSdk\MagicStarter\Models\PushDevice;
 use FlutterSdk\MagicStarter\Models\SupportConversation;
 use FlutterSdk\MagicStarter\Models\SupportMessage;
 use FlutterSdk\MagicStarter\Models\SupportMessageAttachment;
@@ -722,6 +723,34 @@ class SupportConversationResourceTest extends FilamentTestCase
             ->assertSee('invoice.pdf');
     }
 
+    public function test_the_thread_labels_the_screenshot_the_app_captured_apart_from_an_upload(): void
+    {
+        Storage::fake('local');
+        $conversation = $this->conversation($this->user('opener@example.com'));
+        $message = $this->message($conversation, SupportSenderType::CUSTOMER, SupportMessageKind::MESSAGE, 'Broken');
+        $upload = $this->attachment($message, 'chart.png', 'image/png');
+        $screenshot = $this->attachment(
+            $message,
+            'screenshot.png',
+            'image/png',
+            SupportAttachmentOrigin::AUTO_SCREENSHOT,
+        );
+        $label = (string) __('magic-starter::admin_support.attachments.auto_screenshot');
+
+        $html = Livewire::actingAs($this->staff())
+            ->test(ViewSupportConversation::class, ['record' => $conversation->getKey()])
+            ->assertSee($label)
+            ->html();
+
+        // The label sits with the screenshot alone, not with the file the customer chose.
+        $this->assertSame(1, substr_count($html, $label));
+        $this->assertLessThan(
+            strpos($html, e($this->panelFileUrl($screenshot))),
+            strpos($html, e($this->panelFileUrl($upload))),
+        );
+        $this->assertGreaterThan(strpos($html, e($this->panelFileUrl($screenshot))), strpos($html, $label));
+    }
+
     public function test_the_panel_serves_a_file_with_fixed_headers_to_staff_and_refuses_everyone_else(): void
     {
         Storage::fake('local');
@@ -939,6 +968,30 @@ class SupportConversationResourceTest extends FilamentTestCase
             ->assertDontSee('event.number_01');
     }
 
+    public function test_the_customer_context_leaves_push_device_heartbeats_out_of_the_activity(): void
+    {
+        $this->enable(Features::audit());
+        $opener = $this->user('opener@example.com');
+        $conversation = $this->conversation($opener);
+
+        foreach (range(1, 20) as $minute) {
+            Carbon::setTestNow(Carbon::parse('2026-10-12 10:00:00')->addMinutes($minute));
+            $this->audit(sprintf('event.number_%02d', $minute), null, null, $opener->getKey(), []);
+        }
+
+        foreach (range(1, 5) as $beat) {
+            Carbon::setTestNow(Carbon::parse('2026-10-12 11:00:00')->addMinutes($beat));
+            $this->audit('push_device.updated', null, null, $opener->getKey(), [
+                'last_seen_at' => 'x',
+            ], PushDevice::class);
+        }
+
+        Livewire::actingAs($this->staff())->test(ViewSupportConversation::class, ['record' => $conversation->getKey()])
+            ->assertSee('event.number_20')
+            ->assertSee('event.number_01')
+            ->assertDontSee('push_device.updated');
+    }
+
     public function test_the_host_description_is_absent_while_the_contract_is_unbound(): void
     {
         $conversation = $this->conversation($this->user('opener@example.com'), [
@@ -1080,14 +1133,18 @@ class SupportConversationResourceTest extends FilamentTestCase
     /**
      * A stored file on the fake `local` disk and its row.
      */
-    private function attachment(SupportMessage $message, string $name, string $mime): SupportMessageAttachment
-    {
+    private function attachment(
+        SupportMessage $message,
+        string $name,
+        string $mime,
+        SupportAttachmentOrigin $origin = SupportAttachmentOrigin::UPLOAD,
+    ): SupportMessageAttachment {
         $path = "support/{$message->conversation_id}/" . Str::uuid() . '.' . pathinfo($name, PATHINFO_EXTENSION);
         Storage::disk('local')->put($path, $mime === 'application/pdf' ? "%PDF-1.4\n%%EOF\n" : 'png-bytes');
 
         return $message->attachments()->create([
             'conversation_id' => $message->conversation_id,
-            'origin' => SupportAttachmentOrigin::UPLOAD,
+            'origin' => $origin,
             'disk' => 'local',
             'path' => $path,
             'original_name' => $name,
@@ -1110,10 +1167,11 @@ class SupportConversationResourceTest extends FilamentTestCase
         string|int|null $actorId,
         string|int|null $relatedUserId,
         array $newValues,
+        string $auditableType = SupportConversation::class,
     ): Audit {
         return Audit::query()->create([
             'event' => $event,
-            'auditable_type' => SupportConversation::class,
+            'auditable_type' => $auditableType,
             'auditable_id' => '1',
             'actor_type' => $actorType,
             'actor_id' => $actorId === null ? null : (string) $actorId,

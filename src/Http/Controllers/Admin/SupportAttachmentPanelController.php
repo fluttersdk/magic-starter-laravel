@@ -5,9 +5,9 @@ namespace FlutterSdk\MagicStarter\Http\Controllers\Admin;
 use Filament\Facades\Filament;
 use Filament\Models\Contracts\FilamentUser;
 use FlutterSdk\MagicStarter\Models\SupportMessageAttachment;
+use FlutterSdk\MagicStarter\Support\SupportAttachmentResponse;
 use FlutterSdk\MagicStarter\Support\TeamKey;
 use Illuminate\Database\Eloquent\ModelNotFoundException;
-use Illuminate\Support\Facades\Storage;
 use Symfony\Component\HttpFoundation\StreamedResponse;
 
 /**
@@ -18,25 +18,15 @@ use Symfony\Component\HttpFoundation\StreamedResponse;
  * is asked again here so a panel configured without Filament's own
  * `Authenticate` middleware still refuses. There is no signed url.
  *
- * Staff read every file of the thread, a staff note's included. The headers
- * are the customer route's: the type comes from the row, never re-guessed from
- * the bytes, an image is shown inline and never sniffed, and a PDF is only ever
- * a download, since its contents are the customer's and untrusted.
+ * Staff read every file of the thread, a staff note's included. The response
+ * is the customer route's, through {@see SupportAttachmentResponse}: a PDF is
+ * only ever a download, since its contents are the customer's and untrusted.
  */
 class SupportAttachmentPanelController
 {
     /**
-     * The types served, each sent as its own `Content-Type`; a row of any other type is not found.
-     *
-     * @var list<string>
+     * Stream a file of the conversation to a staff user of the current panel; anyone else is refused with 403.
      */
-    private const SERVED_TYPES = [
-        'image/png',
-        'image/jpeg',
-        'image/webp',
-        'application/pdf',
-    ];
-
     public function show(string $conversation, string $attachment): StreamedResponse
     {
         $user = Filament::auth()->user();
@@ -44,18 +34,7 @@ class SupportAttachmentPanelController
 
         abort_unless($user instanceof FilamentUser && $panel !== null && $user->canAccessPanel($panel), 403);
 
-        $file = $this->find($conversation, $attachment);
-
-        return Storage::disk($file->disk)->response(
-            $file->path,
-            $file->original_name,
-            [
-                'Content-Type' => $file->mime,
-                'X-Content-Type-Options' => 'nosniff',
-                'Cache-Control' => 'private, no-store',
-            ],
-            $file->mime === 'application/pdf' ? 'attachment' : 'inline',
-        );
+        return SupportAttachmentResponse::make($this->find($conversation, $attachment));
     }
 
     /**
@@ -74,7 +53,7 @@ class SupportAttachmentPanelController
 
         return SupportMessageAttachment::query()
             ->where('conversation_id', $conversation)
-            ->whereIn('mime', self::SERVED_TYPES)
+            ->whereIn('mime', SupportAttachmentResponse::MIMES)
             ->whereKey($attachment)
             ->firstOrFail();
     }
