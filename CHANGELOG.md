@@ -4,6 +4,8 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [0.0.32] - 2026-10-14
+
 ### Added
 
 - **The panel shows times in the staff user's timezone.** `MagicStarterPlugin::boot()` sets `FilamentTimezone` to the signed-in user's `timezone` unless it is empty or `UTC`, then to the new `magic-starter.admin.timezone` (`MAGIC_STARTER_ADMIN_TIMEZONE`), then to `app.timezone`. Before, every `dateTime()` column and entry showed UTC. (`src/Filament/MagicStarterPlugin.php`, `config/magic-starter.php`, `doc/basics/admin-panel.md`)
@@ -33,6 +35,12 @@ All notable changes to this project will be documented in this file.
 - **Contact sales continues the open conversation instead of filing a new one on every tap.** A signed-in opener who taps Contact sales again while their contact-sales conversation in their current team is not resolved gets that conversation back (201), with the body added as another customer message; a resolved one, another team's and an in-app conversation are never reused. The opener's own user row is locked first, so concurrent taps queue on a row that always exists. (`src/Actions/OpenSupportConversation.php`)
 - **The opener is told when the AI desk answers.** A committed answer that does not hand off sends `SupportReplyNotification` for the stored AI message, as a staff reply does (database, push with the OneSignal feature, realtime); the opener is read again after the commit, so a guest claim that lands meanwhile notifies the account; an outage of the notification is reported and never fails the answer. Before, the reply sat unread until the customer opened the thread. (`src/Jobs/RespondToSupportConversation.php`)
 - **Claiming a guest session moves its support conversations.** `support_conversations.user_id` moves to the account, and `team_id` to the account's current team when the account does not belong to the stored one; the guest's own customer messages (`support_messages.sender_id`) move with them, so the staff thread does not mark them "Sent as a visitor" once the guest row is pruned. Before, a conversation the guest opened stayed on the spent guest row and was unreachable. (`src/Actions/ClaimGuestAccount.php`)
+
+### Upgrading
+
+- **Publish the three new migrations and run `php artisan migrate` before turning on `support-csat`, `support-feedback`, `support-attachments` or `support-diagnostics`.** Copy `add_feedback_columns_to_support_conversations_table.php`, `create_support_message_attachments_table.php` and `create_support_feedback_table.php` from `vendor/fluttersdk/magic-starter-laravel/database/migrations/` into `database/migrations/` under timestamps later than your latest migration. All three are additive; what reads them is behind those four features.
+- **A host with a published `config/magic-starter.php` adds the new keys.** The config merge is shallow, so `support.attachments`, `support.feedback` and `support.ai.image_reservation_tokens` are missing from a published `support` block, and `admin.timezone` from a published `admin` block.
+- **Laravel 12 hosts need 12.32 or newer.** Every `illuminate/*` constraint is `^12.32|^13.0`.
 
 ## [0.0.31] - 2026-10-13
 
