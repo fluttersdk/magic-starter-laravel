@@ -300,15 +300,20 @@ class MagicStarterPlugin implements Plugin
     }
 
     /**
-     * The staff user's own `timezone` unless it is empty or the column's `UTC`
-     * default, which says nothing was chosen; then `magic-starter.admin.timezone`;
-     * then `app.timezone`.
+     * The staff user's own `timezone` unless it is empty or a default that says
+     * nothing was chosen (the column's `UTC`, or `magic-starter.defaults.timezone`
+     * that registration falls back to); then `magic-starter.admin.timezone`; then
+     * `app.timezone`.
      */
     protected function resolveTimezone(Panel $panel): string
     {
         $own = data_get($panel->auth()->user(), 'timezone');
+        $unchosen = [
+            'UTC',
+            config('magic-starter.defaults.timezone', 'UTC'),
+        ];
 
-        if (filled($own) && $own !== 'UTC') {
+        if (filled($own) && ! in_array($own, $unchosen, true)) {
             return $own;
         }
 

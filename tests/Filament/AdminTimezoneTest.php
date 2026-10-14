@@ -48,6 +48,16 @@ class AdminTimezoneTest extends FilamentTestCase
             ->assertTableColumnFormattedStateSet('created_at', $this->formatted('21:00:00'), $member);
     }
 
+    public function test_a_staff_user_on_the_configured_default_timezone_sees_the_admin_timezone(): void
+    {
+        config()->set('magic-starter.defaults.timezone', 'Europe/Berlin');
+        config()->set('magic-starter.admin.timezone', 'Asia/Tokyo');
+        $member = $this->member();
+
+        Livewire::actingAs($this->staff('Europe/Berlin'))->test(ListUsers::class)
+            ->assertTableColumnFormattedStateSet('created_at', $this->formatted('21:00:00'), $member);
+    }
+
     public function test_with_neither_the_app_timezone_applies(): void
     {
         config()->set('magic-starter.admin.timezone', null);
