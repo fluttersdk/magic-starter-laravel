@@ -48,6 +48,7 @@ use Illuminate\Support\Facades\Event;
 use Illuminate\Support\Facades\Exceptions;
 use Illuminate\Support\Facades\Notification;
 use Illuminate\Support\Facades\Queue;
+use Illuminate\Support\Facades\Schema;
 use Illuminate\Support\Facades\Storage;
 use Illuminate\Support\Str;
 use Illuminate\Validation\ValidationException;
@@ -708,8 +709,23 @@ class SupportConversationResourceTest extends FilamentTestCase
             ->assertSeeHtml('Took &lt;b&gt;three&lt;/b&gt; days.');
     }
 
+    public function test_the_thread_opens_on_a_host_without_the_attachments_feature_or_its_table(): void
+    {
+        Schema::drop('support_message_attachments');
+        $conversation = $this->conversation($this->user('opener@example.com'));
+        $this->message($conversation, SupportSenderType::CUSTOMER, SupportMessageKind::MESSAGE, 'Plain text only');
+
+        [$item] = SupportConversationResource::threadItems($conversation);
+
+        $this->assertSame([], $item['attachments']);
+        Livewire::actingAs($this->staff())->test(ViewSupportConversation::class, ['record' => $conversation->getKey()])
+            ->assertOk()
+            ->assertSee('Plain text only');
+    }
+
     public function test_the_thread_shows_an_image_inline_and_a_pdf_as_an_untrusted_download(): void
     {
+        $this->enable(Features::supportAttachments());
         Storage::fake('local');
         $conversation = $this->conversation($this->user('opener@example.com'));
         $message = $this->message($conversation, SupportSenderType::CUSTOMER, SupportMessageKind::MESSAGE, 'See files');
@@ -726,6 +742,7 @@ class SupportConversationResourceTest extends FilamentTestCase
 
     public function test_the_thread_labels_the_screenshot_the_app_captured_apart_from_an_upload(): void
     {
+        $this->enable(Features::supportAttachments());
         Storage::fake('local');
         $conversation = $this->conversation($this->user('opener@example.com'));
         $message = $this->message($conversation, SupportSenderType::CUSTOMER, SupportMessageKind::MESSAGE, 'Broken');

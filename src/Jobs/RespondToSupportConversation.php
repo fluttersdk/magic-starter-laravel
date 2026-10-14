@@ -10,6 +10,7 @@ use FlutterSdk\MagicStarter\Enums\SupportHandoffReason;
 use FlutterSdk\MagicStarter\Enums\SupportMessageKind;
 use FlutterSdk\MagicStarter\Enums\SupportSenderType;
 use FlutterSdk\MagicStarter\Events\SupportConversationUpdated;
+use FlutterSdk\MagicStarter\Features;
 use FlutterSdk\MagicStarter\Models\SupportConversation;
 use FlutterSdk\MagicStarter\Models\SupportMessage;
 use FlutterSdk\MagicStarter\Models\SupportMessageAttachment;
@@ -372,11 +373,20 @@ class RespondToSupportConversation implements ShouldQueue
      *
      * Only the trigger's own `upload` files count: the auto screenshot, staff files and anything on an earlier
      * message stay out. An image is a disk and a path, never bytes; the responder reads it if its provider can.
+     * Without `support-attachments` there are none to read, and a host that never published the attachments
+     * migration has no table to read them from.
      *
      * @return array{images: list<array{disk: string, path: string, mime: string}>, pdfs: int}
      */
     private function uploads(SupportMessage $trigger): array
     {
+        if (! Features::hasSupportAttachmentsFeatures()) {
+            return [
+                'images' => [],
+                'pdfs' => 0,
+            ];
+        }
+
         $uploads = $trigger->attachments()
             ->where('origin', SupportAttachmentOrigin::UPLOAD->value)
             ->orderBy('created_at')
