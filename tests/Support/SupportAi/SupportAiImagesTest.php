@@ -153,6 +153,22 @@ class SupportAiImagesTest extends TestCase
         $this->assertSame(2, $responder->turns[0]->pdfCount);
     }
 
+    public function test_a_host_without_the_attachments_feature_or_its_table_still_gets_an_answer(): void
+    {
+        config()->set('magic-starter.features', [
+            Features::support(),
+        ]);
+        Schema::drop('support_message_attachments');
+        $responder = $this->bindResponder();
+        [$conversation, $trigger] = $this->pendingTurn('How do I add a teammate?');
+
+        $this->runJob($conversation, $trigger);
+
+        $this->assertSame(1, $responder->calls);
+        $this->assertSame([], $responder->turns[0]->images);
+        $this->assertSame(0, $responder->turns[0]->pdfCount);
+    }
+
     public function test_an_image_on_an_earlier_message_is_not_sent_again(): void
     {
         $responder = $this->bindResponder();

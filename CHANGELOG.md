@@ -4,6 +4,10 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Fixed
+
+- **A host without `support-attachments` keeps its AI desk and its staff thread on 0.0.32.** The AI responder read the trigger's files and the panel's thread loaded every message's files whatever the feature said, so a host that had not published `create_support_message_attachments_table.php` failed every AI turn (`no such table: support_message_attachments`) and could not open a conversation in the panel. Both now read files only with `support-attachments`, as the 0.0.32 upgrade notes promised. (`src/Jobs/RespondToSupportConversation.php`, `src/Filament/Resources/SupportConversations/SupportConversationResource.php`)
+
 ## [0.0.32] - 2026-10-14
 
 ### Added

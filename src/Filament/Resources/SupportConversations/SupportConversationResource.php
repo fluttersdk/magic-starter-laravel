@@ -389,15 +389,22 @@ class SupportConversationResource extends MagicStarterResource
     /**
      * The whole thread in the order it was written, staff notes included.
      *
+     * Files are loaded only with `support-attachments`: a host that never published the attachments migration has
+     * no table to read them from.
+     *
      * @return Collection<int, SupportMessage>
      */
     protected static function thread(SupportConversation $conversation): Collection
     {
         return $conversation->messages()
-            ->with([
-                'sender',
-                'attachments',
-            ])
+            ->with(Features::hasSupportAttachmentsFeatures()
+                ? [
+                    'sender',
+                    'attachments',
+                ]
+                : [
+                    'sender',
+                ])
             ->orderBy('created_at')
             ->orderBy('id')
             ->get();
@@ -657,10 +664,12 @@ class SupportConversationResource extends MagicStarterResource
                 'event' => [$time],
                 default => [$name, $time],
             },
-            'attachments' => $message->attachments
-                ->map(static fn (SupportMessageAttachment $file): array => static::attachmentItem($file))
-                ->values()
-                ->all(),
+            'attachments' => $message->relationLoaded('attachments')
+                ? $message->attachments
+                    ->map(static fn (SupportMessageAttachment $file): array => static::attachmentItem($file))
+                    ->values()
+                    ->all()
+                : [],
         ];
     }
 
