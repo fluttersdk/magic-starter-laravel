@@ -45,6 +45,7 @@ use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Event;
+use Illuminate\Support\Facades\Exceptions;
 use Illuminate\Support\Facades\Notification;
 use Illuminate\Support\Facades\Queue;
 use Illuminate\Support\Facades\Storage;
@@ -778,6 +779,11 @@ class SupportConversationResourceTest extends FilamentTestCase
             ->get("/admin/magic-starter/support-attachments/{$other->getKey()}/{$image->getKey()}")
             ->assertNotFound();
 
+        // A key of the wrong shape is not found before any query runs.
+        $this->actingAs($staff)
+            ->get("/admin/magic-starter/support-attachments/{$conversation->getKey()}/not-a-key")
+            ->assertNotFound();
+
         // The opener, signed in but outside the panel gate, is refused.
         $this->actingAs($opener)->get($this->panelFileUrl($image))->assertForbidden();
     }
@@ -949,6 +955,32 @@ class SupportConversationResourceTest extends FilamentTestCase
             ->assertSee('paused_reason')
             ->assertDontSee('monitor.paused_by_stranger')
             ->assertDontSee('token.rotated_by_job');
+    }
+
+    public function test_a_failing_customer_description_is_reported_and_costs_only_its_own_block(): void
+    {
+        Exceptions::fake();
+        $this->app->instance(DescribesSupportCustomer::class, new class implements DescribesSupportCustomer
+        {
+            public function describe(SupportConversation $conversation): array
+            {
+                throw new RuntimeException('The billing service is down.');
+            }
+        });
+        $conversation = $this->conversation($this->user('opener@example.com'), [
+            'client_context' => [
+                'app_version' => '4.2.0',
+            ],
+        ]);
+
+        Livewire::actingAs($this->staff())->test(ViewSupportConversation::class, ['record' => $conversation->getKey()])
+            ->assertSee((string) __('magic-starter::admin_support.context.title'))
+            ->assertSee('4.2.0')
+            ->assertDontSee('The billing service is down.');
+
+        Exceptions::assertReported(
+            static fn (RuntimeException $exception): bool => $exception->getMessage() === 'The billing service is down.',
+        );
     }
 
     public function test_the_customer_context_reads_only_the_latest_twenty_audit_rows(): void

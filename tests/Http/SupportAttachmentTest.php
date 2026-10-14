@@ -18,10 +18,12 @@ use FlutterSdk\MagicStarter\Tests\TestCase;
 use GdImage;
 use Illuminate\Auth\Authenticatable as AuthenticatableTrait;
 use Illuminate\Contracts\Auth\Authenticatable;
+use Illuminate\Contracts\Filesystem\Filesystem;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Schema\Blueprint;
 use Illuminate\Foundation\Application;
 use Illuminate\Http\UploadedFile;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Event;
 use Illuminate\Support\Facades\Notification;
 use Illuminate\Support\Facades\Schema;
@@ -31,6 +33,8 @@ use Illuminate\Support\Str;
 use Illuminate\Testing\TestResponse;
 use Laravel\Sanctum\HasApiTokens;
 use Laravel\Sanctum\SanctumServiceProvider;
+use Mockery;
+use PHPUnit\Framework\Attributes\DataProvider;
 use RuntimeException;
 
 /**
@@ -336,6 +340,156 @@ class SupportAttachmentTest extends TestCase
         [$bottomRed, , $bottomBlue] = $this->rgb($image, 12, 44);
         $this->assertGreaterThan($topBlue + 100, $topRed);
         $this->assertGreaterThan($bottomRed + 100, $bottomBlue);
+    }
+
+    /**
+     * Where the red top-left corner of an 80x40 photo lands once each EXIF orientation is undone.
+     *
+     * @return array<string, array{0: int, 1: array{0: int, 1: int}, 2: string}>
+     */
+    public static function orientations(): array
+    {
+        return [
+            'upright' => [1, [80, 40], 'top-left'],
+            'mirrored' => [2, [80, 40], 'top-right'],
+            'upside down' => [3, [80, 40], 'bottom-right'],
+            'flipped' => [4, [80, 40], 'bottom-left'],
+            'transposed' => [5, [40, 80], 'top-left'],
+            'quarter clockwise' => [6, [40, 80], 'top-right'],
+            'transversed' => [7, [40, 80], 'bottom-right'],
+            'quarter counter-clockwise' => [8, [40, 80], 'bottom-left'],
+        ];
+    }
+
+    /**
+     * @param  array{0: int, 1: int}  $size
+     */
+    #[DataProvider('orientations')]
+    public function test_every_exif_orientation_is_undone(int $orientation, array $size, string $redCorner): void
+    {
+        $opener = $this->user('opener@example.com');
+
+        $this->openWithFiles($opener, [
+            $this->upload('photo.jpg', $this->jpegWithRedCorner($orientation)),
+        ]);
+
+        $image = imagecreatefromstring(
+            (string) Storage::disk('local')->get(SupportMessageAttachment::query()->sole()->path),
+        );
+        $this->assertInstanceOf(GdImage::class, $image);
+        $this->assertSame($size, [imagesx($image), imagesy($image)]);
+
+        [$width, $height] = $size;
+        $corners = [
+            'top-left' => [5, 5],
+            'top-right' => [$width - 6, 5],
+            'bottom-left' => [5, $height - 6],
+            'bottom-right' => [$width - 6, $height - 6],
+        ];
+
+        foreach ($corners as $corner => [$x, $y]) {
+            [$red, , $blue] = $this->rgb($image, $x, $y);
+            $corner === $redCorner
+                ? $this->assertGreaterThan($blue + 100, $red, "{$corner} should be red")
+                : $this->assertGreaterThan($red + 100, $blue, "{$corner} should be blue");
+        }
+    }
+
+    public function test_a_jpeg_with_a_malformed_exif_block_is_stored_as_drawn(): void
+    {
+        $opener = $this->user('opener@example.com');
+        $payload = "Exif\x00\x00" . 'XX' . str_repeat("\xFF", 12);
+        $jpeg = $this->jpeg();
+        $broken = substr($jpeg, 0, 2) . "\xFF\xE1" . pack('n', strlen($payload) + 2) . $payload . substr($jpeg, 2);
+
+        $this->openWithFiles($opener, [
+            $this->upload('photo.jpg', $broken),
+        ]);
+
+        $attachment = SupportMessageAttachment::query()->sole();
+        $this->assertSame([40, 20], [$attachment->width, $attachment->height]);
+    }
+
+    public function test_an_image_whose_header_reads_but_whose_pixels_do_not_is_refused(): void
+    {
+        $opener = $this->user('opener@example.com');
+
+        $this->actingAs($opener, 'sanctum');
+        $this->postJson('/support/conversations', [
+            'topic' => 'technical',
+            'body' => 'Broken image.',
+            'attachments' => [
+                $this->upload('broken.png', $this->pngClaiming(10, 10)),
+            ],
+        ])->assertUnprocessable()->assertJsonValidationErrors('attachments.0');
+
+        $this->assertSame(0, SupportConversation::query()->count());
+        $this->assertSame([], $this->storedFiles());
+    }
+
+    public function test_a_gif_named_png_and_a_plain_value_are_refused(): void
+    {
+        $opener = $this->user('opener@example.com');
+        ob_start();
+        imagegif($this->canvas(10, 10));
+        $gif = (string) ob_get_clean();
+
+        $this->actingAs($opener, 'sanctum');
+        $this->postJson('/support/conversations', [
+            'topic' => 'technical',
+            'body' => 'Animation.',
+            'attachments' => [
+                $this->upload('animation.png', $gif),
+                'not a file',
+            ],
+        ])->assertUnprocessable()->assertJsonValidationErrors([
+            'attachments.0',
+            'attachments.1',
+        ]);
+
+        $this->assertSame(0, SupportConversation::query()->count());
+        $this->assertSame([], $this->storedFiles());
+    }
+
+    public function test_a_refused_write_rolls_back_and_deletes_the_files_already_written(): void
+    {
+        $opener = $this->user('opener@example.com');
+        $conversation = $this->openWithFiles($opener, []);
+        $message = $conversation->messages()->sole();
+        $action = app(StoreSupportAttachments::class);
+        $prepared = $action->prepare($opener, [
+            $this->upload('one.png', $this->png()),
+            $this->upload('two.png', $this->png()),
+        ]);
+
+        $written = [];
+        $deleted = [];
+        $disk = Mockery::mock(Filesystem::class);
+        $disk->shouldReceive('put')->twice()->andReturnUsing(
+            static function (string $path) use (&$written): bool {
+                $written[] = $path;
+
+                return count($written) === 1;
+            },
+        );
+        $disk->shouldReceive('delete')->once()->andReturnUsing(
+            static function (array $paths) use (&$deleted): bool {
+                $deleted = $paths;
+
+                return true;
+            },
+        );
+        Storage::set('local', $disk);
+
+        try {
+            DB::transaction(static fn () => $action->store($message, $prepared, $opener));
+            $this->fail('The refused write did not throw.');
+        } catch (RuntimeException $exception) {
+            $this->assertStringContainsString('refused a write', $exception->getMessage());
+        }
+
+        $this->assertSame([$written[0]], $deleted);
+        $this->assertSame(0, SupportMessageAttachment::query()->count());
     }
 
     public function test_four_files_are_refused(): void
@@ -937,13 +1091,35 @@ class SupportAttachmentTest extends TestCase
         imagefilledrectangle($image, $half, 0, $width - 1, $height - 1, (int) imagecolorallocate($image, 0, 0, 255));
         ob_start();
         imagejpeg($image, null, 95);
-        $jpeg = (string) ob_get_clean();
 
+        return $this->withGpsExif((string) ob_get_clean(), 6);
+    }
+
+    /**
+     * An 80x40 JPEG, red in its top-left quadrant and blue elsewhere, tagged with `$orientation`.
+     */
+    private function jpegWithRedCorner(int $orientation): string
+    {
+        $image = imagecreatetruecolor(80, 40);
+        $this->assertInstanceOf(GdImage::class, $image);
+        imagefill($image, 0, 0, (int) imagecolorallocate($image, 0, 0, 255));
+        imagefilledrectangle($image, 0, 0, 39, 19, (int) imagecolorallocate($image, 255, 0, 0));
+        ob_start();
+        imagejpeg($image, null, 95);
+
+        return $this->withGpsExif((string) ob_get_clean(), $orientation);
+    }
+
+    /**
+     * `$jpeg` with an APP1 EXIF block holding `$orientation` and a GPS block.
+     */
+    private function withGpsExif(string $jpeg, int $orientation): string
+    {
         // Little-endian TIFF: IFD0 at 8 holds Orientation and the GPS pointer (2 + 2 * 12 + 4 = 30 bytes), so
         // the GPS IFD starts at 38 and holds the version and a latitude reference.
         $tiff = 'II' . pack('v', 42) . pack('V', 8)
             . pack('v', 2)
-            . pack('vvVvv', 0x0112, 3, 1, 6, 0)
+            . pack('vvVvv', 0x0112, 3, 1, $orientation, 0)
             . pack('vvVV', 0x8825, 4, 1, 38)
             . pack('V', 0)
             . pack('v', 2)
