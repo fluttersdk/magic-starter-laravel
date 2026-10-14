@@ -25,7 +25,10 @@ class AdminTimezoneTest extends FilamentTestCase
 
     protected function tearDown(): void
     {
-        FilamentTimezone::set(null);
+        // A skipped test still tears down, and the job without Filament skips every test here.
+        if (class_exists(FilamentTimezone::class)) {
+            FilamentTimezone::set(null);
+        }
 
         parent::tearDown();
     }
