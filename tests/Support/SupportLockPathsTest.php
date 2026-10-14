@@ -88,6 +88,8 @@ class SupportLockPathsTest extends TestCase
             'create_support_conversations_table.php',
             'create_support_messages_table.php',
             'add_ai_columns_to_support_tables.php',
+            // The responder reads the trigger message's attachments.
+            'create_support_message_attachments_table.php',
         ] as $file) {
             $migration = require __DIR__ . '/../../database/migrations/' . $file;
             $migration->up();

@@ -27,6 +27,7 @@ use Illuminate\Support\Facades\Notification;
 use Illuminate\Support\Facades\Schema;
 use Illuminate\Support\Facades\Storage;
 use Illuminate\Support\Facades\URL;
+use Illuminate\Support\Str;
 use Illuminate\Testing\TestResponse;
 use Laravel\Sanctum\HasApiTokens;
 use Laravel\Sanctum\SanctumServiceProvider;
@@ -483,9 +484,11 @@ class SupportAttachmentTest extends TestCase
 
     public function test_a_teammate_and_a_stranger_get_404_on_the_file_and_its_link(): void
     {
-        $opener = $this->user('opener@example.com', 'team-a');
-        $teammate = $this->user('mate@example.com', 'team-a');
-        $stranger = $this->user('stranger@example.com', 'team-b');
+        // Real uuids: PostgreSQL refuses a non-uuid text in the team key column.
+        $teamA = (string) Str::uuid();
+        $opener = $this->user('opener@example.com', $teamA);
+        $teammate = $this->user('mate@example.com', $teamA);
+        $stranger = $this->user('stranger@example.com', (string) Str::uuid());
         $conversation = $this->openWithFiles($opener, [
             $this->upload('invoice.pdf', $this->pdf()),
         ]);

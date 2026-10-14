@@ -20,6 +20,7 @@ use Illuminate\Support\Facades\Event;
 use Illuminate\Support\Facades\Lang;
 use Illuminate\Support\Facades\Notification;
 use Illuminate\Support\Facades\Schema;
+use Illuminate\Support\Str;
 use Laravel\Sanctum\SanctumServiceProvider;
 
 /**
@@ -155,8 +156,10 @@ class SupportRatingTest extends TestCase
 
     public function test_a_teammate_cannot_rate_the_conversation(): void
     {
-        $opener = $this->customer('opener@example.com', team: 'team-1');
-        $teammate = $this->customer('teammate@example.com', team: 'team-1');
+        // A real uuid: PostgreSQL refuses a non-uuid text in the team key column.
+        $team = (string) Str::uuid();
+        $opener = $this->customer('opener@example.com', team: $team);
+        $teammate = $this->customer('teammate@example.com', team: $team);
         $conversation = $this->conversation($opener, SupportConversationStatus::RESOLVED);
 
         $this->actingAs($teammate, 'sanctum');
