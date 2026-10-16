@@ -444,12 +444,37 @@ class MagicStarterPlugin implements Plugin
     }
 
     /**
-     * The resource classes to mount: defaults merged with overrides, minus the
-     * dropped keys, the disabled features and the classes that do not exist.
+     * The resource class registered under a key, or null when nothing is mounted there.
      *
-     * @return list<class-string>
+     * Null follows the same rules the panel mounts by: the key was dropped with
+     * {@see withoutResources()}, its feature is off, or the class does not exist.
+     * Call it on the instance the panel carries (`$panel->getPlugin(self::ID)`);
+     * {@see get()} needs a current panel, which a queue worker does not have.
+     *
+     * @return class-string<\Filament\Resources\Resource>|null
+     */
+    public function resourceFor(string $key): ?string
+    {
+        return $this->mountedResources()[$key] ?? null;
+    }
+
+    /**
+     * The resource classes to mount, in registration order.
+     *
+     * @return list<class-string<\Filament\Resources\Resource>>
      */
     protected function enabledResources(): array
+    {
+        return array_values($this->mountedResources());
+    }
+
+    /**
+     * The resource classes to mount by key: defaults merged with overrides, minus
+     * the dropped keys, the disabled features and the classes that do not exist.
+     *
+     * @return array<string, class-string<\Filament\Resources\Resource>>
+     */
+    protected function mountedResources(): array
     {
         $resources = [
             'users' => 'FlutterSdk\\MagicStarter\\Filament\\Resources\\Users\\UserResource',
@@ -468,7 +493,7 @@ class MagicStarterPlugin implements Plugin
             ...$this->resources,
         ];
 
-        $enabled = [];
+        $mounted = [];
 
         foreach ($resources as $key => $class) {
             if (in_array($key, $this->withoutResources, true)) {
@@ -479,10 +504,10 @@ class MagicStarterPlugin implements Plugin
                 continue;
             }
 
-            $enabled[] = $class;
+            $mounted[$key] = $class;
         }
 
-        return $enabled;
+        return $mounted;
     }
 
     /**

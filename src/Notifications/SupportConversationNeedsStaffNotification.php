@@ -2,9 +2,12 @@
 
 namespace FlutterSdk\MagicStarter\Notifications;
 
+use Filament\Facades\Filament;
 use Filament\Notifications\Notification as FilamentNotification;
+use Filament\Panel;
 use FlutterSdk\MagicStarter\Enums\SupportHandoffReason;
 use FlutterSdk\MagicStarter\Features;
+use FlutterSdk\MagicStarter\Filament\MagicStarterPlugin;
 use FlutterSdk\MagicStarter\Http\Resources\NotificationResource;
 use FlutterSdk\MagicStarter\Models\SupportConversation;
 use Illuminate\Bus\Queueable;
@@ -12,6 +15,7 @@ use Illuminate\Contracts\Queue\ShouldQueue;
 use Illuminate\Notifications\Messages\BroadcastMessage;
 use Illuminate\Notifications\Messages\MailMessage;
 use Illuminate\Notifications\Notification;
+use Illuminate\Support\Arr;
 use Illuminate\Support\Facades\Lang;
 use onesignal\client\model\LanguageStringMap;
 use onesignal\client\model\Notification as OneSignalNotification;
@@ -129,10 +133,16 @@ class SupportConversationNeedsStaffNotification extends Notification implements 
      */
     public function toMail(mixed $notifiable): MailMessage
     {
-        return (new MailMessage)
+        $mail = (new MailMessage)
             ->subject($this->title() . ': ' . $this->conversation->subject)
             ->line($this->reasonLine())
             ->line(Lang::get('magic-starter::admin_support.notifications.staff.open_panel'));
+
+        $url = $this->panelUrl();
+
+        return $url === null
+            ? $mail
+            : $mail->action(Lang::get('magic-starter::admin_support.notifications.staff.open_action'), $url);
     }
 
     /**
@@ -152,6 +162,40 @@ class SupportConversationNeedsStaffNotification extends Notification implements 
         ]);
 
         return $payload;
+    }
+
+    /**
+     * The conversation's page in the panel that carries the starter plugin, or null when no safe link exists.
+     *
+     * This runs in a queue worker, which has no current panel, request or tenant. A panel on several domains
+     * asks Filament for the current domain and a tenancy panel for a tenant, and a worker has neither, so such
+     * a panel gets no link rather than a mail job that throws.
+     */
+    private function panelUrl(): ?string
+    {
+        // The classes can be in vendor with Filament's provider never registered, so the facade has no root.
+        if (! class_exists(Filament::class) || ! app()->bound('filament')) {
+            return null;
+        }
+
+        $panel = Arr::first(
+            Filament::getPanels(),
+            static fn (Panel $panel): bool => $panel->hasPlugin(MagicStarterPlugin::ID),
+        );
+
+        if ($panel === null || count($panel->getDomains()) > 1 || $panel->hasTenancy()) {
+            return null;
+        }
+
+        /** @var MagicStarterPlugin $plugin */
+        $plugin = $panel->getPlugin(MagicStarterPlugin::ID);
+        $resource = $plugin->resourceFor('support');
+
+        if ($resource === null || ! $resource::hasPage('view')) {
+            return null;
+        }
+
+        return $resource::getUrl('view', ['record' => $this->conversation->getKey()], panel: $panel->getId());
     }
 
     private function title(): string

@@ -146,7 +146,8 @@ return [
         'subject' => 'Your free trial was not started',
         'card_used' => 'The card on file has already been used for a free trial, so no trial was opened for this subscription.',
         'nothing_charged' => 'The subscription was ended straight away and nothing was charged.',
-        'subscribe' => 'You can still subscribe without a trial from the billing screen.',
+        'subscribe' => 'You can still subscribe without a free trial.',
+        'action' => 'View plans',
     ],
 
 ];

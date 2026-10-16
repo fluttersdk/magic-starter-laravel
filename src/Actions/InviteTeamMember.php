@@ -5,6 +5,7 @@ namespace FlutterSdk\MagicStarter\Actions;
 use FlutterSdk\MagicStarter\Contracts\InvitesTeamMembers;
 use FlutterSdk\MagicStarter\Notifications\TeamInvitationNotification;
 use Illuminate\Contracts\Auth\Authenticatable;
+use Illuminate\Contracts\Translation\HasLocalePreference;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Support\Facades\Notification;
 use Illuminate\Support\Str;
@@ -34,7 +35,13 @@ class InviteTeamMember implements InvitesTeamMembers
             'token' => Str::random(32),
         ]);
 
-        Notification::route('mail', $email)->notify(new TeamInvitationNotification($invitation));
+        // The recipient is an anonymous notifiable with no locale of its own, so the
+        // mail is pinned to the inviter's language at dispatch.
+        $locale = $user instanceof HasLocalePreference ? $user->preferredLocale() : null;
+
+        Notification::route('mail', $email)->notify(
+            (new TeamInvitationNotification($invitation))->locale($locale ?? app()->getLocale()),
+        );
 
         return $invitation;
     }

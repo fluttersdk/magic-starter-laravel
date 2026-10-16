@@ -391,6 +391,11 @@ class MagicStarterServiceProvider extends ServiceProvider
         // 3.7. Register package translations.
         $this->loadTranslationsFrom(__DIR__ . '/../lang', 'magic-starter');
 
+        // 3.70. Register the framework's own mail strings (password reset, template chrome),
+        // which Laravel ships as English JSON keys with no translation. An app's own
+        // `lang/<locale>.json` loads after this path and wins per key.
+        $this->loadJsonTranslationsFrom(__DIR__ . '/../lang');
+
         // 3.71. Register package views: the staff thread of the Filament inbox lives here.
         $this->loadViewsFrom(__DIR__ . '/../resources/views', 'magic-starter');
 

@@ -952,6 +952,9 @@ return [
 
         'trial_refused_notification' => (bool) env('MAGIC_STARTER_TRIAL_REFUSED_NOTIFICATION', true),
 
+        // Path of the client's billing screen, linked from mails; the default is magic_starter's own billing route.
+        'client_path' => '/teams/billing',
+
         'log_channel' => env('MAGIC_STARTER_BILLING_LOG_CHANNEL'),
 
         'webhook_retention_days' => (int) env('MAGIC_STARTER_BILLING_WEBHOOK_RETENTION_DAYS', 90),
