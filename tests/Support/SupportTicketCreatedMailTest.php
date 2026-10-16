@@ -8,8 +8,8 @@ use FlutterSdk\MagicStarter\Events\SupportConversationNeedsStaff;
 use FlutterSdk\MagicStarter\Models\SupportConversation;
 use FlutterSdk\MagicStarter\Notifications\SupportTicketCreatedNotification;
 use FlutterSdk\MagicStarter\Support\SupportThreadToken;
-use FlutterSdk\MagicStarter\Tests\Fixtures\ConcreteAdminUser;
 use FlutterSdk\MagicStarter\Tests\Fixtures\ConcreteUser;
+use FlutterSdk\MagicStarter\Tests\Fixtures\ConcreteVerifiableUser;
 use FlutterSdk\MagicStarter\Tests\TestCase;
 use Illuminate\Contracts\Queue\ShouldBeEncrypted;
 use Illuminate\Contracts\Queue\ShouldQueue;
@@ -160,8 +160,8 @@ class SupportTicketCreatedMailTest extends TestCase
 
     public function test_an_unverified_account_gets_no_mail_and_a_verified_one_gets_the_in_app_link(): void
     {
-        $unverified = $this->createUser(ConcreteAdminUser::class, 'new@example.com', verified: false);
-        $verified = $this->createUser(ConcreteAdminUser::class, 'ada@example.com');
+        $unverified = $this->createUser(ConcreteVerifiableUser::class, 'new@example.com', verified: false);
+        $verified = $this->createUser(ConcreteVerifiableUser::class, 'ada@example.com');
 
         $this->action()->open($unverified, $this->inAppInput());
         $conversation = $this->action()->open($verified, $this->inAppInput());
@@ -189,7 +189,7 @@ class SupportTicketCreatedMailTest extends TestCase
     {
         foreach ([
             ConcreteUser::class,
-            ConcreteAdminUser::class,
+            ConcreteVerifiableUser::class,
         ] as $model) {
             $guest = $model::query()->create([
                 'name' => 'Guest',

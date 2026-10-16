@@ -11,8 +11,8 @@ use FlutterSdk\MagicStarter\Features;
 use FlutterSdk\MagicStarter\MagicStarter;
 use FlutterSdk\MagicStarter\Models\SupportConversation;
 use FlutterSdk\MagicStarter\Notifications\SupportCsatInvitationNotification;
-use FlutterSdk\MagicStarter\Tests\Fixtures\ConcreteAdminUser;
 use FlutterSdk\MagicStarter\Tests\Fixtures\ConcreteUser;
+use FlutterSdk\MagicStarter\Tests\Fixtures\ConcreteVerifiableUser;
 use FlutterSdk\MagicStarter\Tests\TestCase;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Event;
@@ -140,11 +140,11 @@ class SupportCsatInvitationMailTest extends TestCase
 
     public function test_a_guest_with_an_address_gets_no_invitation(): void
     {
-        MagicStarter::useUserModel(ConcreteAdminUser::class);
+        MagicStarter::useUserModel(ConcreteVerifiableUser::class);
 
         foreach ([
             ConcreteUser::class,
-            ConcreteAdminUser::class,
+            ConcreteVerifiableUser::class,
         ] as $model) {
             $guest = $model::query()->create([
                 'name' => 'Guest',
@@ -210,9 +210,9 @@ class SupportCsatInvitationMailTest extends TestCase
     public function test_an_unverified_account_gets_no_invitation_and_a_verified_one_does(): void
     {
         // The opener is read through the conversation's relation, which resolves the configured user model.
-        MagicStarter::useUserModel(ConcreteAdminUser::class);
-        $unverified = $this->createUser(ConcreteAdminUser::class, 'new@example.com', verified: false);
-        $verified = $this->createUser(ConcreteAdminUser::class, 'ada@example.com');
+        MagicStarter::useUserModel(ConcreteVerifiableUser::class);
+        $unverified = $this->createUser(ConcreteVerifiableUser::class, 'new@example.com', verified: false);
+        $verified = $this->createUser(ConcreteVerifiableUser::class, 'ada@example.com');
 
         $this->resolve($this->createConversation($unverified));
         $this->resolve($this->createConversation($verified));
