@@ -428,13 +428,16 @@ A check settles the trials one hop from its own row. A chain (A shares a card wi
 
 ### The refusal mail
 
-`TrialRefusedNotification` is mailed only for `card_reused`: the person's card had already taken a trial, no trial was opened, nothing was charged, and they can still subscribe without one. A `duplicate` sends nothing, since the trial they meant to have is the surviving one. The mail goes out after the cancel is confirmed, so a mail failure never causes a second cancel.
+`TrialRefusedNotification` is mailed only for `card_reused`: the person's card had already taken a trial, no trial was opened, nothing was charged, and they can still subscribe without one. A `duplicate` sends nothing, since the trial they meant to have is the surviving one. The mail goes out after the cancel is confirmed, so a mail failure never causes a second cancel. Its "View plans" action links to the frontend base (`magic-starter.frontend_url`, or `url('/')` when that is unset) followed by `magic-starter.billing.client_path`.
 
 | Config key | Env | Default |
 |------------|-----|---------|
 | `magic-starter.billing.trial_refused_notification` | `MAGIC_STARTER_TRIAL_REFUSED_NOTIFICATION` | `true` |
+| `magic-starter.billing.client_path` | none | `/teams/billing` |
 
-Set it `false` to send your own message instead. The sentences are `magic-starter::billing.trial_refused.*` in `en` and `tr`; a published `lang/vendor/magic-starter/` copy wins over the package's own.
+`client_path` is the client's billing screen path, linked from the refusal mail. A published `billing` array replaces the package's whole array and may predate the key, in which case the mail falls back to `/teams/billing`.
+
+Set `trial_refused_notification` `false` to send your own message instead. The sentences are `magic-starter::billing.trial_refused.*` in `en` and `tr`; a published `lang/vendor/magic-starter/` copy wins over the package's own.
 
 ### The table
 

@@ -89,7 +89,8 @@ return [
         'subject' => 'Ücretsiz deneme süreniz başlatılmadı',
         'card_used' => 'Kayıtlı kart daha önce bir ücretsiz deneme için kullanıldığından bu abonelik için deneme süresi açılmadı.',
         'nothing_charged' => 'Abonelik hemen sonlandırıldı ve sizden hiçbir ücret alınmadı.',
-        'subscribe' => 'Dilerseniz faturalandırma ekranından deneme süresi olmadan abone olabilirsiniz.',
+        'subscribe' => 'Dilerseniz ücretsiz deneme olmadan yine de abone olabilirsiniz.',
+        'action' => 'Planları görüntüleyin',
     ],
 
 ];

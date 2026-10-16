@@ -5,6 +5,7 @@ namespace FlutterSdk\MagicStarter\Notifications;
 use FlutterSdk\MagicStarter\Actions\ReplyToSupportConversation;
 use FlutterSdk\MagicStarter\Features;
 use FlutterSdk\MagicStarter\Http\Resources\NotificationResource;
+use FlutterSdk\MagicStarter\Models\SupportConversation;
 use FlutterSdk\MagicStarter\Models\SupportMessage;
 use Illuminate\Bus\Queueable;
 use Illuminate\Contracts\Queue\ShouldBeEncrypted;
@@ -25,8 +26,7 @@ use onesignal\client\model\Notification as OneSignalNotification;
  * Two audiences, chosen by the staff reply action (the AI desk only answers a signed-in opener, so it
  * always builds the in-app one): an opener with an
  * account is told in app (database) and by push, with generic text, ids and
- * the client route of the thread (`action_url`, from
- * `support.client_thread_path`) only, and reads the reply through the API; a visitor with no account gets a
+ * the client route of the thread (`action_url`, see {@see SupportConversation::clientThreadPath()}) only, and reads the reply through the API; a visitor with no account gets a
  * mail carrying the reply itself and a fresh thread link (`$threadUrl`), since
  * the mail is their only way back in. Only ever built for a customer-visible
  * reply, never for a staff note.
@@ -159,16 +159,11 @@ class SupportReplyNotification extends Notification implements ShouldBeEncrypted
     }
 
     /**
-     * The in-app route of the thread: `support.client_thread_path` with `{id}`
-     * replaced by the conversation key.
+     * The in-app route of the thread, see {@see SupportConversation::clientThreadPath()}.
      */
     private function actionUrl(): string
     {
-        return str_replace(
-            '{id}',
-            (string) $this->message->conversation_id,
-            (string) config('magic-starter.support.client_thread_path', '/support/{id}'),
-        );
+        return SupportConversation::clientThreadPath($this->message->conversation_id);
     }
 
     private function title(): string

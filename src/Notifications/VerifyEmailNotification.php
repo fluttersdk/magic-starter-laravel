@@ -6,7 +6,6 @@ use FlutterSdk\MagicStarter\Support\FrontendUrl;
 use Illuminate\Notifications\Messages\MailMessage;
 use Illuminate\Notifications\Notification;
 use Illuminate\Support\Carbon;
-use Illuminate\Support\Facades\Lang;
 use Illuminate\Support\Facades\URL;
 
 class VerifyEmailNotification extends Notification
@@ -29,9 +28,9 @@ class VerifyEmailNotification extends Notification
         $verificationUrl = $this->resolveVerificationUrl($notifiable);
 
         return (new MailMessage)
-            ->subject(Lang::get('Verify Email Address'))
-            ->line(Lang::get('Please click the button below to verify your email address.'))
-            ->action(Lang::get('Verify Email'), $verificationUrl);
+            ->subject((string) __('magic-starter::mail.verify.subject'))
+            ->line((string) __('magic-starter::mail.verify.intro'))
+            ->action((string) __('magic-starter::mail.verify.action'), $verificationUrl);
     }
 
     /**

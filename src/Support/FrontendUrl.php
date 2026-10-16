@@ -59,4 +59,17 @@ final class FrontendUrl
 
         return null;
     }
+
+    /**
+     * An absolute URL for `$path` under the frontend base.
+     *
+     * Falls back to the application root so a mail link is always absolute: a
+     * mail client cannot resolve a relative one.
+     *
+     * @param  string  $path  starts with a slash
+     */
+    public static function to(string $path): string
+    {
+        return (self::baseOrNull() ?? rtrim(url('/'), '/')) . $path;
+    }
 }

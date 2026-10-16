@@ -8,8 +8,9 @@ use FlutterSdk\MagicStarter\Models\SupportConversation;
  * The secret in a public support thread link, for a visitor with no account.
  *
  * The plaintext exists only in the return value of {@see self::mint()}, in the
- * encrypted queued reply notification and in the mail it goes into; the row
- * keeps its sha256. One conversation holds one
+ * encrypted queued notification that carries the link (a staff reply, or the
+ * opt-in ticket-created mail to a visitor) and in the mail it goes into; the
+ * row keeps its sha256. One conversation holds one
  * live token: a new mint replaces the hash, so the link in an older mail stops
  * working, and a revoke clears it. Both bump `thread_token_version`. A token
  * also stops working after `magic-starter.support.public.link_ttl_days`.

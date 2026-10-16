@@ -73,6 +73,19 @@ return [
     | maps a field of the public form to a list of validation rule class
     | names applied on top of the package's own, for a captcha or a blocklist.
     |
+    | `mail` holds two optional mails, both off. `ticket_created` confirms a
+    | new conversation to its opener: a visitor through a freshly minted thread
+    | link (so only with `public.thread_url` set), an account holder only with
+    | a verified address. `csat_invitation` asks the account holder of a newly
+    | resolved conversation for a rating, with the `support-csat` feature on.
+    | The account-holder half of both needs a user model implementing
+    | `MustVerifyEmail` with `Features::emailVerification()` enabled, since
+    | otherwise no address is ever verified and they never send; a guest never
+    | receives either. With `ticket_created` on, every caller of
+    | `openPublic()`, not only the package route, mails any address typed
+    | into it, so each must carry a captcha (`public.extra_rules` for the
+    | package route).
+    |
     | `topics` lists what an opener may file a conversation under; the labels
     | are `magic-starter::support.topics.<topic>`. `client_thread_path` is the
     | in-app route of a thread; `{id}` is replaced with the conversation key.
@@ -121,6 +134,11 @@ return [
             'link_ttl_days' => (int) env('MAGIC_STARTER_SUPPORT_LINK_TTL_DAYS', 14),
             'extra_rules' => [],
             'thread_url' => env('MAGIC_STARTER_SUPPORT_THREAD_URL'),
+        ],
+
+        'mail' => [
+            'ticket_created' => false,
+            'csat_invitation' => false,
         ],
 
         'topics' => [
@@ -951,6 +969,9 @@ return [
         ],
 
         'trial_refused_notification' => (bool) env('MAGIC_STARTER_TRIAL_REFUSED_NOTIFICATION', true),
+
+        // Path of the client's billing screen, linked from mails; the default is magic_starter's own billing route.
+        'client_path' => '/teams/billing',
 
         'log_channel' => env('MAGIC_STARTER_BILLING_LOG_CHANNEL'),
 

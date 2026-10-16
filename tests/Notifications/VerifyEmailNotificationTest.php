@@ -72,6 +72,31 @@ final class VerifyEmailNotificationTest extends TestCase
         $this->assertSame('Verify Email', $mailMessage->actionText);
     }
 
+    public function test_the_mail_reads_in_english_under_en(): void
+    {
+        app()->setLocale('en');
+
+        $mail = (new VerifyEmailNotification)->toMail(new VerifyEmailNotificationTestUser);
+
+        $this->assertSame('Verify Email Address', $mail->subject);
+        $this->assertSame(['Please click the button below to verify your email address.'], $mail->introLines);
+        $this->assertSame('Verify Email', $mail->actionText);
+    }
+
+    public function test_the_mail_reads_in_turkish_under_tr(): void
+    {
+        app()->setLocale('tr');
+
+        $mail = (new VerifyEmailNotification)->toMail(new VerifyEmailNotificationTestUser);
+
+        $this->assertSame('E-posta Adresinizi Doğrulayın', $mail->subject);
+        $this->assertSame(
+            ['E-posta adresinizi doğrulamak için lütfen aşağıdaki düğmeye tıklayın.'],
+            $mail->introLines,
+        );
+        $this->assertSame('E-postanızı doğrulayın', $mail->actionText);
+    }
+
     public function test_verification_url_uses_frontend_url(): void
     {
         $notification = new VerifyEmailNotification;

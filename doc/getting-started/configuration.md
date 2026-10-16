@@ -241,6 +241,8 @@ Every user-facing sentence the API answers with resolves through `__('magic-star
 php artisan vendor:publish --tag=magic-starter-lang
 ```
 
+The mail strings sit under the same namespace: `magic-starter::mail.invitation.*` and `magic-starter::mail.verify.*`. Override one key per locale in `lang/vendor/magic-starter/<locale>/mail.php`. The password reset mail and the template chrome of every mail (`Hello!`, `Regards,`, the button subcopy) are Laravel's own English strings, translated in the package's `resources/lang/tr.json`, which is registered with `loadJsonTranslationsFrom`. That file is not part of `magic-starter-lang`, since Laravel reads no JSON file from `lang/vendor/`: override a framework string in your application's own `lang/tr.json`, which loads after the package's and wins per key.
+
 Note that a published file WINS over the package's own, and Laravel reads it before the shipped catalogue. A published copy left behind after an upgrade keeps serving the old wording, and a locale test can end up measuring the copy rather than the catalogue.
 
 Selecting the locale is your application's job. This package resolves nothing on its own: put your locale middleware in `route_middleware` above, or these routes answer in `config('app.locale')` whatever the caller asked for.

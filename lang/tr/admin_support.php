@@ -196,6 +196,7 @@ return [
             'negative_rating' => 'Bir müşteri çözülmüş bir görüşmeyi olumsuz puanladı.',
             'feedback' => 'Bir müşteri uygulama içi geri bildirimde düşük puan verdi.',
             'open_panel' => 'Yanıtlamak için yönetim panelini açın.',
+            'open_action' => 'Görüşmeyi açın',
         ],
         'reply' => [
             'title' => 'Destekten yeni yanıt',

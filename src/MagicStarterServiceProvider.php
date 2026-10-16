@@ -388,8 +388,13 @@ class MagicStarterServiceProvider extends ServiceProvider
             $this->scheduleSupportSweep();
         }
 
-        // 3.7. Register package translations.
+        // 3.7. Register package translations, and the framework's own mail strings (password reset,
+        // template chrome), which Laravel ships as English JSON keys with no translation. The JSON
+        // file lives outside `lang/` because the `magic-starter-lang` tag publishes that whole
+        // directory to `lang/vendor/magic-starter/`, where Laravel never reads a JSON file. An app's
+        // own `lang/<locale>.json` loads after this path and wins per key.
         $this->loadTranslationsFrom(__DIR__ . '/../lang', 'magic-starter');
+        $this->loadJsonTranslationsFrom(__DIR__ . '/../resources/lang');
 
         // 3.71. Register package views: the staff thread of the Filament inbox lives here.
         $this->loadViewsFrom(__DIR__ . '/../resources/views', 'magic-starter');

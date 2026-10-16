@@ -32,4 +32,24 @@ return [
         'handoff' => 'I have passed this conversation to our support team. A person will reply here.',
     ],
 
+    /*
+     * Package copy only: a mail line is Markdown, so nothing the customer typed ever goes into one.
+     */
+    'mail' => [
+        'ticket_created' => [
+            'subject' => 'We received your support request #:number',
+            'intro' => 'We received your request #:number and will reply in this conversation.',
+            'visitor' => 'Follow the conversation and reply through the link below. Every reply we send brings a '
+                . 'new link, which replaces this one.',
+            'account' => 'You can follow the conversation and reply in the app.',
+            'action' => 'View conversation',
+        ],
+        'csat_invitation' => [
+            'subject' => 'How did we do with request #:number?',
+            'intro' => 'Your support request #:number has been resolved.',
+            'ask' => 'Rating the conversation takes a single tap and tells us how we did.',
+            'action' => 'Rate the conversation',
+        ],
+    ],
+
 ];

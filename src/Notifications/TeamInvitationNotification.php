@@ -8,7 +8,6 @@ use Illuminate\Contracts\Queue\ShouldQueue;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Notifications\Messages\MailMessage;
 use Illuminate\Notifications\Notification;
-use Illuminate\Support\Facades\Lang;
 
 /**
  * Notification sent to a user when they are invited to a team.
@@ -45,21 +44,18 @@ class TeamInvitationNotification extends Notification implements ShouldQueue
      */
     public function toMail(mixed $notifiable): MailMessage
     {
-        // @phpstan-ignore-next-line: Magic property access on Eloquent model
-        $token = (string) $this->invitation->token;
-
-        // @phpstan-ignore-next-line: Magic relation access on Eloquent model
-        $teamName = (string) $this->invitation->team->name;
-
-        $acceptUrl = $this->acceptUrl($token);
+        $token = (string) $this->invitation->getAttribute('token');
+        $teamName = (string) $this->invitation->getRelationValue('team')?->getAttribute('name');
 
         return (new MailMessage)
-            ->subject(Lang::get('Team Invitation'))
-            ->greeting(Lang::get('Hello!'))
-            ->line(Lang::get('You have been invited to join the :team team!', ['team' => $teamName]))
-            ->line(Lang::get('If you do not have an account, you may create one by clicking the button below. After creating an account, you may click the invitation acceptance button in this email to accept the invitation:'))
-            ->action(Lang::get('Accept Invitation'), $acceptUrl)
-            ->line(Lang::get('If you did not expect to receive an invitation to this team, you may discard this email.'));
+            ->subject((string) __('magic-starter::mail.invitation.subject'))
+            ->greeting((string) __('magic-starter::mail.invitation.greeting'))
+            ->line((string) __('magic-starter::mail.invitation.invited', [
+                'team' => $teamName,
+            ]))
+            ->line((string) __('magic-starter::mail.invitation.no_account'))
+            ->action((string) __('magic-starter::mail.invitation.action'), $this->acceptUrl($token))
+            ->line((string) __('magic-starter::mail.invitation.discard'));
     }
 
     /**

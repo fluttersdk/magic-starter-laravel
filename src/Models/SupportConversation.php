@@ -169,6 +169,20 @@ class SupportConversation extends Model
     }
 
     /**
+     * The in-app route of a thread: `support.client_thread_path` with `{id}` replaced by the conversation key.
+     *
+     * Read with a default, since a published config predating the key replaces the whole `support` array.
+     */
+    public static function clientThreadPath(string|int $id): string
+    {
+        return str_replace(
+            '{id}',
+            (string) $id,
+            (string) config('magic-starter.support.client_thread_path', '/support/{id}'),
+        );
+    }
+
+    /**
      * The opener, or null for a visitor who wrote in without an account.
      *
      * @return BelongsTo<Model, $this>

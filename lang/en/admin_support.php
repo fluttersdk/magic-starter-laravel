@@ -196,6 +196,7 @@ return [
             'negative_rating' => 'A customer rated a resolved conversation thumbs down.',
             'feedback' => 'A customer left a low score in the in-app feedback.',
             'open_panel' => 'Open the admin panel to answer it.',
+            'open_action' => 'Open conversation',
         ],
         'reply' => [
             'title' => 'New reply from support',

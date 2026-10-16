@@ -4,6 +4,35 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Added
+
+- **A trial-refused mail links to the billing screen through "View plans".** The action points at the frontend base (`magic-starter.frontend_url`, or `url('/')` when unset) followed by the new `magic-starter.billing.client_path` (default `/teams/billing`). (`src/Notifications/TrialRefusedNotification.php`, `config/magic-starter.php`, `lang/en/billing.php`, `lang/tr/billing.php`)
+- **The staff "needs staff" mail gets an "Open conversation" action.** It links to the conversation's view page in the panel that carries `MagicStarterPlugin`, found through the new public `MagicStarterPlugin::resourceFor(string $key): ?string`. No action is added when Filament is absent or its provider is not registered, no panel carries the plugin, the support resource is dropped or has no `view` page, or the panel has more than one domain or uses tenancy. The body still carries no customer text. (`src/Notifications/SupportConversationNeedsStaffNotification.php`, `src/Filament/MagicStarterPlugin.php`)
+- **An opt-in mail confirms a new support conversation, `support.mail.ticket_created`, default `false`.** It goes to the opener of an in-app or public conversation, not to a contact-sales continuation or the feedback card. A visitor gets a freshly minted thread link, which needs `support.public.thread_url`; a later staff reply mints a new link that replaces it. An account holder gets an in-app link, and only with a verified address. The mail carries the package copy and the conversation number, never the submitter's text. With it on, the public form mails any address typed into it, so give `support.public.extra_rules` a captcha. (`src/Notifications/SupportTicketCreatedNotification.php`, `src/Actions/OpenSupportConversation.php`, `config/magic-starter.php`, `lang/en/support.php`, `lang/tr/support.php`)
+- **An opt-in mail invites the account holder to rate a resolved conversation, `support.mail.csat_invitation`, default `false`.** On a transition to resolved, after the commit, it mails the account holder (verified, non-blank address) a link to the in-app thread, when `support-csat` is on and the conversation is not yet rated. It is never sent to a visitor. (`src/Notifications/SupportCsatInvitationNotification.php`, `src/Actions/ChangeSupportConversation.php`, `config/magic-starter.php`, `lang/en/support.php`, `lang/tr/support.php`)
+
+- **Neither support mail reaches a guest or an unverified address.** The package's `hasVerifiedEmail()` answers true for every guest, and a guest can set any unclaimed address through the profile, so both mails refuse a guest and a blank address and read `email_verified_at` itself for a `MustVerifyEmail` user, as the staff recipients do. A queue that refuses the push after the commit is reported and never fails the request or the staff change. (`src/Actions/OpenSupportConversation.php`, `src/Actions/ChangeSupportConversation.php`)
+- **The rating invitation goes out once per resolution.** A conversation that was rated, reopened and resolved again is invited again, the same window `can_rate` opens, instead of being skipped for ever after its first rating. (`src/Actions/ChangeSupportConversation.php`)
+
+### Changed
+
+- **`MailLocale::for($notifiable)` is the one place a mail built in somebody else's request picks its language.** The notifiable's `preferredLocale()` (`HasLocalePreference`), else the request locale; the invite, the resend and the ticket-created mail use it. (`src/Support/MailLocale.php`)
+- **`FrontendUrl::to($path)` builds an absolute mail link.** The frontend base, or the application root when none is usable, followed by the path; the trial-refused, ticket-created and rating mails use it. (`src/Support/FrontendUrl.php`)
+- **`SupportConversation::clientThreadPath($id)` builds the in-app route of a thread.** `support.client_thread_path` with `{id}` replaced, read with a default; the reply notification and both new mails use it. (`src/Models/SupportConversation.php`)
+- **The framework mail strings moved to `resources/lang/tr.json`.** The `magic-starter-lang` tag publishes the whole `lang/` directory to `lang/vendor/magic-starter/`, where Laravel never reads a JSON file, so an edited published copy changed nothing. Override a framework string in the application's own `lang/tr.json`. (`resources/lang/tr.json`, `src/MagicStarterServiceProvider.php`)
+- **The invitation and verification mails read their sentences from `magic-starter::mail.*`.** The keys are `magic-starter::mail.invitation.*` and `magic-starter::mail.verify.*`, shipped in `lang/en/mail.php` and `lang/tr/mail.php`; a `lang/vendor/magic-starter/<locale>/mail.php` copy overrides them per key. (`lang/en/mail.php`, `lang/tr/mail.php`, `src/Notifications/TeamInvitationNotification.php`, `src/Notifications/VerifyEmailNotification.php`)
+
+### Fixed
+
+- **The invitation, verification and password reset mails render in Turkish under `tr`.** `resources/lang/tr.json` translates the framework's reset mail and the template chrome of every MailMessage (`Hello!`, `Regards,`, the button subcopy), registered with `loadJsonTranslationsFrom`; an application's own `lang/tr.json` loads after it and wins per key. (`resources/lang/tr.json`, `src/MagicStarterServiceProvider.php`, `src/Notifications/VerifyEmailNotification.php`)
+- **An invitation is sent in the inviter's language.** The mail locale is the inviter's `preferredLocale()` (`HasLocalePreference`), else the request locale, in both the invite and the resend. (`src/Actions/InviteTeamMember.php`, `src/Actions/ResendTeamInvitation.php`)
+- **The invitation mail has one Accept button.** A person without an account creates one from the same link, so the mail no longer promises a register button the mail never had. (`src/Notifications/TeamInvitationNotification.php`, `lang/en/mail.php`, `lang/tr/mail.php`)
+
+### Upgrading
+
+- **A host with a published `config/magic-starter.php` adds the new nested keys.** The config merge is shallow: a published `support` block needs `mail` with `ticket_created` and `csat_invitation`, and a published `billing` block needs `client_path`. Without them the two support mails stay off and the refusal mail links to `/teams/billing`.
+- **The account-holder half of both support mails needs email verification.** The user model has to implement `MustVerifyEmail` and `Features::emailVerification()` has to be enabled, otherwise no address is ever verified and they never send; a guest never receives them. With `ticket_created` on, every caller of `openPublic()`, not only the package route, has to carry a captcha.
+
 ## [0.0.33] - 2026-10-14
 
 ### Fixed

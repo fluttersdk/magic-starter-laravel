@@ -3,6 +3,7 @@
 namespace FlutterSdk\MagicStarter\Notifications;
 
 use FlutterSdk\MagicStarter\Jobs\CheckTrialCard;
+use FlutterSdk\MagicStarter\Support\FrontendUrl;
 use Illuminate\Bus\Queueable;
 use Illuminate\Contracts\Queue\ShouldQueue;
 use Illuminate\Notifications\Messages\MailMessage;
@@ -55,6 +56,20 @@ class TrialRefusedNotification extends Notification implements ShouldQueue
             ->subject((string) __('magic-starter::billing.trial_refused.subject'))
             ->line((string) __('magic-starter::billing.trial_refused.card_used'))
             ->line((string) __('magic-starter::billing.trial_refused.nothing_charged'))
-            ->line((string) __('magic-starter::billing.trial_refused.subscribe'));
+            ->line((string) __('magic-starter::billing.trial_refused.subscribe'))
+            ->action((string) __('magic-starter::billing.trial_refused.action'), $this->billingUrl());
+    }
+
+    /**
+     * The absolute URL of the client's billing screen.
+     *
+     * Absolute because a mail client cannot resolve a relative link, so it falls
+     * back to the application's own root exactly as {@see TeamInvitationNotification}
+     * does. The path is read with an explicit default because a consumer's published
+     * `billing` array replaces the package's whole array and may predate `client_path`.
+     */
+    private function billingUrl(): string
+    {
+        return FrontendUrl::to((string) config('magic-starter.billing.client_path', '/teams/billing'));
     }
 }

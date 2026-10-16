@@ -148,6 +148,52 @@ final class TeamInvitationNotificationTest extends TestCase
         );
     }
 
+    public function test_the_mail_reads_in_english_under_en(): void
+    {
+        app()->setLocale('en');
+
+        $mail = (new TeamInvitationNotification(
+            new TeamInvitationNotificationTestInvitation('tok-123'),
+        ))->toMail(null);
+
+        $this->assertSame('Team Invitation', $mail->subject);
+        $this->assertSame('Hello!', $mail->greeting);
+        $this->assertSame([
+            'You have been invited to join the Acme Ops team!',
+            'Select the button below to accept the invitation. '
+            . 'If you do not have an account yet, you can create one from the same link.',
+        ], $mail->introLines);
+        $this->assertSame('Accept Invitation', $mail->actionText);
+        $this->assertSame([
+            'If you did not expect to receive an invitation to this team, you may discard this email.',
+        ], $mail->outroLines);
+    }
+
+    /**
+     * One Accept button, and a line that no longer promises a register button the
+     * mail never had: a person without an account creates one from the same link.
+     */
+    public function test_the_mail_reads_in_turkish_under_tr(): void
+    {
+        app()->setLocale('tr');
+
+        $mail = (new TeamInvitationNotification(
+            new TeamInvitationNotificationTestInvitation('tok-123'),
+        ))->toMail(null);
+
+        $this->assertSame('Takım Daveti', $mail->subject);
+        $this->assertSame('Merhaba!', $mail->greeting);
+        $this->assertSame([
+            'Acme Ops takımına katılmaya davet edildiniz!',
+            'Daveti kabul etmek için aşağıdaki düğmeye tıklayın. '
+            . 'Henüz hesabınız yoksa aynı bağlantıdan bir hesap oluşturabilirsiniz.',
+        ], $mail->introLines);
+        $this->assertSame('Daveti kabul edin', $mail->actionText);
+        $this->assertSame([
+            'Bu takıma davet edilmeyi beklemiyorsanız bu e-postayı yok sayabilirsiniz.',
+        ], $mail->outroLines);
+    }
+
     public function test_the_token_is_url_encoded(): void
     {
         config(['magic-starter.frontend_url' => 'https://app.example.test']);
