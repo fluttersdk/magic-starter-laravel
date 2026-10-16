@@ -38,7 +38,7 @@ return [
     'mail' => [
         'ticket_created' => [
             'subject' => '#:number numaralı destek talebinizi aldık',
-            'intro' => 'Bize ulaştığınız için teşekkür ederiz. #:number numaralı talebiniz destek ekibimize iletildi.',
+            'intro' => '#:number numaralı talebinizi aldık ve yanıtımızı bu görüşmede ileteceğiz.',
             'visitor' => 'Görüşmeyi aşağıdaki bağlantıdan takip edip yanıtlayabilirsiniz. Gönderdiğimiz her yanıtla '
                 . 'birlikte bu bağlantının yerini alan yeni bir bağlantı gelir.',
             'account' => 'Görüşmeyi uygulamadan takip edip yanıtlayabilirsiniz.',

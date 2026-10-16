@@ -12,7 +12,7 @@ return [
         'invited' => ':team takımına katılmaya davet edildiniz!',
         'no_account' => 'Daveti kabul etmek için aşağıdaki düğmeye tıklayın. '
             . 'Henüz hesabınız yoksa aynı bağlantıdan bir hesap oluşturabilirsiniz.',
-        'action' => 'Daveti Kabul Et',
+        'action' => 'Daveti kabul edin',
         'discard' => 'Bu takıma davet edilmeyi beklemiyorsanız bu e-postayı yok sayabilirsiniz.',
     ],
 
@@ -22,7 +22,7 @@ return [
     'verify' => [
         'subject' => 'E-posta Adresinizi Doğrulayın',
         'intro' => 'E-posta adresinizi doğrulamak için lütfen aşağıdaki düğmeye tıklayın.',
-        'action' => 'E-postayı Doğrula',
+        'action' => 'E-postanızı doğrulayın',
     ],
 
 ];

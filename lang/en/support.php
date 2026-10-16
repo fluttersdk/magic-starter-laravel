@@ -38,7 +38,7 @@ return [
     'mail' => [
         'ticket_created' => [
             'subject' => 'We received your support request #:number',
-            'intro' => 'Thank you for contacting us. Your request #:number is with our support team.',
+            'intro' => 'We received your request #:number and will reply in this conversation.',
             'visitor' => 'Follow the conversation and reply through the link below. Every reply we send brings a '
                 . 'new link, which replaces this one.',
             'account' => 'You can follow the conversation and reply in the app.',

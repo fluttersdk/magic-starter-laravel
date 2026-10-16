@@ -3,6 +3,7 @@
 namespace FlutterSdk\MagicStarter\Notifications;
 
 use FlutterSdk\MagicStarter\Actions\ChangeSupportConversation;
+use FlutterSdk\MagicStarter\Models\SupportConversation;
 use FlutterSdk\MagicStarter\Support\FrontendUrl;
 use Illuminate\Bus\Queueable;
 use Illuminate\Contracts\Queue\ShouldQueue;
@@ -57,20 +58,9 @@ class SupportCsatInvitationNotification extends Notification implements ShouldQu
                 'number' => $this->number,
             ]))
             ->line((string) __('magic-starter::support.mail.csat_invitation.ask'))
-            ->action((string) __('magic-starter::support.mail.csat_invitation.action'), $this->clientThreadUrl());
-    }
-
-    /**
-     * The absolute in-app route of the thread, where the rating is given.
-     */
-    private function clientThreadUrl(): string
-    {
-        $base = FrontendUrl::baseOrNull() ?? rtrim(url('/'), '/');
-
-        return $base . str_replace(
-            '{id}',
-            (string) $this->conversationId,
-            (string) config('magic-starter.support.client_thread_path', '/support/{id}'),
-        );
+            ->action(
+                (string) __('magic-starter::support.mail.csat_invitation.action'),
+                FrontendUrl::to(SupportConversation::clientThreadPath($this->conversationId)),
+            );
     }
 }

@@ -78,8 +78,13 @@ return [
     | link (so only with `public.thread_url` set), an account holder only with
     | a verified address. `csat_invitation` asks the account holder of a newly
     | resolved conversation for a rating, with the `support-csat` feature on.
-    | With `ticket_created` on, the public form mails any address typed into
-    | it, so give `public.extra_rules` a captcha.
+    | The account-holder half of both needs a user model implementing
+    | `MustVerifyEmail` with `Features::emailVerification()` enabled, since
+    | otherwise no address is ever verified and they never send; a guest never
+    | receives either. With `ticket_created` on, every caller of
+    | `openPublic()`, not only the package route, mails any address typed
+    | into it, so each must carry a captcha (`public.extra_rules` for the
+    | package route).
     |
     | `topics` lists what an opener may file a conversation under; the labels
     | are `magic-starter::support.topics.<topic>`. `client_thread_path` is the

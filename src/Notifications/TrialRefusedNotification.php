@@ -68,10 +68,8 @@ class TrialRefusedNotification extends Notification implements ShouldQueue
      * does. The path is read with an explicit default because a consumer's published
      * `billing` array replaces the package's whole array and may predate `client_path`.
      */
-    protected function billingUrl(): string
+    private function billingUrl(): string
     {
-        $base = FrontendUrl::baseOrNull() ?? rtrim(url('/'), '/');
-
-        return $base . config('magic-starter.billing.client_path', '/teams/billing');
+        return FrontendUrl::to((string) config('magic-starter.billing.client_path', '/teams/billing'));
     }
 }

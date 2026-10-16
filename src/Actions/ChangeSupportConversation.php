@@ -121,15 +121,21 @@ class ChangeSupportConversation implements ChangesSupportConversations
      * Mail the account holder an invitation to rate the resolution, when it may be rated and is not yet.
      *
      * A visitor has no rating route, so only a conversation with an opener
-     * account qualifies; as with the ticket-created mail, an unverified address
-     * may belong to someone else and is not mailed.
+     * account qualifies. As with the ticket-created mail, an unverified address
+     * may belong to someone else and a guest can set any unclaimed one, so a guest
+     * is never mailed and `email_verified_at` is read itself rather than through
+     * `hasVerifiedEmail()`, which answers true for a guest.
+     *
+     * A rating closes the window it was given in: the opener may rate again once
+     * the conversation is resolved after that rating, the predicate the resource's
+     * `can_rate` uses. A refused queue push is reported and never fails the change.
      */
     private function inviteRating(SupportConversation $c): void
     {
         if (! (bool) config('magic-starter.support.mail.csat_invitation', false)
             || ! Features::hasSupportCsatFeatures()
             || $c->user_id === null
-            || $c->csat_rated_at !== null) {
+            || $this->ratedForThisResolution($c)) {
             return;
         }
 
@@ -137,11 +143,21 @@ class ChangeSupportConversation implements ChangesSupportConversations
 
         if (! $opener instanceof Model
             || blank($opener->getAttribute('email'))
-            || ($opener instanceof MustVerifyEmail && ! $opener->hasVerifiedEmail())) {
+            || (method_exists($opener, 'isGuest') && $opener->isGuest())
+            || ($opener instanceof MustVerifyEmail && $opener->getAttribute('email_verified_at') === null)) {
             return;
         }
 
-        Notification::send($opener, new SupportCsatInvitationNotification($c->number, $c->getKey()));
+        rescue(
+            static fn () => Notification::send($opener, new SupportCsatInvitationNotification($c->number, $c->getKey())),
+            report: true,
+        );
+    }
+
+    private function ratedForThisResolution(SupportConversation $c): bool
+    {
+        return $c->csat_rated_at !== null
+            && ($c->resolved_at === null || $c->csat_rated_at->gte($c->resolved_at));
     }
 
     private function isStaff(mixed $userId): bool

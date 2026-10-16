@@ -14,7 +14,7 @@ use Illuminate\Support\Facades\Lang;
  *
  * The password reset mail is Laravel's own: its strings are English JSON keys that
  * the framework ships no translation for, so a Turkish recipient got an English mail
- * until the package registered `lang/tr.json`. Every Turkish assertion compares
+ * until the package registered `resources/lang/tr.json`. Every Turkish assertion compares
  * against the literal text, never only against "not English", because a mail that is
  * wrongly Turkish passes the second kind of check.
  */
@@ -118,6 +118,16 @@ final class MailTranslationTest extends TestCase
         );
     }
 
+    /**
+     * The `magic-starter-lang` tag publishes the whole `lang/` directory to `lang/vendor/magic-starter/`, where Laravel
+     * reads no JSON file, so a `tr.json` in it would be edited by an adopter and never loaded.
+     */
+    public function test_the_json_catalogue_sits_outside_the_published_lang_directory(): void
+    {
+        $this->assertFileDoesNotExist(__DIR__ . '/../../lang/tr.json');
+        $this->assertFileExists(__DIR__ . '/../../resources/lang/tr.json');
+    }
+
     public function test_an_app_json_file_overrides_the_package_value(): void
     {
         Lang::addJsonPath($this->appLang);
@@ -137,7 +147,7 @@ final class MailTranslationTest extends TestCase
         $mail = (new TeamInvitationNotification(new MailTranslationTestInvitation))->toMail(null);
 
         $this->assertSame('Uygulamanin Davet Konusu', $mail->subject);
-        $this->assertSame('Daveti Kabul Et', $mail->actionText);
+        $this->assertSame('Daveti kabul edin', $mail->actionText);
     }
 }
 

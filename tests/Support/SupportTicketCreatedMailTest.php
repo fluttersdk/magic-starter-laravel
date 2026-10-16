@@ -16,11 +16,13 @@ use Illuminate\Contracts\Queue\ShouldQueue;
 use Illuminate\Notifications\AnonymousNotifiable;
 use Illuminate\Support\Facades\Event;
 use Illuminate\Support\Facades\Notification;
+use RuntimeException;
 
 /**
  * Locks the opt-in mail that confirms a new support conversation: off by default, sent only for a row the in-app
  * or public door just created, to a visitor with a fresh thread link and package copy alone, and to an account
- * holder only when their address is verified.
+ * holder only when their address is verified. A guest is never mailed, whatever address a profile edit gave it, and a
+ * queue that refuses the push after the commit never fails the request that stored the conversation.
  */
 class SupportTicketCreatedMailTest extends TestCase
 {
@@ -181,6 +183,47 @@ class SupportTicketCreatedMailTest extends TestCase
         $this->action()->open($user, $this->inAppInput());
 
         Notification::assertSentTo($user, SupportTicketCreatedNotification::class);
+    }
+
+    public function test_a_guest_with_an_address_is_never_mailed(): void
+    {
+        foreach ([
+            ConcreteUser::class,
+            ConcreteAdminUser::class,
+        ] as $model) {
+            $guest = $model::query()->create([
+                'name' => 'Guest',
+                'email' => 'guest-' . class_basename($model) . '@example.com',
+                'password' => 'secret',
+                'is_guest' => true,
+                'email_verified_at' => null,
+            ]);
+
+            $this->action()->open($guest, $this->inAppInput());
+        }
+
+        Notification::assertNothingSent();
+    }
+
+    public function test_a_queue_that_refuses_the_account_holder_mail_does_not_fail_the_request(): void
+    {
+        $user = $this->createUser(ConcreteUser::class, 'ada@example.com');
+        Notification::shouldReceive('send')->once()->andThrow(new RuntimeException('queue down'));
+
+        $conversation = $this->action()->open($user, $this->inAppInput());
+
+        $this->assertTrue($conversation->exists);
+        $this->assertSame(1, SupportConversation::query()->count());
+    }
+
+    public function test_a_queue_that_refuses_the_visitor_mail_does_not_fail_the_request(): void
+    {
+        Notification::shouldReceive('send')->once()->andThrow(new RuntimeException('queue down'));
+
+        $conversation = $this->action()->openPublic($this->publicInput());
+
+        $this->assertTrue($conversation->exists);
+        $this->assertSame(1, SupportConversation::query()->count());
     }
 
     public function test_a_contact_sales_continuation_mails_nothing(): void

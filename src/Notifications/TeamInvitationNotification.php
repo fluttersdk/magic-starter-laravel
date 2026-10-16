@@ -50,7 +50,9 @@ class TeamInvitationNotification extends Notification implements ShouldQueue
         return (new MailMessage)
             ->subject((string) __('magic-starter::mail.invitation.subject'))
             ->greeting((string) __('magic-starter::mail.invitation.greeting'))
-            ->line((string) __('magic-starter::mail.invitation.invited', ['team' => $teamName]))
+            ->line((string) __('magic-starter::mail.invitation.invited', [
+                'team' => $teamName,
+            ]))
             ->line((string) __('magic-starter::mail.invitation.no_account'))
             ->action((string) __('magic-starter::mail.invitation.action'), $this->acceptUrl($token))
             ->line((string) __('magic-starter::mail.invitation.discard'));

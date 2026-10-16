@@ -188,7 +188,7 @@ final class TeamInvitationNotificationTest extends TestCase
             'Daveti kabul etmek için aşağıdaki düğmeye tıklayın. '
             . 'Henüz hesabınız yoksa aynı bağlantıdan bir hesap oluşturabilirsiniz.',
         ], $mail->introLines);
-        $this->assertSame('Daveti Kabul Et', $mail->actionText);
+        $this->assertSame('Daveti kabul edin', $mail->actionText);
         $this->assertSame([
             'Bu takıma davet edilmeyi beklemiyorsanız bu e-postayı yok sayabilirsiniz.',
         ], $mail->outroLines);

@@ -17,11 +17,13 @@ use FlutterSdk\MagicStarter\Tests\TestCase;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Event;
 use Illuminate\Support\Facades\Notification;
+use RuntimeException;
 
 /**
  * Locks the opt-in mail that asks an account holder to rate a resolved conversation: once per transition to
  * resolved, after the change commits, never to a visitor, never for a rated resolution and never without the
- * `support-csat` feature.
+ * `support-csat` feature. A guest is never mailed, a rating opens a new window when the conversation is reopened and
+ * resolved again, and a queue that refuses the push never fails the staff change that resolved the conversation.
  */
 class SupportCsatInvitationMailTest extends TestCase
 {
@@ -101,8 +103,9 @@ class SupportCsatInvitationMailTest extends TestCase
         Notification::assertNothingSent();
     }
 
-    public function test_a_rated_resolution_mails_nothing(): void
+    public function test_a_resolution_rated_at_the_moment_it_was_made_mails_nothing(): void
     {
+        $this->freezeTime();
         $conversation = $this->createConversation($this->createUser(ConcreteUser::class, 'ada@example.com'));
         $conversation->forceFill([
             'csat_rating' => SupportCsatRating::UP,
@@ -112,6 +115,59 @@ class SupportCsatInvitationMailTest extends TestCase
         $this->resolve($conversation);
 
         Notification::assertNothingSent();
+    }
+
+    public function test_a_resolution_after_a_rated_one_is_invited_once(): void
+    {
+        $conversation = $this->createConversation($this->createUser(ConcreteUser::class, 'ada@example.com'));
+        $conversation->forceFill([
+            'status' => SupportConversationStatus::RESOLVED,
+            'resolved_at' => now(),
+            'csat_rating' => SupportCsatRating::UP,
+            'csat_rated_at' => now()->addMinute(),
+        ])->save();
+        $this->travel(1)->hour();
+        $action = app(ChangeSupportConversation::class);
+
+        $action->change($this->staff(), $conversation, [
+            'status' => SupportConversationStatus::OPEN->value,
+        ]);
+        $this->travel(1)->hour();
+        $this->resolve($conversation);
+
+        Notification::assertSentTimes(SupportCsatInvitationNotification::class, 1);
+    }
+
+    public function test_a_guest_with_an_address_gets_no_invitation(): void
+    {
+        MagicStarter::useUserModel(ConcreteAdminUser::class);
+
+        foreach ([
+            ConcreteUser::class,
+            ConcreteAdminUser::class,
+        ] as $model) {
+            $guest = $model::query()->create([
+                'name' => 'Guest',
+                'email' => 'guest-' . class_basename($model) . '@example.com',
+                'password' => 'secret',
+                'is_guest' => true,
+                'email_verified_at' => null,
+            ]);
+
+            $this->resolve($this->createConversation($guest));
+        }
+
+        Notification::assertNothingSent();
+    }
+
+    public function test_a_queue_that_refuses_the_invitation_does_not_fail_the_resolution(): void
+    {
+        $conversation = $this->createConversation($this->createUser(ConcreteUser::class, 'ada@example.com'));
+        Notification::shouldReceive('send')->once()->andThrow(new RuntimeException('queue down'));
+
+        $this->resolve($conversation);
+
+        $this->assertSame(SupportConversationStatus::RESOLVED, $conversation->refresh()->status);
     }
 
     public function test_a_visitor_conversation_mails_nothing(): void

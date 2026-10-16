@@ -19,6 +19,8 @@ use FlutterSdk\MagicStarter\Tests\Fixtures\ConcreteTeam;
 use Illuminate\Notifications\Messages\MailMessage;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\Lang;
+use Illuminate\Support\Facades\Route;
+use ReflectionClass;
 
 /**
  * The staff "needs staff" mail links to the conversation in the panel, and
@@ -122,6 +124,27 @@ class StaffNotificationPanelLinkTest extends FilamentTestCase
         $this->assertNoAction($this->mailFor($this->conversation()));
     }
 
+    /**
+     * A panel on one domain is how an app serves its panel from its own host, and the worker has to link to that
+     * host: the domain is the one thing the panel's routes know that a queue worker's request cannot supply.
+     */
+    public function test_a_panel_on_one_domain_links_on_that_domain(): void
+    {
+        $conversation = $this->conversation();
+        $this->panels(
+            Panel::make()
+                ->id('single')
+                ->domain('admin.example.test')
+                ->plugin(MagicStarterPlugin::make()),
+        );
+        $this->registerPanelRoutes();
+
+        $mail = $this->mailFor($conversation);
+
+        $this->assertMatchesRegularExpression('#^https?://admin\.example\.test/#', (string) $mail->actionUrl);
+        $this->assertStringEndsWith('/support-conversations/' . $conversation->getKey(), (string) $mail->actionUrl);
+    }
+
     public function test_there_is_no_button_when_filament_is_installed_but_its_provider_is_not_registered(): void
     {
         // A host with filament in vendor and no panel provider: the classes load, the container binding is absent.
@@ -142,6 +165,16 @@ class StaffNotificationPanelLinkTest extends FilamentTestCase
         foreach ($panels as $panel) {
             $registry->panels[$panel->getId()] = $panel;
         }
+    }
+
+    /**
+     * The routes of the panels now in the registry, which Filament registers once at boot for the panels it had then.
+     */
+    private function registerPanelRoutes(): void
+    {
+        Route::group([], dirname((new ReflectionClass(Panel::class))->getFileName(), 2) . '/routes/web.php');
+
+        app('router')->getRoutes()->refreshNameLookups();
     }
 
     private function assertNoAction(MailMessage $mail): void

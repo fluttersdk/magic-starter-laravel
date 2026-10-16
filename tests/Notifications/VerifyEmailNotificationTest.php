@@ -94,7 +94,7 @@ final class VerifyEmailNotificationTest extends TestCase
             ['E-posta adresinizi doğrulamak için lütfen aşağıdaki düğmeye tıklayın.'],
             $mail->introLines,
         );
-        $this->assertSame('E-postayı Doğrula', $mail->actionText);
+        $this->assertSame('E-postanızı doğrulayın', $mail->actionText);
     }
 
     public function test_verification_url_uses_frontend_url(): void

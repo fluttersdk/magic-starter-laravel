@@ -3,6 +3,7 @@
 namespace FlutterSdk\MagicStarter\Notifications;
 
 use FlutterSdk\MagicStarter\Actions\OpenSupportConversation;
+use FlutterSdk\MagicStarter\Models\SupportConversation;
 use FlutterSdk\MagicStarter\Support\FrontendUrl;
 use Illuminate\Bus\Queueable;
 use Illuminate\Contracts\Queue\ShouldBeEncrypted;
@@ -70,23 +71,7 @@ class SupportTicketCreatedNotification extends Notification implements ShouldBeE
                 : 'magic-starter::support.mail.ticket_created.account'))
             ->action(
                 (string) __('magic-starter::support.mail.ticket_created.action'),
-                $this->threadUrl ?? $this->clientThreadUrl(),
+                $this->threadUrl ?? FrontendUrl::to(SupportConversation::clientThreadPath($this->conversationId)),
             );
-    }
-
-    /**
-     * The absolute in-app route of the thread: the frontend base, falling back
-     * to the application root as {@see TeamInvitationNotification} does, and
-     * `support.client_thread_path` with `{id}` replaced by the conversation key.
-     */
-    private function clientThreadUrl(): string
-    {
-        $base = FrontendUrl::baseOrNull() ?? rtrim(url('/'), '/');
-
-        return $base . str_replace(
-            '{id}',
-            (string) $this->conversationId,
-            (string) config('magic-starter.support.client_thread_path', '/support/{id}'),
-        );
     }
 }

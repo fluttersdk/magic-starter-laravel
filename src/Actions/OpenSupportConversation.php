@@ -15,12 +15,13 @@ use FlutterSdk\MagicStarter\Features;
 use FlutterSdk\MagicStarter\Jobs\RespondToSupportConversation;
 use FlutterSdk\MagicStarter\Models\SupportConversation;
 use FlutterSdk\MagicStarter\Notifications\SupportTicketCreatedNotification;
+use FlutterSdk\MagicStarter\Support\MailLocale;
 use FlutterSdk\MagicStarter\Support\SupportAi\SupportHandoff;
 use FlutterSdk\MagicStarter\Support\SupportRules;
+use FlutterSdk\MagicStarter\Support\SupportStaffRecipients;
 use FlutterSdk\MagicStarter\Support\SupportThreadToken;
 use Illuminate\Contracts\Auth\Authenticatable;
 use Illuminate\Contracts\Auth\MustVerifyEmail;
-use Illuminate\Contracts\Translation\HasLocalePreference;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\UniqueConstraintViolationException;
@@ -420,21 +421,30 @@ class OpenSupportConversation implements OpensSupportConversations
      * Queue the ticket-created mail to a signed-in opener once the conversation commits.
      *
      * An unverified address may belong to someone else, so a `MustVerifyEmail`
-     * account is mailed only once verified; a guest with no address is skipped.
+     * account is mailed only once verified. A guest is never mailed: the package's
+     * `hasVerifiedEmail()` answers true for one, and a guest can set any unclaimed
+     * address through the profile, so `email_verified_at` is read itself, as
+     * {@see SupportStaffRecipients} does. A refused queue push after the commit is
+     * reported and never fails the request that stored the conversation.
      */
     private function confirmToAccountHolder(SupportConversation $conversation, Authenticatable $user): void
     {
         if (! $this->confirmsNewConversations()
             || blank($conversation->email)
-            || ($user instanceof MustVerifyEmail && ! $user->hasVerifiedEmail())) {
+            || (method_exists($user, 'isGuest') && $user->isGuest())
+            || ($user instanceof MustVerifyEmail
+                && $user instanceof Model
+                && $user->getAttribute('email_verified_at') === null)) {
             return;
         }
 
-        $locale = $user instanceof HasLocalePreference ? $user->preferredLocale() : null;
         $notification = (new SupportTicketCreatedNotification($conversation->number, $conversation->getKey()))
-            ->locale($locale ?? app()->getLocale());
+            ->locale(MailLocale::for($user));
 
-        DB::afterCommit(static fn () => Notification::send($user, $notification));
+        DB::afterCommit(static fn () => rescue(
+            static fn () => Notification::send($user, $notification),
+            report: true,
+        ));
     }
 
     /**
@@ -444,6 +454,8 @@ class OpenSupportConversation implements OpensSupportConversations
      * notification. Minting in the queued job would race a staff reply (the later
      * mint retires the reply's link) and mint again on every retry. Without a
      * `support.public.thread_url` there is no page to link to, so nothing is sent.
+     * A refused queue push is reported and never fails the request; the mint stays
+     * outside the rescue, since a mint that fails is a bug to see, not to report past.
      */
     private function confirmToVisitor(SupportConversation $conversation): void
     {
@@ -458,9 +470,12 @@ class OpenSupportConversation implements OpensSupportConversations
         DB::afterCommit(static function () use ($conversation, $template, $locale): void {
             $link = str_replace('{token}', rawurlencode(SupportThreadToken::mint($conversation)), trim($template));
 
-            Notification::route('mail', $conversation->email)->notify(
-                (new SupportTicketCreatedNotification($conversation->number, $conversation->getKey(), $link))
-                    ->locale($locale),
+            rescue(
+                static fn () => Notification::route('mail', $conversation->email)->notify(
+                    (new SupportTicketCreatedNotification($conversation->number, $conversation->getKey(), $link))
+                        ->locale($locale),
+                ),
+                report: true,
             );
         });
     }

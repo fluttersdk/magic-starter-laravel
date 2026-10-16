@@ -4,8 +4,8 @@ namespace FlutterSdk\MagicStarter\Actions;
 
 use FlutterSdk\MagicStarter\Contracts\ResendsTeamInvitations;
 use FlutterSdk\MagicStarter\Notifications\TeamInvitationNotification;
+use FlutterSdk\MagicStarter\Support\MailLocale;
 use Illuminate\Contracts\Auth\Authenticatable;
-use Illuminate\Contracts\Translation\HasLocalePreference;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Support\Facades\Notification;
 
@@ -28,10 +28,8 @@ class ResendTeamInvitation implements ResendsTeamInvitations
             'expires_at' => now()->addDays((int) config('magic-starter.invitation_expiry_days', 7)),
         ])->save();
 
-        $locale = $actor instanceof HasLocalePreference ? $actor->preferredLocale() : null;
-
         Notification::route('mail', $invitation->getAttribute('email'))->notify(
-            (new TeamInvitationNotification($invitation))->locale($locale ?? app()->getLocale()),
+            (new TeamInvitationNotification($invitation))->locale(MailLocale::for($actor)),
         );
     }
 }
