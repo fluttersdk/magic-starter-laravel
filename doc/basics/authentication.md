@@ -307,7 +307,7 @@ Sends a password reset email. Always returns 200 regardless of whether the email
 ```
 
 > [!NOTE]
-> The password reset URL is customized in `MagicStarterServiceProvider::boot()` to point to your frontend application. Configure it via `config('magic-starter.password_reset_url')`.
+> The reset link points to your frontend application: `MagicStarterServiceProvider::boot()` builds `{frontend}/auth/reset-password?token=...&email=...`, where `{frontend}` is `config('magic-starter.frontend_url')`, falling back to `config('app.frontend_url')` and then the application's own root. Set `MAGIC_STARTER_FRONTEND_URL`.
 
 ### Reset Password
 
