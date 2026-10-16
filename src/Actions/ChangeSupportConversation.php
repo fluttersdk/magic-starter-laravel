@@ -7,14 +7,18 @@ use FlutterSdk\MagicStarter\Contracts\ChangesSupportConversations;
 use FlutterSdk\MagicStarter\Enums\SupportConversationStatus;
 use FlutterSdk\MagicStarter\Enums\SupportPriority;
 use FlutterSdk\MagicStarter\Events\SupportConversationUpdated;
+use FlutterSdk\MagicStarter\Features;
 use FlutterSdk\MagicStarter\MagicStarter;
 use FlutterSdk\MagicStarter\Models\SupportConversation;
+use FlutterSdk\MagicStarter\Notifications\SupportCsatInvitationNotification;
 use FlutterSdk\MagicStarter\Support\SupportStaffRecipients;
 use FlutterSdk\MagicStarter\Support\SupportThreadToken;
 use Illuminate\Contracts\Auth\Authenticatable;
+use Illuminate\Contracts\Auth\MustVerifyEmail;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Lang;
+use Illuminate\Support\Facades\Notification;
 use Illuminate\Support\Facades\Validator;
 use Illuminate\Validation\Rule;
 use Illuminate\Validation\ValidationException;
@@ -28,6 +32,11 @@ use Illuminate\Validation\ValidationException;
  * The assignee has to be a support recipient. Resolving stamps `resolved_at`
  * and revokes the public link, so a resolved thread cannot be written to from
  * an old mail; leaving `resolved` clears the stamp.
+ *
+ * With `support.mail.csat_invitation` and the `support-csat` feature on, a
+ * transition to resolved also mails the account holder an invitation to rate
+ * it, once the change commits: the panel may hold its own transaction around
+ * this call, and a mail about a resolution that rolled back would be false.
  */
 class ChangeSupportConversation implements ChangesSupportConversations
 {
@@ -100,7 +109,39 @@ class ChangeSupportConversation implements ChangesSupportConversations
             rescue(static fn () => event(new SupportConversationUpdated($c)), report: true);
         }
 
+        // 6. Invite a rating of this resolution, after every enclosing transaction commits.
+        if ($resolving) {
+            DB::afterCommit(fn () => $this->inviteRating($c));
+        }
+
         return $c;
+    }
+
+    /**
+     * Mail the account holder an invitation to rate the resolution, when it may be rated and is not yet.
+     *
+     * A visitor has no rating route, so only a conversation with an opener
+     * account qualifies; as with the ticket-created mail, an unverified address
+     * may belong to someone else and is not mailed.
+     */
+    private function inviteRating(SupportConversation $c): void
+    {
+        if (! (bool) config('magic-starter.support.mail.csat_invitation', false)
+            || ! Features::hasSupportCsatFeatures()
+            || $c->user_id === null
+            || $c->csat_rated_at !== null) {
+            return;
+        }
+
+        $opener = $c->user;
+
+        if (! $opener instanceof Model
+            || blank($opener->getAttribute('email'))
+            || ($opener instanceof MustVerifyEmail && ! $opener->hasVerifiedEmail())) {
+            return;
+        }
+
+        Notification::send($opener, new SupportCsatInvitationNotification($c->number, $c->getKey()));
     }
 
     private function isStaff(mixed $userId): bool

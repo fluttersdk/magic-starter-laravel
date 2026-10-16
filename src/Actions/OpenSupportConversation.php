@@ -14,9 +14,13 @@ use FlutterSdk\MagicStarter\Events\SupportConversationNeedsStaff;
 use FlutterSdk\MagicStarter\Features;
 use FlutterSdk\MagicStarter\Jobs\RespondToSupportConversation;
 use FlutterSdk\MagicStarter\Models\SupportConversation;
+use FlutterSdk\MagicStarter\Notifications\SupportTicketCreatedNotification;
 use FlutterSdk\MagicStarter\Support\SupportAi\SupportHandoff;
 use FlutterSdk\MagicStarter\Support\SupportRules;
+use FlutterSdk\MagicStarter\Support\SupportThreadToken;
 use Illuminate\Contracts\Auth\Authenticatable;
+use Illuminate\Contracts\Auth\MustVerifyEmail;
+use Illuminate\Contracts\Translation\HasLocalePreference;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\UniqueConstraintViolationException;
@@ -24,6 +28,7 @@ use Illuminate\Http\UploadedFile;
 use Illuminate\Support\Arr;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Event;
+use Illuminate\Support\Facades\Notification;
 use Illuminate\Support\Facades\Validator;
 use Illuminate\Support\Str;
 use Illuminate\Validation\ValidationException;
@@ -34,8 +39,16 @@ use Illuminate\Validation\ValidationException;
  * Who owns the conversation is never read from `$input`: `open()` takes the
  * opener and their current team from the auth context, `openPublic()` stores
  * neither, and every public submission is a new conversation, however many the
- * address already has. Nothing is mailed to a public submitter; the thread link
- * goes out with the first staff reply.
+ * address already has.
+ *
+ * Nothing is mailed on opening unless `support.mail.ticket_created` is on, and
+ * then only for a conversation the in-app or public door just created, never a
+ * continued one or one filed through {@see self::continueOrCreate()} by the
+ * feedback card. A visitor gets a thread link minted once the conversation
+ * commits (none without `support.public.thread_url`), an account holder the
+ * in-app route, and only with a verified address. Either mail carries the
+ * conversation number and package copy alone, never what the submitter typed.
+ * Otherwise a visitor's thread link goes out with the first staff reply.
  *
  * A contact-sales conversation is always filed under the `sales` topic, and a
  * conversation opened without a subject gets the first line of its body.
@@ -174,6 +187,9 @@ class OpenSupportConversation implements OpensSupportConversations
 
         $this->announce($conversation, $user, alertStaff: ! $toAi);
 
+        // 6. Confirm the new conversation to its opener, when the adopter asked for it.
+        $this->confirmToAccountHolder($conversation, $user);
+
         return $conversation;
     }
 
@@ -272,8 +288,9 @@ class OpenSupportConversation implements OpensSupportConversations
             null,
         );
 
-        // 3. Tell staff once.
+        // 3. Tell staff once, and confirm to the visitor when the adopter asked for it.
         $this->announce($conversation, null);
+        $this->confirmToVisitor($conversation);
 
         return $conversation;
     }
@@ -397,6 +414,63 @@ class OpenSupportConversation implements OpensSupportConversations
                 }
             }
         }
+    }
+
+    /**
+     * Queue the ticket-created mail to a signed-in opener once the conversation commits.
+     *
+     * An unverified address may belong to someone else, so a `MustVerifyEmail`
+     * account is mailed only once verified; a guest with no address is skipped.
+     */
+    private function confirmToAccountHolder(SupportConversation $conversation, Authenticatable $user): void
+    {
+        if (! $this->confirmsNewConversations()
+            || blank($conversation->email)
+            || ($user instanceof MustVerifyEmail && ! $user->hasVerifiedEmail())) {
+            return;
+        }
+
+        $locale = $user instanceof HasLocalePreference ? $user->preferredLocale() : null;
+        $notification = (new SupportTicketCreatedNotification($conversation->number, $conversation->getKey()))
+            ->locale($locale ?? app()->getLocale());
+
+        DB::afterCommit(static fn () => Notification::send($user, $notification));
+    }
+
+    /**
+     * Mint a thread link and queue the ticket-created mail to a visitor once the conversation commits.
+     *
+     * The token is minted here, in the request, and travels in the encrypted
+     * notification. Minting in the queued job would race a staff reply (the later
+     * mint retires the reply's link) and mint again on every retry. Without a
+     * `support.public.thread_url` there is no page to link to, so nothing is sent.
+     */
+    private function confirmToVisitor(SupportConversation $conversation): void
+    {
+        $template = config('magic-starter.support.public.thread_url');
+
+        if (! $this->confirmsNewConversations() || ! is_string($template) || trim($template) === '') {
+            return;
+        }
+
+        $locale = app()->getLocale();
+
+        DB::afterCommit(static function () use ($conversation, $template, $locale): void {
+            $link = str_replace('{token}', rawurlencode(SupportThreadToken::mint($conversation)), trim($template));
+
+            Notification::route('mail', $conversation->email)->notify(
+                (new SupportTicketCreatedNotification($conversation->number, $conversation->getKey(), $link))
+                    ->locale($locale),
+            );
+        });
+    }
+
+    /**
+     * Read with a default: a published config predating the key replaces the whole `support` array.
+     */
+    private function confirmsNewConversations(): bool
+    {
+        return (bool) config('magic-starter.support.mail.ticket_created', false);
     }
 
     private function announce(
