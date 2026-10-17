@@ -48,9 +48,9 @@ Primary key type (UUID vs. auto-incrementing integer) is a single config flag (`
 | Method | Config key | Fallback |
 |---|---|---|
 | `userModel()` | `magic-starter.models.user` | `auth.providers.users.model` |
-| `teamModel()` | `magic-starter.models.team` | — |
-| `membershipModel()` | `magic-starter.models.membership` | — |
-| `teamInvitationModel()` | `magic-starter.models.team_invitation` | — |
+| `teamModel()` | `magic-starter.models.team` | - |
+| `membershipModel()` | `magic-starter.models.membership` | - |
+| `teamInvitationModel()` | `magic-starter.models.team_invitation` | - |
 
 All four throw `RuntimeException` when the resolved value is `null` or an empty string.
 
@@ -77,7 +77,7 @@ protected static array $appModelOverrides = [
 When the configured class is one of the three built-in package models, `class_exists()` is called on the corresponding `App\Models\*` equivalent. If the consumer has published and extended the stub, that class is returned instead. The call is wrapped in `try/catch (Throwable)` to survive stale Composer classmaps that reference a deleted file.
 
 > [!NOTE]
-> `userModel()` does **not** go through `resolveConcreteModel()`. The user model is always whatever the consumer specifies — the package ships no built-in `User` model.
+> `userModel()` does **not** go through `resolveConcreteModel()`. The user model is always whatever the consumer specifies - the package ships no built-in `User` model.
 
 ### <a name="runtime-overrides"></a>Runtime Overrides
 
@@ -113,7 +113,7 @@ Call `MagicStarter::reset()` in `tearDown()` to clear all overrides and the `ign
 ```
 
 > [!NOTE]
-> The `ConditionallyUsesUuids` trait must be present on every model — including pivot models extending `Pivot`. It is **not** applied automatically; it must be explicitly declared with `use ConditionallyUsesUuids;` in each model class.
+> The `ConditionallyUsesUuids` trait must be present on every model - including pivot models extending `Pivot`. It is **not** applied automatically; it must be explicitly declared with `use ConditionallyUsesUuids;` in each model class.
 
 ---
 
@@ -165,8 +165,8 @@ MigrationHelper::foreignKey($table, 'user_id')->constrained()->cascadeOnDelete()
 MigrationHelper::morphColumns(Blueprint $table, string $name): void
 ```
 
-- UUID mode: `$table->uuidMorphs($name)` — generates `{name}_type VARCHAR` and `{name}_id CHAR(36)`
-- Integer mode: `$table->morphs($name)` — generates `{name}_type VARCHAR` and `{name}_id BIGINT UNSIGNED`
+- UUID mode: `$table->uuidMorphs($name)` - generates `{name}_type VARCHAR` and `{name}_id CHAR(36)`
+- Integer mode: `$table->morphs($name)` - generates `{name}_type VARCHAR` and `{name}_id BIGINT UNSIGNED`
 
 Used for polymorphic relations such as `notifiable` on `notification_settings` and `tokenable` on `personal_access_tokens`.
 
@@ -242,8 +242,8 @@ Stores pending invitations to join a team, identified by a unique token sent to 
 
 **Methods**
 
-- `isExpired(): bool` — returns `true` when `expires_at` is set and is in the past.
-- `scopeValid(Builder $query)` — filters to non-expired invitations (`expires_at IS NULL OR expires_at > NOW()`).
+- `isExpired(): bool` - returns `true` when `expires_at` is set and is in the past.
+- `scopeValid(Builder $query)` - filters to non-expired invitations (`expires_at IS NULL OR expires_at > NOW()`).
 
 **Relations**
 
@@ -309,7 +309,7 @@ Extends `Laravel\Sanctum\PersonalAccessToken` with device-tracking columns. This
 
 All standard Sanctum columns (`tokenable_type`, `tokenable_id`, `name`, `token`, `abilities`, `last_used_at`, `expires_at`) are inherited.
 
-Uses `ConditionallyUsesUuids` — the `tokenable_id` column type is kept in sync with the user PK type via `MigrationHelper::morphColumns($table, 'tokenable')`.
+Uses `ConditionallyUsesUuids` - the `tokenable_id` column type is kept in sync with the user PK type via `MigrationHelper::morphColumns($table, 'tokenable')`.
 
 ---
 
@@ -366,9 +366,11 @@ Resolution order:
 2. Looks for a DB override in `notificationSettings` for the `(type, channel)` pair; returns `is_enabled` if found.
 3. Falls back to the registry's default channels for the type.
 
-**`notificationPreferenceMatrix(): array`** — returns the full preference state for all registered notification types. DB overrides use slug-based keys (not FQCNs) to ensure a stable API response shape regardless of how types were registered.
+**`notificationPreferenceMatrix(): array`** - returns the full preference state for all registered notification types. DB overrides use slug-based keys (not FQCNs) to ensure a stable API response shape regardless of how types were registered.
 
 **`routeNotificationForOneSignal(): array`**: returns `['external_id' => [MagicStarter::onesignalExternalIdPrefix() . $this->getKey()]]` for v5 SDK alias-based routing. The payload is passed to `FlutterSdk\MagicStarter\Notifications\Channels\OneSignalChannel`, which applies the aliases to the notification via `setIncludeAliases()`. A prefix is required because OneSignal rejects simple numeric values such as `0` or `1` as external IDs, and because the id has to match the one the Flutter client registered. Both sides read it from config (`magic-starter.onesignal.external_id_prefix` here, `magic_starter.notifications.external_id_prefix` there), defaulting to the same `user_`; a mismatch is silent, since OneSignal accepts a send to an alias no device carries.
+
+**Boot hook (`bootHasNotifications()`)**: keeps the OneSignal SMS subscription in step with `phone`. A `saving` hook clears `sms_registered_at` when an existing model's phone is dirty and the column is loaded, so the next SMS send reconciles again. An `updated` hook queues `PruneSmsSubscriptions` through `DB::afterCommit` when the old phone was non-empty and OneSignal is provisioned, so a rolled-back change sends nothing. `initializeHasNotifications()` merges the `sms_registered_at` datetime cast.
 
 ### <a name="twofactorauthenticatable"></a>TwoFactorAuthenticatable
 
@@ -414,9 +416,9 @@ Provides identity helpers for models that support unauthenticated (guest) sessio
 
 Overrides Laravel's default `MustVerifyEmail` contract implementation with guest-awareness.
 
-**`hasVerifiedEmail(): bool`** — guests are treated as verified (they have no email address, so the `verified` middleware must not block them). Internally calls `method_exists($this, 'isGuest')` before using `isGuest()` to avoid coupling to `HasGuestSupport`.
+**`hasVerifiedEmail(): bool`** - guests are treated as verified (they have no email address, so the `verified` middleware must not block them). Internally calls `method_exists($this, 'isGuest')` before using `isGuest()` to avoid coupling to `HasGuestSupport`.
 
-**`sendEmailVerificationNotification(): void`** — dispatches `VerifyEmailNotification` (the package's own notification class, not Laravel's default), **at most once per model instance**.
+**`sendEmailVerificationNotification(): void`** - dispatches `VerifyEmailNotification` (the package's own notification class, not Laravel's default), **at most once per model instance**.
 
 A registration reaches this method twice: `Actions\CreateUser` sends explicitly, and `AuthController::register()` then fires `Registered`, whose framework listener calls it again on the same object. Neither caller can go (the action has direct invokers, and `CreatePersonalTeamListener` hangs off `Registered`), so the "one verification mail per registration" invariant is enforced here, at the seam both paths funnel through. A deliberate resend through `POST /email/verification-notification` is unaffected, since it arrives in its own request with its own instance.
 
@@ -475,6 +477,6 @@ Every model class carries PHPDoc block annotations above the class declaration:
 Key rules:
 - Use `@property` for every database column.
 - Use `@property-read` for Eloquent accessors and loaded relation results.
-- Type the `id` column as `string` even in integer mode — Eloquent casts it to string in PHP; document the PHP-visible type, not the SQL type.
+- Type the `id` column as `string` even in integer mode - Eloquent casts it to string in PHP; document the PHP-visible type, not the SQL type.
 - Use `Carbon|null` for nullable timestamp columns, not `string`.
 - Collections are typed with their item type: `Collection<int, TeamInvitation>`.
