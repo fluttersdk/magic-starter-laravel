@@ -53,6 +53,7 @@ return [
         // \FlutterSdk\MagicStarter\Features::audit(),
         // \FlutterSdk\MagicStarter\Features::support(),
         // \FlutterSdk\MagicStarter\Features::releases(),
+        // \FlutterSdk\MagicStarter\Features::aiRuns(),
     ],
 
     /*
@@ -1300,5 +1301,46 @@ return [
 
     'releases' => [
         'limit' => 50,
+    ],
+
+    /*
+    |--------------------------------------------------------------------------
+    | AI Run Log
+    |--------------------------------------------------------------------------
+    |
+    | With the ai-runs feature on, a host app records every model call it makes
+    | through the `RecordsAiRuns` contract and staff read the log from the admin
+    | panel. The package never calls a model itself.
+    |
+    | `retention_days` is the age, in days, after which a run's bodies (prompt,
+    | input, output, tool calls, error message) are blanked. The row, its usage
+    | and its cost stay.
+    |
+    | `abandon_after_minutes` is how long a run may stay `running` before the
+    | daily prune closes it as `abandoned`.
+    |
+    | `max_body_bytes` caps each stored body, in bytes. Longer text is cut.
+    |
+    | `mask` scrubs secrets from every body before it is written. `patterns`
+    | is the package's own regex list, `extra_patterns` appends yours, and
+    | `keys` names the array keys whose values are replaced outright.
+    |
+    */
+
+    'ai_runs' => [
+        'retention_days' => 30,
+        'abandon_after_minutes' => 30,
+        'max_body_bytes' => 262144,
+        'mask' => [
+            'patterns' => [],
+            'keys' => [
+                'api_key',
+                'authorization',
+                'password',
+                'secret',
+                'token',
+            ],
+            'extra_patterns' => [],
+        ],
     ],
 ];

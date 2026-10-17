@@ -95,6 +95,8 @@ abstract class FilamentTestCase extends TestCase
             'create_teams_table.php',
             'create_support_conversations_table.php',
             'create_support_messages_table.php',
+            // Same `_` before `s` trap: `create_ai_run_attempts` sorts ahead of `create_ai_runs`.
+            'create_ai_runs_table.php',
         ];
         $rank = static function (string $file) use ($roots): array {
             $name = basename($file);
