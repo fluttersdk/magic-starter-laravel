@@ -15,6 +15,7 @@ use Illuminate\Database\QueryException;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Schema;
+use PDOException;
 use Throwable;
 
 /**
@@ -25,9 +26,10 @@ use Throwable;
  *   SAVEPOINT whenever the host already opened one. On PostgreSQL a failed
  *   statement aborts the whole transaction and turns its COMMIT into a
  *   ROLLBACK, so a failed log row would otherwise take the host's own writes
- *   with it. A {@see QueryException}, a {@see JsonEncodingException} and a
- *   {@see DeadlockException} are caught and logged at error level; anything
- *   else is a bug and propagates.
+ *   with it. A {@see PDOException} (a {@see QueryException}, a
+ *   {@see DeadlockException}, or the bare one Laravel rethrows when BEGIN
+ *   cannot reconnect after a lost connection) and a {@see JsonEncodingException}
+ *   are caught and logged at error level; anything else is a bug and propagates.
  * - A missing table (an application that upgraded without migrating) skips the
  *   write with one warning per process and per table, so a missing attempts
  *   table still leaves the runs. Only a table that EXISTS is remembered: a
@@ -373,7 +375,7 @@ class AiRunRecorder implements RecordsAiRuns
 
         try {
             DB::transaction($write);
-        } catch (QueryException|JsonEncodingException|DeadlockException $exception) {
+        } catch (PDOException|JsonEncodingException $exception) {
             Log::error('An AI run row could not be written; the call continues.', [
                 ...$context,
                 'table' => $table,
@@ -410,7 +412,7 @@ class AiRunRecorder implements RecordsAiRuns
         // next call asks again.
         try {
             $exists = Schema::hasTable($table);
-        } catch (QueryException $exception) {
+        } catch (PDOException $exception) {
             Log::error('The AI run tables could not be checked; the call continues.', [
                 'table' => $table,
                 'exception' => $this->rootMessage($exception),
