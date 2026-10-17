@@ -9,6 +9,7 @@
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <meta name="robots" content="noindex, nofollow">
+    <meta name="color-scheme" content="light dark">
     <title>{{ __('magic-starter::newsletter.page.title') }} | {{ config('app.name') }}</title>
     <style>
         *, *::before, *::after { box-sizing: border-box; }

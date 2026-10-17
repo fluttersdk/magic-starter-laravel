@@ -208,16 +208,31 @@ class NewsletterSubscriber extends Model
      */
     public function unsubscribe(string $via, array $auditContext = []): void
     {
-        if ($this->unsubscribed_at !== null) {
+        $now = now();
+
+        // A conditional update, so two withdrawals racing on one row (a mail provider's one-click
+        // POST and the reader's own click) record one audit row. A row the previous release
+        // re-activated after a withdrawal is active again, so it can be withdrawn again.
+        $withdrawn = Auditor::withoutAuditing(fn (): int => self::query()
+            ->whereKey($this->getKey())
+            ->where(static function (Builder $query): void {
+                $query->where('is_active', true)->orWhereNull('unsubscribed_at');
+            })
+            ->update([
+                'is_active' => false,
+                'unsubscribed_at' => $now,
+                'updated_at' => $now,
+            ]));
+
+        if ($withdrawn === 0) {
             return;
         }
 
-        Auditor::withoutAuditing(function (): void {
-            $this->fill([
-                'is_active' => false,
-                'unsubscribed_at' => now(),
-            ])->save();
-        });
+        $this->forceFill([
+            'is_active' => false,
+            'unsubscribed_at' => $now,
+            'updated_at' => $now,
+        ])->syncOriginal();
 
         Auditor::record('newsletter.unsubscribed', $this, [
             'via' => $via,

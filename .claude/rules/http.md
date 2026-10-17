@@ -7,7 +7,7 @@ path: "src/Http/**/*.php"
 ## Controllers
 
 - Inject contracts via `app(ContractClass::class)`, not constructor type-hinting
-- Return `JsonResponse` — never return views or redirects (API-only package)
+- Return `JsonResponse` — never return views or redirects (API-only package). One exception: `PublicNewsletterUnsubscribeController` renders an HTML page, because a mail link and an RFC 8058 one-click POST both need a page, never a redirect
 - Wrap external calls (Socialite, cache) in try-catch with `report($exception)`:
   ```php
   try {

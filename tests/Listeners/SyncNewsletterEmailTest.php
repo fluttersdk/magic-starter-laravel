@@ -3,6 +3,7 @@
 namespace FlutterSdk\MagicStarter\Tests\Listeners;
 
 use FlutterSdk\MagicStarter\Actions\UpdateUserProfile;
+use FlutterSdk\MagicStarter\Audit\Audit;
 use FlutterSdk\MagicStarter\Features;
 use FlutterSdk\MagicStarter\MagicStarter;
 use FlutterSdk\MagicStarter\Models\NewsletterSubscriber;
@@ -10,6 +11,7 @@ use FlutterSdk\MagicStarter\Tests\Fixtures\ConcreteUser;
 use FlutterSdk\MagicStarter\Tests\TestCase;
 use Illuminate\Foundation\Application;
 use Illuminate\Notifications\Notifiable;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Notification;
 use Orchestra\Testbench\Attributes\DefineEnvironment;
 
@@ -89,6 +91,32 @@ final class SyncNewsletterEmailTest extends TestCase
         $row = NewsletterSubscriber::query()->sole();
         $this->assertSame('taken@example.com', $row->email);
         $this->assertSame($user->getKey(), $row->user_id);
+    }
+
+    public function test_the_taken_over_rows_audit_trail_goes_with_it(): void
+    {
+        (require __DIR__ . '/../../database/migrations/create_magic_starter_audits_table.php')->up();
+
+        $user = $this->subscribedUser('old@example.com');
+        $unclaimed = NewsletterSubscriber::query()->create([
+            'email' => 'taken@example.com',
+            'is_active' => true,
+            'source' => 'registration',
+        ]);
+
+        Audit::query()->forceCreate([
+            'event' => 'created',
+            'auditable_type' => NewsletterSubscriber::class,
+            'auditable_id' => (string) $unclaimed->getKey(),
+            'new_values' => ['email' => 'taken@example.com'],
+            'created_at' => now(),
+        ]);
+
+        $user->update(['email' => 'taken@example.com']);
+
+        $this->assertSame(0, DB::table('magic_starter_audits')
+            ->where('auditable_id', (string) $unclaimed->getKey())
+            ->count());
     }
 
     public function test_a_change_that_leaves_the_address_alone_touches_nothing(): void

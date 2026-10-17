@@ -5,6 +5,8 @@ namespace FlutterSdk\MagicStarter\Listeners;
 use FlutterSdk\MagicStarter\Audit\Auditor;
 use FlutterSdk\MagicStarter\Models\NewsletterSubscriber;
 use Illuminate\Database\Eloquent\Model;
+use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Schema;
 use Illuminate\Support\Str;
 
 /**
@@ -37,10 +39,24 @@ class SyncNewsletterEmail
 
         $email = Str::lower($user->email);
 
-        NewsletterSubscriber::query()
+        $unclaimed = NewsletterSubscriber::query()
             ->whereNull('user_id')
             ->whereRaw('lower(email) = ?', [$email])
-            ->delete();
+            ->pluck('id')
+            ->all();
+
+        if ($unclaimed !== []) {
+            // The trail of a removed row keeps the address it was written with, and no erasure can
+            // find it later (it has no owner), so it goes with the row, as the migration does it.
+            if (Schema::hasTable('magic_starter_audits')) {
+                DB::table('magic_starter_audits')
+                    ->where('auditable_type', NewsletterSubscriber::class)
+                    ->whereIn('auditable_id', array_map('strval', $unclaimed))
+                    ->delete();
+            }
+
+            NewsletterSubscriber::query()->whereKey($unclaimed)->delete();
+        }
 
         NewsletterSubscriber::query()
             ->where('user_id', $user->getKey())

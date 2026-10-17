@@ -48,8 +48,9 @@ class NewsletterController
             );
         }
 
-        // 2. Subscribe records the consent; unsubscribe keeps the row and its token.
-        if ($validated['subscribe'] === true) {
+        // 2. Subscribe records the consent; unsubscribe keeps the row and its token. The `boolean`
+        //    rule also passes 1, '1', 0 and '0', so the branch reads the value as a boolean too.
+        if (filter_var($validated['subscribe'], FILTER_VALIDATE_BOOLEAN)) {
             $subscriber = NewsletterSubscriber::subscribeUser($user, 'profile');
         } else {
             $subscriber = NewsletterSubscriber::forUser($user);

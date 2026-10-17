@@ -1089,11 +1089,15 @@ class MagicStarterServiceProvider extends ServiceProvider
         });
 
         // Newsletter one-click unsubscribe. The POST is bucketed on the hashed
-        // token, never the IP: one-click requests arrive from a mail provider's
-        // shared egress, so an IP bucket would let one inbox's traffic lock out
-        // every other reader behind the same provider. The page is a plain read.
+        // token: one-click requests arrive from a mail provider's shared egress,
+        // so a tight IP bucket would let one inbox's traffic lock out every other
+        // reader behind the same provider. The loose IP ceiling only stops one
+        // address from spraying guessed tokens at the lookup. The page is a plain read.
         RateLimiter::for('magic-starter-newsletter-unsubscribe', function ($request) {
-            return Limit::perMinute(10)->by('newsletter|' . hash('sha256', (string) $request->route('token')));
+            return [
+                Limit::perMinute(10)->by('newsletter|' . hash('sha256', (string) $request->route('token'))),
+                Limit::perMinute(300)->by('newsletter-ip|' . $request->ip()),
+            ];
         });
 
         RateLimiter::for('magic-starter-newsletter-unsubscribe-page', function ($request) {

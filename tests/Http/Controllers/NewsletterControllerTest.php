@@ -327,6 +327,41 @@ final class NewsletterControllerTest extends TestCase
         Notification::assertSentToTimes($user, NewsletterSubscribedNotification::class, 2);
     }
 
+    public function test_a_numeric_or_string_flag_means_what_it_says(): void
+    {
+        Notification::fake();
+        $user = $this->makeUser('numeric@example.test');
+
+        $this->actingAs($user)->putJson('/user/newsletter', ['subscribe' => 1])
+            ->assertOk()
+            ->assertJsonFragment(['subscribed' => true]);
+
+        $this->actingAs($user)->putJson('/user/newsletter', ['subscribe' => '0'])
+            ->assertOk()
+            ->assertJsonFragment(['subscribed' => false]);
+
+        $this->assertFalse(NewsletterSubscriber::query()->sole()->is_active);
+    }
+
+    public function test_a_row_the_previous_release_reactivated_can_be_withdrawn_again(): void
+    {
+        Notification::fake();
+        $user = $this->makeUser('again@example.test');
+        $this->actingAs($user)->putJson('/user/newsletter', ['subscribe' => true])->assertOk();
+
+        // The previous release flips is_active back on and knows nothing of unsubscribed_at.
+        NewsletterSubscriber::query()->update([
+            'is_active' => true,
+            'unsubscribed_at' => '2026-03-01 10:00:00',
+        ]);
+
+        $this->actingAs($user)->putJson('/user/newsletter', ['subscribe' => false])
+            ->assertOk()
+            ->assertJsonFragment(['subscribed' => false]);
+
+        $this->assertFalse(NewsletterSubscriber::query()->sole()->is_active);
+    }
+
     public function test_unsubscribing_records_the_withdrawal_and_is_idempotent(): void
     {
         Notification::fake();
