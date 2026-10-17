@@ -60,7 +60,14 @@ class AiRunRecorder implements RecordsAiRuns
 
     private const TRUNCATED = '[truncated %d bytes]';
 
-    private const TRUNCATED_TAIL = '/\[truncated (\d+) bytes\]\z/';
+    /**
+     * The pre-cut's marker sits on a line of its own, so a secret cut mid-value
+     * (an unclosed quote, an unquoted value) ends before it and the masker
+     * neither swallows the count nor stops short of the secret.
+     */
+    private const PRECUT_TRUNCATED = "\n" . self::TRUNCATED;
+
+    private const TRUNCATED_TAIL = '/\n?\[truncated (\d+) bytes\]\z/';
 
     /**
      * Column widths, in characters, of the metadata strings a host hands over.
@@ -315,7 +322,7 @@ class AiRunRecorder implements RecordsAiRuns
 
         $kept = mb_strcut($text, 0, $bytes, 'UTF-8');
 
-        return $kept . sprintf(self::TRUNCATED, strlen($text) - strlen($kept));
+        return $kept . sprintf(self::PRECUT_TRUNCATED, strlen($text) - strlen($kept));
     }
 
     /**

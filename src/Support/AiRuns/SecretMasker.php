@@ -163,6 +163,8 @@ final class SecretMasker
         return '/(?<![\w-])["\']?(?:' . $names . ')["\']?\s*[:=]\s*'
             . '(?|"(?:(?:Bearer|Token|Basic)\s+)?(?<secret>[^"]+)"'
             . '|\'(?:(?:Bearer|Token|Basic)\s+)?(?<secret>[^\']+)\''
+            // A quote that never closes: output cut at max_tokens, or a body cut at the cap.
+            . '|["\'](?:(?:Bearer|Token|Basic)\s+)?(?<secret>[^"\'\s,;&}]+)'
             . '|(?:(?:Bearer|Token|Basic)\s+)?(?<secret>[^"\'\r\n,;&}]*[^"\'\s,;&}]))/i';
     }
 
