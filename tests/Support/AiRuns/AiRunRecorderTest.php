@@ -487,6 +487,35 @@ class AiRunRecorderTest extends TestCase
                 && $context['exception'] === 'Deadlock found when trying to get lock');
     }
 
+    public function test_a_raw_pdo_failure_inside_the_write_is_logged_and_start_answers_null(): void
+    {
+        // A lost connection reaches the recorder as a bare PDOException when Laravel's
+        // retry of BEGIN cannot reconnect, outside any QueryException.
+        $this->migrateAiRuns();
+        AiRun::creating(static function (): void {
+            throw new PDOException('SQLSTATE[08006] server closed the connection unexpectedly');
+        });
+        Log::spy();
+
+        $this->assertNull($this->recorder()->start(new AiRunStart(feature: 'incident.analysis')));
+
+        Log::shouldHaveReceived('error')
+            ->once()
+            ->withArgs(static fn (string $message, array $context): bool => $context['table'] === 'ai_runs'
+                && $context['exception'] === 'SQLSTATE[08006] server closed the connection unexpectedly');
+    }
+
+    public function test_a_raw_pdo_failure_in_the_table_check_is_logged_and_never_thrown(): void
+    {
+        Log::spy();
+        Schema::shouldReceive('hasTable')->andThrow(new PDOException('connection refused'));
+
+        $this->assertNull($this->recorder()->start(new AiRunStart(feature: 'incident.analysis')));
+
+        Log::shouldHaveReceived('error')
+            ->withArgs(static fn (string $message, array $context): bool => $context['exception'] === 'connection refused');
+    }
+
     public function test_metadata_longer_than_its_column_is_cut_to_fit(): void
     {
         $this->migrateAiRuns();
