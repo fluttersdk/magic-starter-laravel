@@ -16,6 +16,7 @@ use FlutterSdk\MagicStarter\Console\ReconcileBillingEntitlements;
 use FlutterSdk\MagicStarter\Console\SupportDoctorCommand;
 use FlutterSdk\MagicStarter\Console\SweepSupportConversationsCommand;
 use FlutterSdk\MagicStarter\Support\FrontendUrl;
+use FlutterSdk\MagicStarter\Support\MailBrand;
 use Illuminate\Auth\Events\Registered;
 use Illuminate\Auth\Events\Verified;
 use Illuminate\Auth\Notifications\ResetPassword;
@@ -403,6 +404,11 @@ class MagicStarterServiceProvider extends ServiceProvider
 
         // 3.71. Register package views: the staff thread of the Filament inbox lives here.
         $this->loadViewsFrom(__DIR__ . '/../resources/views', 'magic-starter');
+
+        // 3.72. Brand every markdown mail the app sends, once the app opted in; off, mail stays stock.
+        if (MailBrand::enabled()) {
+            $this->registerMailBrand();
+        }
 
         // 4. Load package routes unless explicitly ignored.
         if (! MagicStarter::shouldIgnoreRoutes()) {
@@ -799,6 +805,27 @@ class MagicStarterServiceProvider extends ServiceProvider
                 ->withoutOverlapping()
                 ->onOneServer();
         });
+    }
+
+    /**
+     * Point Laravel's markdown mail at the package components and theme.
+     *
+     * The package directory is appended, never prepended, so a component an app
+     * keeps in its own `mail.markdown.paths` still wins over the package one. It
+     * is written in boot because the Markdown singleton reads both keys once, at
+     * its first resolve. `config:cache` stores the config as boot left it, so the
+     * next boot already finds the path and must not add it a second time.
+     */
+    protected function registerMailBrand(): void
+    {
+        $path = dirname(__DIR__) . '/resources/views/mail';
+        $paths = config('mail.markdown.paths', []);
+
+        if (! in_array($path, $paths, true)) {
+            config(['mail.markdown.paths' => [...$paths, $path]]);
+        }
+
+        config(['mail.markdown.theme' => 'magic-starter::mail.theme']);
     }
 
     /**
