@@ -4,6 +4,8 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [0.0.35] - 2026-10-17
+
 ### Added
 
 - **`mail.brand` brands every markdown mail from one config block, opt in with `MAGIC_STARTER_MAIL_BRAND_ENABLED=true`.** The package appends its `resources/views/mail` directory to `mail.markdown.paths` once and sets `mail.markdown.theme`, so this package's notifications, an app's own `MailMessage` notifications and Laravel's password reset get a logo header, a footer line (`:year`, Markdown), a font stack, radii and eight light colours, plus eight optional dark ones for Apple Mail, Outlook.com and Outlook mobile. `MailBrand::current()` checks the values when a mail renders and throws an `InvalidArgumentException` naming the key. A directory the app already lists in `mail.markdown.paths` overrides a single component; a Mailable with its own view is untouched. (`src/Support/MailBrand.php`, `src/MagicStarterServiceProvider.php`, `resources/views/mail/`, `config/magic-starter.php`, `doc/basics/notifications.md`, `doc/getting-started/configuration.md`)
