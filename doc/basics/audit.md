@@ -141,6 +141,18 @@ Auditor::record('admin.user_impersonated', $user, [
 
 The signature is `record(string $event, ?Model $subject, array $context = [], ?Authenticatable $actor = null)`. The actor defaults to the authenticated user, and `$context` is merged over the request context. It writes nothing while the feature is off.
 
+### Newsletter events
+
+With `newsletter-subscription` on, consent changes are recorded under explicit event names on the subscriber row:
+
+| Event | When | Context |
+|-------|------|---------|
+| `newsletter.subscribed` | A user consents, from the profile toggle or at registration | `consent_version`, `source` |
+| `newsletter.unsubscribed` | A subscription is withdrawn; nothing is written when it already was | `via`: `profile`, `one_click` (the public link) or `staff` |
+| `admin.newsletter.subscriber_deactivated` | Staff run "Deactivate" in the admin panel | the admin action row, beside the `newsletter.unsubscribed` row |
+
+The one-click `POST` carries the token in its URL, so that row's `url` is stored as `null`: no audit row ever holds an unsubscribe token. The token is also in the model's `$hidden`, so a row that records the subscriber stores it as `[redacted]`.
+
 ---
 
 <a name="silencing-the-listener"></a>
@@ -196,7 +208,9 @@ A deleted account's trail is personal data and goes with it. Deleting the user m
 
 A deletion that rolls back erases nothing.
 
-The purge finds rows by user key only. A row keyed by an email address elsewhere is not covered: a team invitation (its values hold the invited address and it relates to the team, not to a user) and a newsletter subscriber both keep their audit rows. Delete those yourself when your obligations require it.
+The purge finds rows by user key only. A row keyed by an email address elsewhere is not covered: a team invitation (its values hold the invited address and it relates to the team, not to a user) keeps its audit rows. Delete those yourself when your obligations require it.
+
+A newsletter subscription is covered, but not by the purge: `DeleteUser` deletes the user's subscriber row (found by `user_id`, or by address for a row nobody has claimed yet) together with that row's audit rows, inside the deletion's transaction.
 
 ---
 

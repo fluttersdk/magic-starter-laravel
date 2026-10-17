@@ -1375,6 +1375,21 @@ return [
 
     /*
     |--------------------------------------------------------------------------
+    | Newsletter
+    |--------------------------------------------------------------------------
+    |
+    | `consent_version` is the version of the opt-in wording an app shows
+    | next to its newsletter checkbox. Bump it when that copy changes: each
+    | subscription stores the version the person agreed to.
+    |
+    */
+
+    'newsletter' => [
+        'consent_version' => env('MAGIC_STARTER_NEWSLETTER_CONSENT_VERSION', '1'),
+    ],
+
+    /*
+    |--------------------------------------------------------------------------
     | AI Run Log
     |--------------------------------------------------------------------------
     |

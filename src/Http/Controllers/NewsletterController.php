@@ -9,8 +9,9 @@ use Illuminate\Http\Request;
 /**
  * Manages newsletter subscription status for the authenticated user.
  *
- * Provides a boolean subscribe/unsubscribe toggle keyed to the user's email.
- * Does not expose email in the response — the user already knows their own address.
+ * Provides a boolean subscribe/unsubscribe toggle on the user's own subscription,
+ * which records the consent behind it. Does not expose email in the response:
+ * the user already knows their own address.
  */
 class NewsletterController
 {
@@ -19,24 +20,14 @@ class NewsletterController
      */
     public function show(Request $request): JsonResponse
     {
-        $subscriber = NewsletterSubscriber::where('email', $request->user()->email)->first();
-
-        if ($subscriber) {
-            return response()->json([
-                'subscribed' => (bool) $subscriber->is_active,
-                'source' => $subscriber->source,
-                'subscribed_at' => $subscriber->created_at,
-            ]);
-        }
-
-        return response()->json(['subscribed' => false]);
+        return $this->status(NewsletterSubscriber::forUser($request->user()));
     }
 
     /**
      * Update the newsletter subscription status for the authenticated user.
      *
-     * Creates a subscriber record with source='profile' when subscribing for the first time.
-     * Requires the user to have an email address — returns 400 otherwise.
+     * Subscribing records the consent with source='profile'.
+     * Requires the user to have an email address; returns 400 otherwise.
      */
     public function update(Request $request): JsonResponse
     {
@@ -47,47 +38,39 @@ class NewsletterController
             ],
         ]);
 
-        // 1. Guard — newsletter subscription requires an email address.
-        if ($request->user()->email === null) {
+        $user = $request->user();
+
+        // 1. Guard: newsletter subscription requires an email address.
+        if ($user->email === null) {
             return response()->json(
                 ['message' => __('magic-starter::profile.newsletter.email_required')],
                 400,
             );
         }
 
-        $subscriber = null;
-
-        // 2. Subscribe: upsert record and ensure is_active is true.
-        if ($validated['subscribe'] === true) {
-            $subscriber = NewsletterSubscriber::firstOrCreate(
-                ['email' => $request->user()->email],
-                [
-                    'source' => 'profile',
-                    'is_active' => true,
-                ],
-            );
-            $subscriber->update(['is_active' => true]);
+        // 2. Subscribe records the consent; unsubscribe keeps the row and its token. The `boolean`
+        //    rule also passes 1, '1', 0 and '0', so the branch reads the value as a boolean too.
+        if (filter_var($validated['subscribe'], FILTER_VALIDATE_BOOLEAN)) {
+            $subscriber = NewsletterSubscriber::subscribeUser($user, 'profile');
+        } else {
+            $subscriber = NewsletterSubscriber::forUser($user);
+            $subscriber?->unsubscribe('profile');
         }
 
-        // 3. Unsubscribe: flip is_active to false without deleting the record.
-        if ($validated['subscribe'] === false) {
-            $subscriber = NewsletterSubscriber::where('email', $request->user()->email)->first();
-            if ($subscriber) {
-                $subscriber->update(['is_active' => false]);
-            }
+        // 3. Return the updated status in the same shape as show().
+        return $this->status($subscriber);
+    }
+
+    private function status(?NewsletterSubscriber $subscriber): JsonResponse
+    {
+        if ($subscriber === null) {
+            return response()->json(['subscribed' => false]);
         }
 
-        // 4. Return the updated status in the same shape as show().
-        $subscriber = $subscriber ?? NewsletterSubscriber::where('email', $request->user()->email)->first();
-
-        if ($subscriber) {
-            return response()->json([
-                'subscribed' => (bool) $subscriber->is_active,
-                'source' => $subscriber->source,
-                'subscribed_at' => $subscriber->created_at,
-            ]);
-        }
-
-        return response()->json(['subscribed' => false]);
+        return response()->json([
+            'subscribed' => (bool) $subscriber->is_active,
+            'source' => $subscriber->source,
+            'subscribed_at' => $subscriber->consented_at ?? $subscriber->created_at,
+        ]);
     }
 }

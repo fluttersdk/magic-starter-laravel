@@ -279,17 +279,40 @@ Stores per-user overrides for notification delivery preferences. Each row repres
 
 `FlutterSdk\MagicStarter\Models\NewsletterSubscriber`
 
-Tracks email newsletter opt-ins. Created with `firstOrCreate()` in the newsletter action for idempotency.
+A user's newsletter subscription and the consent it rests on. The row belongs to a user, not to an address: `email` is a copy kept in step with the user's. Use `NewsletterSubscriber::forUser()`, `subscribeUser()` and `unsubscribe()` rather than writing the columns, and read recipients through `marketable()` only.
 
 **Columns**
 
 | Column | Type | Notes |
 |---|---|---|
 | `id` | uuid / bigint | PK |
-| `email` | string | Subscriber email (unique enforced at DB level) |
+| `user_id` | uuid / bigint\|null | Owner, unique, foreign key to `users` with cascade on delete; `null` only on a row written by address alone, until the owner claims it |
+| `email` | string | Copy of the owner's email (unique enforced at DB level) |
 | `is_active` | boolean | Subscription status |
 | `source` | string\|null | Optional attribution source |
+| `consented_at` | timestamp\|null | When consent was last given |
+| `consent_version` | string(32)\|null | `magic-starter.newsletter.consent_version` at that moment; `pre-e5a` on rows that predate the record |
+| `consent_source` | string(32)\|null | Where consent was given, e.g. `profile` or `registration` |
+| `unsubscribed_at` | timestamp\|null | When consent was withdrawn |
+| `unsubscribe_token` | string(64)\|null | Unique one-click unsubscribe secret, minted on creation and never rotated; in `$hidden` |
 | `created_at`, `updated_at` | timestamp | |
+
+**Relations**
+
+| Method | Type |
+|---|---|
+| `user()` | `BelongsTo<Model, $this>` |
+
+**Methods**
+
+| Method | Behaviour |
+|---|---|
+| `scopeMarketable()` | `marketable()`: active, `consented_at` set, `unsubscribed_at` null, `user_id` set. The only audience a sender may use |
+| `forUser($user)` | The user's row by `user_id`; failing that, claims an owner-less row with the user's address (case-insensitive). A row another user owns is never taken |
+| `subscribeUser($user, $source)` | Creates or reactivates the row, keeps its token, rewrites the consent fields, queues the confirmation mail when the row was not a marketing recipient, records `newsletter.subscribed` |
+| `unsubscribe($via, $auditContext = [])` | Sets `is_active` false and `unsubscribed_at`; does nothing when already withdrawn; records `newsletter.unsubscribed` |
+
+See [Newsletter Subscription](../basics/profile.md#newsletter) for the endpoints, the one-click link and the consent rules.
 
 ### <a name="personalaccesstoken"></a>PersonalAccessToken
 
