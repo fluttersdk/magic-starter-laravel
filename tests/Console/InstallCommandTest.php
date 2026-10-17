@@ -493,6 +493,28 @@ final class InstallCommandTest extends TestCase
         );
     }
 
+    public function test_releases_feature_publishes_the_app_releases_migration(): void
+    {
+        $this->artisan('magic-starter:install', [
+            '--features' => ['releases'],
+        ])->assertExitCode(0);
+
+        $this->assertCount(1, glob(database_path('migrations/*_create_app_releases_table.php')) ?: []);
+        $this->assertStringContainsString(
+            "\n        \\FlutterSdk\\MagicStarter\\Features::releases(),",
+            (string) file_get_contents(config_path('magic-starter.php')),
+        );
+    }
+
+    public function test_without_releases_the_app_releases_migration_is_skipped(): void
+    {
+        $this->artisan('magic-starter:install', [
+            '--features' => ['teams'],
+        ])->assertExitCode(0);
+
+        $this->assertSame([], glob(database_path('migrations/*_create_app_releases_table.php')) ?: []);
+    }
+
     /**
      * A provider-created account has no password, and the core users table
      * declares the column NOT NULL; only guest-auth and phone-otp relaxed it

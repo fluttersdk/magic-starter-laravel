@@ -52,6 +52,7 @@ return [
         // \FlutterSdk\MagicStarter\Features::billing(),
         // \FlutterSdk\MagicStarter\Features::audit(),
         // \FlutterSdk\MagicStarter\Features::support(),
+        // \FlutterSdk\MagicStarter\Features::releases(),
     ],
 
     /*
@@ -1281,5 +1282,23 @@ return [
 
     'account_deletion' => [
         'grace_days' => (int) env('MAGIC_STARTER_ACCOUNT_DELETION_GRACE_DAYS', 30),
+    ],
+
+    /*
+    |--------------------------------------------------------------------------
+    | Releases
+    |--------------------------------------------------------------------------
+    |
+    | With the releases feature on, staff write the release notes of each app
+    | version and clients read the published ones from the public releases
+    | endpoint.
+    |
+    | `limit` caps how many of the newest published releases that endpoint
+    | returns.
+    |
+    */
+
+    'releases' => [
+        'limit' => 50,
     ],
 ];
