@@ -1308,4 +1308,66 @@ return [
     'releases' => [
         'limit' => 50,
     ],
+
+    /*
+    |--------------------------------------------------------------------------
+    | Mail Brand
+    |--------------------------------------------------------------------------
+    |
+    | The brand is per app: each app fills this block with its own name, logo
+    | and colours. It is off by default, so nothing about a mail changes until
+    | an app opts in. With `enabled` on, every Laravel markdown mail the app
+    | sends renders through the package layout and theme: this package's
+    | notifications, the app's own and Laravel's password reset. Components an
+    | app keeps in its own `mail.markdown.paths` still win over the package's.
+    |
+    | The light colours default to Laravel's own theme, so switching the brand
+    | on without values looks like a stock Laravel mail. Colours are six digit
+    | hex values. The dark colours are optional, all eight or none: only mail
+    | clients that honour prefers-color-scheme show them, the rest keep the
+    | light ones.
+    |
+    | `logo_url` is an absolute http or https URL to a raster image (PNG or
+    | JPEG) and `logo_width` its width in pixels. `footer` replaces the
+    | copyright line, and `:year` in it becomes the current year. `font_stack`
+    | is printed into the stylesheet as it is, so it takes font names, commas,
+    | quotes and hyphens only.
+    |
+    */
+
+    'mail' => [
+        'brand' => [
+            'enabled' => (bool) env('MAGIC_STARTER_MAIL_BRAND_ENABLED', false),
+            'name' => env('APP_NAME', 'Laravel'),
+            'logo_url' => null,
+            'logo_width' => 48,
+            'footer' => null,
+            'font_stack' => "-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif, "
+                . "'Apple Color Emoji', 'Segoe UI Emoji', 'Segoe UI Symbol'",
+            'button_radius' => 4,
+            'card_radius' => 4,
+            'colors' => [
+                'light' => [
+                    'primary' => '#18181b',
+                    'on_primary' => '#ffffff',
+                    'heading' => '#18181b',
+                    'text' => '#52525b',
+                    'muted' => '#a1a1aa',
+                    'background' => '#fafafa',
+                    'card' => '#ffffff',
+                    'border' => '#e4e4e7',
+                ],
+                'dark' => [
+                    'primary' => null,
+                    'on_primary' => null,
+                    'heading' => null,
+                    'text' => null,
+                    'muted' => null,
+                    'background' => null,
+                    'card' => null,
+                    'border' => null,
+                ],
+            ],
+        ],
+    ],
 ];
