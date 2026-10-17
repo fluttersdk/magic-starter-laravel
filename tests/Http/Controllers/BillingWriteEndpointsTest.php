@@ -2459,6 +2459,9 @@ final class BillingWriteSubscriptionBuilder
         return $this;
     }
 
+    /**
+     * Records that the checkout asked for Stripe's promotion code field.
+     */
     public function allowPromotionCodes(): self
     {
         BillingWriteRail::$checkoutAllowsPromotionCodes = true;
