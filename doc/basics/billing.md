@@ -11,6 +11,7 @@
 - [Endpoints](#endpoints)
 - [Refusals](#refusals)
 - [Trials](#trials)
+- [Promotion Codes](#promotion-codes)
 - [RevenueCat Webhook](#revenuecat-webhook)
 - [Agent Commands](#agent-commands)
 - [Audit Log](#audit-log)
@@ -405,7 +406,7 @@ A row the card check refused still counts, so a refusal never resets eligibility
 
 ### Checkout
 
-`POST billing/checkout` starts the trial for an eligible caller with Cashier's `trialDays()` and tags the subscription with the metadata `magic_starter_trial_user`, the acting user's key. The tag is how the webhook learns the person, since under team billing the Stripe customer is the team. An ineligible caller is not refused: they buy at the full price, which is what `GET billing/plans` showed them.
+`POST billing/checkout` starts the trial for an eligible caller by sending `subscription_data.trial_period_days` to Stripe and tags the subscription with the metadata `magic_starter_trial_user`, the acting user's key. The tag is how the webhook learns the person, since under team billing the Stripe customer is the team. An ineligible caller is not refused: they buy at the full price, which is what `GET billing/plans` showed them.
 
 Every checkout, trial or not, sends `payment_method_collection=always`. A trial's first invoice is zero, and a session that skipped the card would end the trial on a customer with nothing to charge. The card is also what the check below reads.
 
@@ -460,6 +461,38 @@ Set `trial_refused_notification` `false` to send your own message instead. The s
 
 - A wallet card (Apple Pay, Google Pay) can carry a different fingerprint than the same card entered plainly, so one card can reach a second trial through the wallet. This is an accepted limitation.
 - Web and store trials are separate. `trial_days` reaches Stripe only. A store (intro offer) trial is configured in App Store Connect or Google Play Console, and is not recorded, checked or counted here, so a customer can take one on each rail.
+
+---
+
+<a name="promotion-codes"></a>
+## Promotion Codes
+
+Stripe Checkout can show a promotion code field. It is off by default, and it is a **web rail** feature: a store purchase is priced by the store and is unaffected.
+
+| Config key | Env | Default |
+|------------|-----|---------|
+| `magic-starter.billing.promotion_codes` | `MAGIC_STARTER_BILLING_PROMOTION_CODES` | `false` |
+
+```bash
+MAGIC_STARTER_BILLING_PROMOTION_CODES=true
+```
+
+With it `true`, every `POST billing/checkout` session, trial or not, is created with `allow_promotion_codes` through Cashier's `allowPromotionCodes()`, and Stripe Checkout renders its own code field. With it `false` the key is not sent at all. The package never creates a code: coupons and promotion codes are made by the operator in the Stripe dashboard (or API).
+
+A code is a Stripe coupon plus a customer-facing string, so the coupon's settings decide what it does. Stripe accepts `allow_promotion_codes` together with `subscription_data.trial_period_days`, an explicit `currency` and `payment_method_collection=always`, the options a package checkout sends; redeeming a code in a browser on such a session was not exercised. What follows was measured against the Stripe API (version `2026-08-26.dahlia`, test mode, test clocks) unless a Stripe page is named. The measurements attached each code when the subscription was created through the Subscriptions API, which is what Checkout does when the customer completes it; the swap used `proration_behavior=always_invoice` and `billing_cycle_anchor=now`.
+
+### Before you hand out a code
+
+- **Prefer `percent_off`.** An `amount_off` coupon needs `currency_options` for every currency you sell in, and `currency_options` exists only on `amount_off` ([Stripe: create a coupon](https://docs.stripe.com/api/coupons/create)). A percentage is currency-neutral.
+- **A code discounts an annual invoice in full.** Even a 3 month `repeating` code at 50% took half of the whole year's charge off the first annual invoice, not half of one month.
+- **A `repeating` code survives a monthly to annual swap.** A customer who swaps to annual inside the window keeps the discount on the annual line, and the window is not reset by the swap. A swap after the window has closed is full price.
+- **To keep codes off annual, give annual its own Stripe product.** Set the coupon's `applies_to` to the monthly product only. Stripe states that a promotion code inherits the product restrictions of its parent coupon ([Stripe: coupons](https://docs.stripe.com/billing/subscriptions/coupons)). This restriction was not exercised in the measurement; the catalogue it ran on had one product for both cycles.
+- **Under a trial, `once` is not spent on the trial.** The trial's invoice is zero and carries a zero discount line, so nothing is spent; the coupon stays on the subscription, and the first paid invoice is discounted. After it the subscription holds no discount.
+- **Under a trial, a `repeating` window starts at creation.** It counts from when the subscription is created, not from the first charge. A trial shorter than a month costs no discounted charge: a 3 month code on a 14 day trial discounted three paid charges and the fourth was full price. A trial of a month or more does use up discounted charges, since the window keeps running while it lasts.
+- **Do not put `minimum_amount` on a code that a trial product can see.** Through the Subscriptions API, Stripe refused such a code on a trialling subscription at creation ("This promotion code cannot be redeemed because the associated purchase does not meet the minimum amount requirement."), since the first invoice is zero. Redemption through Checkout itself was not measured, nor was a `minimum_amount` code on a subscription without a trial, so treat both as unverified.
+- **`first_time_transaction` excludes anyone who trialed or paid before.** Stripe does not count a customer with earlier payments or non-void invoices as first-time ([Stripe: discounts in Checkout](https://docs.stripe.com/payments/checkout/discounts)), and it names customers who "Subscribed to a trial period, even if it subsequently canceled" among those the setting refuses ([Stripe: coupons](https://docs.stripe.com/billing/subscriptions/coupons)).
+
+The `checkout_started` row of the [audit log](#audit-log) records `promotion_codes`, a boolean that says whether codes were allowed on that session. It does not say whether a code was entered or which one.
 
 ---
 
@@ -590,7 +623,7 @@ Every billing outcome leaves one row in `billing_events` and dispatches one Lara
 |--------|--------|----------|------------|
 | `entitlement_applied` | `webhook`, `reconcile`, `trial_check` | none | `before`, `after`, `changed`, `direction`, `cross_rail`. |
 | `entitlement_dropped` | any feeder | `stale`, `same_instant_revocation`, `undecidable_tier_order`, `cross_rail_revocation`, `projected_cross_rail_takeover` | The log context and `incoming_status`. |
-| `checkout_started` | `request` | none | `product`, `price_id`, `trial_days`. |
+| `checkout_started` | `request` | none | `product`, `price_id`, `trial_days`, `promotion_codes`. |
 | `subscription_swapped` | `request` | none | `product`, `price_id`. |
 | `subscription_cancelled` | `request` | none | `ends_at`. |
 | `portal_opened` | `request` | none | none. |
