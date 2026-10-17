@@ -403,6 +403,13 @@ class MagicStarterServiceProvider extends ServiceProvider
             $this->scheduleSupportSweep();
         }
 
+        // 3.665. Keep each newsletter row's address in step with its owner's. A wildcard
+        //        with a user-model check at event time, because `useUserModel()` may run
+        //        after this boot and a subclass fires an event under its own name.
+        if (Features::hasNewsletterSubscriptionFeatures()) {
+            Event::listen('eloquent.updated: *', Listeners\SyncNewsletterEmail::class);
+        }
+
         // 3.7. Register package translations, and the framework's own mail strings (password reset,
         // template chrome), which Laravel ships as English JSON keys with no translation. The JSON
         // file lives outside `lang/` because the `magic-starter-lang` tag publishes that whole

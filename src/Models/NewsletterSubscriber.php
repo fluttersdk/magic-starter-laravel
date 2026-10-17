@@ -2,13 +2,17 @@
 
 namespace FlutterSdk\MagicStarter\Models;
 
+use FlutterSdk\MagicStarter\Audit\Auditor;
 use FlutterSdk\MagicStarter\MagicStarter;
+use FlutterSdk\MagicStarter\Notifications\NewsletterSubscribedNotification;
 use FlutterSdk\MagicStarter\Support\ConditionallyUsesUuids;
+use FlutterSdk\MagicStarter\Support\MailLocale;
 use Illuminate\Contracts\Auth\Authenticatable;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Support\Carbon;
+use Illuminate\Support\Facades\Notification;
 use Illuminate\Support\Str;
 
 /**
@@ -144,6 +148,81 @@ class NewsletterSubscriber extends Model
         $unclaimed->save();
 
         return $unclaimed;
+    }
+
+    /**
+     * Record the user's consent to the newsletter and confirm it by mail.
+     *
+     * Creates the subscription when there is none, reactivates a withdrawn one
+     * and keeps its token. The confirmation goes out only when the row was not
+     * a marketing recipient before, so repeating the call mails nothing.
+     */
+    public static function subscribeUser(Authenticatable $user, string $source): self
+    {
+        $row = self::forUser($user) ?? new self([
+            'user_id' => $user->getAuthIdentifier(),
+            'email' => $user->email ?? null,
+            'source' => $source,
+        ]);
+
+        $wasMarketable = $row->exists
+            && $row->is_active
+            && $row->consented_at !== null
+            && $row->unsubscribed_at === null;
+
+        $version = (string) config('magic-starter.newsletter.consent_version');
+
+        $row->fill([
+            'is_active' => true,
+            'unsubscribed_at' => null,
+            'consented_at' => now(),
+            'consent_version' => $version,
+            'consent_source' => $source,
+        ])->save();
+
+        if (! $wasMarketable) {
+            Notification::send(
+                $user,
+                (new NewsletterSubscribedNotification($row))->locale(MailLocale::for($user)),
+            );
+        }
+
+        Auditor::record('newsletter.subscribed', $row, [
+            'consent_version' => $version,
+            'source' => $source,
+        ]);
+
+        return $row;
+    }
+
+    /**
+     * Withdraw the consent. Does nothing when it was already withdrawn.
+     *
+     * The save is silenced so the model listener writes no row of its own: the
+     * one `newsletter.unsubscribed` row says who withdrew and how. A caller whose
+     * request URL carries the token passes `['url' => null]`, which replaces the
+     * request context's url so the secret never reaches the trail.
+     *
+     * @param  string  $via  Where the withdrawal came from, e.g. `profile` or `link`.
+     * @param  array<string, mixed>  $auditContext  Merged over the request context of the audit row.
+     */
+    public function unsubscribe(string $via, array $auditContext = []): void
+    {
+        if ($this->unsubscribed_at !== null) {
+            return;
+        }
+
+        Auditor::withoutAuditing(function (): void {
+            $this->fill([
+                'is_active' => false,
+                'unsubscribed_at' => now(),
+            ])->save();
+        });
+
+        Auditor::record('newsletter.unsubscribed', $this, [
+            'via' => $via,
+            ...$auditContext,
+        ]);
     }
 
     private static function mintUnsubscribeToken(): string
