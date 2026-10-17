@@ -118,6 +118,90 @@ class AiRunRecorderTest extends TestCase
         $this->assertNull($fresh->finished_at);
     }
 
+    public function test_hit_writes_a_closed_cache_hit_row_linked_to_the_run_that_produced_the_answer(): void
+    {
+        $this->migrateAiRuns();
+        Carbon::setTestNow('2026-10-17 10:00:00');
+        $source = $this->recorder()->start(new AiRunStart(feature: 'incident.analysis'));
+
+        $run = $this->recorder()->hit(new AiRunStart(
+            feature: 'incident.analysis',
+            teamId: 42,
+            subjectType: 'incident',
+            subjectId: 7,
+            promptHash: str_repeat('a', 64),
+            model: 'claude-sonnet-4-5',
+            context: ['monitor' => 'api.example.com'],
+        ), $source);
+
+        $this->assertNotNull($run);
+        $this->assertNotSame($source, $run);
+
+        $fresh = AiRun::query()->findOrFail($run);
+        $this->assertSame(AiRunStatus::CACHE_HIT, $fresh->status);
+        $this->assertEquals($source, $fresh->source_run_id);
+        $this->assertSame($source, $fresh->sourceRun?->getKey());
+        $this->assertSame('incident.analysis', $fresh->feature);
+        $this->assertSame('42', $fresh->team_id);
+        $this->assertSame('incident', $fresh->subject_type);
+        $this->assertSame('7', $fresh->subject_id);
+        $this->assertSame(str_repeat('a', 64), $fresh->prompt_hash);
+        $this->assertSame('claude-sonnet-4-5', $fresh->model);
+        $this->assertSame(['monitor' => 'api.example.com'], $fresh->context);
+        $this->assertSame(0, $fresh->input_tokens);
+        $this->assertSame(0, $fresh->output_tokens);
+        $this->assertSame(0, $fresh->cache_read_tokens);
+        $this->assertSame(0, $fresh->cache_write_tokens);
+        $this->assertSame(0, $fresh->reasoning_tokens);
+        $this->assertSame(0, $fresh->attempts_count);
+        $this->assertEquals(0, $fresh->cost_usd);
+        $this->assertNull($fresh->cost_source);
+        $this->assertSame(0, $fresh->duration_ms);
+        $this->assertSame('2026-10-17 10:00:00', $fresh->started_at?->toDateTimeString());
+        $this->assertSame('2026-10-17 10:00:00', $fresh->finished_at?->toDateTimeString());
+        $this->assertSame(0, AiRunAttempt::query()->count());
+    }
+
+    public function test_hit_masks_the_bodies_the_way_start_does(): void
+    {
+        $this->migrateAiRuns();
+        $source = $this->recorder()->start(new AiRunStart(feature: 'incident.analysis'));
+
+        $run = $this->recorder()->hit(new AiRunStart(
+            feature: 'incident.analysis',
+            instructions: 'Call with Bearer abcdefgh12345678',
+            input: 'Fetch https://user:hunter22@example.com/x',
+            context: ['token' => 'plain-context-token'],
+        ), $source);
+
+        $fresh = AiRun::query()->findOrFail($run);
+
+        $this->assertSame('Call with Bearer [redacted]', $fresh->instructions);
+        $this->assertSame('Fetch https://[redacted]@example.com/x', $fresh->input);
+        $this->assertSame(['token' => '[redacted]'], $fresh->context);
+    }
+
+    public function test_with_the_feature_off_hit_returns_null_and_writes_nothing(): void
+    {
+        $this->migrateAiRuns();
+        $source = $this->recorder()->start(new AiRunStart(feature: 'incident.analysis'));
+        config(['magic-starter.features' => []]);
+        DB::enableQueryLog();
+
+        $run = $this->recorder()->hit(new AiRunStart(feature: 'incident.analysis'), $source);
+
+        $this->assertNull($run);
+        $this->assertSame([], DB::getQueryLog());
+        $this->assertSame(1, AiRun::query()->count());
+    }
+
+    public function test_a_missing_runs_table_makes_hit_return_null(): void
+    {
+        Log::spy();
+
+        $this->assertNull($this->recorder()->hit(new AiRunStart(feature: 'incident.analysis'), 1));
+    }
+
     public function test_a_failed_then_succeeded_run_folds_its_attempts_on_finish(): void
     {
         $this->migrateAiRuns();
