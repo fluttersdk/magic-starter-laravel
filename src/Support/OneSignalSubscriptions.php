@@ -3,7 +3,6 @@
 namespace FlutterSdk\MagicStarter\Support;
 
 use Closure;
-use Exception;
 use FlutterSdk\MagicStarter\MagicStarter;
 use FlutterSdk\MagicStarter\Models\PushDevice;
 use Illuminate\Database\Eloquent\Model;
@@ -13,6 +12,7 @@ use onesignal\client\model\PropertiesObject;
 use onesignal\client\model\Subscription;
 use onesignal\client\model\User as OneSignalUser;
 use RuntimeException;
+use Throwable;
 
 /**
  * Keeps a user's OneSignal SMS subscription in step with the phone on the account.
@@ -313,7 +313,10 @@ class OneSignalSubscriptions
      * Run one SDK call, translating every failure into a message-safe exception.
      *
      * An HTTP 404 returns null when `$notFoundIsFine` (the user or subscription
-     * is already gone, which is the outcome the caller wanted).
+     * is already gone, which is the outcome the caller wanted). An `Error` is
+     * caught as well: the SDK raises a `TypeError` when it deserialises a
+     * response shape it does not expect, and letting it through would break the
+     * consumer's send that `ensureSmsSubscription()` promises never to poison.
      *
      * @throws RuntimeException Names the operation and the HTTP status, with no `previous`.
      */
@@ -321,7 +324,7 @@ class OneSignalSubscriptions
     {
         try {
             return $request();
-        } catch (Exception $exception) {
+        } catch (Throwable $exception) {
             if ($notFoundIsFine && $exception instanceof ApiException && $exception->getCode() === 404) {
                 return null;
             }

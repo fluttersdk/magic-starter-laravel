@@ -190,6 +190,65 @@ class TrialCheckoutPayloadTest extends TestCase
     }
 
     /**
+     * Promotion codes are off by default, so a session carries no
+     * `allow_promotion_codes` key at all: Stripe Checkout shows no code field.
+     */
+    public function test_promotion_codes_are_not_allowed_by_default(): void
+    {
+        $user = $this->createUser('payload-codes-off@example.test');
+
+        $this->buy($user)->assertOk();
+
+        $this->assertArrayNotHasKey('allow_promotion_codes', $this->sessionParams());
+    }
+
+    /**
+     * With the flag on, an eligible caller's session allows promotion codes
+     * and still carries the trial. stripe-php encodes the boolean as 'true'.
+     */
+    public function test_promotion_codes_are_allowed_beside_the_trial_when_the_flag_is_on(): void
+    {
+        config(['magic-starter.billing.promotion_codes' => true]);
+
+        $user = $this->createUser('payload-codes-trial@example.test');
+
+        $this->buy($user)->assertOk();
+
+        $params = $this->sessionParams();
+
+        $this->assertSame('true', $params['allow_promotion_codes']);
+        $this->assertSame(14, $params['subscription_data']['trial_period_days']);
+        $this->assertArrayNotHasKey('discounts', $params);
+    }
+
+    /**
+     * The flag does not depend on the trial: a caller who already trialed buys
+     * at the full price and can still enter a promotion code.
+     */
+    public function test_promotion_codes_are_allowed_without_a_trial_when_the_flag_is_on(): void
+    {
+        config(['magic-starter.billing.promotion_codes' => true]);
+
+        $user = $this->createUser('payload-codes-trialed@example.test');
+
+        BillingTrial::query()->create([
+            'user_id' => $user->getKey(),
+            'billable_type' => $user->getMorphClass(),
+            'billable_id' => $user->getKey(),
+            'stripe_subscription_id' => 'sub_earlier_trial',
+            'subscription_created_at' => now()->subYear(),
+        ]);
+
+        $this->buy($user)->assertOk();
+
+        $params = $this->sessionParams();
+
+        $this->assertSame('true', $params['allow_promotion_codes']);
+        $this->assertArrayNotHasKey('trial_period_days', $params['subscription_data']);
+        $this->assertArrayNotHasKey('discounts', $params);
+    }
+
+    /**
      * The currency survives Cashier merging the session options into its own
      * payload, lowercase as Stripe writes it: an explicit `currency` is what
      * overrides Stripe's own localisation, so the charge is in the currency

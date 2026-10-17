@@ -892,6 +892,11 @@ return [
     | Set it false to send your own message instead. A config published before
     | this key existed has no key at all and gets the default.
     |
+    | 'promotion_codes' (default false) shows Stripe's promotion code field on
+    | every subscription checkout, trial or not. The codes themselves are
+    | created in the Stripe dashboard; see doc/basics/billing.md, Promotion
+    | Codes. Off sends no `allow_promotion_codes` at all.
+    |
     | 'log_channel' names the log channel every billing line goes to (webhook
     | outcomes, reconciler runs, refusals), so billing can be routed to its own
     | file or alert sink. Null or blank, the default, uses the application's
@@ -971,6 +976,8 @@ return [
         ],
 
         'trial_refused_notification' => (bool) env('MAGIC_STARTER_TRIAL_REFUSED_NOTIFICATION', true),
+
+        'promotion_codes' => (bool) env('MAGIC_STARTER_BILLING_PROMOTION_CODES', false),
 
         // Path of the client's billing screen, linked from mails; the default is magic_starter's own billing route.
         'client_path' => '/teams/billing',

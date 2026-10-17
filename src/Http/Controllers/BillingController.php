@@ -850,6 +850,19 @@ class BillingController
             ]);
         }
 
+        // 7b. Stripe's promotion code field on the Checkout page, behind an
+        //     opt-in flag. It goes through the builder and not into
+        //     `$sessionOptions` below: Cashier turns the builder's property into
+        //     `allow_promotion_codes` and drops it when false, while a session
+        //     key would send an explicit false for every adopter that never
+        //     asked. It applies with or without a trial, so it sits outside the
+        //     trial block above.
+        $promotionCodes = (bool) config('magic-starter.billing.promotion_codes', false);
+
+        if ($promotionCodes) {
+            $subscription->allowPromotionCodes();
+        }
+
         // 8. A card is collected whatever the first total, and said explicitly
         //    rather than left to Stripe's default: a trial's first invoice is
         //    zero, a session that skipped the card would end the trial on a
@@ -895,6 +908,7 @@ class BillingController
                 'product' => $validated['product'],
                 'price_id' => $priceId,
                 'trial_days' => $offeredTrialDays,
+                'promotion_codes' => $promotionCodes,
             ],
         );
 

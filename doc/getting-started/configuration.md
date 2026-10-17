@@ -152,6 +152,7 @@ Every key available in `config/magic-starter.php`:
 | `billing.pricing.currency` | `'USD'` | Base currency a screen falls back to |
 | `billing.pricing.commission` | `absorb`, `0.15` | How store prices derive from web prices: `mode` is `absorb` or `gross_up` |
 | `billing.reconcile.cadence` | `env('MAGIC_STARTER_BILLING_RECONCILE_CADENCE', 'daily')` | Frequency word or cron expression for `billing:reconcile` |
+| `billing.promotion_codes` | `env('MAGIC_STARTER_BILLING_PROMOTION_CODES', false)` | Show Stripe's promotion code field on every web checkout, trial or not. Codes are created in the Stripe dashboard, see [Promotion Codes](../basics/billing.md#promotion-codes) |
 | `billing.revenuecat.path` | `env('REVENUECAT_WEBHOOK_PATH', 'webhooks/revenuecat')` | Whole served path of the RevenueCat webhook |
 | `billing.revenuecat.webhook_secret` | `env('REVENUECAT_WEBHOOK_SECRET')` | HMAC signing secret of the webhook; without it the route is withheld |
 | `billing.revenuecat.secret_api_key` | `env('REVENUECAT_SECRET_API_KEY')` | RevenueCat v1 secret key for the authoritative subscriber read; setting it turns the store rail on |
@@ -440,6 +441,7 @@ All environment variables recognized by the package:
 | `APP_NAME` | `two_factor.company_name` | `'Laravel'` | Company name in authenticator apps |
 | `CASHIER_PRICE_<KEY>` | `billing.products.<key>.refs.stripe_price` | `null` | Stripe price id of a product; `<KEY>` is the product key uppercased (`CASHIER_PRICE_PRO_MONTHLY`) |
 | `MAGIC_STARTER_BILLING_RECONCILE_CADENCE` | `billing.reconcile.cadence` | `'daily'` | How often `billing:reconcile` runs; `hourly` suits a store-heavy app |
+| `MAGIC_STARTER_BILLING_PROMOTION_CODES` | `billing.promotion_codes` | `false` | Show Stripe's promotion code field on every web checkout |
 | `REVENUECAT_WEBHOOK_PATH` | `billing.revenuecat.path` | `'webhooks/revenuecat'` | Served path of the RevenueCat webhook |
 | `REVENUECAT_WEBHOOK_SECRET` | `billing.revenuecat.webhook_secret` | `null` | HMAC signing secret, shown once in the RevenueCat dashboard |
 | `REVENUECAT_SECRET_API_KEY` | `billing.revenuecat.secret_api_key` | `null` | RevenueCat v1 secret key |

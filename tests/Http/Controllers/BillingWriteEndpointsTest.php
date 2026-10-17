@@ -1323,7 +1323,12 @@ class BillingWriteEndpointsTest extends TestCase
         $this->assertSame('cs_test_write', $row->external_id);
         $this->assertNull($row->reason);
         $this->assertSame(
-            ['product' => 'pro_monthly', 'price_id' => 'price_pro', 'trial_days' => 14],
+            [
+                'product' => 'pro_monthly',
+                'price_id' => 'price_pro',
+                'trial_days' => 14,
+                'promotion_codes' => false,
+            ],
             $row->properties,
         );
         $this->assertDispatchedOnce(CheckoutStarted::class, $row);
@@ -1339,6 +1344,26 @@ class BillingWriteEndpointsTest extends TestCase
 
         $guestRow = $this->onlyRow(BillingEventType::CHECKOUT_STARTED, $guest, $guest);
         $this->assertSame(0, $guestRow->properties['trial_days']);
+    }
+
+    /**
+     * With the promotion codes flag on, the builder is asked to allow them and
+     * the `checkout_started` row records it.
+     */
+    public function test_a_checkout_allows_promotion_codes_when_the_flag_is_on(): void
+    {
+        config(['magic-starter.billing.promotion_codes' => true]);
+
+        $this->bootBillingRoutes('user');
+
+        $user = $this->createUser('audit-codes@example.test');
+
+        $this->buy($user, 'pro_monthly')->assertOk();
+
+        $this->assertTrue(BillingWriteRail::$checkoutAllowsPromotionCodes);
+
+        $row = $this->onlyRow(BillingEventType::CHECKOUT_STARTED, $user, $user);
+        $this->assertTrue($row->properties['promotion_codes']);
     }
 
     /**
@@ -2260,6 +2285,11 @@ final class BillingWriteRail
     public static ?array $checkoutMetadata = null;
 
     /**
+     * Whether a checkout asked the builder to allow promotion codes.
+     */
+    public static bool $checkoutAllowsPromotionCodes = false;
+
+    /**
      * The session options a checkout was opened with, or null when none was.
      *
      * @var array<string, mixed>|null
@@ -2291,6 +2321,7 @@ final class BillingWriteRail
         self::$subscriptions = [];
         self::$checkoutTrialDays = null;
         self::$checkoutMetadata = null;
+        self::$checkoutAllowsPromotionCodes = false;
         self::$checkoutSessionOptions = null;
         self::$customerCurrency = null;
         self::$customerReads = 0;
@@ -2424,6 +2455,16 @@ final class BillingWriteSubscriptionBuilder
     public function withMetadata(array $metadata): self
     {
         BillingWriteRail::$checkoutMetadata = $metadata;
+
+        return $this;
+    }
+
+    /**
+     * Records that the checkout asked for Stripe's promotion code field.
+     */
+    public function allowPromotionCodes(): self
+    {
+        BillingWriteRail::$checkoutAllowsPromotionCodes = true;
 
         return $this;
     }
