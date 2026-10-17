@@ -178,6 +178,14 @@ class Features
     }
 
     /**
+     * Enable the AI run log: every model call a host app records, with its usage, cost and attempts.
+     */
+    public static function aiRuns(): string
+    {
+        return 'ai-runs';
+    }
+
+    /**
      * Determine whether the given feature is enabled.
      */
     public static function enabled(string $feature): bool
@@ -351,6 +359,14 @@ class Features
     public static function hasReleaseFeatures(): bool
     {
         return static::enabled(static::releases());
+    }
+
+    /**
+     * Determine whether the AI run log feature is enabled.
+     */
+    public static function hasAiRunFeatures(): bool
+    {
+        return static::enabled(static::aiRuns());
     }
 
     /**

@@ -53,6 +53,7 @@ return [
         // \FlutterSdk\MagicStarter\Features::audit(),
         // \FlutterSdk\MagicStarter\Features::support(),
         // \FlutterSdk\MagicStarter\Features::releases(),
+        // \FlutterSdk\MagicStarter\Features::aiRuns(),
     ],
 
     /*
@@ -1307,5 +1308,47 @@ return [
 
     'releases' => [
         'limit' => 50,
+    ],
+
+    /*
+    |--------------------------------------------------------------------------
+    | AI Run Log
+    |--------------------------------------------------------------------------
+    |
+    | With the ai-runs feature on, a host app records every model call it makes
+    | through the `RecordsAiRuns` contract and staff read the log from the admin
+    | panel. The package never calls a model itself.
+    |
+    | `retention_days` is the age, in days, after which a run's bodies (prompt,
+    | input, output, tool calls, error message) are blanked. The row, its usage
+    | and its cost stay.
+    |
+    | `abandon_after_minutes` is how long a run may stay `running` before the
+    | hourly prune closes it as `abandoned`. At least 1.
+    |
+    | `max_body_bytes` caps each stored body, in bytes. Longer text is cut.
+    |
+    | Those three are read with these same values as code defaults, so a
+    | published `ai_runs` block may leave any of them out.
+    |
+    | `mask` scrubs secrets from every body before it is written. The package's
+    | own patterns and key names live in `SecretMasker` and always apply; these
+    | lists only add to them. `extra_patterns` are PCRE patterns with their
+    | delimiters: one with a named group `secret` replaces only that group, any
+    | other replaces its whole match, and one that does not compile stops the
+    | application from booting. `extra_keys` are key names whose values are
+    | replaced, in an array and written as `key: value` or `key=value` text,
+    | matched case-insensitively.
+    |
+    */
+
+    'ai_runs' => [
+        'retention_days' => 30,
+        'abandon_after_minutes' => 30,
+        'max_body_bytes' => 262144,
+        'mask' => [
+            'extra_patterns' => [],
+            'extra_keys' => [],
+        ],
     ],
 ];

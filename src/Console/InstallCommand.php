@@ -31,7 +31,7 @@ class InstallCommand extends Command
      */
     protected $signature = 'magic-starter:install
         {--all : Install all features without prompting}
-        {--features=* : Features to install (teams, profile-photos, sessions, social-login, newsletter-subscription, extended-profile, notifications, email-verification, guest-auth, phone-otp, timezones, billing, audit)}
+        {--features=* : Features to install (teams, profile-photos, sessions, social-login, newsletter-subscription, extended-profile, notifications, email-verification, guest-auth, phone-otp, timezones, billing, audit, ai-runs)}
         {--uuid : Use UUID primary keys}
         {--no-uuid : Use auto-incrementing integer primary keys}
         {--route-prefix= : Route prefix for package routes}
@@ -63,6 +63,7 @@ class InstallCommand extends Command
         'audit' => 'Audit trail (model changes and admin actions)',
         'support' => 'Support desk (customer conversations and staff inbox)',
         'releases' => 'App releases (curated release notes and latest builds)',
+        'ai-runs' => 'AI run log (model calls with usage, cost and attempts)',
     ];
 
     /** @var array<string, string> Feature key → Features class method name. */
@@ -83,6 +84,7 @@ class InstallCommand extends Command
         'audit' => 'audit',
         'support' => 'support',
         'releases' => 'releases',
+        'ai-runs' => 'aiRuns',
     ];
 
     /** @var list<string> Migrations always published regardless of feature selection. */
@@ -169,6 +171,11 @@ class InstallCommand extends Command
         ],
         'releases' => [
             'create_app_releases_table.php',
+        ],
+        // Attempts point at runs, so the runs table is stamped first.
+        'ai-runs' => [
+            'create_ai_runs_table.php',
+            'create_ai_run_attempts_table.php',
         ],
         // Entitlement provenance lands on whichever table
         // `magic-starter.billing.billable` names, which is `users` by default

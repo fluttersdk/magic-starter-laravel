@@ -9,6 +9,7 @@ use FlutterSdk\MagicStarter\Console\ExpireBillingGrantsCommand;
 use FlutterSdk\MagicStarter\Console\FilamentEjectCommand;
 use FlutterSdk\MagicStarter\Console\FilamentInstallCommand;
 use FlutterSdk\MagicStarter\Console\InstallCommand;
+use FlutterSdk\MagicStarter\Console\PruneAiRunsCommand;
 use FlutterSdk\MagicStarter\Console\PruneAuditsCommand;
 use FlutterSdk\MagicStarter\Console\PruneBillingRecordsCommand;
 use FlutterSdk\MagicStarter\Console\PurgeDeletedUsersCommand;
@@ -142,6 +143,11 @@ class MagicStarterServiceProvider extends ServiceProvider
         // singleton so the table check runs once per worker.
         $this->app->singleton(Support\BillingEventRecorder::class);
 
+        // Unconditional like the billing recorder: the recorder itself answers
+        // null while the ai-runs feature is off, so a host records without
+        // branching. A singleton so each table check runs once per worker.
+        $this->app->singleton(Contracts\RecordsAiRuns::class, Support\AiRuns\AiRunRecorder::class);
+
         // Cashier is wired HERE and never in boot(), because boot() is already
         // too late: CashierServiceProvider::boot() registers the stripe/webhook
         // route under config('cashier.path') the moment it runs, and every
@@ -216,6 +222,9 @@ class MagicStarterServiceProvider extends ServiceProvider
     {
         // 0. Refuse a billable subject the rest of this boot cannot serve.
         $this->guardBillableSubject();
+
+        // 0b. Refuse an AI run mask pattern that would otherwise fail every write.
+        $this->guardAiRunMaskPatterns();
 
         // 1. Register named rate limiters for package endpoints.
         $this->configureRateLimiting();
@@ -455,6 +464,16 @@ class MagicStarterServiceProvider extends ServiceProvider
                 ]);
             }
 
+            // Registered and scheduled with the feature: the tables the command
+            // prunes exist only once the ai-runs migrations did.
+            if (Features::hasAiRunFeatures()) {
+                $this->commands([
+                    PruneAiRunsCommand::class,
+                ]);
+
+                $this->schedulePruneAiRuns();
+            }
+
             // Webhook claims accumulate whether or not a catalogue boots, so this
             // is gated on the feature alone, unlike the reconciler (3.4c).
             if (Features::hasBillingFeatures()) {
@@ -593,6 +612,41 @@ class MagicStarterServiceProvider extends ServiceProvider
             . 'cannot run either.',
             Features::teams(),
         ));
+    }
+
+    /**
+     * Refuse to boot when an extra AI run mask pattern does not compile.
+     *
+     * The masker runs inside the host's AI call path, where an invalid pattern
+     * would raise a warning, which Laravel turns into an `ErrorException`, on
+     * every recorded call. Failing the deploy once is the cheaper outcome, like
+     * {@see self::guardBillableSubject()}. Checked only while the ai-runs feature
+     * is on, since nothing reads the patterns otherwise.
+     *
+     * @throws RuntimeException
+     */
+    private function guardAiRunMaskPatterns(): void
+    {
+        if (! Features::hasAiRunFeatures()) {
+            return;
+        }
+
+        /** @var list<string> $patterns */
+        $patterns = config('magic-starter.ai_runs.mask.extra_patterns', []);
+
+        foreach ($patterns as $pattern) {
+            // Silenced because the exception below carries the same compile error and names the pattern.
+            if (@preg_match($pattern, '') !== false) {
+                continue;
+            }
+
+            throw new RuntimeException(sprintf(
+                '[magic-starter.ai_runs.mask.extra_patterns] holds [%s], which is not a valid PCRE pattern: %s. '
+                . 'Fix or remove it; the AI run log masks every body with it.',
+                $pattern,
+                error_get_last()['message'] ?? preg_last_error_msg(),
+            ));
+        }
     }
 
     /**
@@ -751,6 +805,27 @@ class MagicStarterServiceProvider extends ServiceProvider
             $schedule->command(PruneAuditsCommand::NAME)
                 ->name(PruneAuditsCommand::NAME)
                 ->daily()
+                ->withoutOverlapping();
+        });
+    }
+
+    /**
+     * Put `magic-starter:ai-runs:prune` on the schedule, hourly.
+     *
+     * Attached through `callAfterResolving()` for the reason
+     * {@see self::scheduleEntitlementReconciler()} gives, and mirroring
+     * {@see self::schedulePruneAudits()}: `withoutOverlapping()` keeps a run
+     * that outlasts its tick from racing its successor over the same rows.
+     * Hourly rather than daily because the abandon threshold is counted in
+     * minutes (30 by default): a daily sweep would leave a dead run `running`
+     * for up to a day. The body pass finds nothing new on most ticks.
+     */
+    private function schedulePruneAiRuns(): void
+    {
+        $this->callAfterResolving(Schedule::class, function (Schedule $schedule): void {
+            $schedule->command(PruneAiRunsCommand::NAME)
+                ->name(PruneAiRunsCommand::NAME)
+                ->hourly()
                 ->withoutOverlapping();
         });
     }
