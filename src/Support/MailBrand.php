@@ -6,7 +6,7 @@ use Illuminate\Support\Arr;
 use InvalidArgumentException;
 
 /**
- * The brand an app configures under `magic-starter.mail.brand`, read and checked once.
+ * The brand an app configures under `magic-starter.mail.brand`, checked on every read.
  *
  * The mail theme prints these values into a stylesheet and an `<img src>`, so a
  * bad one has to fail here, loudly, with the config key and the value in the
@@ -89,7 +89,7 @@ final class MailBrand
     }
 
     /**
-     * The value of the `color-scheme` meta tag and CSS property.
+     * The value of the `color-scheme` and `supported-color-schemes` meta tags.
      *
      * A client that is told `light dark` may restyle a mail by itself, so it is
      * only claimed once the dark colours exist.

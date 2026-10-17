@@ -116,6 +116,28 @@ final class MailBrandRenderTest extends TestCase
         $this->assertStringContainsString('<a href="https://acme.test"', $html);
         $this->assertStringContainsString('content="light dark"', $html);
         $this->assertStringContainsString('prefers-color-scheme: dark', $html);
+        $this->assertStringContainsString(
+            'background-color: ' . config('magic-starter.mail.brand.colors.dark.background') . ' !important',
+            $html,
+        );
+        $this->assertStringContainsString(
+            'color: ' . config('magic-starter.mail.brand.colors.dark.on_primary') . ' !important',
+            $html,
+        );
+    }
+
+    #[DefineEnvironment('brandOn')]
+    public function test_success_and_error_buttons_keep_white_text_whatever_the_brand_foreground(): void
+    {
+        config(['magic-starter.mail.brand.colors.light.on_primary' => '#111111']);
+
+        $html = (string) (new MailMessage)->error()->line('Body')->action('Retry', 'https://acme.test/retry')->render();
+
+        $this->assertMatchesRegularExpression(
+            '/<a href="https:\/\/acme\.test\/retry" class="button button-error"[^>]*style="[^"]*color: #ffffff/',
+            $html,
+        );
+        $this->assertStringNotContainsString('color: #111111', $html);
     }
 
     #[DefineEnvironment('brandOnNoDark')]

@@ -239,7 +239,7 @@ img {
 .button {
     -webkit-text-size-adjust: none;
     border-radius: {{ $brand->buttonRadius }}px;
-    color: {{ $brand->light['on_primary'] }};
+    color: #ffffff;
     display: inline-block;
     overflow: hidden;
     text-decoration: none;
@@ -252,6 +252,7 @@ img {
     border-left: 18px solid {{ $brand->light['primary'] }};
     border-right: 18px solid {{ $brand->light['primary'] }};
     border-top: 8px solid {{ $brand->light['primary'] }};
+    color: {{ $brand->light['on_primary'] }};
 }
 
 .button-green,

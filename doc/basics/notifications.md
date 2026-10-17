@@ -816,7 +816,7 @@ Dark colours are optional. When all eight are set, Apple Mail, Outlook.com and O
 
 ### Overriding one component
 
-The package appends its `resources/views/mail` directory to `mail.markdown.paths` and sets `mail.markdown.theme` to `magic-starter::mail.theme`. It replaces `layout`, `header` and `message` (html) and `message` (text); button, panel, table, subcopy and footer stay Laravel's. Because the package path is appended, a directory your app already lists wins per component. Laravel's default `resources/views/vendor/mail` is one, so a file there overrides the package:
+The package appends its `resources/views/mail` directory to `mail.markdown.paths` and sets `mail.markdown.theme` to `magic-starter::mail.theme`, replacing any theme the app configured there; a theme set on a single message with `->theme()` still wins. It replaces `layout`, `header` and `message` (html) and `message` (text); button, panel, table, subcopy and footer stay Laravel's. Because the package path is appended, a directory your app already lists wins per component. Laravel's default `resources/views/vendor/mail` is one, so a file there overrides the package:
 
 ```
 resources/views/vendor/mail/html/header.blade.php

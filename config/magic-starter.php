@@ -1321,8 +1321,8 @@ return [
     | notifications, the app's own and Laravel's password reset. Components an
     | app keeps in its own `mail.markdown.paths` still win over the package's.
     |
-    | The light colours default to Laravel's own theme, so switching the brand
-    | on without values looks like a stock Laravel mail. Colours are six digit
+    | The light colours default to the colours of Laravel's current default
+    | mail theme (Laravel 12.41 and later). Colours are six digit
     | hex values. The dark colours are optional, all eight or none: only mail
     | clients that honour prefers-color-scheme show them, the rest keep the
     | light ones.

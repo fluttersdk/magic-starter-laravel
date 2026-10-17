@@ -2,7 +2,7 @@
 <!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Transitional//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-transitional.dtd">
 <html xmlns="http://www.w3.org/1999/xhtml" lang="{{ str_replace('_', '-', app()->getLocale()) }}">
 <head>
-<title>{{ config('app.name') }}</title>
+<title>{{ $brand->name }}</title>
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
 <meta http-equiv="Content-Type" content="text/html; charset=UTF-8" />
 <meta name="color-scheme" content="{{ $brand->colorScheme() }}">
@@ -23,13 +23,15 @@ width: 100% !important;
 width: 100% !important;
 }
 }
+</style>
 @if ($brand->dark !== null)
 @php($dark = $brand->dark)
 {{-- The inline light styles win over any stylesheet rule, so every dark rule needs !important.
      Outlook.com ignores the media query and marks the elements it recolours with data-ogsc (text)
      and data-ogsb (backgrounds), which the attribute rules target. The inliner matches none of
-     these rules against the mail, so they reach the client only through this style tag. --}}
-
+     these rules against the mail, so they reach the client only through this style tag, which is
+     separate so a client that rejects the attribute selectors keeps the responsive rules above. --}}
+<style>
 @media (prefers-color-scheme: dark) {
 body,
 .wrapper,
@@ -81,17 +83,14 @@ border-left-color: {{ $dark['primary'] }} !important;
 color: {{ $dark['muted'] }} !important;
 }
 
+.button-blue,
 .button-primary {
 background-color: {{ $dark['primary'] }} !important;
 border-color: {{ $dark['primary'] }} !important;
-}
-
-.button {
 color: {{ $dark['on_primary'] }} !important;
 }
 }
 
-[data-ogsb] body,
 [data-ogsb] .wrapper,
 [data-ogsb] .body,
 [data-ogsb] .panel-content {
@@ -141,16 +140,18 @@ border-left-color: {{ $dark['primary'] }} !important;
 color: {{ $dark['muted'] }} !important;
 }
 
+[data-ogsb] .button-blue,
 [data-ogsb] .button-primary {
 background-color: {{ $dark['primary'] }} !important;
 border-color: {{ $dark['primary'] }} !important;
 }
 
-[data-ogsc] .button {
+[data-ogsc] .button-blue,
+[data-ogsc] .button-primary {
 color: {{ $dark['on_primary'] }} !important;
 }
-@endif
 </style>
+@endif
 {!! $head ?? '' !!}
 </head>
 <body>
