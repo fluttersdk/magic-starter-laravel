@@ -3,7 +3,7 @@
 
 ## magic-starter-laravel
 
-A Laravel API-only package providing auth, teams, 2FA, profile, sessions, notifications, locale/timezone, newsletter, and OTP modules. All behavior is driven by feature flags, contract-action bindings, and dynamic model resolution — never hardcoded class names or inline logic.
+A Laravel API-only package providing auth, teams, 2FA, profile, sessions, notifications, locale/timezone, newsletter, OTP, and app release notes modules. All behavior is driven by feature flags, contract-action bindings, and dynamic model resolution, never hardcoded class names or inline logic.
 
 ### Critical Rules
 
@@ -52,6 +52,7 @@ All flags are string constants on `Features::class` — add to `config('magic-st
 | `Features::newsletterSubscription()` | `'newsletter-subscription'` | `Features::hasNewsletterSubscriptionFeatures()` |
 | `Features::timezones()` | `'timezones'` | `Features::hasTimezoneFeatures()` |
 | `Features::audit()` | `'audit'` | `Features::hasAuditFeatures()` |
+| `Features::releases()` | `'releases'` | `Features::hasReleaseFeatures()` |
 
 ### Contract Bindings (default, all overridable)
 

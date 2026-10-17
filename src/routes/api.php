@@ -23,6 +23,7 @@ use FlutterSdk\MagicStarter\Http\Controllers\ProfileController;
 use FlutterSdk\MagicStarter\Http\Controllers\ProfilePhotoController;
 use FlutterSdk\MagicStarter\Http\Controllers\PushDeviceController;
 use FlutterSdk\MagicStarter\Http\Controllers\PushTestController;
+use FlutterSdk\MagicStarter\Http\Controllers\ReleaseController;
 use FlutterSdk\MagicStarter\Http\Controllers\SessionController;
 use FlutterSdk\MagicStarter\Http\Controllers\SettingsController;
 use FlutterSdk\MagicStarter\Http\Controllers\SocialAccountController;
@@ -113,6 +114,11 @@ Route::prefix((string) config('magic-starter.route_prefix', ''))
 
         if (Features::hasTimezoneFeatures()) {
             Route::get('timezones', [TimezoneController::class, 'index']);
+        }
+
+        if (Features::hasReleaseFeatures()) {
+            Route::middleware(['throttle:magic-starter-releases'])
+                ->get('releases', [ReleaseController::class, 'index']);
         }
 
         // To require email verification on protected routes, add the 'verified'

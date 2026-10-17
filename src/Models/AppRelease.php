@@ -3,7 +3,9 @@
 namespace FlutterSdk\MagicStarter\Models;
 
 use FlutterSdk\MagicStarter\Enums\ReleaseStatus;
+use FlutterSdk\MagicStarter\Observers\AppReleaseObserver;
 use FlutterSdk\MagicStarter\Support\ConditionallyUsesUuids;
+use Illuminate\Database\Eloquent\Attributes\ObservedBy;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Support\Carbon;
@@ -12,7 +14,8 @@ use Illuminate\Support\Carbon;
  * One shipped version of the app and the notes staff wrote for it.
  *
  * Global to the app, not to a team. Only a published row with a `published_at`
- * is visible to clients; see {@see scopePublished()}.
+ * is visible to clients; see {@see scopePublished()}. A save or a delete drops the
+ * cached releases feed through {@see AppReleaseObserver}.
  *
  * @property string|int $id
  * @property string $version
@@ -24,6 +27,7 @@ use Illuminate\Support\Carbon;
  * @property Carbon|null $created_at
  * @property Carbon|null $updated_at
  */
+#[ObservedBy(AppReleaseObserver::class)]
 class AppRelease extends Model
 {
     use ConditionallyUsesUuids;

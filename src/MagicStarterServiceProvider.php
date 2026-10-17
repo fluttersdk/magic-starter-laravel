@@ -906,6 +906,11 @@ class MagicStarterServiceProvider extends ServiceProvider
             return Limit::perMinute(30)->by($request->ip());
         });
 
+        // Public releases feed: cached server-side, so the limit only guards the cache hit.
+        RateLimiter::for('magic-starter-releases', function ($request) {
+            return Limit::perMinute(60)->by($request->ip());
+        });
+
         // Email verification
         RateLimiter::for('magic-starter-email-verification', function ($request) {
             return Limit::perMinute(1)->by($request->user()?->id ?: $request->ip());

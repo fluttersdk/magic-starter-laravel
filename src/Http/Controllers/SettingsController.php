@@ -39,6 +39,7 @@ class SettingsController
                 'profile_photos' => Features::hasProfilePhotoFeatures(),
                 'notifications' => Features::hasNotificationFeatures(),
                 'timezones' => Features::hasTimezoneFeatures(),
+                'releases' => Features::hasReleaseFeatures(),
             ],
             'auth' => [
                 'email' => Features::emailIdentity(),

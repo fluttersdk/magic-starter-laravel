@@ -58,6 +58,7 @@ Stop rebuilding authentication, profile management, and team features from scrat
 | :camera: | **Profile Photos** | Upload and delete for users and teams |
 | :desktop_computer: | **Sessions** | Active session listing and revocation |
 | :credit_card: | **Billing** | Entitlement columns on the subject you bill, a user or a team, plus one guarded write path so more than one payment rail can claim a tier without racing |
+| :rocket: | **Releases** | Staff write the release notes of each app version in the admin panel; clients read the published ones, with the latest iOS and Android build, from a public cached endpoint |
 | :scroll: | **Audit Trail** | Every model create, update and delete recorded after commit with the actor and request, secrets redacted, pruned on a schedule |
 | :control_knobs: | **Admin Panel** | Optional Filament plugin: users, teams, subscriptions, newsletter and audits, plus Horizon, Pulse and Telescope behind one gate. Every write goes through the action contracts |
 
@@ -167,7 +168,7 @@ You will also need to:
 
 ## Feature Toggles
 
-All 15 features are opt-in. Enable them by uncommenting in `config/magic-starter.php`:
+All 21 features are opt-in. Enable them by uncommenting in `config/magic-starter.php`:
 
 | Toggle Key | Description |
 |------------|-------------|
@@ -186,6 +187,7 @@ All 15 features are opt-in. Enable them by uncommenting in `config/magic-starter
 | `onesignal` | OneSignal push channel for the notification features, plus, with `notifications` on, `POST devices/push-state` and `POST devices/push-state/release`, where a client reports and withdraws its own device's push reachability (`PushDevice::canReachByPush()`) |
 | `billing` | Entitlement columns on the declared billable subject (`billing.billable`, a user or a team) and the arbitration contract that writes them |
 | `audit` | Audit trail of model changes and admin panel actions in `magic_starter_audits` |
+| `releases` | Release notes staff write in the admin panel, read by clients from the public `GET releases` with the latest iOS and Android build |
 
 ---
 
