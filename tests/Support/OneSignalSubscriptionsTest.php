@@ -123,6 +123,28 @@ final class OneSignalSubscriptionsTest extends TestCase
         $this->assertNull($reported[0]->getPrevious());
     }
 
+    public function test_ensure_sms_subscription_reports_an_sdk_error_without_throwing(): void
+    {
+        // Arrange: an `Error`, not an `Exception`, as the SDK raises when it
+        // deserialises a response shape it does not expect.
+        $user = $this->userWithPhone(self::PHONE);
+
+        $client = $this->createMock(DefaultApi::class);
+        $client->method('getUser')->willThrowException(new TypeError('unexpected response shape'));
+        $client->expects($this->never())->method('createUser');
+
+        $reported = $this->captureReports();
+
+        // Act: the send is not poisoned, and the guard stays unset (retryable).
+        $this->assertFalse((new OneSignalSubscriptions($client))->ensureSmsSubscription($user));
+
+        // Assert
+        $this->assertNull($user->fresh()->sms_registered_at);
+        $this->assertCount(1, $reported);
+        $this->assertSame('OneSignal SMS registration failed: getUser threw TypeError', $reported[0]->getMessage());
+        $this->assertNull($reported[0]->getPrevious());
+    }
+
     public function test_ensure_sms_subscription_skips_a_user_without_a_phone(): void
     {
         // Arrange
@@ -344,21 +366,6 @@ final class OneSignalSubscriptionsTest extends TestCase
 
         // Assert
         $this->assertSame('pt', $created->getProperties()->getLanguage());
-    }
-
-    public function test_a_programming_error_from_the_client_is_not_swallowed(): void
-    {
-        // Arrange
-        $user = $this->userWithPhone(self::PHONE);
-
-        $client = $this->createMock(DefaultApi::class);
-        $client->method('getUser')->willThrowException(new TypeError('bad argument'));
-
-        // Assert
-        $this->expectException(TypeError::class);
-
-        // Act
-        (new OneSignalSubscriptions($client))->ensureSmsSubscription($user);
     }
 
     public function test_ensure_sms_subscription_leaves_the_guard_unset_when_a_delete_fails(): void
