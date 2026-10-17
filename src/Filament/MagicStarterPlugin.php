@@ -114,8 +114,8 @@ class MagicStarterPlugin implements Plugin
      * Register a resource class under a key.
      *
      * A default key (`users`, `teams`, `subscriptions`, `billing_events`,
-     * `webhook_deliveries`, `newsletter_subscribers`, `audits`, `support`, `releases`, `ai_runs`) keeps its
-     * feature gate; any other key is registered unconditionally.
+     * `webhook_deliveries`, `newsletter_subscribers`, `audits`, `support`, `releases`, `ai_runs`, `ai_prompts`)
+     * keeps its feature gate; any other key is registered unconditionally.
      */
     public function resource(string $key, string $class): static
     {
@@ -494,6 +494,7 @@ class MagicStarterPlugin implements Plugin
                 . 'SupportFeedbackResource',
             'releases' => 'FlutterSdk\\MagicStarter\\Filament\\Resources\\AppReleases\\AppReleaseResource',
             'ai_runs' => 'FlutterSdk\\MagicStarter\\Filament\\Resources\\AiRuns\\AiRunResource',
+            'ai_prompts' => 'FlutterSdk\\MagicStarter\\Filament\\Resources\\AiPrompts\\AiPromptOverrideResource',
             ...$this->resources,
         ];
 
@@ -529,6 +530,7 @@ class MagicStarterPlugin implements Plugin
             'support_feedback' => Features::hasSupportFeatures() && Features::hasSupportFeedbackFeatures(),
             'releases' => Features::hasReleaseFeatures(),
             'ai_runs' => Features::hasAiRunFeatures(),
+            'ai_prompts' => Features::hasAiPromptFeatures(),
             default => true,
         };
     }

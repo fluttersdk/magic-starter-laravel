@@ -316,4 +316,28 @@ class FeaturesTest extends TestCase
     {
         $this->assertNotContains(Features::aiRuns(), config('magic-starter.features'));
     }
+
+    public function test_ai_prompts_feature_constant(): void
+    {
+        $this->assertSame('ai-prompts', Features::aiPrompts());
+    }
+
+    public function test_has_ai_prompt_features_returns_false_by_default(): void
+    {
+        config(['magic-starter.features' => []]);
+
+        $this->assertFalse(Features::hasAiPromptFeatures());
+    }
+
+    public function test_has_ai_prompt_features_returns_true_when_enabled(): void
+    {
+        config(['magic-starter.features' => [Features::aiPrompts()]]);
+
+        $this->assertTrue(Features::hasAiPromptFeatures());
+    }
+
+    public function test_ai_prompts_feature_is_off_by_default(): void
+    {
+        $this->assertNotContains(Features::aiPrompts(), config('magic-starter.features'));
+    }
 }
