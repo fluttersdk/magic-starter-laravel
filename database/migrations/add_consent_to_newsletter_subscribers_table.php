@@ -35,19 +35,8 @@ return new class extends Migration
 
         $this->addColumns();
 
-        // 1. The owner first, because an owner-less row is not backfilled but removed. An app whose
-        // users table is unique only case-sensitively can hold two users differing by case; the
-        // exact match wins, so the scalar subquery never returns two rows and stops the deploy.
-        DB::table(self::TABLE)
-            ->whereNull('user_id')
-            ->update([
-                'user_id' => DB::table('users')
-                    ->select('users.id')
-                    ->whereRaw('lower(users.email) = lower(' . self::TABLE . '.email)')
-                    ->orderByRaw('case when users.email = ' . self::TABLE . '.email then 0 else 1 end')
-                    ->orderBy('users.id')
-                    ->limit(1),
-            ]);
+        // 1. The owner first, because an owner-less row is not backfilled but removed.
+        $this->backfillOwners();
 
         // 2. Orphans go before anything is minted for them.
         $this->deleteOrphans();
@@ -115,6 +104,43 @@ return new class extends Migration
                 $table->string('unsubscribe_token', 64)->nullable()->unique();
             }
         });
+    }
+
+    /**
+     * Give each row the user whose address it carries.
+     *
+     * An exact match first, set-based. Then the rows that match only when case is ignored, one at
+     * a time: an app whose unique indexes are case-sensitive can hold `Foo@x` and `foo@x` in either
+     * table, and `user_id` is unique, so a row whose user another row already owns stays owner-less
+     * (and is removed with the orphans) instead of failing the deploy on the index.
+     */
+    private function backfillOwners(): void
+    {
+        DB::table(self::TABLE)
+            ->whereNull('user_id')
+            ->update([
+                'user_id' => DB::table('users')
+                    ->select('users.id')
+                    ->whereColumn('users.email', self::TABLE . '.email')
+                    ->limit(1),
+            ]);
+
+        DB::table(self::TABLE)
+            ->whereNull('user_id')
+            ->select('id', 'email')
+            ->chunkById(self::CHUNK, function (Collection $rows): void {
+                foreach ($rows as $row) {
+                    $owner = DB::table('users')
+                        ->whereRaw('lower(email) = ?', [mb_strtolower((string) $row->email)])
+                        ->value('id');
+
+                    if ($owner === null || DB::table(self::TABLE)->where('user_id', $owner)->exists()) {
+                        continue;
+                    }
+
+                    DB::table(self::TABLE)->where('id', $row->id)->update(['user_id' => $owner]);
+                }
+            });
     }
 
     /**

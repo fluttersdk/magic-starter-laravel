@@ -81,6 +81,31 @@ class NewsletterConsentMigrationTest extends TestCase
         $this->assertEquals($shouting, $this->subscriber('Shouting@Example.COM')->user_id);
     }
 
+    public function test_two_rows_differing_only_by_case_leave_one_owner_and_one_orphan(): void
+    {
+        $this->buildLegacySchema();
+        $owner = $this->insertUser('twin@example.com');
+        $this->insertSubscriber('twin@example.com');
+        $this->insertSubscriber('Twin@Example.com');
+
+        $this->consentMigration()->up();
+
+        $this->assertEquals($owner, $this->subscriber('twin@example.com')->user_id);
+        $this->assertSame(1, DB::table('newsletter_subscribers')->count());
+    }
+
+    public function test_an_exact_case_user_wins_over_a_case_variant(): void
+    {
+        $this->buildLegacySchema();
+        $this->insertUser('casey@example.com');
+        $exact = $this->insertUser('Casey@Example.com');
+        $this->insertSubscriber('Casey@Example.com');
+
+        $this->consentMigration()->up();
+
+        $this->assertEquals($exact, $this->subscriber('Casey@Example.com')->user_id);
+    }
+
     public function test_a_legacy_row_gets_the_pre_e5a_consent_record(): void
     {
         $this->buildLegacySchema();
