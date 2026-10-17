@@ -119,6 +119,22 @@ class SettingsControllerTest extends TestCase
     }
 
     /**
+     * The releases flag follows the feature, so a client knows whether to ask for release notes.
+     */
+    public function test_settings_reflects_the_releases_feature(): void
+    {
+        $this->getJson('/settings')->assertOk()->assertJsonPath('features.releases', false);
+
+        config([
+            'magic-starter.features' => [
+                Features::releases(),
+            ],
+        ]);
+
+        $this->getJson('/settings')->assertOk()->assertJsonPath('features.releases', true);
+    }
+
+    /**
      * The supported_locales list must be a non-empty array from config.
      */
     public function test_settings_returns_supported_locales(): void

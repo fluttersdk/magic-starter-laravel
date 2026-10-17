@@ -111,6 +111,11 @@ class MagicStarterServiceProvider extends ServiceProvider
         $this->app->bind(Contracts\RepliesToSupport::class, Actions\ReplyToSupportConversation::class);
         $this->app->bind(Contracts\ChangesSupportConversations::class, Actions\ChangeSupportConversation::class);
 
+        // How staff curate app releases. Unconditional like every binding above it.
+        $this->app->bind(Contracts\CreatesAppReleases::class, Actions\CreateAppRelease::class);
+        $this->app->bind(Contracts\UpdatesAppReleases::class, Actions\UpdateAppRelease::class);
+        $this->app->bind(Contracts\DeletesAppReleases::class, Actions\DeleteAppRelease::class);
+
         // Bound unconditionally, like every binding above it: the billing
         // feature gates the SCHEMA (see InstallCommand), not the arbitration
         // contract. A consumer has to be able to bind its own entitlement
@@ -904,6 +909,11 @@ class MagicStarterServiceProvider extends ServiceProvider
         // Public settings
         RateLimiter::for('magic-starter-settings', function ($request) {
             return Limit::perMinute(30)->by($request->ip());
+        });
+
+        // Public releases feed: cached server-side, so the limit only guards the cache hit.
+        RateLimiter::for('magic-starter-releases', function ($request) {
+            return Limit::perMinute(60)->by($request->ip());
         });
 
         // Email verification

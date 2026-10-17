@@ -267,4 +267,29 @@ class FeaturesTest extends TestCase
 
         $this->assertTrue(Features::hasEmailVerificationFeatures());
     }
+
+    public function test_releases_feature_constant(): void
+    {
+        $this->assertSame('releases', Features::releases());
+    }
+
+    public function test_has_release_features_returns_false_by_default(): void
+    {
+        config(['magic-starter.features' => []]);
+
+        $this->assertFalse(Features::hasReleaseFeatures());
+    }
+
+    public function test_has_release_features_returns_true_when_enabled(): void
+    {
+        config(['magic-starter.features' => [Features::releases()]]);
+
+        $this->assertTrue(Features::hasReleaseFeatures());
+    }
+
+    public function test_releases_config_ships_a_limit_and_leaves_the_feature_off(): void
+    {
+        $this->assertSame(50, config('magic-starter.releases.limit'));
+        $this->assertNotContains(Features::releases(), config('magic-starter.features'));
+    }
 }

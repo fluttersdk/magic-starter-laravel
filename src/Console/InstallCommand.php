@@ -62,6 +62,7 @@ class InstallCommand extends Command
         'billing' => 'Billing entitlement (provider-neutral plan provenance)',
         'audit' => 'Audit trail (model changes and admin actions)',
         'support' => 'Support desk (customer conversations and staff inbox)',
+        'releases' => 'App releases (curated release notes and latest builds)',
     ];
 
     /** @var array<string, string> Feature key → Features class method name. */
@@ -81,6 +82,7 @@ class InstallCommand extends Command
         'billing' => 'billing',
         'audit' => 'audit',
         'support' => 'support',
+        'releases' => 'releases',
     ];
 
     /** @var list<string> Migrations always published regardless of feature selection. */
@@ -164,6 +166,9 @@ class InstallCommand extends Command
             'add_feedback_columns_to_support_conversations_table.php',
             'create_support_message_attachments_table.php',
             'create_support_feedback_table.php',
+        ],
+        'releases' => [
+            'create_app_releases_table.php',
         ],
         // Entitlement provenance lands on whichever table
         // `magic-starter.billing.billable` names, which is `users` by default

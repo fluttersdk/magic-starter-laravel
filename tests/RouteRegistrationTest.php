@@ -259,6 +259,22 @@ final class RouteRegistrationTest extends TestCase
         $this->assertRouteMissing('PUT', '/user/newsletter');
     }
 
+    public function test_releases_route_registered_when_feature_enabled(): void
+    {
+        $this->bootRoutesWithConfig([
+            Features::releases(),
+        ]);
+
+        $this->assertRouteExists('GET', '/releases');
+    }
+
+    public function test_releases_route_not_registered_when_feature_disabled(): void
+    {
+        $this->bootRoutesWithConfig([]);
+
+        $this->assertRouteMissing('GET', '/releases');
+    }
+
     private function bootRoutesWithConfig(array $features, string $prefix = ''): void
     {
         config([

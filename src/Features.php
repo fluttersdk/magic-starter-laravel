@@ -170,6 +170,14 @@ class Features
     }
 
     /**
+     * Enable the release notes clients read from the public releases endpoint.
+     */
+    public static function releases(): string
+    {
+        return 'releases';
+    }
+
+    /**
      * Determine whether the given feature is enabled.
      */
     public static function enabled(string $feature): bool
@@ -335,6 +343,14 @@ class Features
     public static function hasSupportDiagnosticsFeatures(): bool
     {
         return static::enabled(static::supportDiagnostics());
+    }
+
+    /**
+     * Determine whether the release notes feature is enabled.
+     */
+    public static function hasReleaseFeatures(): bool
+    {
+        return static::enabled(static::releases());
     }
 
     /**

@@ -59,7 +59,7 @@ Features follow a toggle pattern inspired by Jetstream. Enable features by addin
 
 When a feature is disabled (omitted from the array), its routes are not registered and its functionality is unavailable. Core authentication and profile management routes are always active regardless of feature flags.
 
-The 12 features and their toggle methods:
+The main features and their toggle methods:
 
 | Feature Key | Enable Method | Check Method | Description |
 |:------------|:--------------|:-------------|:------------|
@@ -75,6 +75,7 @@ The 12 features and their toggle methods:
 | `guest-auth` | `Features::guestAuth()` | `Features::hasGuestAuthFeatures()` | Anonymous guest user authentication |
 | `phone-otp` | `Features::phoneOtp()` | `Features::hasPhoneOtpFeatures()` | Phone-based OTP verification flow |
 | `timezones` | `Features::timezones()` | `Features::hasTimezoneFeatures()` | Timezone detection and per-user timezone storage |
+| `releases` | `Features::releases()` | `Features::hasReleaseFeatures()` | Release notes staff curate and clients read from `GET releases` |
 
 <a name="programmatic-feature-checking"></a>
 ## Programmatic Feature Checking

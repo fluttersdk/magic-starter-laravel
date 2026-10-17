@@ -67,6 +67,7 @@ Check `Features::enabled()` or the dedicated gate methods before any feature-spe
 | Phone OTP | `Features::hasPhoneOtpFeatures()` | `phone-otp` |
 | Timezones | `Features::hasTimezoneFeatures()` | `timezones` |
 | Audit trail | `Features::hasAuditFeatures()` | `audit` |
+| Releases | `Features::hasReleaseFeatures()` | `releases` |
 
 Enable features in `config/magic-starter.php` under the `features` array.
 

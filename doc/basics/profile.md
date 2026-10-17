@@ -342,7 +342,8 @@ This endpoint intentionally does not require authentication. It only exposes all
         "sessions": true,
         "profile_photos": true,
         "notifications": true,
-        "timezones": true
+        "timezones": true,
+        "releases": false
     },
     "auth": {
         "email": true,
