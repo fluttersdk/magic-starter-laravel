@@ -143,10 +143,12 @@ Every resource sits behind the feature that owns its data.
 | Users | Edit profile fields; reset two-factor, revoke API tokens, resend the verification mail, schedule account deletion (optionally `immediately`) or cancel it. Tabs for tokens, social accounts, push devices, teams and audits | each tab needs its own feature: `sessions`, `social-login`, `onesignal`, `teams`, `audit` |
 | Teams | Rename; delete; add, re-role and remove members; make a member the owner; invite, resend and cancel invitations | `teams` |
 | Subscriptions | Read the list; run "Reconcile now" | `billing` |
-| Newsletter subscribers | Toggle active; export CSV | `newsletter-subscription` |
+| Newsletter subscribers | Read the list and each row's consent record; deactivate an active subscriber; export CSV | `newsletter-subscription` |
 | Audits | List and view | `audit` |
 
 The dashboard lives at `/dashboard` and shows headline counts, plus Horizon and Pulse summaries when those tools are enabled.
+
+Newsletter subscribers is read-mostly. The one write is "Deactivate", which withdraws an active subscription as `via` `staff` and records `unsubscribed_at`. No action turns a row back on: re-activating needs the person's own consent, which only they can give through the profile toggle. The list shows `consented_at`, `consent_version`, `consent_source` and `unsubscribed_at`, and the CSV export carries the same columns beside `email`, `is_active`, `source` and `created_at`. The unsubscribe token is never listed or exported.
 
 ---
 
