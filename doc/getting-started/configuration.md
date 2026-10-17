@@ -59,7 +59,7 @@ Features follow a toggle pattern inspired by Jetstream. Enable features by addin
 
 When a feature is disabled (omitted from the array), its routes are not registered and its functionality is unavailable. Core authentication and profile management routes are always active regardless of feature flags.
 
-The 21 features and their toggle methods:
+The main features and their toggle methods:
 
 | Feature Key | Enable Method | Check Method | Description |
 |:------------|:--------------|:-------------|:------------|

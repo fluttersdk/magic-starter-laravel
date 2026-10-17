@@ -30,7 +30,7 @@ class AppReleaseForm
                     ->maxLength(32),
                 Select::make('status')
                     ->label(__('magic-starter::admin_misc.releases.fields.status'))
-                    ->options(static::statusOptions())
+                    ->options(static::options(ReleaseStatus::cases()))
                     ->default(ReleaseStatus::DRAFT->value)
                     ->required(),
                 DateTimePicker::make('published_at')
@@ -38,17 +38,19 @@ class AppReleaseForm
                 TextInput::make('ios_build')
                     ->label(__('magic-starter::admin_misc.releases.fields.ios_build'))
                     ->numeric()
-                    ->minValue(1),
+                    ->minValue(1)
+                    ->maxValue(2147483647),
                 TextInput::make('android_build')
                     ->label(__('magic-starter::admin_misc.releases.fields.android_build'))
                     ->numeric()
-                    ->minValue(1),
+                    ->minValue(1)
+                    ->maxValue(2147483647),
                 Repeater::make('items')
                     ->label(__('magic-starter::admin_misc.releases.fields.items'))
                     ->schema([
                         Select::make('type')
                             ->label(__('magic-starter::admin_misc.releases.fields.type'))
-                            ->options(static::itemTypeOptions())
+                            ->options(static::options(ReleaseItemType::cases()))
                             ->required(),
                         ...static::textInputs(),
                     ])
@@ -61,22 +63,15 @@ class AppReleaseForm
     }
 
     /**
+     * Translated select options keyed by the stored value.
+     *
+     * @param  list<ReleaseStatus|ReleaseItemType>  $cases
      * @return array<string, string>
      */
-    protected static function statusOptions(): array
+    protected static function options(array $cases): array
     {
-        return collect(ReleaseStatus::cases())
-            ->mapWithKeys(static fn (ReleaseStatus $status): array => [$status->value => $status->label()])
-            ->all();
-    }
-
-    /**
-     * @return array<string, string>
-     */
-    protected static function itemTypeOptions(): array
-    {
-        return collect(ReleaseItemType::cases())
-            ->mapWithKeys(static fn (ReleaseItemType $type): array => [$type->value => $type->label()])
+        return collect($cases)
+            ->mapWithKeys(static fn (ReleaseStatus|ReleaseItemType $case): array => [$case->value => $case->label()])
             ->all();
     }
 

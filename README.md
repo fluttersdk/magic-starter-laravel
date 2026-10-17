@@ -168,7 +168,7 @@ You will also need to:
 
 ## Feature Toggles
 
-All 21 features are opt-in. Enable them by uncommenting in `config/magic-starter.php`:
+Every feature is opt-in. Enable them by uncommenting in `config/magic-starter.php`:
 
 | Toggle Key | Description |
 |------------|-------------|

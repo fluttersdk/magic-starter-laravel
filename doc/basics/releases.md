@@ -119,7 +119,7 @@ The route is throttled to 60 requests per minute per IP (the `magic-starter-rele
 - At most `releases.limit` releases are returned.
 - `type` is one of `new`, `improved` or `fixed`.
 - `text` carries every key of `magic-starter.supported_locales`. A locale the staff left empty shows the `defaults.locale` text, so a client can read its own locale without a fallback of its own.
-- `meta.latest_build.ios` and `meta.latest_build.android` hold the highest build number across all published releases, not only the ones in `data`. Each is `null` when there are no published releases.
+- `meta.latest_build.ios` and `meta.latest_build.android` hold the highest build number across all published releases, not only the ones in `data`. Each is `null` when no published release carries a build for that platform.
 
 ---
 
@@ -150,7 +150,7 @@ The panel writes releases through three contracts. Bind your own to change what 
 
 ```php
 // App\Providers\AppServiceProvider::register()
-$this->app->singleton(CreatesAppReleases::class, \App\Actions\CreateAppRelease::class);
+$this->app->bind(CreatesAppReleases::class, \App\Actions\CreateAppRelease::class);
 ```
 
-Bind in `register()`, not `boot()`.
+Bind in `register()`, not `boot()`. The default update action validates through the default create action, so bind both when you change the rules.

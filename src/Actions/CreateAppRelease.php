@@ -67,8 +67,9 @@ class CreateAppRelease implements CreatesAppReleases
             ],
             'status' => ['required', Rule::enum(ReleaseStatus::class)],
             'published_at' => ['nullable', 'date', 'before_or_equal:now'],
-            'ios_build' => ['nullable', 'integer', 'min:1'],
-            'android_build' => ['nullable', 'integer', 'min:1'],
+            // PostgreSQL stores an unsignedInteger as a signed integer.
+            'ios_build' => ['nullable', 'integer', 'min:1', 'max:2147483647'],
+            'android_build' => ['nullable', 'integer', 'min:1', 'max:2147483647'],
             'items' => ['required', 'array', 'min:1', 'max:50'],
             'items.*.type' => ['required', Rule::enum(ReleaseItemType::class)],
             ...$textRules,

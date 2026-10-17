@@ -35,10 +35,7 @@ final class ReleaseFeed
         return Cache::remember(self::CACHE_KEY, self::TTL_SECONDS, static fn (): array => [
             'data' => self::releases(),
             'meta' => [
-                'latest_build' => [
-                    'ios' => self::latestBuild('ios_build'),
-                    'android' => self::latestBuild('android_build'),
-                ],
+                'latest_build' => self::latestBuilds(),
             ],
         ]);
     }
@@ -69,12 +66,21 @@ final class ReleaseFeed
     }
 
     /**
-     * The highest build of one platform over every published release, or null when none carries it.
+     * The highest build of each platform over every published release, null for a platform none carries.
+     *
+     * @return array{ios: int|null, android: int|null}
      */
-    private static function latestBuild(string $column): ?int
+    private static function latestBuilds(): array
     {
-        $build = AppRelease::query()->published()->max($column);
+        $builds = AppRelease::query()
+            ->published()
+            ->toBase()
+            ->selectRaw('max(ios_build) as ios, max(android_build) as android')
+            ->first();
 
-        return $build === null ? null : (int) $build;
+        return [
+            'ios' => $builds?->ios === null ? null : (int) $builds->ios,
+            'android' => $builds?->android === null ? null : (int) $builds->android,
+        ];
     }
 }

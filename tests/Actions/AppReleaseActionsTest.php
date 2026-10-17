@@ -127,6 +127,14 @@ class AppReleaseActionsTest extends TestCase
         ));
     }
 
+    public function test_create_refuses_a_build_number_past_a_signed_integer(): void
+    {
+        $this->assertRefused('ios_build', fn () => app(CreatesAppReleases::class)->create(
+            new ConcreteUser,
+            $this->input(['ios_build' => 2147483648]),
+        ));
+    }
+
     public function test_create_refuses_a_bad_version_format(): void
     {
         $this->assertRefused('version', fn () => app(CreatesAppReleases::class)->create(
