@@ -35,8 +35,8 @@ The notifications module is feature-gated behind `Features::notifications()`. Al
 
 The module provides two distinct concerns:
 
-1. **Database notification management** — read, mark, and delete Laravel database notifications via `NotificationController`.
-2. **Notification preference management** — per-type, per-channel opt-in/opt-out matrix via `NotificationPreferenceController`.
+1. **Database notification management** - read, mark, and delete Laravel database notifications via `NotificationController`.
+2. **Notification preference management** - per-type, per-channel opt-in/opt-out matrix via `NotificationPreferenceController`.
 
 All routes require an authenticated user (Sanctum `auth:sanctum` middleware is applied at the route group level by `MagicStarterServiceProvider`).
 
@@ -78,7 +78,7 @@ Returns a paginated list of all database notifications for the authenticated use
 The response shape follows Laravel's `AnonymousResourceCollection` with standard pagination links and meta. The `data` field inside each notification item is application-defined.
 
 > [!NOTE]
-> The controller delegates to `$request->user()->notifications()->paginate($perPage)`. The `notifications()` relation is provided by Laravel's `Notifiable` trait — ensure your User model uses it.
+> The controller delegates to `$request->user()->notifications()->paginate($perPage)`. The `notifications()` relation is provided by Laravel's `Notifiable` trait - ensure your User model uses it.
 
 **Controller**: `NotificationController@index`
 
@@ -116,7 +116,7 @@ Marks a single notification as read by setting `read_at` to the current timestam
 |-----------|--------|-----------------------------------------|
 | `id`      | string | The UUID of the notification to mark.   |
 
-The notification is scoped to the authenticated user — attempting to mark another user's notification returns `404`.
+The notification is scoped to the authenticated user - attempting to mark another user's notification returns `404`.
 
 ### Response
 
@@ -154,7 +154,7 @@ Bulk-updates all unread notifications for the authenticated user by setting `rea
 
 **`DELETE /notifications/{id}`**
 
-Permanently deletes a single notification. The notification is scoped to the authenticated user — attempting to delete another user's notification returns `404`.
+Permanently deletes a single notification. The notification is scoped to the authenticated user - attempting to delete another user's notification returns `404`.
 
 ### Path Parameters
 
@@ -256,7 +256,7 @@ Notification preferences allow users to opt in or out of specific notification t
 
 **`GET /notification-preferences`**
 
-Returns the full type × channel matrix for the authenticated user. Each entry reflects the effective preference — either the stored DB override or the registry default.
+Returns the full type × channel matrix for the authenticated user. Each entry reflects the effective preference - either the stored DB override or the registry default.
 
 ### Response
 
@@ -274,8 +274,8 @@ Returns the full type × channel matrix for the authenticated user. Each entry r
 }
 ```
 
-- `enabled` — whether the user currently has this channel on for this type.
-- `locked` — whether the channel cannot be changed (the registry defined it as locked). Locked channels should be rendered as non-interactive in the UI.
+- `enabled` - whether the user currently has this channel on for this type.
+- `locked` - whether the channel cannot be changed (the registry defined it as locked). Locked channels should be rendered as non-interactive in the UI.
 
 **Controller**: `NotificationPreferenceController@show`
 
@@ -491,13 +491,43 @@ The driver handles the remaining setup:
 
 The channel passes the `Notification` instance directly to the OneSignal SDK for delivery.
 
+### SMS subscriptions
+
+OneSignal delivers an SMS only to a user that carries a registered SMS subscription, and it fans the send out to every SMS subscription the user has. The package registers that subscription lazily, at send time, so the notification's SMS builder calls `ensureSmsSubscription()` before it builds the payload:
+
+```php
+public function toSms(mixed $notifiable): OneSignalNotification
+{
+    app(OneSignalSubscriptions::class)->ensureSmsSubscription($notifiable);
+
+    // ... build the sms-targeted payload
+}
+```
+
+The reconcile runs in this order:
+
+1. `getUser` reads what OneSignal holds. A 404 means OneSignal has never seen the user, and counts as no subscriptions.
+2. Every enabled SMS subscription whose token is not the current phone is deleted. A disabled one is left alone.
+3. `createUser` (an upsert) registers the current phone with the user's two-letter language, only when no SMS subscription carries it yet.
+
+`users.sms_registered_at` is set only after all three steps succeed. A failure is reported, `ensureSmsSubscription()` returns `false`, and the next send retries. The phone number never appears in an exception message or a log line.
+
+When the phone changes, the `HasNotifications` trait clears `sms_registered_at` on save, so the next SMS send reconciles again and the old number is removed in step 2. The reset also runs for a model loaded without that column, and is skipped when the `users` table has no `sms_registered_at` column, so an app that has not published it is unaffected. Phones are compared and sent with spaces, dashes, dots and brackets stripped, so `+1 (555) 123-4567` and `+15551234567` are the same number.
+
+Two queued jobs keep OneSignal in step with the account. Both need a queue worker, and both do nothing unless OneSignal is provisioned (an app id and a REST key):
+
+- `PruneSmsSubscriptions` runs after a phone change commits and deletes every enabled SMS subscription whose token is not the current phone. Clearing the phone removes them all. The job reads the current phone when it runs, carries the model rather than the number, and is dropped when the user is gone. It has 3 tries with a 2, 5, 10 second backoff.
+- `DeleteOneSignalUser` runs after `DeleteUser` commits the purge and deletes the OneSignal user by external id, which erases its push and SMS subscriptions with it.
+
+A subscription that is disabled is a carrier opt-out (STOP). Neither the reconcile nor the prune re-enables, re-creates or deletes it: deleting it would wipe OneSignal's record, and a user returning to that number would be registered as enabled again, which breaches carrier rules. It delivers nothing, so keeping it costs nothing.
+
 ---
 
 ## <a name="notificationsetting-model"></a>NotificationSetting Model
 
 `FlutterSdk\MagicStarter\Models\NotificationSetting`
 
-Stores one row per (notifiable, type, channel) combination. Only explicit overrides are stored — the absence of a row means the registry default applies.
+Stores one row per (notifiable, type, channel) combination. Only explicit overrides are stored - the absence of a row means the registry default applies.
 
 ### Columns
 
@@ -526,7 +556,7 @@ public function notifiable(): MorphTo<Model, $this>
 
 `FlutterSdk\MagicStarter\Listeners\GateNotificationChannels`
 
-This event listener is registered automatically by `MagicStarterServiceProvider` and listens to Laravel's `Illuminate\Notifications\Events\NotificationSending` event. Laravel fires this event once per channel per notifiable — if the listener returns `false`, delivery for that channel is cancelled.
+This event listener is registered automatically by `MagicStarterServiceProvider` and listens to Laravel's `Illuminate\Notifications\Events\NotificationSending` event. Laravel fires this event once per channel per notifiable - if the listener returns `false`, delivery for that channel is cancelled.
 
 ### Gate logic (in order)
 

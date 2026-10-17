@@ -6,12 +6,15 @@ use FlutterSdk\MagicStarter\Audit\Audit;
 use FlutterSdk\MagicStarter\Contracts\DeletesTeams;
 use FlutterSdk\MagicStarter\Contracts\DeletesUsers;
 use FlutterSdk\MagicStarter\Features;
+use FlutterSdk\MagicStarter\Jobs\DeleteOneSignalUser;
 use FlutterSdk\MagicStarter\Models\NewsletterSubscriber;
 use FlutterSdk\MagicStarter\Models\NotificationSetting;
+use FlutterSdk\MagicStarter\Models\PushDevice;
 use FlutterSdk\MagicStarter\Models\SocialAccount;
 use FlutterSdk\MagicStarter\Models\SupportConversation;
 use FlutterSdk\MagicStarter\Models\SupportMessageAttachment;
 use FlutterSdk\MagicStarter\Social\AppleProviderFactory;
+use FlutterSdk\MagicStarter\Support\OneSignalSubscriptions;
 use FlutterSdk\MagicStarter\Support\OwnedTeams;
 use Illuminate\Contracts\Auth\Authenticatable;
 use Illuminate\Database\Eloquent\Model;
@@ -37,9 +40,11 @@ use Illuminate\Validation\ValidationException;
  * way (its billing guard) rolls back the teams already deleted and leaves the
  * account whole. The Apple revocations, the profile photo and the files of the
  * user's support conversations cannot be rolled back, so they run only after
- * that transaction commits. The conversations and their attachment rows go by
- * database cascade, which fires no model event, so the file paths are read
- * before the account row is deleted.
+ * that transaction commits, and so does the deletion of the user from OneSignal,
+ * which holds the push and SMS subscriptions and erases them with the user (a
+ * queued job, run after the outermost commit like the Apple revocation). The
+ * conversations and their attachment rows go by database cascade, which fires
+ * no model event, so the file paths are read before the account row is deleted.
  */
 class DeleteUser implements DeletesUsers
 {
@@ -64,7 +69,7 @@ class DeleteUser implements DeletesUsers
      */
     public function delete(Authenticatable $user): void
     {
-        [$appleAccounts, $photoPath, $supportFiles] = DB::transaction(function () use ($user): array {
+        [$appleAccounts, $photoPath, $supportFiles, $oneSignalId] = DB::transaction(function () use ($user): array {
             // 1. A shared team would take other people's data with it, and a
             //    subscription on the user's own row would keep charging nobody.
             $this->refuseUnlessDeletable($user);
@@ -93,23 +98,39 @@ class DeleteUser implements DeletesUsers
             $photoPath = empty($user->profile_photo_path) ? null : (string) $user->profile_photo_path;
             $supportFiles = $this->supportAttachmentFiles($user);
 
+            // The alias is read while the row still exists; the job carries the
+            // id because the model is gone by the time it runs.
+            $oneSignalId = OneSignalSubscriptions::provisioned() && $user instanceof Model
+                ? PushDevice::externalIdFor($user)
+                : null;
+
             $user->delete();
 
             return [
                 $appleAccounts,
                 $photoPath,
                 $supportFiles,
+                $oneSignalId,
             ];
         });
 
-        // 7. Neither can be rolled back, so both wait for the OUTERMOST commit:
+        // 7. None of these can be rolled back, so all wait for the OUTERMOST commit:
         //    the purge runs this inside its own transaction, and a grant revoked
         //    for an account that then survives cannot be restored. Apple review
         //    requires the revocation; the factory reports a failure instead of
-        //    throwing, so it cannot undo the deletion.
-        DB::afterCommit(function () use ($appleAccounts, $photoPath, $supportFiles): void {
+        //    throwing, so it cannot undo the deletion. OneSignal holds the push
+        //    and SMS subscriptions, so deleting its user erases them; on a `sync`
+        //    queue the job runs right here, so a failure is reported and never
+        //    stops the file cleanup below.
+        DB::afterCommit(function () use ($appleAccounts, $photoPath, $supportFiles, $oneSignalId): void {
             foreach ($appleAccounts as $account) {
                 $this->apple->revoke($account);
+            }
+
+            if ($oneSignalId !== null) {
+                rescue(function () use ($oneSignalId): void {
+                    DeleteOneSignalUser::dispatch($oneSignalId);
+                }, report: true);
             }
 
             if ($photoPath !== null) {

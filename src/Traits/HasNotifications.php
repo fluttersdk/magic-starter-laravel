@@ -2,17 +2,24 @@
 
 namespace FlutterSdk\MagicStarter\Traits;
 
+use FlutterSdk\MagicStarter\Jobs\PruneSmsSubscriptions;
 use FlutterSdk\MagicStarter\MagicStarter;
 use FlutterSdk\MagicStarter\Models\NotificationSetting;
 use FlutterSdk\MagicStarter\NotificationPreferenceRegistry;
+use FlutterSdk\MagicStarter\Support\OneSignalSubscriptions;
 use Illuminate\Contracts\Translation\HasLocalePreference;
+use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\MorphMany;
+use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Schema;
 
 /**
  * Notification management trait for user models.
  *
  * Provides notification preference management (per-type channel toggles)
- * and push notification routing (OneSignal external ID resolution).
+ * and push notification routing (OneSignal external ID resolution). It also
+ * resets the SMS registration guard and queues the removal of the old number
+ * from OneSignal when the model's phone changes.
  *
  * Add to your User model:
  *
@@ -28,11 +35,70 @@ use Illuminate\Database\Eloquent\Relations\MorphMany;
 trait HasNotifications
 {
     /**
+     * Keep the OneSignal SMS subscription in step with the phone on the model.
+     *
+     * Every write of `phone` goes through Eloquent (the profile action, user
+     * creation, an admin form, consumer code), so the reaction lives here and
+     * none of those paths needs to know about it.
+     *
+     * - `saving` resets the `sms_registered_at` guard, which sends the next SMS
+     *   back through `OneSignalSubscriptions::ensureSmsSubscription()`. It acts
+     *   when the attribute is loaded OR the table has the column, so a query that
+     *   did not select it still clears the guard in the database. An app that
+     *   never published the column must not get an unknown-column write, which
+     *   is why the schema is asked, and only on a phone change.
+     * - `updated` queues {@see PruneSmsSubscriptions} so the number the account
+     *   stopped using leaves OneSignal. `getOriginal()` still holds the previous
+     *   value there, and a first phone has nothing to prune. The dispatch waits
+     *   for the outermost commit through `DB::afterCommit`, so a rolled-back
+     *   change sends nothing, and the model event itself never calls OneSignal.
+     *   On a `sync` queue the job runs right there, so a failure is reported
+     *   rather than thrown: the phone change has already been stored.
+     */
+    public static function bootHasNotifications(): void
+    {
+        static::saving(function (Model $model): void {
+            if (
+                $model->exists
+                && $model->isDirty('phone')
+                && (
+                    array_key_exists('sms_registered_at', $model->getAttributes())
+                    || Schema::connection($model->getConnectionName())
+                        ->hasColumn($model->getTable(), 'sms_registered_at')
+                )
+            ) {
+                $model->setAttribute('sms_registered_at', null);
+            }
+        });
+
+        static::updated(function (Model $model): void {
+            if (! $model->wasChanged('phone')) {
+                return;
+            }
+
+            $previous = $model->getOriginal('phone');
+
+            if (
+                ! is_string($previous)
+                || trim($previous) === ''
+                || ! OneSignalSubscriptions::provisioned()
+            ) {
+                return;
+            }
+
+            DB::afterCommit(fn () => rescue(function () use ($model): void {
+                PruneSmsSubscriptions::dispatch($model);
+            }, report: true));
+        });
+    }
+
+    /**
      * Merge the trait's attribute casts into the model.
      *
      * Eloquent calls this automatically for every model that uses the trait,
      * so consuming apps get the `sms_registered_at` datetime cast (used by the
-     * on-demand OneSignal SMS subscription guard) without declaring it manually.
+     * on-demand OneSignal SMS subscription guard, which the trait boot
+     * resets when the phone changes) without declaring it manually.
      */
     public function initializeHasNotifications(): void
     {
