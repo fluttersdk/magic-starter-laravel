@@ -186,6 +186,14 @@ class Features
     }
 
     /**
+     * Enable the AI prompt overrides: staff tune a registered prompt's body from the admin panel.
+     */
+    public static function aiPrompts(): string
+    {
+        return 'ai-prompts';
+    }
+
+    /**
      * Determine whether the given feature is enabled.
      */
     public static function enabled(string $feature): bool
@@ -367,6 +375,14 @@ class Features
     public static function hasAiRunFeatures(): bool
     {
         return static::enabled(static::aiRuns());
+    }
+
+    /**
+     * Determine whether the AI prompt overrides feature is enabled.
+     */
+    public static function hasAiPromptFeatures(): bool
+    {
+        return static::enabled(static::aiPrompts());
     }
 
     /**

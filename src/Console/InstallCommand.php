@@ -31,7 +31,7 @@ class InstallCommand extends Command
      */
     protected $signature = 'magic-starter:install
         {--all : Install all features without prompting}
-        {--features=* : Features to install (teams, profile-photos, sessions, social-login, newsletter-subscription, extended-profile, notifications, email-verification, guest-auth, phone-otp, timezones, billing, audit, ai-runs)}
+        {--features=* : Features to install (teams, profile-photos, sessions, social-login, newsletter-subscription, extended-profile, notifications, email-verification, guest-auth, phone-otp, timezones, billing, audit, ai-runs, ai-prompts)}
         {--uuid : Use UUID primary keys}
         {--no-uuid : Use auto-incrementing integer primary keys}
         {--route-prefix= : Route prefix for package routes}
@@ -64,6 +64,7 @@ class InstallCommand extends Command
         'support' => 'Support desk (customer conversations and staff inbox)',
         'releases' => 'App releases (curated release notes and latest builds)',
         'ai-runs' => 'AI run log (model calls with usage, cost and attempts)',
+        'ai-prompts' => 'AI prompt overrides (staff tune prompts in the admin panel)',
     ];
 
     /** @var array<string, string> Feature key → Features class method name. */
@@ -85,6 +86,7 @@ class InstallCommand extends Command
         'support' => 'support',
         'releases' => 'releases',
         'ai-runs' => 'aiRuns',
+        'ai-prompts' => 'aiPrompts',
     ];
 
     /** @var list<string> Migrations always published regardless of feature selection. */
@@ -176,6 +178,9 @@ class InstallCommand extends Command
         'ai-runs' => [
             'create_ai_runs_table.php',
             'create_ai_run_attempts_table.php',
+        ],
+        'ai-prompts' => [
+            'create_ai_prompt_overrides_table.php',
         ],
         // Entitlement provenance lands on whichever table
         // `magic-starter.billing.billable` names, which is `users` by default
