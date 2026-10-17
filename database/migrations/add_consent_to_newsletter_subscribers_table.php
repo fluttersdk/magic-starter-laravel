@@ -35,13 +35,18 @@ return new class extends Migration
 
         $this->addColumns();
 
-        // 1. The owner first, because an owner-less row is not backfilled but removed.
+        // 1. The owner first, because an owner-less row is not backfilled but removed. An app whose
+        // users table is unique only case-sensitively can hold two users differing by case; the
+        // exact match wins, so the scalar subquery never returns two rows and stops the deploy.
         DB::table(self::TABLE)
             ->whereNull('user_id')
             ->update([
                 'user_id' => DB::table('users')
                     ->select('users.id')
-                    ->whereRaw('lower(users.email) = lower(' . self::TABLE . '.email)'),
+                    ->whereRaw('lower(users.email) = lower(' . self::TABLE . '.email)')
+                    ->orderByRaw('case when users.email = ' . self::TABLE . '.email then 0 else 1 end')
+                    ->orderBy('users.id')
+                    ->limit(1),
             ]);
 
         // 2. Orphans go before anything is minted for them.
