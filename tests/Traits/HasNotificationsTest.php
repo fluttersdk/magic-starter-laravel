@@ -2,6 +2,7 @@
 
 namespace FlutterSdk\MagicStarter\Tests\Traits;
 
+use FlutterSdk\MagicStarter\Jobs\PruneSmsSubscriptions;
 use FlutterSdk\MagicStarter\MagicStarter;
 use FlutterSdk\MagicStarter\Models\NotificationSetting;
 use FlutterSdk\MagicStarter\NotificationPreferenceRegistry;
@@ -9,10 +10,22 @@ use FlutterSdk\MagicStarter\Tests\TestCase;
 use FlutterSdk\MagicStarter\Traits\HasNotifications;
 use Illuminate\Contracts\Translation\HasLocalePreference;
 use Illuminate\Database\Eloquent\Concerns\HasUuids;
+use Illuminate\Database\Schema\Blueprint;
 use Illuminate\Foundation\Auth\User as Authenticatable;
+use Illuminate\Support\Facades\Bus;
+use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Exceptions;
+use Illuminate\Support\Facades\Schema;
+use onesignal\client\api\DefaultApi;
+use onesignal\client\ApiException;
+use RuntimeException;
 
 final class HasNotificationsTest extends TestCase
 {
+    private const OLD_PHONE = '+15550000001';
+
+    private const NEW_PHONE = '+15550000002';
+
     protected function setUp(): void
     {
         parent::setUp();
@@ -520,6 +533,258 @@ final class HasNotificationsTest extends TestCase
         $routing = $user->routeNotificationForOneSignal();
 
         $this->assertSame(['operator-' . $user->getKey()], $routing['external_id']);
+    }
+
+    public function test_changing_the_phone_resets_the_sms_registration_guard(): void
+    {
+        $this->bootUsersTable(withPhone: true, withGuard: true);
+
+        $user = HasNotifPrefsTestUser::query()->create([
+            'name' => 'Registered User',
+            'phone' => self::OLD_PHONE,
+            'sms_registered_at' => now(),
+        ]);
+
+        $this->assertNotNull($user->fresh()->sms_registered_at);
+
+        $user->update(['phone' => self::NEW_PHONE]);
+
+        $this->assertNull($user->fresh()->sms_registered_at);
+        $this->assertNull($user->sms_registered_at);
+    }
+
+    public function test_saving_another_attribute_keeps_the_sms_registration_guard(): void
+    {
+        $this->bootUsersTable(withPhone: true, withGuard: true);
+
+        $user = HasNotifPrefsTestUser::query()->create([
+            'name' => 'Registered User',
+            'phone' => self::OLD_PHONE,
+            'sms_registered_at' => now(),
+        ]);
+
+        $user->update(['name' => 'Renamed User']);
+        $user->update(['phone' => self::OLD_PHONE]);
+
+        $this->assertNotNull($user->fresh()->sms_registered_at);
+    }
+
+    public function test_a_phone_change_saves_on_a_users_table_without_the_guard_column(): void
+    {
+        $this->bootUsersTable(withPhone: true, withGuard: false);
+
+        $user = HasNotifPrefsTestUser::query()->create([
+            'name' => 'Unpublished Column User',
+            'phone' => self::OLD_PHONE,
+        ]);
+
+        $user->update(['phone' => self::NEW_PHONE]);
+
+        $this->assertSame(self::NEW_PHONE, $user->fresh()->phone);
+    }
+
+    public function test_a_phone_change_saves_when_the_guard_column_was_not_selected(): void
+    {
+        $this->bootUsersTable(withPhone: true, withGuard: true);
+
+        $created = HasNotifPrefsTestUser::query()->create([
+            'name' => 'Partial Read User',
+            'phone' => self::OLD_PHONE,
+            'sms_registered_at' => now(),
+        ]);
+
+        $partial = HasNotifPrefsTestUser::query()->select(['id', 'phone'])->findOrFail($created->getKey());
+        $partial->update(['phone' => self::NEW_PHONE]);
+
+        $this->assertSame(self::NEW_PHONE, $created->fresh()->phone);
+        $this->assertNotNull($created->fresh()->sms_registered_at);
+    }
+
+    public function test_a_phone_change_queues_the_prune_of_the_old_number(): void
+    {
+        $this->bootUsersTable(withPhone: true, withGuard: true);
+        $this->provisionOneSignal();
+
+        $user = HasNotifPrefsTestUser::query()->create([
+            'name' => 'Moving User',
+            'phone' => self::OLD_PHONE,
+        ]);
+
+        Bus::fake();
+
+        $user->update(['phone' => self::NEW_PHONE]);
+
+        Bus::assertDispatchedTimes(PruneSmsSubscriptions::class, 1);
+        Bus::assertDispatched(
+            PruneSmsSubscriptions::class,
+            fn (PruneSmsSubscriptions $job): bool => $job->user->is($user),
+        );
+    }
+
+    public function test_clearing_the_phone_queues_the_prune(): void
+    {
+        $this->bootUsersTable(withPhone: true, withGuard: true);
+        $this->provisionOneSignal();
+
+        $user = HasNotifPrefsTestUser::query()->create([
+            'name' => 'Leaving User',
+            'phone' => self::OLD_PHONE,
+        ]);
+
+        Bus::fake();
+
+        $user->update(['phone' => null]);
+
+        Bus::assertDispatchedTimes(PruneSmsSubscriptions::class, 1);
+    }
+
+    public function test_setting_a_first_phone_queues_nothing(): void
+    {
+        $this->bootUsersTable(withPhone: true, withGuard: true);
+        $this->provisionOneSignal();
+
+        $user = HasNotifPrefsTestUser::query()->create([
+            'name' => 'New Number User',
+        ]);
+
+        Bus::fake();
+
+        $user->update(['phone' => self::NEW_PHONE]);
+
+        Bus::assertNothingDispatched();
+    }
+
+    public function test_saving_another_attribute_queues_nothing(): void
+    {
+        $this->bootUsersTable(withPhone: true, withGuard: true);
+        $this->provisionOneSignal();
+
+        $user = HasNotifPrefsTestUser::query()->create([
+            'name' => 'Steady User',
+            'phone' => self::OLD_PHONE,
+        ]);
+
+        Bus::fake();
+
+        $user->update(['name' => 'Renamed User']);
+
+        Bus::assertNothingDispatched();
+    }
+
+    public function test_a_phone_change_queues_nothing_without_onesignal_provisioning(): void
+    {
+        $this->bootUsersTable(withPhone: true, withGuard: true);
+
+        $user = HasNotifPrefsTestUser::query()->create([
+            'name' => 'Unprovisioned User',
+            'phone' => self::OLD_PHONE,
+        ]);
+
+        Bus::fake();
+
+        $user->update(['phone' => self::NEW_PHONE]);
+
+        Bus::assertNothingDispatched();
+    }
+
+    public function test_a_rolled_back_phone_change_queues_nothing(): void
+    {
+        $this->bootUsersTable(withPhone: true, withGuard: true);
+        $this->provisionOneSignal();
+
+        $user = HasNotifPrefsTestUser::query()->create([
+            'name' => 'Rolled Back User',
+            'phone' => self::OLD_PHONE,
+        ]);
+
+        Bus::fake();
+
+        DB::beginTransaction();
+        $user->update(['phone' => self::NEW_PHONE]);
+        DB::rollBack();
+
+        Bus::assertNothingDispatched();
+        $this->assertSame(self::OLD_PHONE, $user->fresh()->phone);
+    }
+
+    public function test_a_phone_change_inside_a_transaction_queues_only_once_it_commits(): void
+    {
+        $this->bootUsersTable(withPhone: true, withGuard: true);
+        $this->provisionOneSignal();
+
+        $user = HasNotifPrefsTestUser::query()->create([
+            'name' => 'Committed User',
+            'phone' => self::OLD_PHONE,
+        ]);
+
+        Bus::fake();
+
+        DB::transaction(function () use ($user): void {
+            $user->update(['phone' => self::NEW_PHONE]);
+
+            Bus::assertNothingDispatched();
+        });
+
+        Bus::assertDispatchedTimes(PruneSmsSubscriptions::class, 1);
+    }
+
+    public function test_a_prune_failing_on_a_sync_queue_is_reported_and_the_phone_change_stands(): void
+    {
+        $this->bootUsersTable(withPhone: true, withGuard: true);
+        $this->provisionOneSignal();
+        config(['queue.default' => 'sync']);
+
+        $client = $this->createMock(DefaultApi::class);
+        $client->method('getUser')->willThrowException(new ApiException('[500] upstream', 500));
+        $this->app->instance(DefaultApi::class, $client);
+
+        $user = HasNotifPrefsTestUser::query()->create([
+            'name' => 'Sync Queue User',
+            'phone' => self::OLD_PHONE,
+        ]);
+
+        Exceptions::fake();
+
+        $user->update(['phone' => self::NEW_PHONE]);
+
+        Exceptions::assertReported(
+            fn (RuntimeException $exception): bool => $exception->getMessage() === 'OneSignal SMS prune failed: getUser returned HTTP 500',
+        );
+        $this->assertSame(self::NEW_PHONE, $user->fresh()->phone);
+    }
+
+    private function provisionOneSignal(): void
+    {
+        config([
+            'magic-starter.onesignal.app_id' => 'app-xyz',
+            'magic-starter.onesignal.rest_api_key' => 'rest-key',
+        ]);
+    }
+
+    /**
+     * Rebuild `users` with the SMS columns this feature reads and writes.
+     *
+     * The shared `setUp()` table has neither, as an app that never published them.
+     */
+    private function bootUsersTable(bool $withPhone, bool $withGuard): void
+    {
+        Schema::dropIfExists('users');
+
+        Schema::create('users', function (Blueprint $table) use ($withPhone, $withGuard): void {
+            $table->uuid('id')->primary();
+            $table->string('name')->nullable();
+            $table->string('email')->nullable();
+
+            if ($withPhone) {
+                $table->string('phone')->nullable();
+            }
+
+            if ($withGuard) {
+                $table->timestamp('sms_registered_at')->nullable();
+            }
+
+            $table->timestamps();
+        });
     }
 }
 

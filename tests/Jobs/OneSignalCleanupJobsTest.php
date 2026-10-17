@@ -6,6 +6,7 @@ use FlutterSdk\MagicStarter\Jobs\DeleteOneSignalUser;
 use FlutterSdk\MagicStarter\Jobs\PruneSmsSubscriptions;
 use FlutterSdk\MagicStarter\Tests\Fixtures\ConcreteUser;
 use FlutterSdk\MagicStarter\Tests\TestCase;
+use Illuminate\Support\Facades\Bus;
 use Illuminate\Support\Facades\Schema;
 use onesignal\client\api\DefaultApi;
 use onesignal\client\model\PropertiesObject;
@@ -32,6 +33,8 @@ final class OneSignalCleanupJobsTest extends TestCase
         $this->configureRestKey();
         $user = $this->userWithPhone(self::STALE_PHONE);
         $payload = serialize(new PruneSmsSubscriptions($user));
+        // The trait queues its own prune on this change; only the job under test may run.
+        Bus::fake();
         $user->forceFill(['phone' => self::PHONE])->save();
         $job = unserialize($payload);
 
@@ -63,6 +66,8 @@ final class OneSignalCleanupJobsTest extends TestCase
         // Arrange
         $this->configureRestKey();
         $user = $this->userWithPhone(self::PHONE);
+        // The trait queues its own prune on this change; only the job under test may run.
+        Bus::fake();
         $user->forceFill(['phone' => null])->save();
 
         $deleted = [];

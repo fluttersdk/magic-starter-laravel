@@ -6,6 +6,7 @@ use FlutterSdk\MagicStarter\Actions\DeleteUser;
 use FlutterSdk\MagicStarter\Actions\SubscriptionGuardedDeleteTeam;
 use FlutterSdk\MagicStarter\Contracts\DeletesTeams;
 use FlutterSdk\MagicStarter\Contracts\DeletesUsers;
+use FlutterSdk\MagicStarter\Jobs\DeleteOneSignalUser;
 use FlutterSdk\MagicStarter\MagicStarter;
 use FlutterSdk\MagicStarter\Models\SocialAccount;
 use FlutterSdk\MagicStarter\Social\AppleProviderFactory;
@@ -20,12 +21,16 @@ use GuzzleHttp\Psr7\Response;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Schema\Blueprint;
 use Illuminate\Foundation\Testing\RefreshDatabase;
+use Illuminate\Support\Facades\Bus;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Exceptions;
 use Illuminate\Support\Facades\Schema;
 use Illuminate\Support\Facades\Storage;
 use Illuminate\Validation\ValidationException;
 use Laravel\Cashier\Billable;
 use Laravel\Sanctum\HasApiTokens;
+use onesignal\client\api\DefaultApi;
+use onesignal\client\ApiException;
 use RuntimeException;
 
 /**
@@ -430,6 +435,91 @@ class DeleteUserTest extends TestCase
         $this->app->make(DeletesUsers::class)->delete($user);
 
         $this->assertNull(DeleteUserTestUser::query()->find($user->getKey()));
+    }
+
+    /**
+     * OneSignal holds the push and SMS subscriptions of the account, so its user
+     * goes with the account. The external id is read before the row is deleted.
+     */
+    public function test_a_purged_account_is_deleted_from_onesignal_after_the_purge_commits(): void
+    {
+        $this->provisionOneSignal();
+
+        $user = $this->createUser('Purged');
+        $externalId = 'user_' . $user->getKey();
+
+        Bus::fake();
+
+        $this->app->make(DeletesUsers::class)->delete($user);
+
+        Bus::assertDispatchedTimes(DeleteOneSignalUser::class, 1);
+        Bus::assertDispatched(
+            DeleteOneSignalUser::class,
+            fn (DeleteOneSignalUser $job): bool => $job->externalId === $externalId,
+        );
+        $this->assertNull(DeleteUserTestUser::query()->find($user->getKey()));
+    }
+
+    public function test_a_purged_account_dispatches_nothing_without_onesignal_provisioning(): void
+    {
+        $user = $this->createUser('Unprovisioned');
+
+        Bus::fake();
+
+        $this->app->make(DeletesUsers::class)->delete($user);
+
+        Bus::assertNothingDispatched();
+    }
+
+    public function test_a_refused_deletion_leaves_onesignal_alone(): void
+    {
+        $this->provisionOneSignal();
+
+        $user = $this->createUser('Owner');
+        $team = $this->createTeam($user, 'Shared');
+        $team->users()->attach($this->createUser('Member')->getKey(), ['role' => 'member']);
+
+        Bus::fake();
+
+        try {
+            $this->app->make(DeletesUsers::class)->delete($user);
+            $this->fail('Expected the shared-team refusal.');
+        } catch (ValidationException) {
+            Bus::assertNothingDispatched();
+        }
+    }
+
+    public function test_a_onesignal_failure_on_a_sync_queue_is_reported_and_the_purge_completes(): void
+    {
+        $this->provisionOneSignal();
+        config(['queue.default' => 'sync']);
+        Storage::fake('public');
+        Storage::disk('public')->put('photos/purged.jpg', 'x');
+
+        $client = $this->createMock(DefaultApi::class);
+        $client->method('deleteUser')->willThrowException(new ApiException('[500] upstream', 500));
+        $this->app->instance(DefaultApi::class, $client);
+
+        $user = $this->createUser('Purged');
+        $user->forceFill(['profile_photo_path' => 'photos/purged.jpg'])->save();
+
+        Exceptions::fake();
+
+        $this->app->make(DeletesUsers::class)->delete($user);
+
+        Exceptions::assertReported(
+            fn (RuntimeException $exception): bool => $exception->getMessage() === 'OneSignal user delete failed: deleteUser returned HTTP 500',
+        );
+        $this->assertNull(DeleteUserTestUser::query()->find($user->getKey()));
+        Storage::disk('public')->assertMissing('photos/purged.jpg');
+    }
+
+    private function provisionOneSignal(): void
+    {
+        config([
+            'magic-starter.onesignal.app_id' => 'app-xyz',
+            'magic-starter.onesignal.rest_api_key' => 'rest-key',
+        ]);
     }
 
     private function createUser(string $name): DeleteUserTestUser
