@@ -150,6 +150,7 @@ class InstallCommand extends Command
         ],
         'newsletter-subscription' => [
             'create_newsletter_subscribers_table.php',
+            'add_consent_to_newsletter_subscribers_table.php',
         ],
         'timezones' => [
             'add_timezone_to_users_table.php',

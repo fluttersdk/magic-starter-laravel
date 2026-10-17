@@ -32,12 +32,13 @@ return [
             'email' => 'E-posta',
             'is_active' => 'Aktif',
             'source' => 'Kaynak',
+            'consented_at' => 'Onay tarihi',
+            'consent_version' => 'Onay sürümü',
+            'consent_source' => 'Onay kaynağı',
+            'unsubscribed_at' => 'Abonelikten çıkış tarihi',
             'created_at' => 'Abonelik tarihi',
         ],
-        'toggle' => [
-            'deactivate' => 'Pasifleştir',
-            'activate' => 'Aktifleştir',
-        ],
+        'deactivate' => 'Pasifleştir',
         'export' => [
             'label' => 'CSV dışa aktar',
         ],

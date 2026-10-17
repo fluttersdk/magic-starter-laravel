@@ -12,5 +12,5 @@ path: "src/Actions/**/*.php"
 - Gate feature-specific logic: `if (Features::hasTeamFeatures()) { ... }`
 - Use `Arr::get($input, 'key')` for optional field retrieval from validated input
 - Return typed values matching contract signature (Authenticatable, Model, void)
-- Newsletter: use `firstOrCreate()` for idempotent subscriber creation
+- Newsletter: write through `NewsletterSubscriber::subscribeUser()` / `unsubscribe()`; read the marketing audience only through `marketable()`
 - Two-factor: defer notifications via events, don't send directly from action

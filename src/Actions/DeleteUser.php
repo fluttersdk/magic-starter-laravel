@@ -237,10 +237,12 @@ class DeleteUser implements DeletesUsers
      * newsletter subscription, with the audit rows that describe them.
      *
      * The audit trail forgets the user's own rows after commit, but it finds
-     * related rows through a `user_id` column, which none of these tables has:
-     * notifications and settings are addressed by the notifiable morph, and a
-     * subscription by email. Without this their audit rows would keep the
-     * notification payloads and the address after the person is gone.
+     * related rows through a `user_id` column, which notifications and settings
+     * do not have: they are addressed by the notifiable morph. A subscription is
+     * erased by its owner, which survives an address change, and a row nobody
+     * claimed yet by the address it was written with. Without this their audit
+     * rows would keep the notification payloads and the address after the
+     * person is gone.
      *
      * Each table is read only when it exists, because an application that never
      * installed the feature has none, and a feature switched off since still left
@@ -257,8 +259,15 @@ class DeleteUser implements DeletesUsers
         $this->eraseRows('notifications', new DatabaseNotification, $notifiable);
         $this->eraseRows((new NotificationSetting)->getTable(), new NotificationSetting, $notifiable);
 
+        $newsletter = (new NewsletterSubscriber)->getTable();
+
+        $this->eraseRows($newsletter, new NewsletterSubscriber, [
+            'user_id' => $user->getAuthIdentifier(),
+        ]);
+
         if (! empty($user->email)) {
-            $this->eraseRows((new NewsletterSubscriber)->getTable(), new NewsletterSubscriber, [
+            $this->eraseRows($newsletter, new NewsletterSubscriber, [
+                'user_id' => null,
                 'email' => $user->email,
             ]);
         }

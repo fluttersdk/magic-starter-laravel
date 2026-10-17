@@ -403,6 +403,13 @@ class MagicStarterServiceProvider extends ServiceProvider
             $this->scheduleSupportSweep();
         }
 
+        // 3.665. Keep each newsletter row's address in step with its owner's. A wildcard
+        //        with a user-model check at event time, because `useUserModel()` may run
+        //        after this boot and a subclass fires an event under its own name.
+        if (Features::hasNewsletterSubscriptionFeatures()) {
+            Event::listen('eloquent.updated: *', Listeners\SyncNewsletterEmail::class);
+        }
+
         // 3.7. Register package translations, and the framework's own mail strings (password reset,
         // template chrome), which Laravel ships as English JSON keys with no translation. The JSON
         // file lives outside `lang/` because the `magic-starter-lang` tag publishes that whole
@@ -442,6 +449,11 @@ class MagicStarterServiceProvider extends ServiceProvider
             // The customer side of the support desk, absent with the feature off.
             if (Features::hasSupportFeatures()) {
                 $this->loadRoutesFrom(__DIR__ . '/routes/support.php');
+            }
+
+            // The public unsubscribe link, from its own file: every mail sent carries its url.
+            if (Features::hasNewsletterSubscriptionFeatures()) {
+                $this->loadRoutesFrom(__DIR__ . '/routes/newsletter.php');
             }
         }
 
@@ -1074,6 +1086,22 @@ class MagicStarterServiceProvider extends ServiceProvider
             }
 
             return Limit::perHour(10)->by('thread|' . hash('sha256', $token));
+        });
+
+        // Newsletter one-click unsubscribe. The POST is bucketed on the hashed
+        // token: one-click requests arrive from a mail provider's shared egress,
+        // so a tight IP bucket would let one inbox's traffic lock out every other
+        // reader behind the same provider. The loose IP ceiling only stops one
+        // address from spraying guessed tokens at the lookup. The page is a plain read.
+        RateLimiter::for('magic-starter-newsletter-unsubscribe', function ($request) {
+            return [
+                Limit::perMinute(10)->by('newsletter|' . hash('sha256', (string) $request->route('token'))),
+                Limit::perMinute(300)->by('newsletter-ip|' . $request->ip()),
+            ];
+        });
+
+        RateLimiter::for('magic-starter-newsletter-unsubscribe-page', function ($request) {
+            return Limit::perMinute(60)->by($request->ip());
         });
     }
 }

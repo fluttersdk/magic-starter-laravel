@@ -32,12 +32,13 @@ return [
             'email' => 'Email',
             'is_active' => 'Active',
             'source' => 'Source',
+            'consented_at' => 'Consented at',
+            'consent_version' => 'Consent version',
+            'consent_source' => 'Consent source',
+            'unsubscribed_at' => 'Unsubscribed at',
             'created_at' => 'Subscribed at',
         ],
-        'toggle' => [
-            'deactivate' => 'Deactivate',
-            'activate' => 'Activate',
-        ],
+        'deactivate' => 'Deactivate',
         'export' => [
             'label' => 'Export CSV',
         ],

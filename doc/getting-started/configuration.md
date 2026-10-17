@@ -162,6 +162,7 @@ Every key available in `config/magic-starter.php`:
 | `billing.revenuecat.api_v2_key` | `env('REVENUECAT_API_V2_KEY')` | RevenueCat v2 read key, used by `billing:doctor --remote` only |
 | `billing.revenuecat.project_id` | `env('REVENUECAT_PROJECT_ID')` | RevenueCat project id, used by `billing:doctor --remote` only |
 | `billing.stripe_test_mode.emails` | `env('MAGIC_STARTER_BILLING_STRIPE_TEST_EMAILS')`, comma list | Emails allowed to check out or swap while a Stripe key that is not provably live runs outside `local` and `testing`. Verified and lower-cased; empty refuses everybody |
+| `newsletter.consent_version` | `env('MAGIC_STARTER_NEWSLETTER_CONSENT_VERSION', '1')` | Version of your newsletter consent wording, stored in `consent_version` on every consent from now on (32 characters at most). Raise it when the wording changes, see [Consent Record](../basics/profile.md#newsletter-consent) |
 | `mail.brand.enabled` | `env('MAGIC_STARTER_MAIL_BRAND_ENABLED', false)` | Brand every markdown mail with the package layout and theme, see [Mail Branding](../basics/notifications.md#mail-branding) |
 | `mail.brand.name` | `env('APP_NAME', 'Laravel')` | Name beside the logo, the logo's alt text and the default footer |
 | `mail.brand.logo_url` | `null` | Absolute `http` or `https` URL of the header logo (a PNG); `null` shows the name only |
@@ -461,4 +462,5 @@ All environment variables recognized by the package:
 | `REVENUECAT_API_V2_KEY` | `billing.revenuecat.api_v2_key` | `null` | v2 read key for `billing:doctor --remote` |
 | `REVENUECAT_PROJECT_ID` | `billing.revenuecat.project_id` | `null` | RevenueCat project id for `billing:doctor --remote` |
 | `MAGIC_STARTER_BILLING_STRIPE_TEST_EMAILS` | `billing.stripe_test_mode.emails` | empty | Comma-separated emails allowed to buy on a Stripe key that is not provably live, outside `local` and `testing` |
+| `MAGIC_STARTER_NEWSLETTER_CONSENT_VERSION` | `newsletter.consent_version` | `'1'` | Version of the newsletter consent wording recorded with each consent |
 | `MAGIC_STARTER_MAIL_BRAND_ENABLED` | `mail.brand.enabled` | `false` | Brand every markdown mail with the package layout and theme |
