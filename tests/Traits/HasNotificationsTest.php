@@ -583,7 +583,7 @@ final class HasNotificationsTest extends TestCase
         $this->assertSame(self::NEW_PHONE, $user->fresh()->phone);
     }
 
-    public function test_a_phone_change_saves_when_the_guard_column_was_not_selected(): void
+    public function test_a_phone_change_resets_the_guard_even_when_the_column_was_not_selected(): void
     {
         $this->bootUsersTable(withPhone: true, withGuard: true);
 
@@ -597,7 +597,7 @@ final class HasNotificationsTest extends TestCase
         $partial->update(['phone' => self::NEW_PHONE]);
 
         $this->assertSame(self::NEW_PHONE, $created->fresh()->phone);
-        $this->assertNotNull($created->fresh()->sms_registered_at);
+        $this->assertNull($created->fresh()->sms_registered_at);
     }
 
     public function test_a_phone_change_queues_the_prune_of_the_old_number(): void

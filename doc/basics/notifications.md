@@ -507,19 +507,19 @@ public function toSms(mixed $notifiable): OneSignalNotification
 The reconcile runs in this order:
 
 1. `getUser` reads what OneSignal holds. A 404 means OneSignal has never seen the user, and counts as no subscriptions.
-2. Every SMS subscription whose token is not the current phone is deleted.
-3. `createUser` (an upsert) registers the current phone with the user's language, only when no SMS subscription carries it yet.
+2. Every enabled SMS subscription whose token is not the current phone is deleted. A disabled one is left alone.
+3. `createUser` (an upsert) registers the current phone with the user's two-letter language, only when no SMS subscription carries it yet.
 
 `users.sms_registered_at` is set only after all three steps succeed. A failure is reported, `ensureSmsSubscription()` returns `false`, and the next send retries. The phone number never appears in an exception message or a log line.
 
-When the phone changes, the `HasNotifications` trait clears `sms_registered_at` on save, so the next SMS send reconciles again and the old number is removed in step 2. The reset only runs when the column is loaded, so an app that has not published it is unaffected.
+When the phone changes, the `HasNotifications` trait clears `sms_registered_at` on save, so the next SMS send reconciles again and the old number is removed in step 2. The reset also runs for a model loaded without that column, and is skipped when the `users` table has no `sms_registered_at` column, so an app that has not published it is unaffected. Phones are compared and sent with spaces, dashes, dots and brackets stripped, so `+1 (555) 123-4567` and `+15551234567` are the same number.
 
 Two queued jobs keep OneSignal in step with the account. Both need a queue worker, and both do nothing unless OneSignal is provisioned (an app id and a REST key):
 
-- `PruneSmsSubscriptions` runs after a phone change commits and deletes every SMS subscription whose token is not the current phone. Clearing the phone removes them all. The job reads the current phone when it runs, carries the model rather than the number, and is dropped when the user is gone. It has 3 tries with a 2, 5, 10 second backoff.
+- `PruneSmsSubscriptions` runs after a phone change commits and deletes every enabled SMS subscription whose token is not the current phone. Clearing the phone removes them all. The job reads the current phone when it runs, carries the model rather than the number, and is dropped when the user is gone. It has 3 tries with a 2, 5, 10 second backoff.
 - `DeleteOneSignalUser` runs after `DeleteUser` commits the purge and deletes the OneSignal user by external id, which erases its push and SMS subscriptions with it.
 
-A subscription that is registered but disabled is an opt-out. The reconcile never re-enables or re-creates it, because doing so without fresh consent breaches carrier rules.
+A subscription that is disabled is a carrier opt-out (STOP). Neither the reconcile nor the prune re-enables, re-creates or deletes it: deleting it would wipe OneSignal's record, and a user returning to that number would be registered as enabled again, which breaches carrier rules. It delivers nothing, so keeping it costs nothing.
 
 ---
 

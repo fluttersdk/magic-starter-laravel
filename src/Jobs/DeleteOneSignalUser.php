@@ -2,7 +2,6 @@
 
 namespace FlutterSdk\MagicStarter\Jobs;
 
-use FlutterSdk\MagicStarter\Actions\DeleteUser;
 use FlutterSdk\MagicStarter\Support\OneSignalSubscriptions;
 use Illuminate\Contracts\Queue\ShouldQueue;
 use Illuminate\Foundation\Queue\Queueable;
@@ -10,7 +9,7 @@ use Illuminate\Foundation\Queue\Queueable;
 /**
  * Deletes a purged account's user from OneSignal, which stops every channel.
  *
- * Dispatched by {@see DeleteUser} after the purge commits. It carries the
+ * Dispatched by the `DeleteUser` action after the purge commits. It carries the
  * external id and not the model, because the row it was derived from is gone by
  * the time the job runs.
  *
@@ -24,6 +23,9 @@ class DeleteOneSignalUser implements ShouldQueue
 {
     use Queueable;
 
+    /**
+     * Attempts before the queue gives up and fails the job.
+     */
     public int $tries = 3;
 
     /**
@@ -33,6 +35,9 @@ class DeleteOneSignalUser implements ShouldQueue
      */
     public array $backoff = [2, 5, 10];
 
+    /**
+     * @param  string  $externalId  The OneSignal alias value, carried instead of the model because the row is gone.
+     */
     public function __construct(
         public string $externalId,
     ) {}

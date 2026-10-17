@@ -2,6 +2,7 @@
 
 namespace FlutterSdk\MagicStarter\Jobs;
 
+use FlutterSdk\MagicStarter\Models\PushDevice;
 use FlutterSdk\MagicStarter\Support\OneSignalSubscriptions;
 use Illuminate\Contracts\Queue\ShouldQueue;
 use Illuminate\Database\Eloquent\Model;
@@ -14,7 +15,7 @@ use Illuminate\Foundation\Queue\Queueable;
  * number left behind in OneSignal keeps receiving texts, because OneSignal fans
  * an SMS send out to every SMS subscription the user has, so the old number is
  * removed as soon as the account stops using it. Clearing the phone removes
- * every SMS subscription.
+ * every enabled SMS subscription; a disabled one is a carrier opt-out and stays.
  *
  * It only ever deletes. Registering the new number is not done here: the package
  * does not know whether the user opted in to SMS, so registration stays lazy and
@@ -40,6 +41,9 @@ class PruneSmsSubscriptions implements ShouldQueue
      */
     public bool $deleteWhenMissingModels = true;
 
+    /**
+     * Attempts before the queue gives up and fails the job.
+     */
     public int $tries = 3;
 
     /**
@@ -49,6 +53,9 @@ class PruneSmsSubscriptions implements ShouldQueue
      */
     public array $backoff = [2, 5, 10];
 
+    /**
+     * @param  Model  $user  Carried as a model reference so the phone is read fresh when the job runs.
+     */
     public function __construct(
         public Model $user,
     ) {}
@@ -64,15 +71,14 @@ class PruneSmsSubscriptions implements ShouldQueue
             return;
         }
 
-        $externalId = OneSignalSubscriptions::externalIdFor($this->user);
+        $externalId = PushDevice::externalIdFor($this->user);
 
         if ($externalId === null) {
             return;
         }
 
-        $rawPhone = $this->user->getAttribute('phone');
-        $phone = is_string($rawPhone) ? trim($rawPhone) : '';
+        $phone = $this->user->getAttribute('phone');
 
-        app(OneSignalSubscriptions::class)->pruneSmsSubscriptions($externalId, $phone === '' ? null : $phone);
+        app(OneSignalSubscriptions::class)->pruneSmsSubscriptions($externalId, is_string($phone) ? $phone : null);
     }
 }

@@ -11,6 +11,7 @@ use Illuminate\Contracts\Translation\HasLocalePreference;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\MorphMany;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Schema;
 
 /**
  * Notification management trait for user models.
@@ -42,9 +43,10 @@ trait HasNotifications
      *
      * - `saving` resets the `sms_registered_at` guard, which sends the next SMS
      *   back through `OneSignalSubscriptions::ensureSmsSubscription()`. It acts
-     *   only when the attribute is loaded: an app that never published the
-     *   column, or a query that did not select it, must not get an unknown-column
-     *   write.
+     *   when the attribute is loaded OR the table has the column, so a query that
+     *   did not select it still clears the guard in the database. An app that
+     *   never published the column must not get an unknown-column write, which
+     *   is why the schema is asked, and only on a phone change.
      * - `updated` queues {@see PruneSmsSubscriptions} so the number the account
      *   stopped using leaves OneSignal. `getOriginal()` still holds the previous
      *   value there, and a first phone has nothing to prune. The dispatch waits
@@ -59,18 +61,25 @@ trait HasNotifications
             if (
                 $model->exists
                 && $model->isDirty('phone')
-                && array_key_exists('sms_registered_at', $model->getAttributes())
+                && (
+                    array_key_exists('sms_registered_at', $model->getAttributes())
+                    || Schema::connection($model->getConnectionName())
+                        ->hasColumn($model->getTable(), 'sms_registered_at')
+                )
             ) {
                 $model->setAttribute('sms_registered_at', null);
             }
         });
 
         static::updated(function (Model $model): void {
+            if (! $model->wasChanged('phone')) {
+                return;
+            }
+
             $previous = $model->getOriginal('phone');
 
             if (
-                ! $model->wasChanged('phone')
-                || ! is_string($previous)
+                ! is_string($previous)
                 || trim($previous) === ''
                 || ! OneSignalSubscriptions::provisioned()
             ) {

@@ -9,6 +9,7 @@ use FlutterSdk\MagicStarter\Features;
 use FlutterSdk\MagicStarter\Jobs\DeleteOneSignalUser;
 use FlutterSdk\MagicStarter\Models\NewsletterSubscriber;
 use FlutterSdk\MagicStarter\Models\NotificationSetting;
+use FlutterSdk\MagicStarter\Models\PushDevice;
 use FlutterSdk\MagicStarter\Models\SocialAccount;
 use FlutterSdk\MagicStarter\Models\SupportConversation;
 use FlutterSdk\MagicStarter\Models\SupportMessageAttachment;
@@ -100,7 +101,7 @@ class DeleteUser implements DeletesUsers
             // The alias is read while the row still exists; the job carries the
             // id because the model is gone by the time it runs.
             $oneSignalId = OneSignalSubscriptions::provisioned() && $user instanceof Model
-                ? OneSignalSubscriptions::externalIdFor($user)
+                ? PushDevice::externalIdFor($user)
                 : null;
 
             $user->delete();

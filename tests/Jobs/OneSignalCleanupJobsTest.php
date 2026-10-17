@@ -61,7 +61,7 @@ final class OneSignalCleanupJobsTest extends TestCase
         $this->assertSame(['sub-old'], $deleted);
     }
 
-    public function test_prune_with_a_cleared_phone_deletes_every_sms_subscription(): void
+    public function test_prune_with_a_cleared_phone_deletes_every_enabled_sms_subscription(): void
     {
         // Arrange
         $this->configureRestKey();
@@ -86,8 +86,8 @@ final class OneSignalCleanupJobsTest extends TestCase
         // Act
         (new PruneSmsSubscriptions($user))->handle();
 
-        // Assert
-        $this->assertSame(['sub-a', 'sub-b'], $deleted);
+        // Assert: the disabled one is a carrier opt-out and stays on record.
+        $this->assertSame(['sub-a'], $deleted);
     }
 
     public function test_prune_treats_a_blank_phone_as_cleared(): void

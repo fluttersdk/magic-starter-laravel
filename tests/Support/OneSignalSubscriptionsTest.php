@@ -21,6 +21,7 @@ use onesignal\client\model\Subscription;
 use onesignal\client\model\User as OneSignalUser;
 use RuntimeException;
 use Throwable;
+use TypeError;
 
 final class OneSignalSubscriptionsTest extends TestCase
 {
@@ -253,6 +254,113 @@ final class OneSignalSubscriptionsTest extends TestCase
         $this->assertNotNull($user->fresh()->sms_registered_at);
     }
 
+    public function test_ensure_sms_subscription_keeps_a_disabled_stale_subscription_and_registers_the_current_number(): void
+    {
+        // Arrange: a disabled subscription is a carrier opt-out (STOP). Deleting it would
+        // wipe OneSignal's record and let createUser re-register that number as enabled
+        // if the user ever returns to it; it delivers nothing, so keeping it costs nothing.
+        $user = $this->userWithPhone(self::PHONE);
+
+        $created = null;
+        $client = $this->createMock(DefaultApi::class);
+        $client->method('getUser')->willReturn(
+            $this->oneSignalUser([$this->subscription('sub-optout', self::STALE_PHONE, enabled: false)]),
+        );
+        $client->expects($this->never())->method('deleteSubscription');
+        $client->expects($this->once())
+            ->method('createUser')
+            ->willReturnCallback(function (string $appId, OneSignalUser $body) use (&$created): OneSignalUser {
+                $created = $body;
+
+                return $body;
+            });
+
+        // Act
+        $this->assertTrue((new OneSignalSubscriptions($client))->ensureSmsSubscription($user));
+
+        // Assert
+        $this->assertSame(self::PHONE, $created->getSubscriptions()[0]->getToken());
+        $this->assertNotNull($user->fresh()->sms_registered_at);
+    }
+
+    public function test_ensure_sms_subscription_sends_and_compares_the_phone_in_its_normalised_form(): void
+    {
+        // Arrange: Filament forms and consumer code store the number as typed.
+        $user = $this->userWithPhone('+1 (555) 000-0001');
+
+        $created = null;
+        $client = $this->createMock(DefaultApi::class);
+        $client->method('getUser')->willThrowException(new ApiException('[404] none', 404));
+        $client->expects($this->once())
+            ->method('createUser')
+            ->willReturnCallback(function (string $appId, OneSignalUser $body) use (&$created): OneSignalUser {
+                $created = $body;
+
+                return $body;
+            });
+
+        // Act
+        $this->assertTrue((new OneSignalSubscriptions($client))->ensureSmsSubscription($user));
+
+        // Assert
+        $this->assertSame(self::STALE_PHONE, $created->getSubscriptions()[0]->getToken());
+    }
+
+    public function test_ensure_sms_subscription_treats_a_formatted_phone_matching_the_token_as_registered(): void
+    {
+        // Arrange
+        $user = $this->userWithPhone('+1 (555) 000-0001');
+
+        $client = $this->createMock(DefaultApi::class);
+        $client->method('getUser')->willReturn(
+            $this->oneSignalUser([$this->subscription('sub-current', self::STALE_PHONE)]),
+        );
+        $client->expects($this->never())->method('createUser');
+        $client->expects($this->never())->method('deleteSubscription');
+
+        // Act + Assert
+        $this->assertTrue((new OneSignalSubscriptions($client))->ensureSmsSubscription($user));
+        $this->assertNotNull($user->fresh()->sms_registered_at);
+    }
+
+    public function test_ensure_sms_subscription_sends_the_primary_language_subtag(): void
+    {
+        // Arrange
+        app()->setLocale('pt_BR');
+        $user = $this->userWithPhone(self::PHONE);
+
+        $created = null;
+        $client = $this->createMock(DefaultApi::class);
+        $client->method('getUser')->willThrowException(new ApiException('[404] none', 404));
+        $client->method('createUser')
+            ->willReturnCallback(function (string $appId, OneSignalUser $body) use (&$created): OneSignalUser {
+                $created = $body;
+
+                return $body;
+            });
+
+        // Act
+        $this->assertTrue((new OneSignalSubscriptions($client))->ensureSmsSubscription($user));
+
+        // Assert
+        $this->assertSame('pt', $created->getProperties()->getLanguage());
+    }
+
+    public function test_a_programming_error_from_the_client_is_not_swallowed(): void
+    {
+        // Arrange
+        $user = $this->userWithPhone(self::PHONE);
+
+        $client = $this->createMock(DefaultApi::class);
+        $client->method('getUser')->willThrowException(new TypeError('bad argument'));
+
+        // Assert
+        $this->expectException(TypeError::class);
+
+        // Act
+        (new OneSignalSubscriptions($client))->ensureSmsSubscription($user);
+    }
+
     public function test_ensure_sms_subscription_leaves_the_guard_unset_when_a_delete_fails(): void
     {
         // Arrange
@@ -308,7 +416,7 @@ final class OneSignalSubscriptionsTest extends TestCase
         $this->assertSame(['sub-old'], $deleted);
     }
 
-    public function test_prune_sms_subscriptions_deletes_every_sms_subscription_without_a_kept_number(): void
+    public function test_prune_sms_subscriptions_deletes_every_enabled_sms_subscription_without_a_kept_number(): void
     {
         // Arrange
         $deleted = [];
@@ -326,8 +434,29 @@ final class OneSignalSubscriptionsTest extends TestCase
         // Act
         (new OneSignalSubscriptions($client))->pruneSmsSubscriptions('user_1', null);
 
+        // Assert: the disabled one is a carrier opt-out and stays on record.
+        $this->assertSame(['sub-a'], $deleted);
+    }
+
+    public function test_prune_sms_subscriptions_compares_the_kept_phone_in_its_normalised_form(): void
+    {
+        // Arrange
+        $deleted = [];
+        $client = $this->createMock(DefaultApi::class);
+        $client->method('getUser')->willReturn($this->oneSignalUser([
+            $this->subscription('sub-keep', self::STALE_PHONE),
+            $this->subscription('sub-old', self::PHONE),
+        ]));
+        $client->method('deleteSubscription')
+            ->willReturnCallback(function (string $appId, string $id) use (&$deleted): void {
+                $deleted[] = $id;
+            });
+
+        // Act
+        (new OneSignalSubscriptions($client))->pruneSmsSubscriptions('user_1', '+1 (555) 000-0001');
+
         // Assert
-        $this->assertSame(['sub-a', 'sub-b'], $deleted);
+        $this->assertSame(['sub-old'], $deleted);
     }
 
     public function test_prune_sms_subscriptions_is_a_no_op_for_a_user_onesignal_never_saw(): void
