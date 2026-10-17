@@ -193,7 +193,7 @@ class AiRun extends Model
     }
 
     /**
-     * The run this override replaced, or null for a code-sourced run or once that run was deleted.
+     * The run whose stored answer this `cache_hit` run served, or null for any other run or once that run was deleted.
      *
      * @return BelongsTo<AiRun, $this>
      */

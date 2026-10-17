@@ -536,6 +536,28 @@ final class InstallCommandTest extends TestCase
         );
     }
 
+    public function test_ai_prompts_feature_publishes_the_overrides_migration_and_enables_the_flag(): void
+    {
+        $this->artisan('magic-starter:install', [
+            '--features' => ['ai-prompts'],
+        ])->assertExitCode(0);
+
+        $this->assertCount(1, glob(database_path('migrations/*_create_ai_prompt_overrides_table.php')) ?: []);
+        $this->assertStringContainsString(
+            "\n        \\FlutterSdk\\MagicStarter\\Features::aiPrompts(),",
+            (string) file_get_contents(config_path('magic-starter.php')),
+        );
+    }
+
+    public function test_without_ai_prompts_the_overrides_migration_is_skipped(): void
+    {
+        $this->artisan('magic-starter:install', [
+            '--features' => ['teams'],
+        ])->assertExitCode(0);
+
+        $this->assertSame([], glob(database_path('migrations/*_create_ai_prompt_overrides_table.php')) ?: []);
+    }
+
     public function test_without_ai_runs_the_ai_run_migrations_are_skipped(): void
     {
         $this->artisan('magic-starter:install', [
