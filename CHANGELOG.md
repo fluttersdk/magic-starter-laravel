@@ -4,6 +4,8 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [0.0.34] - 2026-10-17
+
 ### Added
 
 - **`billing.promotion_codes` shows Stripe's promotion code field on the subscription checkout, default `false`.** Set `MAGIC_STARTER_BILLING_PROMOTION_CODES=true` and every `POST billing/checkout` session, trial or not, is created with `allow_promotion_codes` through Cashier's `allowPromotionCodes()`; off sends no such key, and store purchases are unaffected. The codes are made in the Stripe dashboard. The `checkout_started` audit row records a `promotion_codes` boolean, and the billing guide documents the measured Stripe behaviour of `once` and `repeating` codes under a trial, annual invoices, monthly to annual swaps and `minimum_amount`. (`src/Http/Controllers/BillingController.php`, `config/magic-starter.php`, `doc/basics/billing.md`, `doc/getting-started/configuration.md`)
@@ -38,7 +40,7 @@ All notable changes to this project will be documented in this file.
 
 ### Upgrading
 
-- **A host with a published `config/magic-starter.php` adds the new nested keys.** The config merge is shallow: a published `support` block needs `mail` with `ticket_created` and `csat_invitation`, and a published `billing` block needs `client_path`. Without them the two support mails stay off and the refusal mail links to `/teams/billing`.
+- **A host with a published `config/magic-starter.php` adds the new nested keys.** The config merge is shallow: a published `support` block needs `mail` with `ticket_created` and `csat_invitation`, and a published `billing` block needs `client_path` and `promotion_codes`. Without them the two support mails stay off, the refusal mail links to `/teams/billing` and promotion codes stay off.
 - **The account-holder half of both support mails needs email verification.** The user model has to implement `MustVerifyEmail` and `Features::emailVerification()` has to be enabled, otherwise no address is ever verified and they never send; a guest never receives them. With `ticket_created` on, every caller of `openPublic()`, not only the package route, has to carry a captcha.
 - **The two OneSignal cleanup jobs need a queue worker.** `PruneSmsSubscriptions` and `DeleteOneSignalUser` run on the queue, so without a worker a removed number stays in OneSignal until the next SMS send reconciles it, and a purged user stays in OneSignal. Nothing to publish and no migration.
 - **A disabled SMS subscription is never re-enabled.** The reconcile keeps a registered but disabled subscription as it is. Re-enabling it would need fresh consent, which the package never collects.
