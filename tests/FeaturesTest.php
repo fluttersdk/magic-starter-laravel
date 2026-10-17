@@ -292,4 +292,28 @@ class FeaturesTest extends TestCase
         $this->assertSame(50, config('magic-starter.releases.limit'));
         $this->assertNotContains(Features::releases(), config('magic-starter.features'));
     }
+
+    public function test_ai_runs_feature_constant(): void
+    {
+        $this->assertSame('ai-runs', Features::aiRuns());
+    }
+
+    public function test_has_ai_run_features_returns_false_by_default(): void
+    {
+        config(['magic-starter.features' => []]);
+
+        $this->assertFalse(Features::hasAiRunFeatures());
+    }
+
+    public function test_has_ai_run_features_returns_true_when_enabled(): void
+    {
+        config(['magic-starter.features' => [Features::aiRuns()]]);
+
+        $this->assertTrue(Features::hasAiRunFeatures());
+    }
+
+    public function test_ai_runs_feature_is_off_by_default(): void
+    {
+        $this->assertNotContains(Features::aiRuns(), config('magic-starter.features'));
+    }
 }

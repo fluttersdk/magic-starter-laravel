@@ -515,6 +515,37 @@ final class InstallCommandTest extends TestCase
         $this->assertSame([], glob(database_path('migrations/*_create_app_releases_table.php')) ?: []);
     }
 
+    public function test_ai_runs_feature_publishes_both_migrations_runs_before_attempts(): void
+    {
+        $this->artisan('magic-starter:install', [
+            '--features' => ['ai-runs'],
+        ])->assertExitCode(0);
+
+        $runs = glob(database_path('migrations/*_create_ai_runs_table.php')) ?: [];
+        $attempts = glob(database_path('migrations/*_create_ai_run_attempts_table.php')) ?: [];
+
+        $this->assertCount(1, $runs);
+        $this->assertCount(1, $attempts);
+        $this->assertTrue(
+            basename($runs[0]) < basename($attempts[0]),
+            'The attempts table points at ai_runs, so the runs migration must be stamped first.',
+        );
+        $this->assertStringContainsString(
+            "\n        \\FlutterSdk\\MagicStarter\\Features::aiRuns(),",
+            (string) file_get_contents(config_path('magic-starter.php')),
+        );
+    }
+
+    public function test_without_ai_runs_the_ai_run_migrations_are_skipped(): void
+    {
+        $this->artisan('magic-starter:install', [
+            '--features' => ['teams'],
+        ])->assertExitCode(0);
+
+        $this->assertSame([], glob(database_path('migrations/*_create_ai_runs_table.php')) ?: []);
+        $this->assertSame([], glob(database_path('migrations/*_create_ai_run_attempts_table.php')) ?: []);
+    }
+
     /**
      * A provider-created account has no password, and the core users table
      * declares the column NOT NULL; only guest-auth and phone-otp relaxed it
