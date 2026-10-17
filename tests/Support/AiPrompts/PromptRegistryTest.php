@@ -99,6 +99,35 @@ class PromptRegistryTest extends TestCase
         (new PromptRegistry)->get('missing.key');
     }
 
+    public function test_find_answers_the_definition_or_null_for_an_unknown_key(): void
+    {
+        $registry = new PromptRegistry;
+        $registry->define('triage', 'Triage', fn (): string => 'Triage.', fn (): string => 'Fence.');
+
+        $this->assertSame($registry->get('triage'), $registry->find('triage'));
+        $this->assertNull($registry->find('missing.key'));
+    }
+
+    public function test_a_key_wider_than_its_column_throws_at_define(): void
+    {
+        $registry = new PromptRegistry;
+
+        $registry->define(str_repeat('k', 100), 'Fits', fn (): string => 'Body.', fn (): string => 'Fence.');
+
+        $this->expectException(InvalidArgumentException::class);
+        $this->expectExceptionMessage('100');
+
+        $registry->define(str_repeat('k', 101), 'Too wide', fn (): string => 'Body.', fn (): string => 'Fence.');
+    }
+
+    public function test_required_phrases_describe_lists_each_phrase_in_brackets(): void
+    {
+        $this->assertSame('[VERDICT:], [one of: up, down]', RequiredPhrases::describe([
+            'VERDICT:',
+            'one of: up, down',
+        ]));
+    }
+
     public function test_required_phrases_collapse_whitespace_on_both_sides(): void
     {
         $missing = RequiredPhrases::missing(

@@ -10,6 +10,7 @@ use FlutterSdk\MagicStarter\Filament\Concerns\WritesThroughContracts;
 use FlutterSdk\MagicStarter\Filament\Resources\AiPrompts\AiPromptOverrideResource;
 use FlutterSdk\MagicStarter\Filament\Support\ContractAction;
 use FlutterSdk\MagicStarter\Models\AiPromptOverride;
+use Illuminate\Support\Str;
 use Symfony\Component\HttpFoundation\StreamedResponse;
 
 class EditAiPromptOverride extends EditRecord
@@ -70,7 +71,8 @@ class EditAiPromptOverride extends EditRecord
     }
 
     /**
-     * The stored body as `<key>.txt`, so it can be pasted into the code default.
+     * The stored body as `<key>.txt`, so it can be pasted into the code default. The key is
+     * slugged with dots kept: a `/` or `\` in it would make the disposition header throw.
      */
     private function downloadBody(): StreamedResponse
     {
@@ -81,7 +83,7 @@ class EditAiPromptOverride extends EditRecord
             static function () use ($override): void {
                 echo $override->body;
             },
-            "{$override->key}.txt",
+            Str::slug($override->key, '.') . '.txt',
             ['Content-Type' => 'text/plain'],
         );
     }

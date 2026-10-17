@@ -29,8 +29,8 @@ use SebastianBergmann\Diff\Output\UnifiedDiffOutputBuilder;
  * Only the body is a field. The boundary block and the code default are read-only entries, and
  * `loaded_default_hash` is hidden state that tells the contract which code default the editor
  * opened on; the contract compares it with the live one and stores its own hash, never this one.
- * On edit the diff of the code default against the stored body is shown, and a stale row asks for
- * a tick that the diff was reviewed before it can be saved over the changed default.
+ * On edit the diff of the code default against the stored body is shown, and a stale or an
+ * incomplete row asks for a tick that the diff was reviewed before it can be saved.
  */
 class AiPromptOverrideForm
 {
@@ -77,7 +77,7 @@ class AiPromptOverrideForm
                     ->accepted()
                     ->dehydrated(false)
                     ->visible(static fn (?Model $record): bool => $record instanceof AiPromptOverride
-                        && AiPromptOverrideResource::status($record) === AiPromptOverrideResource::STATUS_STALE),
+                        && AiPromptOverrideResource::status($record)->needsReview()),
                 static::codeBlock('default_body', static fn (PromptDefinition $prompt): string => $prompt->body())
                     ->copyable(),
                 static::codeBlock('boundary', static fn (PromptDefinition $prompt): string => $prompt->boundary()),
@@ -159,7 +159,7 @@ class AiPromptOverrideForm
             }
 
             $fail((string) __('magic-starter::admin_ai.refusals.missing_phrases', [
-                'phrases' => implode(', ', array_map(static fn (string $phrase): string => "[{$phrase}]", $missing)),
+                'phrases' => RequiredPhrases::describe($missing),
             ]));
         };
     }
@@ -182,6 +182,6 @@ class AiPromptOverrideForm
         $header = '--- ' . __('magic-starter::admin_ai.prompts.diff.from')
             . "\n+++ " . __('magic-starter::admin_ai.prompts.diff.to') . "\n";
 
-        return (new Differ(new UnifiedDiffOutputBuilder($header)))->diff($default, $record->body);
+        return (new Differ(new UnifiedDiffOutputBuilder($header, true)))->diff($default, $record->body);
     }
 }

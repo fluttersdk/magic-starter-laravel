@@ -7,6 +7,7 @@ use FlutterSdk\MagicStarter\Enums\AiPromptSource;
 use FlutterSdk\MagicStarter\Features;
 use FlutterSdk\MagicStarter\Models\AiPromptOverride;
 use Illuminate\Support\Facades\Cache;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 use PDOException;
 
@@ -23,17 +24,28 @@ use PDOException;
  *
  * The overrides are read as one map through the shared cache under
  * {@see AiPromptOverride::CACHE_KEY}, which the model forgets on every save and
- * delete. There is deliberately no instance or static memo on top: Octane and
- * Horizon workers live for many requests, and a memo would keep serving a
- * deleted override until the worker restarts.
+ * delete once the write has committed. There is deliberately no instance or
+ * static memo on top: Octane and Horizon workers live for many requests, and a
+ * memo would keep serving a deleted override until the worker restarts. The map
+ * does expire after {@see self::CACHE_TTL_SECONDS}: a reader that rebuilt the map
+ * from rows read before a commit can cache it just after the commit's forget, and
+ * the expiry bounds how long that lost race can serve the old overrides.
+ *
+ * The read runs in its own transaction, a savepoint when the host already has one
+ * open, so a failed read on PostgreSQL rolls back to the savepoint instead of
+ * aborting the host's transaction.
  *
  * Failure mode: a database failure while reading (a missing table, a lost
- * connection; {@see \Illuminate\Database\QueryException} is a PDOException)
- * answers the code default and logs one warning per process. Anything else,
- * a cache store failure included, propagates.
+ * connection, a database-backed cache store;
+ * {@see \Illuminate\Database\QueryException} is a PDOException) answers the
+ * code default and logs one warning per process. A failure of any other cache
+ * store, and anything that is not a database failure, propagates.
  */
 final class PromptResolver implements ResolvesPrompts
 {
+    /** How long the cached map of overrides lives at most, however a write reaches the database. */
+    public const CACHE_TTL_SECONDS = 300;
+
     /** Whether this process already warned that the overrides could not be read. */
     private static bool $warnedUnreadable = false;
 
@@ -44,11 +56,12 @@ final class PromptResolver implements ResolvesPrompts
     public function resolve(string $key): ResolvedPrompt
     {
         $definition = $this->registry->get($key);
-        $defaultHash = $definition->defaultHash();
+        $body = $definition->body();
+        $defaultHash = PromptDefinition::hashBody($body);
         $override = $this->currentOverride($definition, $defaultHash);
 
         return new ResolvedPrompt(
-            text: ($override ?? $definition->body()) . "\n\n" . $definition->boundary(),
+            text: ($override ?? $body) . "\n\n" . $definition->boundary(),
             source: $override === null ? AiPromptSource::CODE : AiPromptSource::OVERRIDE,
             defaultHash: $defaultHash,
         );
@@ -84,19 +97,23 @@ final class PromptResolver implements ResolvesPrompts
     private function overrides(string $key): array
     {
         try {
-            return Cache::rememberForever(AiPromptOverride::CACHE_KEY, static fn (): array => AiPromptOverride::query()
-                ->get([
-                    'key',
-                    'body',
-                    'default_hash',
-                ])
-                ->mapWithKeys(static fn (AiPromptOverride $override): array => [
-                    $override->key => [
-                        'body' => $override->body,
-                        'default_hash' => $override->default_hash,
-                    ],
-                ])
-                ->all());
+            return Cache::remember(
+                AiPromptOverride::CACHE_KEY,
+                self::CACHE_TTL_SECONDS,
+                static fn (): array => DB::transaction(static fn (): array => AiPromptOverride::query()
+                    ->get([
+                        'key',
+                        'body',
+                        'default_hash',
+                    ])
+                    ->mapWithKeys(static fn (AiPromptOverride $override): array => [
+                        $override->key => [
+                            'body' => $override->body,
+                            'default_hash' => $override->default_hash,
+                        ],
+                    ])
+                    ->all()),
+            );
         } catch (PDOException $exception) {
             if (! self::$warnedUnreadable) {
                 self::$warnedUnreadable = true;

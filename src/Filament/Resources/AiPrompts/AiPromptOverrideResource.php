@@ -8,6 +8,7 @@ use Filament\Support\Icons\Heroicon;
 use Filament\Tables\Columns\TextColumn;
 use Filament\Tables\Table;
 use FlutterSdk\MagicStarter\Contracts\SavesAiPromptOverrides;
+use FlutterSdk\MagicStarter\Enums\AiPromptOverrideStatus;
 use FlutterSdk\MagicStarter\Filament\Resources\AiPrompts\Pages\CreateAiPromptOverride;
 use FlutterSdk\MagicStarter\Filament\Resources\AiPrompts\Pages\EditAiPromptOverride;
 use FlutterSdk\MagicStarter\Filament\Resources\AiPrompts\Pages\ListAiPromptOverrides;
@@ -17,6 +18,7 @@ use FlutterSdk\MagicStarter\Filament\Support\ContractAction;
 use FlutterSdk\MagicStarter\Models\AiPromptOverride;
 use FlutterSdk\MagicStarter\Support\AiPrompts\PromptDefinition;
 use FlutterSdk\MagicStarter\Support\AiPrompts\PromptRegistry;
+use FlutterSdk\MagicStarter\Support\AiPrompts\RequiredPhrases;
 use Illuminate\Contracts\Auth\Authenticatable;
 use Illuminate\Database\Eloquent\Model;
 
@@ -28,18 +30,13 @@ use Illuminate\Database\Eloquent\Model;
  * and is not editable here. There is no bulk action on the table: a bulk delete would skip
  * the contract.
  *
- * A row is judged against the code default as the registry answers it right now: `stale`
- * once the default changed after the edit (the resolver ignores such an override until it
- * is re-saved), `orphaned` once the host no longer registers the key.
+ * A row is judged against the registration as the registry answers it right now: `orphaned`
+ * once the host no longer registers the key, `stale` once the default changed after the edit,
+ * `incomplete` once the body lacks a required phrase. The resolver ignores a stale or an
+ * incomplete override until it is re-saved.
  */
 class AiPromptOverrideResource extends MagicStarterResource
 {
-    public const STATUS_CURRENT = 'current';
-
-    public const STATUS_STALE = 'stale';
-
-    public const STATUS_ORPHANED = 'orphaned';
-
     /**
      * Shown for a column a row cannot answer (the label of a key nobody registers any more).
      */
@@ -88,16 +85,10 @@ class AiPromptOverrideResource extends MagicStarterResource
                     ->placeholder(static::ABSENT),
                 TextColumn::make('status')
                     ->label(__('magic-starter::admin_ai.prompts.columns.status'))
-                    ->state(static fn (AiPromptOverride $record): string => static::status($record))
+                    ->state(static fn (AiPromptOverride $record): AiPromptOverrideStatus => static::status($record))
                     ->badge()
-                    ->formatStateUsing(static fn (string $state): string => (string) __(
-                        "magic-starter::admin_ai.prompts.statuses.{$state}",
-                    ))
-                    ->color(static fn (string $state): string => match ($state) {
-                        static::STATUS_CURRENT => 'success',
-                        static::STATUS_STALE => 'warning',
-                        default => 'gray',
-                    }),
+                    ->formatStateUsing(static fn (AiPromptOverrideStatus $state): string => $state->label())
+                    ->color(static fn (AiPromptOverrideStatus $state): string => $state->color()),
                 TextColumn::make('updated_at')
                     ->label(__('magic-starter::admin_ai.prompts.columns.updated_at'))
                     ->dateTime()
@@ -121,23 +112,28 @@ class AiPromptOverrideResource extends MagicStarterResource
      */
     public static function definition(string $key): ?PromptDefinition
     {
-        return app(PromptRegistry::class)->all()[$key] ?? null;
+        return app(PromptRegistry::class)->find($key);
     }
 
     /**
-     * Whether the override still matches the code default it was written against.
-     *
-     * @return self::STATUS_*
+     * Whether the resolver would apply the override: registered, written against the live
+     * code default, and still keeping every required phrase.
      */
-    public static function status(AiPromptOverride $override): string
+    public static function status(AiPromptOverride $override): AiPromptOverrideStatus
     {
         $definition = static::definition($override->key);
 
-        return match (true) {
-            $definition === null => static::STATUS_ORPHANED,
-            $definition->defaultHash() !== $override->default_hash => static::STATUS_STALE,
-            default => static::STATUS_CURRENT,
-        };
+        if ($definition === null) {
+            return AiPromptOverrideStatus::ORPHANED;
+        }
+
+        if ($definition->defaultHash() !== $override->default_hash) {
+            return AiPromptOverrideStatus::STALE;
+        }
+
+        return RequiredPhrases::missing($override->body, $definition->requiredPhrases) === []
+            ? AiPromptOverrideStatus::CURRENT
+            : AiPromptOverrideStatus::INCOMPLETE;
     }
 
     /**

@@ -40,11 +40,12 @@ class SaveAiPromptOverride implements SavesAiPromptOverrides
         // 1. A key nobody registered has no default to override.
         $key = (string) ($input['key'] ?? '');
 
-        if (! array_key_exists($key, $this->registry->all())) {
+        $definition = $this->registry->find($key);
+
+        if ($definition === null) {
             throw $this->refusal('key', 'unknown_key', ['key' => $key]);
         }
 
-        $definition = $this->registry->get($key);
         $body = (string) ($input['body'] ?? '');
 
         // 2. A blank body would send the model an empty prompt.
@@ -62,7 +63,7 @@ class SaveAiPromptOverride implements SavesAiPromptOverrides
 
         if ($missing !== []) {
             throw $this->refusal('body', 'missing_phrases', [
-                'phrases' => implode(', ', array_map(static fn (string $phrase): string => "[{$phrase}]", $missing)),
+                'phrases' => RequiredPhrases::describe($missing),
             ]);
         }
 

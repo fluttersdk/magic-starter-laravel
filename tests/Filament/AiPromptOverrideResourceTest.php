@@ -5,6 +5,7 @@ namespace FlutterSdk\MagicStarter\Tests\Filament;
 use Filament\Forms\Components\Select;
 use Filament\Notifications\Notification as FilamentNotification;
 use Filament\Panel;
+use FlutterSdk\MagicStarter\Enums\AiPromptOverrideStatus;
 use FlutterSdk\MagicStarter\Events\AdminActionPerformed;
 use FlutterSdk\MagicStarter\Features;
 use FlutterSdk\MagicStarter\Filament\MagicStarterPlugin;
@@ -93,11 +94,35 @@ class AiPromptOverrideResourceTest extends FilamentTestCase
 
         Livewire::actingAs($this->staff())->test(ListAiPromptOverrides::class)
             ->assertCanSeeTableRecords([$current, $stale, $orphaned])
-            ->assertTableColumnStateSet('status', 'current', $current)
-            ->assertTableColumnStateSet('status', 'stale', $stale)
-            ->assertTableColumnStateSet('status', 'orphaned', $orphaned)
+            ->assertTableColumnStateSet('status', AiPromptOverrideStatus::CURRENT, $current)
+            ->assertTableColumnStateSet('status', AiPromptOverrideStatus::STALE, $stale)
+            ->assertTableColumnStateSet('status', AiPromptOverrideStatus::ORPHANED, $orphaned)
             ->assertTableColumnStateSet('label', 'Incident analysis', $current)
             ->assertTableColumnStateSet('label', 'Status summary', $stale);
+    }
+
+    public function test_an_override_missing_a_required_phrase_is_badged_incomplete_and_asks_for_the_review_tick(): void
+    {
+        $incomplete = $this->override(self::KEY, 'Look at the outage.', hash('sha256', $this->default));
+
+        Livewire::actingAs($this->staff())->test(ListAiPromptOverrides::class)
+            ->assertTableColumnStateSet('status', AiPromptOverrideStatus::INCOMPLETE, $incomplete);
+
+        $edit = Livewire::actingAs($this->staff())->test(EditAiPromptOverride::class, [
+            'record' => $incomplete->getKey(),
+        ])
+            ->assertFormFieldIsVisible('reviewed')
+            ->fillForm(['body' => 'Analyse every incident, then summarise it.'])
+            ->call('save')
+            ->assertHasFormErrors(['reviewed']);
+
+        $this->assertSame('Look at the outage.', $incomplete->refresh()->body);
+
+        $edit->fillForm(['reviewed' => true])
+            ->call('save')
+            ->assertHasNoFormErrors();
+
+        $this->assertSame('Analyse every incident, then summarise it.', $incomplete->refresh()->body);
     }
 
     public function test_choosing_a_key_fills_the_code_default_and_its_hash(): void
@@ -259,6 +284,15 @@ class AiPromptOverrideResourceTest extends FilamentTestCase
         Livewire::actingAs($this->staff())->test(EditAiPromptOverride::class, ['record' => $override->getKey()])
             ->callAction('download')
             ->assertFileDownloaded('incident.analysis.txt', 'Analyse this incident.', 'text/plain');
+    }
+
+    public function test_the_download_filename_is_slugged_for_a_key_with_a_path_separator(): void
+    {
+        $override = $this->override('incident/analysis\\v2', 'Analyse this incident.', hash('sha256', 'whatever'));
+
+        Livewire::actingAs($this->staff())->test(EditAiPromptOverride::class, ['record' => $override->getKey()])
+            ->callAction('download')
+            ->assertFileDownloaded('incidentanalysisv2.txt', 'Analyse this incident.', 'text/plain');
     }
 
     public function test_the_promoted_action_deletes_through_the_contract_and_returns_to_the_list(): void

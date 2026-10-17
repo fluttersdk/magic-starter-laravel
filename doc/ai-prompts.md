@@ -83,9 +83,9 @@ class AiPromptServiceProvider extends ServiceProvider
 | `boundary` | Text appended after every body; code only, never stored, never editable |
 | `requiredPhrases` | Literals any body must contain, because your parser or your fence depends on them |
 
-Both texts are closures so a default that reads the locale or config is built on every call, and the hash used for [staleness](#staleness-and-the-boundary) always describes the default the code would answer right now.
+Both texts are closures, evaluated on every call, and they must be deterministic: no locale, request, clock or config that varies from call to call. One override row pins one default hash, so a body that differs per call would leave the override stale for some calls and current for others. The hash used for [staleness](#staleness-and-the-boundary) always describes the default the code would answer right now.
 
-`define()` checks the registration itself and throws an `InvalidArgumentException` for a key that is already defined, or for a default body that lacks one of its own required phrases. A mistake there fails the boot and your tests instead of a call in production.
+`define()` checks the registration itself and throws an `InvalidArgumentException` for a key that is already defined or longer than 100 characters (the column width), or for a default body that lacks one of its own required phrases. A mistake there fails the boot and your tests instead of a call in production.
 
 Registration is unconditional. It runs the same whether the feature is on or off.
 
@@ -141,7 +141,7 @@ class IncidentAnalyst
 | `hash` | The sha256 of `text`, so runs that sent the same prompt group together |
 | `defaultHash` | The sha256 of the code default body at resolve time, whichever body was used |
 
-An unknown key throws an `InvalidArgumentException`. There is no memo inside the process: every `resolve()` is one read of the shared cache, so a save in the panel reaches the next call on every worker, Octane and Horizon included.
+An unknown key throws an `InvalidArgumentException`; `PromptRegistry::find()` answers `null` instead, for a caller that has to ask first. There is no memo inside the process: every `resolve()` is one read of the shared cache, so a save in the panel reaches the next call on every worker, Octane and Horizon included. The cached map expires after 300 seconds as well, so a write that bypasses the model, or a reader that cached rows just before a commit, is corrected within that time.
 
 ---
 
@@ -157,9 +157,9 @@ The flow is four steps:
 3. **Promote to code.** When the wording is right, "Download body" gives you `<key>.txt`. Paste it into the prompt's code default and deploy.
 4. **Delete.** "Promoted to code, delete" removes the override, after a confirmation. Delete only after the deploy: until then the override is the only copy of the new wording, and deleting it puts the old code default back.
 
-The list shows each override with a badge: `current`, `stale` or `orphaned`. There is no bulk action, because a bulk delete would skip the contract.
+The list shows each override with a badge: `current`, `stale`, `incomplete` or `orphaned`. `incomplete` is an override that matches the code default but lacks a required phrase, so the resolver ignores it; like a stale row it asks for the review tick before it can be saved. There is no bulk action, because a bulk delete would skip the contract.
 
-Saving and deleting go through two contracts, `SavesAiPromptOverrides` and `DeletesAiPromptOverrides`, which you can swap like any other [action contract](architecture/action-contracts.md). The default save refuses, with a message on the field, an unknown key, a blank body, a body that lacks a required phrase, and a body edited against a code default that has since changed.
+Saving and deleting go through two contracts, `SavesAiPromptOverrides` and `DeletesAiPromptOverrides`, which you can swap like any other [action contract](architecture/action-contracts.md). The default save refuses an unknown key, a blank body, a body that lacks a required phrase, and a body edited against a code default that has since changed. The panel shows a refusal other than a missing phrase as a danger notification; a missing phrase is a message on the body field.
 
 ---
 
@@ -177,7 +177,7 @@ A row whose key the host no longer registers is **orphaned**. It is never applie
 
 The hash covers the body only. The boundary is not part of it, because the boundary is read from the code on every resolve and no override stores or replaces it. Changing a boundary changes the text sent to the model at once, and makes no override stale. That is the point of the split: put the rules a prompt injection must not be able to remove, such as the fence around untrusted evidence, in the boundary, and let staff tune only the wording above it.
 
-Required phrases are checked again at resolve time, not only at save. An override that lost one of them, because you added a phrase to the registration after it was saved, is skipped the same way a stale one is.
+Required phrases are checked again at resolve time, not only at save. An override that lost one of them, because you added a phrase to the registration after it was saved, is skipped the same way a stale one is, and the panel badges it `incomplete`.
 
 ---
 
@@ -186,4 +186,4 @@ Required phrases are checked again at resolve time, not only at save. An overrid
 
 A prompt must not stop a model call. When the database cannot answer, `resolve()` answers the code default, and the first failure in a process logs one warning with the reason `ai_prompt_overrides_unreadable`. A `PDOException` is the trigger, and a `QueryException` is one, so a missing table (an upgrade that has not migrated yet) and a lost connection are both covered.
 
-Anything else is a bug and propagates, a failure of the cache store included. A failed read is not cached, so the next call reads the database again.
+A database failure includes a database-backed cache store, whose failure is a `QueryException` too, so it answers the code default as well. A failure of any other cache store, or of anything that is not a database failure, is a bug and propagates. A failed read is not cached, so the next call reads the database again. The read runs in its own transaction, a savepoint inside yours, so on PostgreSQL a failed read does not abort a transaction your code has open.

@@ -94,8 +94,9 @@ return [
 
     /*
      * Prompt tezgahı: personel, uygulamanın kodda kaydettiği bir promptun gövdesini değiştirir.
-     * `stale` koddaki varsayılanın düzenlemeden sonra değiştiğini, `orphaned` uygulamanın
-     * anahtarı artık kaydetmediğini gösterir.
+     * `stale` koddaki varsayılanın düzenlemeden sonra değiştiğini, `incomplete` gövdede
+     * zorunlu bir ifadenin eksik olduğunu, `orphaned` uygulamanın anahtarı artık
+     * kaydetmediğini gösterir.
      */
     'prompts' => [
         'navigation_label' => 'AI promptları',
@@ -112,6 +113,7 @@ return [
         'statuses' => [
             'current' => 'Güncel',
             'stale' => 'Eskimiş',
+            'incomplete' => 'Eksik',
             'orphaned' => 'Sahipsiz',
         ],
 

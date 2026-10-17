@@ -15,6 +15,9 @@ use InvalidArgumentException;
  */
 final class PromptRegistry
 {
+    /** The width of the `ai_prompt_overrides.key` column; a longer key could never be stored. */
+    private const MAX_KEY_LENGTH = 100;
+
     /** @var array<string, PromptDefinition> */
     private array $definitions = [];
 
@@ -23,7 +26,7 @@ final class PromptRegistry
      * @param  Closure(): string  $boundary
      * @param  list<string>  $requiredPhrases
      *
-     * @throws InvalidArgumentException When the key is taken or the default lacks a required phrase.
+     * @throws InvalidArgumentException When the key is too long or taken, or the default lacks a required phrase.
      */
     public function define(
         string $key,
@@ -32,6 +35,12 @@ final class PromptRegistry
         Closure $boundary,
         array $requiredPhrases = [],
     ): void {
+        if (strlen($key) > self::MAX_KEY_LENGTH) {
+            throw new InvalidArgumentException(
+                'The AI prompt key [' . $key . '] is longer than ' . self::MAX_KEY_LENGTH . ' characters.',
+            );
+        }
+
         if (isset($this->definitions[$key])) {
             throw new InvalidArgumentException("The AI prompt [{$key}] is already defined.");
         }
@@ -42,7 +51,7 @@ final class PromptRegistry
         if ($missing !== []) {
             throw new InvalidArgumentException(
                 "The default body of the AI prompt [{$key}] lacks its required phrases: "
-                . implode(', ', array_map(static fn (string $phrase): string => "[{$phrase}]", $missing)) . '.',
+                . RequiredPhrases::describe($missing) . '.',
             );
         }
 
@@ -54,8 +63,16 @@ final class PromptRegistry
      */
     public function get(string $key): PromptDefinition
     {
-        return $this->definitions[$key]
+        return $this->find($key)
             ?? throw new InvalidArgumentException("No AI prompt is defined as [{$key}].");
+    }
+
+    /**
+     * The prompt defined under the key, or null when the host registers none.
+     */
+    public function find(string $key): ?PromptDefinition
+    {
+        return $this->definitions[$key] ?? null;
     }
 
     /**

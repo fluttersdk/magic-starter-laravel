@@ -26,6 +26,16 @@ final class RequiredPhrases
         ));
     }
 
+    /**
+     * The phrases as one readable list for a message, each in brackets: `[a], [b]`.
+     *
+     * @param  list<string>  $missing
+     */
+    public static function describe(array $missing): string
+    {
+        return implode(', ', array_map(static fn (string $phrase): string => "[{$phrase}]", $missing));
+    }
+
     private static function normalise(string $text): string
     {
         return (string) preg_replace('/\s+/', ' ', $text);

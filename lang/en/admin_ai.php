@@ -93,8 +93,8 @@ return [
 
     /*
      * The prompt workbench: staff replace the body of a prompt the host registered in code.
-     * `stale` means the code default changed after the edit, `orphaned` that the host no
-     * longer registers the key.
+     * `stale` means the code default changed after the edit, `incomplete` that the body lacks
+     * a required phrase, `orphaned` that the host no longer registers the key.
      */
     'prompts' => [
         'navigation_label' => 'AI prompts',
@@ -111,6 +111,7 @@ return [
         'statuses' => [
             'current' => 'Current',
             'stale' => 'Stale',
+            'incomplete' => 'Incomplete',
             'orphaned' => 'Orphaned',
         ],
 

@@ -6,6 +6,7 @@ use FlutterSdk\MagicStarter\Support\ConditionallyUsesUuids;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\Cache;
+use Illuminate\Support\Facades\DB;
 
 /**
  * The body staff chose for one registered prompt, replacing its code default.
@@ -13,10 +14,13 @@ use Illuminate\Support\Facades\Cache;
  * Only the body is stored: the boundary block and the required phrases belong to
  * the code registration and are never written here. `default_hash` records which
  * code default the edit started from. Every save and delete forgets
- * {@see self::CACHE_KEY}, so the resolver's cached map of overrides is rebuilt on
- * the next read and a change takes effect without waiting out a TTL. A write
- * that bypasses the model (a raw query, `insert`, `upsert`) fires no event and
- * leaves the cache stale.
+ * {@see self::CACHE_KEY} once the write has committed (at once outside a
+ * transaction), so the resolver's cached map of overrides is rebuilt on the next
+ * read and a change takes effect without waiting out the TTL. The forget waits
+ * for the commit because a reader that rebuilt the map from the rows before it
+ * would otherwise cache them again just after the forget; the resolver's TTL
+ * bounds the race that remains. A write that bypasses the model (a raw query,
+ * `insert`, `upsert`) fires no event and leaves the cache stale until that TTL.
  *
  * @property string|int $id
  * @property string $key
@@ -44,11 +48,11 @@ class AiPromptOverride extends Model
     protected static function booted(): void
     {
         static::saved(static function (): void {
-            Cache::forget(self::CACHE_KEY);
+            DB::afterCommit(static fn () => Cache::forget(self::CACHE_KEY));
         });
 
         static::deleted(static function (): void {
-            Cache::forget(self::CACHE_KEY);
+            DB::afterCommit(static fn () => Cache::forget(self::CACHE_KEY));
         });
     }
 }

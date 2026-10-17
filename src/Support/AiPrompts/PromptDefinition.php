@@ -8,9 +8,11 @@ use Closure;
  * One prompt a host registered at boot: the editable code default body, the
  * code-owned boundary block, and the phrases any body must keep.
  *
- * Both texts are closures so a default that reads the locale or config is built
- * per call, and {@see self::defaultHash()} always describes the default the code
- * would answer right now.
+ * Both texts are closures, evaluated on every call, and must be deterministic: no
+ * locale, request, clock or config that varies from call to call. One override row
+ * pins one default hash, so a body that differs per call would leave the override
+ * stale for some calls and current for others. {@see self::defaultHash()} always
+ * describes the default the code would answer right now.
  */
 final readonly class PromptDefinition
 {
@@ -43,6 +45,14 @@ final readonly class PromptDefinition
      */
     public function defaultHash(): string
     {
-        return hash('sha256', $this->body());
+        return self::hashBody($this->body());
+    }
+
+    /**
+     * The hash of a body already read from the closure, for a caller that needs the text as well.
+     */
+    public static function hashBody(string $body): string
+    {
+        return hash('sha256', $body);
     }
 }

@@ -10,10 +10,13 @@ use FlutterSdk\MagicStarter\Support\AiPrompts\PromptRegistry;
 use FlutterSdk\MagicStarter\Support\AiPrompts\PromptResolver;
 use FlutterSdk\MagicStarter\Support\AiPrompts\ResolvedPrompt;
 use FlutterSdk\MagicStarter\Tests\TestCase;
+use Illuminate\Database\Events\TransactionBeginning;
+use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Schema;
+use Illuminate\Support\Str;
 use InvalidArgumentException;
 use ReflectionProperty;
 use RuntimeException;
@@ -182,9 +185,60 @@ class PromptResolverTest extends TestCase
             ->withArgs(fn (string $message, array $context): bool => ($context['key'] ?? null) === 'triage');
     }
 
+    /**
+     * On PostgreSQL a failed statement aborts the whole open transaction, so a read that failed
+     * inside the host's transaction would fail every later statement the host runs in it. The
+     * read therefore runs in its own savepoint (a nested `DB::transaction`), which this test sees
+     * as a `TransactionBeginning` event; SQLite does not abort, so the follow-up query only proves
+     * the transaction is still usable and the savepoint was rolled back.
+     */
+    public function test_a_failed_read_inside_a_host_transaction_leaves_that_transaction_usable(): void
+    {
+        Schema::drop('ai_prompt_overrides');
+        Log::spy();
+        $savepoints = 0;
+        $this->app['events']->listen(TransactionBeginning::class, function () use (&$savepoints): void {
+            $savepoints++;
+        });
+
+        DB::transaction(function () use (&$savepoints): void {
+            $savepointsBefore = $savepoints;
+
+            $prompt = $this->resolve();
+
+            $this->assertSame(AiPromptSource::CODE, $prompt->source);
+            $this->assertSame($savepointsBefore + 1, $savepoints);
+            $this->assertSame(1, DB::transactionLevel());
+            $this->assertSame(1, DB::selectOne('select 1 as one')->one);
+        });
+    }
+
+    public function test_a_stale_cached_map_is_rebuilt_once_the_ttl_has_passed(): void
+    {
+        $this->resolve();
+        $this->assertSame(AiPromptSource::CODE, $this->resolve()->source);
+
+        // A write that fires no model event leaves the cached map stale, as a lost race would.
+        DB::table('ai_prompt_overrides')->insert([
+            'id' => (string) Str::uuid(),
+            'key' => 'triage',
+            'body' => 'Look closely, then answer with one of: up, down.',
+            'default_hash' => hash('sha256', $this->default),
+        ]);
+        $this->assertSame(AiPromptSource::CODE, $this->resolve()->source);
+
+        Carbon::setTestNow(Carbon::now()->addSeconds(PromptResolver::CACHE_TTL_SECONDS + 1));
+
+        try {
+            $this->assertSame(AiPromptSource::OVERRIDE, $this->resolve()->source);
+        } finally {
+            Carbon::setTestNow();
+        }
+    }
+
     public function test_a_failure_that_is_not_a_database_one_propagates(): void
     {
-        Cache::shouldReceive('rememberForever')->andThrow(new RuntimeException('Cache store down.'));
+        Cache::shouldReceive('remember')->andThrow(new RuntimeException('Cache store down.'));
 
         $this->expectException(RuntimeException::class);
         $this->expectExceptionMessage('Cache store down.');
