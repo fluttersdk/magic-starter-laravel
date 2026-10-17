@@ -146,6 +146,10 @@ class SecretMaskerTest extends TestCase
         yield 'single-quoted passphrase' => ["password: 'correct horse battery'", "password: '[redacted]'"];
         yield 'unquoted passphrase' => ["password: two words\nnext line", "password: [redacted]\nnext line"];
         yield 'quote never closed' => ['{"password": "hunter2', '{"password": "[redacted]'];
+        yield 'quote never closed around words' => [
+            "{\"password\": \"correct horse battery\n[truncated 9 bytes]",
+            "{\"password\": \"[redacted]\n[truncated 9 bytes]",
+        ];
         yield 'quote cut by the pre-cut' => [
             "{\"password\": \"hunter2\n[truncated 9 bytes]",
             "{\"password\": \"[redacted]\n[truncated 9 bytes]",
