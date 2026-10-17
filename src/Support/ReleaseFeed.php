@@ -5,17 +5,24 @@ namespace FlutterSdk\MagicStarter\Support;
 use FlutterSdk\MagicStarter\Http\Resources\AppReleaseResource;
 use FlutterSdk\MagicStarter\Models\AppRelease;
 use Illuminate\Support\Facades\Cache;
+use Illuminate\Support\Str;
 
 /**
  * The cached body of the public releases endpoint.
  *
- * One key holds the whole answer, so a release saved or deleted drops exactly
- * that key and nothing else in the host's cache. The TTL is the backstop for a
- * write that bypasses model events; the observer is the normal way out.
+ * The body is cached under a key that carries a version token, and a release
+ * saved or deleted replaces the token rather than deleting the body. A rebuild
+ * that read the table before a write and stores its body after the write's
+ * observer ran therefore stores it under a token nobody reads any more, so the
+ * write cannot be hidden behind the stale body (the race plain cache-aside has).
+ * A superseded body expires with the TTL, which is also the backstop for a
+ * write that bypasses model events.
  */
 final class ReleaseFeed
 {
     public const CACHE_KEY = 'magic-starter:releases';
+
+    public const VERSION_KEY = 'magic-starter:releases:version';
 
     public const TTL_SECONDS = 3600;
 
@@ -32,7 +39,11 @@ final class ReleaseFeed
      */
     public static function payload(): array
     {
-        return Cache::remember(self::CACHE_KEY, self::TTL_SECONDS, static fn (): array => [
+        // 1. Read the version first, so a write that lands during the rebuild
+        //    leaves this body under the version it replaced.
+        $key = self::CACHE_KEY . ':' . self::version();
+
+        return Cache::remember($key, self::TTL_SECONDS, static fn (): array => [
             'data' => self::releases(),
             'meta' => [
                 'latest_build' => self::latestBuilds(),
@@ -41,11 +52,27 @@ final class ReleaseFeed
     }
 
     /**
-     * Drop the cached body so the next read rebuilds it from the table.
+     * Retire the cached body: the next read builds a new one from the table.
+     *
+     * Replaces the version token instead of deleting the body, see the class
+     * doc block for why.
      */
     public static function forget(): void
     {
-        Cache::forget(self::CACHE_KEY);
+        Cache::forever(self::VERSION_KEY, (string) Str::uuid());
+    }
+
+    /**
+     * The current version token, minted when the store holds none.
+     *
+     * A token is random rather than a counter, so a token lost to eviction is
+     * never minted again and cannot point back at an old body.
+     */
+    private static function version(): string
+    {
+        Cache::add(self::VERSION_KEY, (string) Str::uuid());
+
+        return (string) Cache::get(self::VERSION_KEY);
     }
 
     /**

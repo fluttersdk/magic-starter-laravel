@@ -7,6 +7,7 @@ use FlutterSdk\MagicStarter\Features;
 use FlutterSdk\MagicStarter\MagicStarter;
 use FlutterSdk\MagicStarter\MagicStarterServiceProvider;
 use FlutterSdk\MagicStarter\Models\AppRelease;
+use FlutterSdk\MagicStarter\Support\ReleaseFeed;
 use FlutterSdk\MagicStarter\Tests\TestCase;
 use Illuminate\Routing\RouteCollection;
 use Illuminate\Support\Carbon;
@@ -241,6 +242,30 @@ class ReleaseControllerTest extends TestCase
         $this->getJson('/api/v1/releases')
             ->assertJsonCount(1, 'data')
             ->assertJsonPath('data.0.version', '1.0.0');
+    }
+
+    public function test_a_write_committed_during_a_rebuild_is_not_hidden_by_the_stale_body(): void
+    {
+        $this->makeRelease('1.0.0', publishedAt: now()->subDays(2));
+
+        // The rebuild has already read the table when a release is published
+        // and the observer drops the cache, exactly the cache-aside race: the
+        // rebuild then stores a body that predates the write.
+        $raced = false;
+        DB::listen(function ($query) use (&$raced): void {
+            if ($raced || ! str_contains($query->sql, 'app_releases') || ! str_starts_with(strtolower($query->sql), 'select')) {
+                return;
+            }
+
+            $raced = true;
+            $this->insertWithoutEvents('1.1.0', now()->subDay());
+            ReleaseFeed::forget();
+        });
+
+        $this->assertCount(1, ReleaseFeed::payload()['data']);
+        $this->assertTrue($raced);
+
+        $this->getJson('/api/v1/releases')->assertJsonCount(2, 'data');
     }
 
     public function test_index_is_throttled_per_ip_at_sixty_requests_a_minute(): void
