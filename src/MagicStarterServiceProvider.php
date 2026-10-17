@@ -9,6 +9,7 @@ use FlutterSdk\MagicStarter\Console\ExpireBillingGrantsCommand;
 use FlutterSdk\MagicStarter\Console\FilamentEjectCommand;
 use FlutterSdk\MagicStarter\Console\FilamentInstallCommand;
 use FlutterSdk\MagicStarter\Console\InstallCommand;
+use FlutterSdk\MagicStarter\Console\PruneAiRunsCommand;
 use FlutterSdk\MagicStarter\Console\PruneAuditsCommand;
 use FlutterSdk\MagicStarter\Console\PruneBillingRecordsCommand;
 use FlutterSdk\MagicStarter\Console\PurgeDeletedUsersCommand;
@@ -460,6 +461,16 @@ class MagicStarterServiceProvider extends ServiceProvider
                 ]);
             }
 
+            // Registered and scheduled with the feature: the tables the command
+            // prunes exist only once the ai-runs migrations did.
+            if (Features::hasAiRunFeatures()) {
+                $this->commands([
+                    PruneAiRunsCommand::class,
+                ]);
+
+                $this->schedulePruneAiRuns();
+            }
+
             // Webhook claims accumulate whether or not a catalogue boots, so this
             // is gated on the feature alone, unlike the reconciler (3.4c).
             if (Features::hasBillingFeatures()) {
@@ -755,6 +766,26 @@ class MagicStarterServiceProvider extends ServiceProvider
         $this->callAfterResolving(Schedule::class, function (Schedule $schedule): void {
             $schedule->command(PruneAuditsCommand::NAME)
                 ->name(PruneAuditsCommand::NAME)
+                ->daily()
+                ->withoutOverlapping();
+        });
+    }
+
+    /**
+     * Put `magic-starter:ai-runs:prune` on the schedule, daily.
+     *
+     * Attached through `callAfterResolving()` for the reason
+     * {@see self::scheduleEntitlementReconciler()} gives, and mirroring
+     * {@see self::schedulePruneAudits()}: `withoutOverlapping()` keeps a run
+     * that outlasts its tick from racing its successor over the same rows. The
+     * cadence is not configurable: retention is counted in days and the
+     * abandon threshold in tens of minutes, so a faster sweep finds little new.
+     */
+    private function schedulePruneAiRuns(): void
+    {
+        $this->callAfterResolving(Schedule::class, function (Schedule $schedule): void {
+            $schedule->command(PruneAiRunsCommand::NAME)
+                ->name(PruneAiRunsCommand::NAME)
                 ->daily()
                 ->withoutOverlapping();
         });

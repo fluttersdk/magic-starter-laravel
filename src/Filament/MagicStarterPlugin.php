@@ -14,6 +14,7 @@ use FlutterSdk\MagicStarter\Filament\Auth\TwoFactorAuthentication;
 use FlutterSdk\MagicStarter\Filament\Ops\OpsAuthorization;
 use FlutterSdk\MagicStarter\Filament\Ops\TelescopeRedaction;
 use FlutterSdk\MagicStarter\Filament\Pages\Dashboard;
+use FlutterSdk\MagicStarter\Filament\Widgets\AiRunStatsWidget;
 use FlutterSdk\MagicStarter\Filament\Widgets\HorizonStatusWidget;
 use FlutterSdk\MagicStarter\Filament\Widgets\PulseSummaryWidget;
 use FlutterSdk\MagicStarter\Filament\Widgets\StarterStatsWidget;
@@ -113,7 +114,7 @@ class MagicStarterPlugin implements Plugin
      * Register a resource class under a key.
      *
      * A default key (`users`, `teams`, `subscriptions`, `billing_events`,
-     * `webhook_deliveries`, `newsletter_subscribers`, `audits`, `support`, `releases`) keeps its
+     * `webhook_deliveries`, `newsletter_subscribers`, `audits`, `support`, `releases`, `ai_runs`) keeps its
      * feature gate; any other key is registered unconditionally.
      */
     public function resource(string $key, string $class): static
@@ -278,6 +279,7 @@ class MagicStarterPlugin implements Plugin
 
         $panel->widgets([
             StarterStatsWidget::class,
+            ...(Features::hasAiRunFeatures() ? [AiRunStatsWidget::class] : []),
         ]);
 
         // 3. The starter's own second factor at login, unless the app already
@@ -491,6 +493,7 @@ class MagicStarterPlugin implements Plugin
             'support_feedback' => 'FlutterSdk\\MagicStarter\\Filament\\Resources\\SupportFeedback\\'
                 . 'SupportFeedbackResource',
             'releases' => 'FlutterSdk\\MagicStarter\\Filament\\Resources\\AppReleases\\AppReleaseResource',
+            'ai_runs' => 'FlutterSdk\\MagicStarter\\Filament\\Resources\\AiRuns\\AiRunResource',
             ...$this->resources,
         ];
 
@@ -525,6 +528,7 @@ class MagicStarterPlugin implements Plugin
             'support' => Features::hasSupportFeatures(),
             'support_feedback' => Features::hasSupportFeatures() && Features::hasSupportFeedbackFeatures(),
             'releases' => Features::hasReleaseFeatures(),
+            'ai_runs' => Features::hasAiRunFeatures(),
             default => true,
         };
     }
