@@ -116,6 +116,10 @@ final class MailBrandRenderTest extends TestCase
         $this->assertStringContainsString('<a href="https://acme.test"', $html);
         $this->assertStringContainsString('content="light dark"', $html);
         $this->assertStringContainsString('prefers-color-scheme: dark', $html);
+        $this->assertMatchesRegularExpression(
+            '/class="inner-body"[^>]*style="[^"]*border-style: solid/',
+            $html,
+        );
         $this->assertStringContainsString(
             'background-color: ' . config('magic-starter.mail.brand.colors.dark.background') . ' !important',
             $html,
