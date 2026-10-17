@@ -8,8 +8,10 @@ use Illuminate\Contracts\Events\ShouldHandleEventsAfterCommit;
 /**
  * Keeps the cached releases feed honest.
  *
- * Runs after the surrounding transaction commits, so a rebuild can never read
- * the table before the write that caused it is visible.
+ * Runs after the surrounding transaction commits, so the next rebuild sees the
+ * write. A rebuild already in flight may still finish with the old rows; it
+ * stores them under the version this observer just retired (see ReleaseFeed),
+ * so nobody is served them.
  */
 class AppReleaseObserver implements ShouldHandleEventsAfterCommit
 {
