@@ -19,6 +19,7 @@
 - [NotificationSetting Model](#notificationsetting-model)
 - [Channel Gating via GateNotificationChannels](#channel-gating-via-gatenotificationchannels)
 - [NotificationPreferenceRegistry](#notificationpreferenceregistry)
+- [Mail Branding](#mail-branding)
 
 ---
 
@@ -731,3 +732,94 @@ NotificationPreferenceRegistry::channelAliases([
 ```
 
 This mapping is used by `GateNotificationChannels` to translate the driver channel name received in `NotificationSending` back to the logical name stored in the registry and in `notification_settings`.
+
+---
+
+## <a name="mail-branding"></a>Mail Branding
+
+The package can brand every markdown mail your app sends from one config block. It is off by default; with it off nothing changes.
+
+```dotenv
+MAGIC_STARTER_MAIL_BRAND_ENABLED=true
+```
+
+It covers every mail built on Laravel's markdown layout: this package's own notifications (invitation, verification, support), your own `MailMessage` notifications and Laravel's password reset. It does not touch a Mailable that renders its own Blade view instead of `x-mail::message`.
+
+```php
+// config/magic-starter.php
+'mail' => [
+    'brand' => [
+        'enabled' => env('MAGIC_STARTER_MAIL_BRAND_ENABLED', false),
+        'name' => 'Acme',
+        'logo_url' => 'https://cdn.example.com/mail/logo.png',
+        'logo_width' => 48,
+        'footer' => 'Acme, all rights reserved :year. [Help centre](https://example.com/help)',
+        'font_stack' => "'Helvetica Neue', Helvetica, Arial, sans-serif",
+        'button_radius' => 8,
+        'card_radius' => 8,
+        'colors' => [
+            'light' => [
+                'primary' => '#2563eb',
+                'on_primary' => '#ffffff',
+                'heading' => '#0f172a',
+                'text' => '#475569',
+                'muted' => '#94a3b8',
+                'background' => '#f8fafc',
+                'card' => '#ffffff',
+                'border' => '#e2e8f0',
+            ],
+            'dark' => [
+                'primary' => '#60a5fa',
+                'on_primary' => '#0f172a',
+                'heading' => '#f8fafc',
+                'text' => '#cbd5e1',
+                'muted' => '#64748b',
+                'background' => '#0f172a',
+                'card' => '#1e293b',
+                'border' => '#334155',
+            ],
+        ],
+    ],
+],
+```
+
+| Key | Default | Meaning |
+|-----|---------|---------|
+| `enabled` | `false` | Turns the branded layout and theme on |
+| `name` | `APP_NAME` | Shown beside the logo, as the logo's alt text and in the default footer |
+| `logo_url` | `null` | Absolute URL of the header logo; `null` shows the name only |
+| `logo_width` | `48` | Logo width in pixels |
+| `footer` | `null` | Footer line. `:year` becomes the current year and the text is Markdown. `null` prints `© <year> <name>. All rights reserved.`, translated |
+| `font_stack` | Laravel's system stack | CSS `font-family` value |
+| `button_radius`, `card_radius` | `4` | Corner radius in pixels |
+| `colors.light.*` | Laravel's default theme | `primary`, `on_primary`, `heading`, `text`, `muted`, `background`, `card`, `border` |
+| `colors.dark.*` | all `null` | The same eight keys, for dark mode |
+
+A value that breaks a rule throws an `InvalidArgumentException` naming the key and the value when a mail renders, never a half-styled mail:
+
+- Colours are six digit hex (`#2563eb`).
+- `colors.dark.*` is all eight keys or none.
+- `logo_url` is `null` or an absolute `http` or `https` URL.
+- `font_stack` holds letters, digits, spaces, commas, quotes and hyphens only.
+- `logo_width` is an integer from 1 to 600, and the radii an integer from 0 to 64. A value read from `env()` is a string, so cast it with `(int)`.
+- `name` is a non-empty string.
+
+A key you leave out is an error, except `logo_url`, `footer` and the dark colours, which count as `null`.
+
+### Logo and font
+
+Use an absolute `https` PNG for the logo, at twice `logo_width` so it stays sharp on a high density screen. SVG and web fonts are unreliable across mail clients. Name the brand typeface first in `font_stack` and finish with system fonts: a client that lacks the first falls through to the next.
+
+### Dark mode
+
+Dark colours are optional. When all eight are set, Apple Mail, Outlook.com and Outlook mobile switch to them. Gmail and Outlook for Windows ignore them and apply their own colour inversion, so check a mail in both schemes before you ship.
+
+### Overriding one component
+
+The package appends its `resources/views/mail` directory to `mail.markdown.paths` and sets `mail.markdown.theme` to `magic-starter::mail.theme`, replacing any theme the app configured there; a theme set on a single message with `->theme()` still wins. It replaces `layout`, `header` and `message` (html) and `message` (text); button, panel, table, subcopy and footer stay Laravel's. Because the package path is appended, a directory your app already lists wins per component. Laravel's default `resources/views/vendor/mail` is one, so a file there overrides the package:
+
+```
+resources/views/vendor/mail/html/header.blade.php
+```
+
+The paths are added once, so `php artisan config:cache` is safe.
