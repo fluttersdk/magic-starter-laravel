@@ -54,7 +54,7 @@ return new class extends Migration
 
             // Bodies: blanked by the prune once they age out.
             $table->json('tool_calls')->nullable();
-            $table->text('error_message')->nullable();
+            $table->longText('error_message')->nullable();
 
             $table->timestamp('bodies_pruned_at')->nullable();
             $table->timestamp('started_at')->nullable();

@@ -142,6 +142,11 @@ class MagicStarterServiceProvider extends ServiceProvider
         // singleton so the table check runs once per worker.
         $this->app->singleton(Support\BillingEventRecorder::class);
 
+        // Unconditional like the billing recorder: the recorder itself answers
+        // null while the ai-runs feature is off, so a host records without
+        // branching. A singleton so each table check runs once per worker.
+        $this->app->singleton(Contracts\RecordsAiRuns::class, Support\AiRuns\AiRunRecorder::class);
+
         // Cashier is wired HERE and never in boot(), because boot() is already
         // too late: CashierServiceProvider::boot() registers the stripe/webhook
         // route under config('cashier.path') the moment it runs, and every

@@ -77,7 +77,7 @@ return new class extends Migration
             $table->json('tools')->nullable();
             $table->longText('output')->nullable();
             $table->json('structured')->nullable();
-            $table->text('error_message')->nullable();
+            $table->longText('error_message')->nullable();
 
             $table->timestamp('bodies_pruned_at')->nullable();
             $table->timestamp('started_at')->nullable();

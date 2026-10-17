@@ -305,7 +305,7 @@ class AiRunTest extends TestCase
         $this->assertSame(30, config('magic-starter.ai_runs.retention_days'));
         $this->assertSame(30, config('magic-starter.ai_runs.abandon_after_minutes'));
         $this->assertSame(262144, config('magic-starter.ai_runs.max_body_bytes'));
-        $this->assertSame([], config('magic-starter.ai_runs.mask.patterns'));
+        $this->assertNotEmpty(config('magic-starter.ai_runs.mask.patterns'));
         $this->assertSame([], config('magic-starter.ai_runs.mask.extra_patterns'));
         $this->assertContains('api_key', config('magic-starter.ai_runs.mask.keys'));
     }

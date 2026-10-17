@@ -1323,7 +1323,10 @@ return [
     |
     | `mask` scrubs secrets from every body before it is written. `patterns`
     | is the package's own regex list, `extra_patterns` appends yours, and
-    | `keys` names the array keys whose values are replaced outright.
+    | `keys` names the array keys whose values are replaced outright (matched
+    | case-insensitively). A pattern with a named group `secret` replaces only
+    | that group, so `Bearer [redacted]` keeps its header; any other pattern
+    | replaces its whole match.
     |
     */
 
@@ -1332,13 +1335,33 @@ return [
         'abandon_after_minutes' => 30,
         'max_body_bytes' => 262144,
         'mask' => [
-            'patterns' => [],
+            'patterns' => [
+                '/\bsk-(?:ant-|or-|proj-)?[A-Za-z0-9_\-]{16,}/',
+                '/\b(?:ghp|gho|ghu|ghs|ghr)_[A-Za-z0-9]{20,}\b/',
+                '/\bgithub_pat_[A-Za-z0-9_]{20,}\b/',
+                '/\bAKIA[0-9A-Z]{16}\b/',
+                // Not a trailing \b: a key ending in `-` has no word boundary before a space.
+                '/\bAIza[0-9A-Za-z_\-]{35}(?![0-9A-Za-z_\-])/',
+                '/\bxox[abprs]-[A-Za-z0-9-]{10,}\b/',
+                '/\beyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}/',
+                '/\b(?:Bearer|Basic)\s+(?<secret>[A-Za-z0-9._~+\/=-]{8,})/i',
+                '/(?<=:\/\/)(?<secret>[^\s:@\/]+:[^\s@\/]+)@/',
+                '/[?&](?:api[_-]?key|access[_-]?token|token|secret|password|passwd|signature|sig|auth)=(?<secret>[^&\s#]+)/i',
+                '/-----BEGIN [A-Z ]*PRIVATE KEY-----[\s\S]*?-----END [A-Z ]*PRIVATE KEY-----/',
+            ],
             'keys' => [
-                'api_key',
                 'authorization',
                 'password',
+                'passwd',
                 'secret',
                 'token',
+                'api_key',
+                'apikey',
+                'access_token',
+                'refresh_token',
+                'client_secret',
+                'cookie',
+                'x-api-key',
             ],
             'extra_patterns' => [],
         ],
