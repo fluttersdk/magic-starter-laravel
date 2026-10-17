@@ -3,6 +3,8 @@
 namespace FlutterSdk\MagicStarter\Tests\Support\AiRuns;
 
 use FlutterSdk\MagicStarter\Contracts\RecordsAiRuns;
+use FlutterSdk\MagicStarter\Enums\AiCostSource;
+use FlutterSdk\MagicStarter\Enums\AiPromptSource;
 use FlutterSdk\MagicStarter\Enums\AiRunStatus;
 use FlutterSdk\MagicStarter\Features;
 use FlutterSdk\MagicStarter\Models\AiRun;
@@ -13,11 +15,13 @@ use FlutterSdk\MagicStarter\Support\AiRuns\AiRunRecorder;
 use FlutterSdk\MagicStarter\Support\AiRuns\AiRunStart;
 use FlutterSdk\MagicStarter\Support\AiRuns\AiUsage;
 use FlutterSdk\MagicStarter\Tests\TestCase;
+use Illuminate\Database\DeadlockException;
 use Illuminate\Database\Schema\Blueprint;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Schema;
+use InvalidArgumentException;
 use ReflectionProperty;
 
 /**
@@ -98,7 +102,7 @@ class AiRunRecorderTest extends TestCase
         $fresh = AiRun::query()->findOrFail($run);
         $this->assertSame(AiRunStatus::RUNNING, $fresh->status);
         $this->assertSame('incident.analysis', $fresh->feature);
-        $this->assertSame('code', $fresh->source);
+        $this->assertSame(AiPromptSource::CODE, $fresh->source);
         $this->assertSame('42', $fresh->team_id);
         $this->assertSame('incident', $fresh->subject_type);
         $this->assertSame('7', $fresh->subject_id);
@@ -140,7 +144,7 @@ class AiRunRecorderTest extends TestCase
         $this->assertSame(100, $fresh->cache_write_tokens);
         $this->assertNull($fresh->reasoning_tokens);
         $this->assertSame('0.00430000', $fresh->cost_usd);
-        $this->assertSame('mixed', $fresh->cost_source);
+        $this->assertSame(AiCostSource::MIXED, $fresh->cost_source);
         $this->assertSame(2400, $fresh->duration_ms);
         $this->assertSame('The API is down because the database is full.', $fresh->output);
         $this->assertSame(['severity' => 'high'], $fresh->structured);
@@ -149,7 +153,7 @@ class AiRunRecorderTest extends TestCase
         $attempts = $fresh->attempts;
         $this->assertCount(2, $attempts);
         $this->assertSame([1, 2], $attempts->pluck('attempt')->all());
-        $this->assertSame(['failed', 'succeeded'], $attempts->pluck('status')->all());
+        $this->assertSame([AiRunStatus::FAILED, AiRunStatus::SUCCEEDED], $attempts->pluck('status')->all());
         $this->assertSame(429, $attempts[0]->http_status);
         $this->assertSame('openrouter', $attempts[0]->provider);
         $this->assertSame('0.00010000', $attempts[0]->cost_usd);
@@ -169,7 +173,7 @@ class AiRunRecorderTest extends TestCase
             model: 'claude-haiku-4-5',
             status: AiRunStatus::FAILED,
             costUsd: '0.00000100',
-            costSource: 'provider',
+            costSource: AiCostSource::PROVIDER,
         ));
         $recorder->attempt($run, new AiRunAttemptData(
             attempt: 2,
@@ -177,13 +181,13 @@ class AiRunRecorderTest extends TestCase
             model: 'claude-haiku-4-5',
             status: AiRunStatus::FAILED,
             costUsd: '1.5',
-            costSource: 'provider',
+            costSource: AiCostSource::PROVIDER,
         ));
         $recorder->finish($run, new AiRunOutcome(status: AiRunStatus::FAILED, errorClass: 'RuntimeException'));
 
         $fresh = AiRun::query()->findOrFail($run);
         $this->assertSame(2, $fresh->attempts_count);
-        $this->assertSame('provider', $fresh->cost_source);
+        $this->assertSame(AiCostSource::PROVIDER, $fresh->cost_source);
         $this->assertSame('1.50000100', $fresh->cost_usd);
         $this->assertNull($fresh->input_tokens);
         $this->assertNull($fresh->output_tokens);
@@ -345,6 +349,205 @@ class AiRunRecorderTest extends TestCase
                 && $context['run'] === $run);
     }
 
+    public function test_broken_text_non_finite_numbers_and_objects_are_scrubbed_and_never_thrown(): void
+    {
+        $this->migrateAiRuns();
+        Log::spy();
+        $recorder = $this->recorder();
+        $broken = "caf\xC3 ok\0done";
+
+        $run = $recorder->start(new AiRunStart(
+            feature: "incident\0.analysis",
+            model: "claude\xFF",
+            instructions: $broken,
+            input: $broken,
+            context: [
+                'log' => $broken,
+                "k\xFF" => 'v',
+            ],
+            tools: ["lookup\xFF"],
+        ));
+        $recorder->attempt($run, new AiRunAttemptData(
+            attempt: 1,
+            provider: "anthropic\0",
+            model: "sonnet\xFF",
+            status: AiRunStatus::SUCCEEDED,
+            finishReason: "stop\xFF",
+            errorMessage: $broken,
+            toolCalls: [
+                [
+                    'name' => "look\0up",
+                    'arguments' => (object) ['token' => 'abc', 'id' => 7],
+                    'result' => ['ratio' => INF, 'note' => $broken],
+                ],
+            ],
+        ));
+        $recorder->finish($run, new AiRunOutcome(
+            status: AiRunStatus::SUCCEEDED,
+            output: $broken,
+            structured: [
+                'score' => NAN,
+                'detail' => (object) ['password' => 'p4ss', 'note' => 'fine'],
+            ],
+            errorMessage: $broken,
+        ));
+
+        Log::shouldNotHaveReceived('error');
+
+        $fresh = AiRun::query()->findOrFail($run);
+        $attempt = AiRunAttempt::query()->sole();
+
+        $this->assertSame(AiRunStatus::SUCCEEDED, $fresh->status);
+        $this->assertSame('incident.analysis', $fresh->feature);
+        $this->assertSame([
+            'score' => null,
+            'detail' => [
+                'password' => '[redacted]',
+                'note' => 'fine',
+            ],
+        ], $fresh->structured);
+        $this->assertSame('anthropic', $attempt->provider);
+
+        $call = (array) $attempt->tool_calls[0];
+        $this->assertSame('lookup', $call['name']);
+        $this->assertSame(['token' => '[redacted]', 'id' => 7], $call['arguments']);
+        $this->assertNull($call['result']['ratio']);
+
+        $texts = [
+            $fresh->instructions,
+            $fresh->input,
+            $fresh->output,
+            $fresh->error_message,
+            $fresh->model,
+            $attempt->finish_reason,
+            $attempt->error_message,
+            $attempt->tool_calls[0]['result']['note'],
+            ...array_keys((array) $fresh->context),
+            ...array_values((array) $fresh->context),
+            ...(array) $fresh->tools,
+        ];
+
+        foreach ($texts as $text) {
+            $this->assertIsString($text);
+            $this->assertTrue(mb_check_encoding($text, 'UTF-8'), "Not UTF-8: {$text}");
+            $this->assertStringNotContainsString("\0", $text);
+        }
+
+        $this->assertStringEndsWith('okdone', (string) $fresh->input);
+    }
+
+    public function test_a_value_json_cannot_encode_loses_only_its_row_with_one_error_line(): void
+    {
+        $this->migrateAiRuns();
+        $recorder = $this->recorder();
+        $run = $recorder->start(new AiRunStart(feature: 'incident.analysis'));
+        $handle = fopen('php://memory', 'r');
+        Log::spy();
+
+        $recorder->finish($run, new AiRunOutcome(status: AiRunStatus::SUCCEEDED, structured: ['handle' => $handle]));
+
+        $this->assertSame(AiRunStatus::RUNNING, AiRun::query()->findOrFail($run)->status);
+        Log::shouldHaveReceived('error')
+            ->once()
+            ->withArgs(static fn (string $message, array $context): bool => $context['table'] === 'ai_runs'
+                && $context['run'] === $run);
+    }
+
+    public function test_a_deadlock_inside_the_write_is_logged_and_start_answers_null(): void
+    {
+        $this->migrateAiRuns();
+        AiRun::creating(static function (): void {
+            throw new DeadlockException('Deadlock found when trying to get lock');
+        });
+        Log::spy();
+
+        $this->assertNull($this->recorder()->start(new AiRunStart(feature: 'incident.analysis')));
+
+        Log::shouldHaveReceived('error')
+            ->once()
+            ->withArgs(static fn (string $message, array $context): bool => $context['table'] === 'ai_runs'
+                && $context['exception'] === 'Deadlock found when trying to get lock');
+    }
+
+    public function test_metadata_longer_than_its_column_is_cut_to_fit(): void
+    {
+        $this->migrateAiRuns();
+        $recorder = $this->recorder();
+
+        $run = $recorder->start(new AiRunStart(
+            feature: str_repeat('ş', 150),
+            subjectType: str_repeat('s', 300),
+            model: str_repeat('m', 200),
+        ));
+        $recorder->attempt($run, new AiRunAttemptData(
+            attempt: 1,
+            provider: str_repeat('p', 100),
+            model: str_repeat('m', 200),
+            status: AiRunStatus::FAILED,
+            finishReason: str_repeat('r', 100),
+            errorClass: str_repeat('E', 300),
+        ));
+        $recorder->finish($run, new AiRunOutcome(status: AiRunStatus::FAILED, errorClass: str_repeat('E', 300)));
+
+        $fresh = AiRun::query()->findOrFail($run);
+        $attempt = AiRunAttempt::query()->sole();
+
+        $this->assertSame(str_repeat('ş', 100), $fresh->feature);
+        $this->assertSame(255, strlen((string) $fresh->subject_type));
+        $this->assertSame(128, strlen((string) $fresh->model));
+        $this->assertSame(255, strlen((string) $fresh->error_class));
+        $this->assertSame(64, strlen($attempt->provider));
+        $this->assertSame(128, strlen((string) $attempt->model));
+        $this->assertSame(64, strlen((string) $attempt->finish_reason));
+        $this->assertSame(255, strlen((string) $attempt->error_class));
+    }
+
+    public function test_a_partial_published_block_still_caps_and_masks_with_the_defaults(): void
+    {
+        $this->migrateAiRuns();
+        config(['magic-starter.ai_runs' => ['retention_days' => 7]]);
+
+        $run = $this->recorder()->start(new AiRunStart(
+            feature: 'incident.analysis',
+            input: 'Bearer abcdefgh12345678 ' . str_repeat('a', 300000),
+        ));
+
+        $input = (string) AiRun::query()->findOrFail($run)->input;
+
+        $this->assertStringStartsWith('Bearer [redacted] ', $input);
+        $this->assertSame(262144 + strlen('[truncated 37874 bytes]'), strlen($input));
+        $this->assertStringEndsWith('[truncated 37874 bytes]', $input);
+    }
+
+    public function test_a_four_megabyte_adversarial_body_masks_quickly_within_memory(): void
+    {
+        $this->migrateAiRuns();
+        $body = str_repeat('token=a&', 500000);
+        memory_reset_peak_usage();
+        $baseline = memory_get_usage();
+        $began = hrtime(true);
+
+        $run = $this->recorder()->start(new AiRunStart(feature: 'incident.analysis', input: $body));
+
+        $seconds = (hrtime(true) - $began) / 1e9;
+        $peak = memory_get_peak_usage() - $baseline;
+        $input = (string) AiRun::query()->findOrFail($run)->input;
+
+        $this->assertLessThan(2.0, $seconds);
+        $this->assertLessThan(64 * 1024 * 1024, $peak);
+        $this->assertStringStartsWith('token=[redacted]&token=[redacted]&', $input);
+        $this->assertStringNotContainsString('token=a&', $input);
+        $this->assertMatchesRegularExpression('/\[truncated \d+ bytes\]\z/', $input);
+        $this->assertLessThan(262144 + 40, strlen($input));
+    }
+
+    public function test_an_outcome_is_either_succeeded_or_failed(): void
+    {
+        $this->expectException(InvalidArgumentException::class);
+
+        new AiRunOutcome(status: AiRunStatus::RUNNING);
+    }
+
     private function failedOpenRouterLeg(): AiRunAttemptData
     {
         return new AiRunAttemptData(
@@ -357,7 +560,7 @@ class AiRunRecorderTest extends TestCase
             errorMessage: 'Too many requests',
             usage: new AiUsage(inputTokens: 120, outputTokens: 0),
             costUsd: '0.0001',
-            costSource: 'provider',
+            costSource: AiCostSource::PROVIDER,
             durationMs: 300,
             startedAt: Carbon::now(),
         );
@@ -379,7 +582,7 @@ class AiRunRecorderTest extends TestCase
                 cacheWriteTokens: 100,
             ),
             costUsd: '0.0042',
-            costSource: 'estimated',
+            costSource: AiCostSource::COMPUTED,
             durationMs: 2000,
             startedAt: Carbon::now(),
         );

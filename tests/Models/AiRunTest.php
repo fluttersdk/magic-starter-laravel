@@ -2,6 +2,8 @@
 
 namespace FlutterSdk\MagicStarter\Tests\Models;
 
+use FlutterSdk\MagicStarter\Enums\AiCostSource;
+use FlutterSdk\MagicStarter\Enums\AiPromptSource;
 use FlutterSdk\MagicStarter\Enums\AiRunStatus;
 use FlutterSdk\MagicStarter\Models\AiRun;
 use FlutterSdk\MagicStarter\Models\AiRunAttempt;
@@ -99,12 +101,17 @@ class AiRunTest extends TestCase
         ]));
 
         $this->assertTrue(Schema::hasIndex('ai_runs', ['created_at']));
+        $this->assertTrue(Schema::hasIndex('ai_runs', ['started_at']));
+        $this->assertTrue(Schema::hasIndex('ai_runs', ['bodies_pruned_at', 'created_at']));
         $this->assertTrue(Schema::hasIndex('ai_runs', ['team_id', 'created_at']));
+        // The composite above serves every team lookup, so a standalone one would only cost writes.
+        $this->assertFalse(Schema::hasIndex('ai_runs', ['team_id']));
         $this->assertTrue(Schema::hasIndex('ai_runs', ['feature', 'created_at']));
         $this->assertTrue(Schema::hasIndex('ai_runs', ['status', 'started_at']));
         $this->assertTrue(Schema::hasIndex('ai_runs', ['prompt_hash']));
         $this->assertTrue(Schema::hasIndex('ai_runs', ['subject_type', 'subject_id']));
         $this->assertTrue(Schema::hasIndex('ai_run_attempts', ['ai_run_id', 'attempt'], 'unique'));
+        $this->assertTrue(Schema::hasIndex('ai_run_attempts', ['bodies_pruned_at', 'created_at']));
     }
 
     public function test_running_the_migrations_twice_is_a_no_op(): void
@@ -132,7 +139,7 @@ class AiRunTest extends TestCase
 
         $this->assertSame($useUuids, is_string($fresh->getKey()));
         $this->assertSame(AiRunStatus::RUNNING, $fresh->status);
-        $this->assertSame('code', $fresh->source);
+        $this->assertSame(AiPromptSource::CODE, $fresh->source);
         $this->assertSame(0, $fresh->attempts_count);
         $this->assertNull($fresh->team_id);
         $this->assertNull($fresh->subject_type);
@@ -176,6 +183,7 @@ class AiRunTest extends TestCase
         $this->assertSame(2, $fresh->attempts_count);
         $this->assertSame(1200, $fresh->input_tokens);
         $this->assertSame('0.01234567', $fresh->cost_usd);
+        $this->assertSame(AiCostSource::COMPUTED, $fresh->cost_source);
         $this->assertSame(['monitor' => 7], $fresh->context);
         $this->assertSame([['name' => 'lookup']], $fresh->tools);
         $this->assertSame(['verdict' => 'down'], $fresh->structured);
@@ -221,6 +229,7 @@ class AiRunTest extends TestCase
             'status' => 'succeeded',
             'http_status' => 200,
             'cost_usd' => '0.00100000',
+            'cost_source' => 'provider',
             'tool_calls' => [['name' => 'lookup']],
             'started_at' => '2026-10-17 10:00:00',
         ]);
@@ -228,6 +237,8 @@ class AiRunTest extends TestCase
         $fresh = AiRunAttempt::query()->findOrFail($attempt->getKey());
 
         $this->assertSame(1, $fresh->attempt);
+        $this->assertSame(AiRunStatus::SUCCEEDED, $fresh->status);
+        $this->assertSame(AiCostSource::PROVIDER, $fresh->cost_source);
         $this->assertSame(200, $fresh->http_status);
         $this->assertSame('0.00100000', $fresh->cost_usd);
         $this->assertSame([['name' => 'lookup']], $fresh->tool_calls);
@@ -300,14 +311,27 @@ class AiRunTest extends TestCase
         );
     }
 
-    public function test_the_config_block_ships_its_defaults(): void
+    public function test_the_cost_and_prompt_source_enums_carry_the_documented_wire_values(): void
+    {
+        $this->assertSame(
+            ['provider', 'computed', 'mixed', 'unpriced'],
+            array_map(static fn (AiCostSource $source): string => $source->value, AiCostSource::cases()),
+        );
+        $this->assertSame(
+            ['code', 'override'],
+            array_map(static fn (AiPromptSource $source): string => $source->value, AiPromptSource::cases()),
+        );
+    }
+
+    public function test_the_config_block_ships_its_defaults_and_only_the_mask_extensions(): void
     {
         $this->assertSame(30, config('magic-starter.ai_runs.retention_days'));
         $this->assertSame(30, config('magic-starter.ai_runs.abandon_after_minutes'));
         $this->assertSame(262144, config('magic-starter.ai_runs.max_body_bytes'));
-        $this->assertNotEmpty(config('magic-starter.ai_runs.mask.patterns'));
-        $this->assertSame([], config('magic-starter.ai_runs.mask.extra_patterns'));
-        $this->assertContains('api_key', config('magic-starter.ai_runs.mask.keys'));
+        $this->assertSame([
+            'extra_patterns' => [],
+            'extra_keys' => [],
+        ], config('magic-starter.ai_runs.mask'));
     }
 
     /**

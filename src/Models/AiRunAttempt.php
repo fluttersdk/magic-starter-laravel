@@ -2,6 +2,8 @@
 
 namespace FlutterSdk\MagicStarter\Models;
 
+use FlutterSdk\MagicStarter\Enums\AiCostSource;
+use FlutterSdk\MagicStarter\Enums\AiRunStatus;
 use FlutterSdk\MagicStarter\Support\ConditionallyUsesUuids;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Support\Carbon;
@@ -18,7 +20,7 @@ use Illuminate\Support\Carbon;
  * @property int $attempt
  * @property string $provider
  * @property string|null $model
- * @property string $status
+ * @property AiRunStatus $status
  * @property int|null $http_status
  * @property string|null $finish_reason
  * @property string|null $error_class
@@ -28,7 +30,7 @@ use Illuminate\Support\Carbon;
  * @property int|null $cache_write_tokens
  * @property int|null $reasoning_tokens
  * @property string|null $cost_usd
- * @property string|null $cost_source
+ * @property AiCostSource|null $cost_source
  * @property int|null $duration_ms
  * @property array<int, mixed>|null $tool_calls
  * @property string|null $error_message
@@ -77,6 +79,8 @@ class AiRunAttempt extends Model
     protected function casts(): array
     {
         return [
+            'status' => AiRunStatus::class,
+            'cost_source' => AiCostSource::class,
             'tool_calls' => 'array',
             'cost_usd' => 'decimal:8',
             'bodies_pruned_at' => 'datetime',

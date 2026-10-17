@@ -65,6 +65,11 @@ return new class extends Migration
                 'ai_run_id',
                 'attempt',
             ]);
+            // The prune's read for bodies not blanked yet.
+            $table->index([
+                'bodies_pruned_at',
+                'created_at',
+            ]);
         });
     }
 

@@ -34,6 +34,14 @@ return [
         'source_run_id' => 'Reused run',
     ],
 
+    'statuses' => [
+        'running' => 'Running',
+        'succeeded' => 'Succeeded',
+        'failed' => 'Failed',
+        'cache_hit' => 'Cache hit',
+        'abandoned' => 'Abandoned',
+    ],
+
     'filters' => [
         'feature' => 'Feature',
         'status' => 'Status',

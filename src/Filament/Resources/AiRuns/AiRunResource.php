@@ -96,7 +96,7 @@ class AiRunResource extends MagicStarterResource
                 TextColumn::make('status')
                     ->label(__('magic-starter::admin_ai.columns.status'))
                     ->badge()
-                    ->formatStateUsing(static fn (AiRunStatus $state): string => $state->value)
+                    ->formatStateUsing(static fn (AiRunStatus $state): string => static::statusLabel($state))
                     ->color(static fn (AiRunStatus $state): string => static::statusColor($state)),
                 TextColumn::make('team')
                     ->label(__('magic-starter::admin_ai.columns.team'))
@@ -207,15 +207,23 @@ class AiRunResource extends MagicStarterResource
     /**
      * Badge colour by status: a failure is the one an operator looks for.
      */
-    public static function statusColor(?AiRunStatus $status): string
+    public static function statusColor(AiRunStatus $status): string
     {
         return match ($status) {
             AiRunStatus::SUCCEEDED => 'success',
             AiRunStatus::FAILED => 'danger',
             AiRunStatus::RUNNING => 'warning',
             AiRunStatus::CACHE_HIT => 'info',
-            AiRunStatus::ABANDONED, null => 'gray',
+            AiRunStatus::ABANDONED => 'gray',
         };
+    }
+
+    /**
+     * The status in the staff user's language, for a badge or a filter option.
+     */
+    public static function statusLabel(AiRunStatus $status): string
+    {
+        return (string) __("magic-starter::admin_ai.statuses.{$status->value}");
     }
 
     /**
@@ -235,16 +243,19 @@ class AiRunResource extends MagicStarterResource
     }
 
     /**
-     * Filter options keyed and labelled by the stored value, which is what a
-     * log line or an alert names.
+     * Filter options keyed by the stored value and labelled like the badge.
      *
      * @return array<string, string>
      */
     protected static function statusOptions(): array
     {
-        $values = array_map(static fn (AiRunStatus $status): string => $status->value, AiRunStatus::cases());
+        $options = [];
 
-        return array_combine($values, $values);
+        foreach (AiRunStatus::cases() as $status) {
+            $options[$status->value] = static::statusLabel($status);
+        }
+
+        return $options;
     }
 
     /**

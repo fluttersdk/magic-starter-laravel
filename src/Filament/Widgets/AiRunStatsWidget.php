@@ -30,6 +30,11 @@ class AiRunStatsWidget extends StatsOverviewWidget
     protected int|array|null $columns = 4;
 
     /**
+     * No polling: the figures span days, and each refresh runs both window aggregates again.
+     */
+    protected ?string $pollingInterval = null;
+
+    /**
      * @return array<Stat>
      */
     protected function getStats(): array

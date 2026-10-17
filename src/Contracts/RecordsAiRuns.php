@@ -14,7 +14,11 @@ use FlutterSdk\MagicStarter\Support\AiRuns\AiRunStart;
  * SDK. Recording never breaks the call it records: with the ai-runs feature off
  * or the table missing, `start()` answers null, and a null run key makes
  * `attempt()` and `finish()` no-ops, so the host never branches on the result.
- * A database failure is logged, never thrown.
+ * Data a column cannot hold (invalid UTF-8, a NUL byte, NAN, an over-long name)
+ * is scrubbed or cut, and a database failure, a value JSON cannot encode or a
+ * deadlock costs that one row and a log line, never an exception. The one
+ * failure that does throw, an extra mask pattern that does not compile, is
+ * raised when the application boots rather than on a call.
  */
 interface RecordsAiRuns
 {

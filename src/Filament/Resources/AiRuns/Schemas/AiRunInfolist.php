@@ -9,6 +9,8 @@ use Filament\Schemas\Components\Section;
 use Filament\Schemas\Schema;
 use Filament\Support\Enums\FontFamily;
 use Filament\Support\Facades\FilamentTimezone;
+use FlutterSdk\MagicStarter\Enums\AiCostSource;
+use FlutterSdk\MagicStarter\Enums\AiPromptSource;
 use FlutterSdk\MagicStarter\Enums\AiRunStatus;
 use FlutterSdk\MagicStarter\Filament\Resources\AiRuns\AiRunResource;
 use FlutterSdk\MagicStarter\Models\AiRun;
@@ -75,10 +77,11 @@ final class AiRunInfolist
                 TextEntry::make('status')
                     ->label(__('magic-starter::admin_ai.columns.status'))
                     ->badge()
-                    ->formatStateUsing(static fn (AiRunStatus $state): string => $state->value)
+                    ->formatStateUsing(static fn (AiRunStatus $state): string => AiRunResource::statusLabel($state))
                     ->color(static fn (AiRunStatus $state): string => AiRunResource::statusColor($state)),
                 TextEntry::make('source')
-                    ->label(__('magic-starter::admin_ai.columns.source')),
+                    ->label(__('magic-starter::admin_ai.columns.source'))
+                    ->formatStateUsing(static fn (AiPromptSource $state): string => $state->value),
                 TextEntry::make('team')
                     ->label(__('magic-starter::admin_ai.columns.team'))
                     ->state(static fn (AiRun $record): ?string => AiRunResource::teamLabel($record))
@@ -139,6 +142,7 @@ final class AiRunInfolist
                     ->placeholder(AiRunResource::ABSENT),
                 TextEntry::make('cost_source')
                     ->label(__('magic-starter::admin_ai.columns.cost_source'))
+                    ->formatStateUsing(static fn (AiCostSource $state): string => $state->value)
                     ->placeholder(AiRunResource::ABSENT),
                 TextEntry::make('error_class')
                     ->label(__('magic-starter::admin_ai.columns.error_class'))
@@ -205,9 +209,10 @@ final class AiRunInfolist
                         TextEntry::make('status')
                             ->label(self::attemptLabel('status'))
                             ->badge()
-                            ->color(static fn (string $state): string => AiRunResource::statusColor(
-                                AiRunStatus::tryFrom($state),
-                            )),
+                            ->formatStateUsing(
+                                static fn (AiRunStatus $state): string => AiRunResource::statusLabel($state),
+                            )
+                            ->color(static fn (AiRunStatus $state): string => AiRunResource::statusColor($state)),
                         TextEntry::make('http_status')
                             ->label(self::attemptLabel('http_status'))
                             ->placeholder(AiRunResource::ABSENT),

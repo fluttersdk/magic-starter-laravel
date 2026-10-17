@@ -228,6 +228,63 @@ class AiRunResourceTest extends FilamentTestCase
             ->assertSee('anthropic');
     }
 
+    public function test_the_status_badge_and_the_status_filter_show_translated_labels(): void
+    {
+        $failed = $this->aiRun(['status' => AiRunStatus::FAILED]);
+        $cached = $this->aiRun(['status' => AiRunStatus::CACHE_HIT]);
+
+        Livewire::actingAs($this->staff())
+            ->test(ListAiRuns::class)
+            ->assertTableColumnFormattedStateSet('status', 'Failed', $failed)
+            ->assertTableColumnFormattedStateSet('status', 'Cache hit', $cached);
+
+        $options = (new ReflectionMethod(AiRunResource::class, 'statusOptions'))->invoke(null);
+
+        $this->assertSame([
+            'running' => 'Running',
+            'succeeded' => 'Succeeded',
+            'failed' => 'Failed',
+            'cache_hit' => 'Cache hit',
+            'abandoned' => 'Abandoned',
+        ], $options);
+
+        app()->setLocale('tr');
+
+        $this->assertSame('Başarısız', AiRunResource::statusLabel(AiRunStatus::FAILED));
+
+        foreach (AiRunStatus::cases() as $status) {
+            $this->assertNotSame(
+                "magic-starter::admin_ai.statuses.{$status->value}",
+                AiRunResource::statusLabel($status),
+            );
+        }
+    }
+
+    public function test_the_view_shows_translated_statuses_and_the_source_and_cost_source_values(): void
+    {
+        $run = $this->aiRun([
+            'status' => AiRunStatus::FAILED,
+            'source' => 'override',
+            'cost_source' => 'computed',
+        ]);
+        $this->attempt($run, 1, ['status' => 'succeeded', 'cost_source' => 'provider']);
+
+        Livewire::actingAs($this->staff())
+            ->test(ViewAiRun::class, ['record' => $run->getKey()])
+            ->assertSuccessful()
+            ->assertSee('Failed')
+            ->assertSee('Succeeded')
+            ->assertSee('override')
+            ->assertSee('computed');
+    }
+
+    public function test_the_stats_widget_does_not_poll(): void
+    {
+        $widget = new AiRunStatsWidget;
+
+        $this->assertNull((new ReflectionMethod($widget, 'getPollingInterval'))->invoke($widget));
+    }
+
     public function test_a_user_outside_the_panel_gate_cannot_reach_the_list(): void
     {
         $this->actingAs($this->staff())->get('/admin/ai-runs')->assertOk();

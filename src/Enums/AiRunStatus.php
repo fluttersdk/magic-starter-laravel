@@ -9,7 +9,7 @@ namespace FlutterSdk\MagicStarter\Enums;
  */
 enum AiRunStatus: string
 {
-    /** Opened and not yet closed; the daily prune turns a stale one into ABANDONED. */
+    /** Opened and not yet closed; the hourly prune turns a stale one into ABANDONED. */
     case RUNNING = 'running';
 
     case SUCCEEDED = 'succeeded';

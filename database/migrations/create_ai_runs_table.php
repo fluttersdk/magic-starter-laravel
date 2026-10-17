@@ -44,7 +44,7 @@ return new class extends Migration
             MigrationHelper::primaryKey($table);
 
             // No constraint: `teams` exists only with the teams feature.
-            $table->string('team_id', 255)->nullable()->index();
+            $table->string('team_id', 255)->nullable();
             $table->string('subject_type', 255)->nullable();
             $table->string('subject_id', 255)->nullable();
 
@@ -91,6 +91,16 @@ return new class extends Migration
             $table->index([
                 'created_at',
             ]);
+            // The list's default sort and the widget's windows.
+            $table->index([
+                'started_at',
+            ]);
+            // The prune's read for bodies not blanked yet.
+            $table->index([
+                'bodies_pruned_at',
+                'created_at',
+            ]);
+            // Also serves every lookup by team alone, so team_id has no index of its own.
             $table->index([
                 'team_id',
                 'created_at',

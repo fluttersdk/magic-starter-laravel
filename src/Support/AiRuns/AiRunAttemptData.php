@@ -3,6 +3,7 @@
 namespace FlutterSdk\MagicStarter\Support\AiRuns;
 
 use DateTimeInterface;
+use FlutterSdk\MagicStarter\Enums\AiCostSource;
 use FlutterSdk\MagicStarter\Enums\AiRunStatus;
 use InvalidArgumentException;
 
@@ -19,7 +20,7 @@ final readonly class AiRunAttemptData
     /**
      * @param  int  $attempt  Counts from 1 and is unique within the run.
      * @param  string|null  $costUsd  A decimal string in US dollars, eight places at most, `0.00042`; never a float.
-     * @param  string|null  $costSource  How the cost was known, `provider` or `estimated`; 16 chars at most.
+     * @param  AiCostSource|null  $costSource  How the cost was known; MIXED is a run's fold, never an attempt's.
      * @param  list<array{name: string, arguments: mixed, result: mixed}>  $toolCalls
      *
      * @throws InvalidArgumentException when the status is neither SUCCEEDED nor FAILED
@@ -35,7 +36,7 @@ final readonly class AiRunAttemptData
         public ?string $errorMessage = null,
         public ?AiUsage $usage = null,
         public ?string $costUsd = null,
-        public ?string $costSource = null,
+        public ?AiCostSource $costSource = null,
         public ?int $durationMs = null,
         public array $toolCalls = [],
         public ?DateTimeInterface $startedAt = null,

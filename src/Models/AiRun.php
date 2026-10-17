@@ -2,6 +2,8 @@
 
 namespace FlutterSdk\MagicStarter\Models;
 
+use FlutterSdk\MagicStarter\Enums\AiCostSource;
+use FlutterSdk\MagicStarter\Enums\AiPromptSource;
 use FlutterSdk\MagicStarter\Enums\AiRunStatus;
 use FlutterSdk\MagicStarter\MagicStarter;
 use FlutterSdk\MagicStarter\Support\ConditionallyUsesUuids;
@@ -28,7 +30,7 @@ use Illuminate\Support\Carbon;
  * @property string|null $subject_type
  * @property string|null $subject_id
  * @property string $feature
- * @property string $source
+ * @property AiPromptSource $source
  * @property string|null $prompt_hash
  * @property AiRunStatus $status
  * @property string|int|null $source_run_id
@@ -41,7 +43,7 @@ use Illuminate\Support\Carbon;
  * @property int|null $cache_write_tokens
  * @property int|null $reasoning_tokens
  * @property string|null $cost_usd
- * @property string|null $cost_source
+ * @property AiCostSource|null $cost_source
  * @property int|null $duration_ms
  * @property string|null $error_class
  * @property string|null $instructions
@@ -110,6 +112,8 @@ class AiRun extends Model
     {
         return [
             'status' => AiRunStatus::class,
+            'source' => AiPromptSource::class,
+            'cost_source' => AiCostSource::class,
             'context' => 'array',
             'tools' => 'array',
             'structured' => 'array',
@@ -118,6 +122,43 @@ class AiRun extends Model
             'started_at' => 'datetime',
             'finished_at' => 'datetime',
         ];
+    }
+
+    /**
+     * The run columns its attempts decide: provider, model, usage and cost.
+     *
+     * One fold for every way a run closes, the recorder's `finish()` and the
+     * prune's abandon pass alike, so an abandoned run keeps the tokens and the
+     * cost its attempts reported. Provider and model come from the last leg that
+     * succeeded and are left out when none did, so the run keeps the model it
+     * was opened with. A total stays null when no attempt reported it.
+     *
+     * @param  Collection<int, AiRunAttempt>  $attempts  First attempt first.
+     * @return array<string, mixed>
+     */
+    public static function foldAttempts(Collection $attempts): array
+    {
+        $totals = [
+            'attempts_count' => $attempts->count(),
+            'input_tokens' => self::sumOf($attempts, 'input_tokens'),
+            'output_tokens' => self::sumOf($attempts, 'output_tokens'),
+            'cache_read_tokens' => self::sumOf($attempts, 'cache_read_tokens'),
+            'cache_write_tokens' => self::sumOf($attempts, 'cache_write_tokens'),
+            'reasoning_tokens' => self::sumOf($attempts, 'reasoning_tokens'),
+            'cost_usd' => self::costOf($attempts),
+            'cost_source' => self::costSourceOf($attempts),
+        ];
+
+        $succeeded = $attempts->last(
+            static fn (AiRunAttempt $attempt): bool => $attempt->status === AiRunStatus::SUCCEEDED,
+        );
+
+        if ($succeeded !== null) {
+            $totals['provider'] = $succeeded->provider;
+            $totals['model'] = $succeeded->model;
+        }
+
+        return $totals;
     }
 
     /**
@@ -159,5 +200,55 @@ class AiRun extends Model
     public function sourceRun(): BelongsTo
     {
         return $this->belongsTo(self::class, 'source_run_id');
+    }
+
+    /**
+     * @param  Collection<int, AiRunAttempt>  $attempts
+     */
+    private static function sumOf(Collection $attempts, string $column): ?int
+    {
+        $reported = $attempts->pluck($column)->filter(static fn (mixed $value): bool => $value !== null);
+
+        return $reported->isEmpty() ? null : (int) $reported->sum();
+    }
+
+    /**
+     * The summed cost as a decimal string, added in whole 1e-8 dollar units so
+     * no float ever rounds it. The `decimal:8` cast reads every value back with
+     * exactly eight places.
+     *
+     * @param  Collection<int, AiRunAttempt>  $attempts
+     */
+    private static function costOf(Collection $attempts): ?string
+    {
+        $reported = $attempts->pluck('cost_usd')->filter(static fn (mixed $value): bool => $value !== null);
+
+        if ($reported->isEmpty()) {
+            return null;
+        }
+
+        $units = $reported->sum(static fn (string $usd): int => (int) str_replace('.', '', $usd));
+
+        return intdiv($units, 100_000_000) . '.' . str_pad((string) ($units % 100_000_000), 8, '0', STR_PAD_LEFT);
+    }
+
+    /**
+     * The one source every costed attempt shares, or MIXED when they differ.
+     *
+     * @param  Collection<int, AiRunAttempt>  $attempts
+     */
+    private static function costSourceOf(Collection $attempts): ?AiCostSource
+    {
+        $sources = $attempts->pluck('cost_source')
+            ->filter(static fn (?AiCostSource $source): bool => $source !== null)
+            ->map(static fn (AiCostSource $source): string => $source->value)
+            ->unique()
+            ->values();
+
+        return match ($sources->count()) {
+            0 => null,
+            1 => AiCostSource::from((string) $sources->first()),
+            default => AiCostSource::MIXED,
+        };
     }
 }

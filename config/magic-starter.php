@@ -1324,16 +1324,21 @@ return [
     | and its cost stay.
     |
     | `abandon_after_minutes` is how long a run may stay `running` before the
-    | daily prune closes it as `abandoned`.
+    | hourly prune closes it as `abandoned`. At least 1.
     |
     | `max_body_bytes` caps each stored body, in bytes. Longer text is cut.
     |
-    | `mask` scrubs secrets from every body before it is written. `patterns`
-    | is the package's own regex list, `extra_patterns` appends yours, and
-    | `keys` names the array keys whose values are replaced outright (matched
-    | case-insensitively). A pattern with a named group `secret` replaces only
-    | that group, so `Bearer [redacted]` keeps its header; any other pattern
-    | replaces its whole match.
+    | Those three are read with these same values as code defaults, so a
+    | published `ai_runs` block may leave any of them out.
+    |
+    | `mask` scrubs secrets from every body before it is written. The package's
+    | own patterns and key names live in `SecretMasker` and always apply; these
+    | lists only add to them. `extra_patterns` are PCRE patterns with their
+    | delimiters: one with a named group `secret` replaces only that group, any
+    | other replaces its whole match, and one that does not compile stops the
+    | application from booting. `extra_keys` are key names whose values are
+    | replaced, in an array and written as `key: value` or `key=value` text,
+    | matched case-insensitively.
     |
     */
 
@@ -1342,35 +1347,8 @@ return [
         'abandon_after_minutes' => 30,
         'max_body_bytes' => 262144,
         'mask' => [
-            'patterns' => [
-                '/\bsk-(?:ant-|or-|proj-)?[A-Za-z0-9_\-]{16,}/',
-                '/\b(?:ghp|gho|ghu|ghs|ghr)_[A-Za-z0-9]{20,}\b/',
-                '/\bgithub_pat_[A-Za-z0-9_]{20,}\b/',
-                '/\bAKIA[0-9A-Z]{16}\b/',
-                // Not a trailing \b: a key ending in `-` has no word boundary before a space.
-                '/\bAIza[0-9A-Za-z_\-]{35}(?![0-9A-Za-z_\-])/',
-                '/\bxox[abprs]-[A-Za-z0-9-]{10,}\b/',
-                '/\beyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}/',
-                '/\b(?:Bearer|Basic)\s+(?<secret>[A-Za-z0-9._~+\/=-]{8,})/i',
-                '/(?<=:\/\/)(?<secret>[^\s:@\/]+:[^\s@\/]+)@/',
-                '/[?&](?:api[_-]?key|access[_-]?token|token|secret|password|passwd|signature|sig|auth)=(?<secret>[^&\s#]+)/i',
-                '/-----BEGIN [A-Z ]*PRIVATE KEY-----[\s\S]*?-----END [A-Z ]*PRIVATE KEY-----/',
-            ],
-            'keys' => [
-                'authorization',
-                'password',
-                'passwd',
-                'secret',
-                'token',
-                'api_key',
-                'apikey',
-                'access_token',
-                'refresh_token',
-                'client_secret',
-                'cookie',
-                'x-api-key',
-            ],
             'extra_patterns' => [],
+            'extra_keys' => [],
         ],
     ],
 ];

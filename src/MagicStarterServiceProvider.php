@@ -223,6 +223,9 @@ class MagicStarterServiceProvider extends ServiceProvider
         // 0. Refuse a billable subject the rest of this boot cannot serve.
         $this->guardBillableSubject();
 
+        // 0b. Refuse an AI run mask pattern that would otherwise fail every write.
+        $this->guardAiRunMaskPatterns();
+
         // 1. Register named rate limiters for package endpoints.
         $this->configureRateLimiting();
 
@@ -612,6 +615,41 @@ class MagicStarterServiceProvider extends ServiceProvider
     }
 
     /**
+     * Refuse to boot when an extra AI run mask pattern does not compile.
+     *
+     * The masker runs inside the host's AI call path, where an invalid pattern
+     * would raise a warning, which Laravel turns into an `ErrorException`, on
+     * every recorded call. Failing the deploy once is the cheaper outcome, like
+     * {@see self::guardBillableSubject()}. Checked only while the ai-runs feature
+     * is on, since nothing reads the patterns otherwise.
+     *
+     * @throws RuntimeException
+     */
+    private function guardAiRunMaskPatterns(): void
+    {
+        if (! Features::hasAiRunFeatures()) {
+            return;
+        }
+
+        /** @var list<string> $patterns */
+        $patterns = config('magic-starter.ai_runs.mask.extra_patterns', []);
+
+        foreach ($patterns as $pattern) {
+            // Silenced because the exception below carries the same compile error and names the pattern.
+            if (@preg_match($pattern, '') !== false) {
+                continue;
+            }
+
+            throw new RuntimeException(sprintf(
+                '[magic-starter.ai_runs.mask.extra_patterns] holds [%s], which is not a valid PCRE pattern: %s. '
+                . 'Fix or remove it; the AI run log masks every body with it.',
+                $pattern,
+                error_get_last()['message'] ?? preg_last_error_msg(),
+            ));
+        }
+    }
+
+    /**
      * Whether the billing catalogue validates, refusing boot when it does not.
      *
      * One process is let through: `billing:doctor`, which exists to report this
@@ -772,21 +810,22 @@ class MagicStarterServiceProvider extends ServiceProvider
     }
 
     /**
-     * Put `magic-starter:ai-runs:prune` on the schedule, daily.
+     * Put `magic-starter:ai-runs:prune` on the schedule, hourly.
      *
      * Attached through `callAfterResolving()` for the reason
      * {@see self::scheduleEntitlementReconciler()} gives, and mirroring
      * {@see self::schedulePruneAudits()}: `withoutOverlapping()` keeps a run
-     * that outlasts its tick from racing its successor over the same rows. The
-     * cadence is not configurable: retention is counted in days and the
-     * abandon threshold in tens of minutes, so a faster sweep finds little new.
+     * that outlasts its tick from racing its successor over the same rows.
+     * Hourly rather than daily because the abandon threshold is counted in
+     * minutes (30 by default): a daily sweep would leave a dead run `running`
+     * for up to a day. The body pass finds nothing new on most ticks.
      */
     private function schedulePruneAiRuns(): void
     {
         $this->callAfterResolving(Schedule::class, function (Schedule $schedule): void {
             $schedule->command(PruneAiRunsCommand::NAME)
                 ->name(PruneAiRunsCommand::NAME)
-                ->daily()
+                ->hourly()
                 ->withoutOverlapping();
         });
     }

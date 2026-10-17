@@ -48,15 +48,13 @@ The installer stamps the runs table first because the attempts table references 
 
 | Key | Default | Meaning |
 |-----|---------|---------|
-| `ai_runs.retention_days` | `30` | Days a run and its attempts keep their bodies before the prune blanks them |
-| `ai_runs.abandon_after_minutes` | `30` | Minutes after which a run still `running` is closed as `abandoned` |
+| `ai_runs.retention_days` | `30` | Days a run and its attempts keep their bodies before the prune blanks them; at least 1 |
+| `ai_runs.abandon_after_minutes` | `30` | Minutes after which a run still `running` is closed as `abandoned`; at least 1 |
 | `ai_runs.max_body_bytes` | `262144` | Bytes one stored string may hold; the rest is cut |
-| `ai_runs.mask.keys` | `authorization`, `password`, `token`, `api_key`, `cookie` and seven more | Array keys whose whole value is replaced |
-| `ai_runs.mask.patterns` | provider keys, bearer tokens, JWTs, url credentials, private keys and more | Regular expressions masked inside every string |
-| `ai_runs.mask.extra_patterns` | `[]` | Your own patterns, added to `patterns` |
+| `ai_runs.mask.extra_patterns` | `[]` | Your own regular expressions, applied after the built-in ones |
+| `ai_runs.mask.extra_keys` | `[]` | Your own key names, masked like the built-in ones |
 
-> [!WARNING]
-> **A published config must copy the nested keys.** The package merges its config shallowly. A published `config/magic-starter.php` with no `ai_runs` key gets the whole package block. Once the file carries an `ai_runs` block, that block is read as it stands, and a nested key it lacks reads as `null`: `mask.keys` and `mask.patterns` become empty so nothing is masked, `max_body_bytes` becomes `0` so every body is replaced by a truncation marker, and `abandon_after_minutes` becomes `0` so the prune closes every run still `running`. Copy the full block from the package config.
+Every key is optional. The package merges its config shallowly, so a published `ai_runs` block replaces the package one whole, and the three numbers fall back to the defaults above when the block leaves them out. The masking defaults are not config at all: they live in `SecretMasker` and always apply, so a published block can add to them but never switch them off.
 
 ---
 
@@ -75,6 +73,7 @@ The installer stamps the runs table first because the attempts table references 
 namespace App\Services;
 
 use FlutterSdk\MagicStarter\Contracts\RecordsAiRuns;
+use FlutterSdk\MagicStarter\Enums\AiCostSource;
 use FlutterSdk\MagicStarter\Enums\AiRunStatus;
 use FlutterSdk\MagicStarter\Support\AiRuns\AiRunAttemptData;
 use FlutterSdk\MagicStarter\Support\AiRuns\AiRunOutcome;
@@ -140,7 +139,7 @@ class IncidentAnalyst
                 cacheWriteTokens: $answer->cacheWriteTokens,
             ),
             costUsd: $answer->costUsd,
-            costSource: 'provider',
+            costSource: AiCostSource::PROVIDER,
         ));
         $this->runs->finish($run, new AiRunOutcome(
             status: AiRunStatus::SUCCEEDED,
@@ -158,11 +157,15 @@ class IncidentAnalyst
 }
 ```
 
-The run is opened as `running`, and `finish()` writes the status you pass: `succeeded` or `failed`. An attempt accepts only those two; `AiRunAttemptData` throws an `InvalidArgumentException` for any other status.
+The run is opened as `running`, and `finish()` writes the status you pass: `succeeded` or `failed`. `AiRunOutcome` and `AiRunAttemptData` accept only those two and throw an `InvalidArgumentException` for any other status.
 
-The host never branches on the recorder. A `null` run key (feature off, table missing, or a failed write) makes `attempt()` and `finish()` no-ops, so the three calls stay the same. The recorder never throws into your call path: every write runs in its own savepoint, so a failed log row cannot roll back your transaction on PostgreSQL. A `QueryException` is logged at error level and swallowed, and a missing table is skipped with one warning. Anything else is a bug and propagates.
+The host never branches on the recorder. A `null` run key (feature off, table missing, or a failed write) makes `attempt()` and `finish()` no-ops, so the three calls stay the same. The recorder never throws into your call path:
 
-`AiRunStart` also takes `source` (`code` unless an override supplied the prompt), `context` (named blocks sent with the prompt) and `tools` (the tool names offered). An attempt takes `toolCalls`, a list of `name`, `arguments` and `result`.
+- Every value is made storable before it is written. Invalid UTF-8 is scrubbed and NUL bytes are stripped from every string, `NAN` and `INF` become `null`, an object becomes the array its JSON form decodes to, and `feature`, `provider`, `model`, `finishReason`, `errorClass` and the other names are cut to the width of their column.
+- Every write builds its row and runs in its own savepoint, so a failed log row cannot roll back your transaction on PostgreSQL. A `QueryException`, a `JsonEncodingException` or a `DeadlockException` loses that one row and is logged at error level; a missing table is skipped with one warning. Anything else is a bug and propagates.
+- The one failure that does throw is configuration: an `extra_patterns` entry that does not compile stops the application from booting, with a message naming the pattern, instead of failing every recorded call.
+
+`AiRunStart` also takes `source` (`AiPromptSource::CODE` unless an override supplied the prompt, then `AiPromptSource::OVERRIDE`), `context` (named blocks sent with the prompt) and `tools` (the tool names offered). An attempt takes `toolCalls`, a list of `name`, `arguments` and `result`.
 
 The `ai_runs` table also holds a `cache_hit` status and a `source_run_id` column for a response cache of your own, which would record a run that reused another run's answer. No package API writes them yet.
 
@@ -179,7 +182,9 @@ The `ai_runs` table also holds a `cache_hit` status and a `source_run_id` column
 - `provider` and `model` come from the last attempt that succeeded. When none did, `model` keeps the value from `start()` and `provider` stays `null`.
 - `attempts_count` is the number of recorded attempts.
 
-`cost_usd` is a decimal string in US dollars with eight places at most, such as `0.00042`; never pass a float. The run's cost is the sum of its attempts, added in whole units of 1e-8 dollars so no float rounds it. `cost_source` is your own label of how the cost was known (16 characters at most, such as `provider` or `estimated`). The run keeps the label its costed attempts share and reads `mixed` when they differ.
+`cost_usd` is a decimal string in US dollars with eight places at most, such as `0.00042`; never pass a float. The run's cost is the sum of its attempts, added in whole units of 1e-8 dollars so no float rounds it.
+
+`costSource` is an `AiCostSource`: `PROVIDER` when the provider reported the charge, `COMPUTED` when you priced the reported tokens yourself, `UNPRICED` when the call had no known price. The run keeps the source its costed attempts share and reads `MIXED` when they differ.
 
 ---
 
@@ -190,30 +195,34 @@ Every body is masked and then capped when it is written, so a prompt that quoted
 
 `SecretMasker` works in two passes:
 
-1. On an array, every entry whose key is in `mask.keys` (compared case-insensitively) has its whole value replaced, whatever its type. The other entries are walked.
-2. On every string, each pattern in `mask.patterns`, then `mask.extra_patterns`, replaces its named group `secret` when it has one, and its whole match otherwise.
+1. On an array, every entry whose key is a sensitive name (compared case-insensitively) has its whole value replaced, whatever its type. The other entries are walked.
+2. On every string, each pattern replaces its named group `secret` when it has one, and its whole match otherwise.
 
-The replacement is `[redacted]`. The default patterns cover provider and GitHub, AWS, Google and Slack keys, JWTs, `Bearer` and `Basic` values, credentials inside a url, secret query parameters and PEM private keys. The masker fails closed: a string the regex engine gives up on is replaced whole, because returning it would leak exactly the oversized body most likely to carry a pasted secret.
+The replacement is `[redacted]`. The defaults live in code, as `SecretMasker::DEFAULT_PATTERNS` and `SecretMasker::DEFAULT_KEYS`, and always apply:
 
-Add your own through `extra_patterns`, which keeps the defaults. Each is a PCRE pattern with its delimiters; use a `(?<secret>...)` group to keep the surrounding text:
+- The patterns cover OpenAI and Anthropic style `sk-` keys, Stripe `sk_live_`, `sk_test_` and `rk_live_` keys, GitHub, AWS, Google and Slack keys, JWTs, `Bearer` and `Basic` values (also written `Bearer:`), credentials inside a url (an empty user and a password holding `@` included), secret query parameters (`api_key`, `access_token`, `refresh_token`, `id_token`, `client_secret`, `password` and more) and PEM, OpenSSH and PGP private keys. A private key pasted without its `END` line is masked to the end of the text.
+- The key names are `authorization`, `proxy-authorization`, `password`, `passwd`, `secret`, `token`, `auth_token`, `x-auth-token`, `api_key`, `api-key`, `apikey`, `x-api-key`, `access_token`, `refresh_token`, `id_token`, `client_secret`, `private_key`, `cookie` and `set-cookie`. They apply to array keys and to text: `password=hunter2`, `"token": "..."`, `X-Api-Key: ...` and `Authorization: Token ...` all keep the name and lose the value. A name glued to a longer word, such as `tokens:`, is not one.
+
+The masker fails closed: a string the regex engine gives up on is replaced whole, because returning it would leak exactly the oversized body most likely to carry a pasted secret.
+
+Add your own through `extra_patterns` and `extra_keys`, which extend the defaults and can never shorten them. Each pattern is a PCRE pattern with its delimiters; use a `(?<secret>...)` group to keep the surrounding text. A pattern that does not compile stops the application from booting, with a message naming it:
 
 ```php
 // config/magic-starter.php
 'ai_runs' => [
-    // retention_days, abandon_after_minutes, max_body_bytes, mask.keys and mask.patterns
-    // as in the package config: this block replaces the package one whole.
     'mask' => [
         'extra_patterns' => [
             '/\bacme_live_[A-Za-z0-9]{24}\b/',
             '/customer-token:\s*(?<secret>\S+)/i',
         ],
+        'extra_keys' => [
+            'x-tenant-secret',
+        ],
     ],
 ],
 ```
 
-Editing `mask.patterns` replaces the defaults instead of adding to them.
-
-After masking, each string is cut to `max_body_bytes` on a character boundary and ends with a `[truncated N bytes]` marker. Masking comes first, so a cut never leaves a shortened secret the patterns no longer recognise. In an array body the cap applies to each string in it.
+Each string is first cut to `max_body_bytes` plus 64 KiB, so masking a multi-megabyte body stays fast, then masked, then cut to `max_body_bytes` on a character boundary with a `[truncated N bytes]` marker that counts every byte missing from the original. Masking comes before the final cut, and the extra 64 KiB keeps a secret that crosses the cap whole while the patterns read it. In an array body this applies to each string in it.
 
 ---
 
@@ -225,10 +234,10 @@ php artisan magic-starter:ai-runs:prune
 php artisan magic-starter:ai-runs:prune --days=7
 ```
 
-The command exists, and is scheduled daily without overlapping, only while the feature is on, so the application needs the Laravel scheduler running. It does two things:
+The command exists, and is scheduled hourly without overlapping, only while the feature is on, so the application needs the Laravel scheduler running. Hourly, because a daily sweep would leave a dead run `running` for up to a day. It does two things:
 
-- **Blanks old bodies.** For runs and attempts older than `retention_days` (or `--days`, at least 1), it nulls the body columns and stamps `bodies_pruned_at`. A row is never deleted and its metadata (feature, status, usage, cost, durations, timestamps) is never touched, so spend and failure history outlive the prompts. Both passes write in chunks of 1000 keys.
-- **Closes abandoned runs.** A run still `running` after `abandon_after_minutes` has lost its caller, for example a worker that was killed between `start()` and `finish()`. It becomes `abandoned`, and `finished_at` is stamped.
+- **Blanks old bodies.** For runs and attempts older than `retention_days` (or `--days`, at least 1), it nulls the body columns and stamps `bodies_pruned_at`. A row is never deleted and its metadata (feature, status, usage, cost, durations, timestamps) is never touched, so spend and failure history outlive the prompts. It writes in chunks of 1000 keys.
+- **Closes abandoned runs.** A run still `running` after `abandon_after_minutes` (at least 1) has lost its caller, for example a worker that was killed between `start()` and `finish()`. It becomes `abandoned`, `finished_at` is stamped, and its provider, model, tokens and cost are folded from the attempts it did record, exactly as `finish()` would have, so its spend still counts. The stale runs are read in chunks of 1000 and each is closed with its own update, which only applies while the run is still `running`.
 
 A table that does not exist is skipped, since the command can run before the migrations did.
 
@@ -239,7 +248,7 @@ A table that does not exist is skipped, since the command can run before the mig
 
 With the [admin panel](basics/admin-panel.md) installed and the feature on, the plugin adds two parts behind the panel's own access gate:
 
-- **`AiRunResource`**, a read-only list and view of every run: started time, feature, status, team, provider, model, attempts, tokens, cost and duration, with filters for feature, status, team and a started date range. A run is a reading of what a call did, so there is no create, edit or delete.
-- **`AiRunStatsWidget`**, on the dashboard: for the last 7 and 30 days, the run count, the failed share, the cost and the cache hit rate. The rate is `cache_read_tokens` over `input_tokens`, taken only over the runs that reported both figures; with no such run, or no run at all for the failed share, it shows a dash.
+- **`AiRunResource`**, a read-only list and view of every run: started time, feature, status, team, provider, model, attempts, tokens, cost and duration, with filters for feature, status, team and a started date range. Status badges and the status filter use translated labels (`admin_ai.statuses.*`, English and Turkish). A run is a reading of what a call did, so there is no create, edit or delete.
+- **`AiRunStatsWidget`**, on the dashboard: for the last 7 and 30 days, the run count, the failed share, the cost and the cache hit rate. It does not poll; reload the page for fresh figures. The rate is `cache_read_tokens` over `input_tokens`, taken only over the runs that reported both figures; with no such run, or no run at all for the failed share, it shows a dash.
 
 The resource is registered under the key `ai_runs`, so `MagicStarterPlugin::make()->withoutResources(['ai_runs'])` drops it like any other.

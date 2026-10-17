@@ -34,6 +34,14 @@ return [
         'source_run_id' => 'Yeniden kullanılan çalıştırma',
     ],
 
+    'statuses' => [
+        'running' => 'Çalışıyor',
+        'succeeded' => 'Başarılı',
+        'failed' => 'Başarısız',
+        'cache_hit' => 'Önbellekten',
+        'abandoned' => 'Yarım kaldı',
+    ],
+
     'filters' => [
         'feature' => 'Özellik',
         'status' => 'Durum',

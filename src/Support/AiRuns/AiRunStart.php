@@ -2,6 +2,8 @@
 
 namespace FlutterSdk\MagicStarter\Support\AiRuns;
 
+use FlutterSdk\MagicStarter\Enums\AiPromptSource;
+
 /**
  * What a host knows when it opens a run: one logical model call, before any
  * provider is tried.
@@ -16,7 +18,7 @@ final readonly class AiRunStart
      * @param  string  $feature  The host's own name for the calling feature, `incident.analysis`; 100 chars at most.
      * @param  int|string|null  $teamId  The team the call is made for; an integer or a UUID key.
      * @param  string|null  $subjectType  The morph type of the record the call is about.
-     * @param  string  $source  Where the prompt came from; `code` unless an override supplied it.
+     * @param  AiPromptSource  $source  Where the prompt came from; CODE unless an override supplied it.
      * @param  string|null  $promptHash  A 64-char sha256 of the prompt, so identical prompts group together.
      * @param  array<string, string>  $context  Named context blocks sent with the prompt.
      * @param  list<string>  $tools  The names of the tools offered to the model.
@@ -26,7 +28,7 @@ final readonly class AiRunStart
         public int|string|null $teamId = null,
         public ?string $subjectType = null,
         public int|string|null $subjectId = null,
-        public string $source = 'code',
+        public AiPromptSource $source = AiPromptSource::CODE,
         public ?string $promptHash = null,
         public ?string $model = null,
         public ?string $instructions = null,
