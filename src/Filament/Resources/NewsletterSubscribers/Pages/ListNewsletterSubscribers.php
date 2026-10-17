@@ -43,13 +43,26 @@ class ListNewsletterSubscribers extends ListRecords
         return response()->streamDownload(function (): void {
             $out = fopen('php://output', 'w');
 
-            fputcsv($out, ['email', 'is_active', 'source', 'created_at'], ',', '"', '');
+            fputcsv($out, [
+                'email',
+                'is_active',
+                'source',
+                'consented_at',
+                'consent_version',
+                'consent_source',
+                'unsubscribed_at',
+                'created_at',
+            ], ',', '"', '');
 
             foreach (NewsletterSubscriber::query()->lazyById() as $subscriber) {
                 fputcsv($out, [
                     $this->safeCell($subscriber->email),
                     $subscriber->is_active ? '1' : '0',
                     $this->safeCell($subscriber->source),
+                    $subscriber->consented_at?->toIso8601String(),
+                    $this->safeCell($subscriber->consent_version),
+                    $this->safeCell($subscriber->consent_source),
+                    $subscriber->unsubscribed_at?->toIso8601String(),
                     $subscriber->created_at?->toIso8601String(),
                 ], ',', '"', '');
             }
