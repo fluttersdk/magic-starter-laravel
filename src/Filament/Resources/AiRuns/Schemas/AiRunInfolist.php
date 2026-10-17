@@ -136,9 +136,8 @@ final class AiRunInfolist
                     ->placeholder(AiRunResource::ABSENT),
                 TextEntry::make('cost_usd')
                     ->label(__('magic-starter::admin_ai.columns.cost_usd'))
-                    ->formatStateUsing(static fn (?string $state): ?string => $state === null
-                        ? null
-                        : AiRunResource::usd($state, 6))
+                    // Filament shows the placeholder for a null state and never formats it.
+                    ->formatStateUsing(static fn (string $state): string => AiRunResource::usd($state, 6))
                     ->placeholder(AiRunResource::ABSENT),
                 TextEntry::make('cost_source')
                     ->label(__('magic-starter::admin_ai.columns.cost_source'))
@@ -226,9 +225,7 @@ final class AiRunInfolist
                             ->placeholder(AiRunResource::ABSENT),
                         TextEntry::make('cost_usd')
                             ->label(self::attemptLabel('cost_usd'))
-                            ->formatStateUsing(static fn (?string $state): ?string => $state === null
-                                ? null
-                                : AiRunResource::usd($state, 6))
+                            ->formatStateUsing(static fn (string $state): string => AiRunResource::usd($state, 6))
                             ->placeholder(AiRunResource::ABSENT),
                         TextEntry::make('duration_ms')
                             ->label(self::attemptLabel('duration_ms'))

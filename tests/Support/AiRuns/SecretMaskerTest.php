@@ -257,6 +257,13 @@ class SecretMaskerTest extends TestCase
         $this->assertTrue($masker->mask(true));
     }
 
+    public function test_a_pattern_that_matches_empty_text_still_walks_the_whole_string(): void
+    {
+        $masked = (new SecretMasker(extraPatterns: ['/q*/']))->mask('ab');
+
+        $this->assertSame('[redacted]a[redacted]b[redacted]', $masked);
+    }
+
     public function test_extra_patterns_extend_the_defaults(): void
     {
         config(['magic-starter.ai_runs.mask.extra_patterns' => ['/\bACME-(?<secret>[0-9]{6})\b/']]);

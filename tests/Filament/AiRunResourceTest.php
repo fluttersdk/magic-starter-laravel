@@ -165,6 +165,59 @@ class AiRunResourceTest extends FilamentTestCase
             ->assertTableColumnStateSet('team', (string) $team->getKey(), $run);
     }
 
+    public function test_the_team_filter_searches_and_names_teams_by_name(): void
+    {
+        $acme = $this->team('Acme');
+        $this->team('Globex');
+
+        $this->assertSame(
+            [(string) $acme->getKey() => 'Acme'],
+            $this->callResource('searchTeams', 'cm'),
+        );
+        $this->assertSame('Acme', $this->callResource('teamName', (string) $acme->getKey()));
+    }
+
+    public function test_without_the_teams_feature_the_team_is_the_stored_id(): void
+    {
+        $run = $this->aiRun(['team_id' => 'team-123']);
+        $this->aiRun(['team_id' => 'team-456']);
+        $this->aiRun(['team_id' => 'other-9']);
+
+        config()->set('magic-starter.features', [Features::aiRuns()]);
+
+        $this->assertSame('team-123', AiRunResource::teamLabel($run));
+        $this->assertSame(
+            ['team-123' => 'team-123', 'team-456' => 'team-456'],
+            $this->callResource('searchTeams', 'team-'),
+        );
+        $this->assertSame('team-456', $this->callResource('teamName', 'team-456'));
+    }
+
+    public function test_the_resource_names_its_model(): void
+    {
+        $this->assertSame(__('magic-starter::admin_ai.model_label'), AiRunResource::getModelLabel());
+    }
+
+    public function test_the_view_names_the_subject_by_its_class_and_key(): void
+    {
+        $run = $this->aiRun(['subject_type' => 'App\\Models\\Incident', 'subject_id' => '42']);
+
+        Livewire::actingAs($this->staff())
+            ->test(ViewAiRun::class, ['record' => $run->getKey()])
+            ->assertSee('Incident 42');
+    }
+
+    public function test_the_view_renders_a_run_with_no_subject_and_no_cost(): void
+    {
+        $run = $this->aiRun();
+        $this->attempt($run, 1);
+
+        Livewire::actingAs($this->staff())
+            ->test(ViewAiRun::class, ['record' => $run->getKey()])
+            ->assertOk()
+            ->assertSee(AiRunResource::ABSENT);
+    }
+
     public function test_the_view_shows_the_metadata_the_bodies_and_the_attempts(): void
     {
         $run = $this->aiRun([
@@ -395,6 +448,14 @@ class AiRunResourceTest extends FilamentTestCase
             'status' => 'succeeded',
             ...$attributes,
         ]);
+    }
+
+    /**
+     * One of the resource's protected static helpers, reached the way Filament reaches it.
+     */
+    private function callResource(string $method, string $argument): mixed
+    {
+        return (new ReflectionMethod(AiRunResource::class, $method))->invoke(null, $argument);
     }
 
     private function team(string $name): ConcreteTeam

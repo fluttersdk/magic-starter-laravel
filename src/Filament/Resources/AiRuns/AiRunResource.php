@@ -126,9 +126,8 @@ class AiRunResource extends MagicStarterResource
                     ->placeholder(static::ABSENT),
                 TextColumn::make('cost_usd')
                     ->label(__('magic-starter::admin_ai.columns.cost_usd'))
-                    ->formatStateUsing(static fn (?string $state): ?string => $state === null
-                        ? null
-                        : static::usd($state, 6))
+                    // Filament shows the placeholder for a null state and never formats it.
+                    ->formatStateUsing(static fn (string $state): string => static::usd($state, 6))
                     ->placeholder(static::ABSENT)
                     ->sortable(),
                 TextColumn::make('duration_ms')

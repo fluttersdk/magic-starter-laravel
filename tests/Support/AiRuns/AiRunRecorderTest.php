@@ -548,6 +548,36 @@ class AiRunRecorderTest extends TestCase
         new AiRunOutcome(status: AiRunStatus::RUNNING);
     }
 
+    public function test_an_attempt_is_either_succeeded_or_failed(): void
+    {
+        $this->expectException(InvalidArgumentException::class);
+
+        new AiRunAttemptData(attempt: 1, provider: 'anthropic', model: null, status: AiRunStatus::ABANDONED);
+    }
+
+    public function test_usage_refuses_a_negative_count(): void
+    {
+        $this->expectException(InvalidArgumentException::class);
+
+        new AiUsage(inputTokens: 10, outputTokens: -1);
+    }
+
+    public function test_finishing_a_run_that_no_longer_exists_writes_nothing(): void
+    {
+        $this->migrateAiRuns();
+
+        // A real key of whichever kind the suite runs (int or uuid), whose row is gone.
+        $run = $this->recorder()->start(new AiRunStart(feature: 'incident.analysis'));
+        AiRun::query()->whereKey($run)->delete();
+        Log::spy();
+
+        $this->recorder()->finish($run, new AiRunOutcome(status: AiRunStatus::SUCCEEDED));
+
+        Log::shouldNotHaveReceived('error');
+
+        $this->assertSame(0, AiRun::query()->count());
+    }
+
     private function failedOpenRouterLeg(): AiRunAttemptData
     {
         return new AiRunAttemptData(
