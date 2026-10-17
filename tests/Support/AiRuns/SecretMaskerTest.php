@@ -142,6 +142,9 @@ class SecretMaskerTest extends TestCase
         yield 'api-key' => ['api-key=0a1b2c3d4e', 'api-key=[redacted]'];
         yield 'cookie' => ['Cookie: sid=0a1b2c', 'Cookie: [redacted]'];
         yield 'client_secret in yaml' => ['client_secret: s3cr3t-v4lue', 'client_secret: [redacted]'];
+        yield 'quoted passphrase' => ['{"password": "correct horse battery"}', '{"password": "[redacted]"}'];
+        yield 'single-quoted passphrase' => ["password: 'correct horse battery'", "password: '[redacted]'"];
+        yield 'unquoted passphrase' => ["password: two words\nnext line", "password: [redacted]\nnext line"];
     }
 
     #[DataProvider('keyValueVectors')]

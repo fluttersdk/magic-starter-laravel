@@ -158,8 +158,12 @@ final class SecretMasker
 
         $names = implode('|', array_map(static fn (string $key): string => preg_quote($key, '/'), $keys));
 
-        return '/(?<![\w-])["\']?(?:' . $names . ')["\']?\s*[:=]\s*["\']?(?:(?:Bearer|Token|Basic)\s+)?'
-            . '(?<secret>[^"\'\s,;&}]+)/i';
+        // A quoted value is masked whole, spaces included; an unquoted one runs to the end of
+        // its line or the next separator, so a passphrase of several words is not half kept.
+        return '/(?<![\w-])["\']?(?:' . $names . ')["\']?\s*[:=]\s*'
+            . '(?|"(?:(?:Bearer|Token|Basic)\s+)?(?<secret>[^"]+)"'
+            . '|\'(?:(?:Bearer|Token|Basic)\s+)?(?<secret>[^\']+)\''
+            . '|(?:(?:Bearer|Token|Basic)\s+)?(?<secret>[^"\'\r\n,;&}]*[^"\'\s,;&}]))/i';
     }
 
     private function maskString(string $text): string

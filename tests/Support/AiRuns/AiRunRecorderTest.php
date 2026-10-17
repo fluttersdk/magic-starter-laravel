@@ -16,12 +16,14 @@ use FlutterSdk\MagicStarter\Support\AiRuns\AiRunStart;
 use FlutterSdk\MagicStarter\Support\AiRuns\AiUsage;
 use FlutterSdk\MagicStarter\Tests\TestCase;
 use Illuminate\Database\DeadlockException;
+use Illuminate\Database\QueryException;
 use Illuminate\Database\Schema\Blueprint;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Schema;
 use InvalidArgumentException;
+use PDOException;
 use ReflectionProperty;
 
 /**
@@ -306,6 +308,22 @@ class AiRunRecorderTest extends TestCase
             ->once()
             ->withArgs(static fn (string $message, array $context): bool => $context['table'] === 'ai_run_attempts');
         Log::shouldNotHaveReceived('error');
+    }
+
+    public function test_a_table_check_on_a_dead_connection_is_logged_and_never_thrown(): void
+    {
+        Log::spy();
+        Schema::shouldReceive('hasTable')->andThrow(
+            new QueryException('testing', 'select exists(...)', [], new PDOException('server closed the connection')),
+        );
+        $recorder = $this->recorder();
+
+        $run = $recorder->start(new AiRunStart(feature: 'incident.analysis'));
+        $recorder->finish('any-run', new AiRunOutcome(status: AiRunStatus::FAILED));
+
+        $this->assertNull($run);
+        Log::shouldHaveReceived('error')
+            ->withArgs(static fn (string $message, array $context): bool => $context['exception'] === 'server closed the connection');
     }
 
     public function test_a_missing_runs_table_makes_start_return_null_with_one_warning(): void

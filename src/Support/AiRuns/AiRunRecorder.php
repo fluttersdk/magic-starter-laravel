@@ -398,7 +398,21 @@ class AiRunRecorder implements RecordsAiRuns
             return true;
         }
 
-        if (Schema::hasTable($table)) {
+        // The first check on a fresh worker is a query too: a dead connection answers "not
+        // recorded", never an exception into the host's call. Nothing is remembered, so the
+        // next call asks again.
+        try {
+            $exists = Schema::hasTable($table);
+        } catch (QueryException $exception) {
+            Log::error('The AI run tables could not be checked; the call continues.', [
+                'table' => $table,
+                'exception' => $this->rootMessage($exception),
+            ]);
+
+            return false;
+        }
+
+        if ($exists) {
             $this->seenTables[$table] = true;
 
             return true;
