@@ -78,4 +78,18 @@ return [
         'cache_hit_rate' => 'Önbellek isabet oranı (son :days gün)',
     ],
 
+    /*
+     * Bir prompt geçersiz kılma kaydedilirken çıkan dört ret; her biri gövde
+     * ya da anahtar alanına bağlanır. `missing_phrases` gövdenin düşürdüğü her
+     * ifadeyi sayar, çünkü uygulamanın ayrıştırıcısı ya da enjeksiyon çiti
+     * onlara dayanır.
+     */
+    'refusals' => [
+        'unknown_key' => '[:key] adıyla kayıtlı bir prompt yok.',
+        'blank_body' => 'Prompt gövdesi boş olamaz.',
+        'default_changed' => 'Bu promptun koddaki varsayılanı siz düzenlerken değişti. '
+            . 'Yeniden yükleyip yeni varsayılanı gözden geçirin, sonra kaydedin.',
+        'missing_phrases' => 'Gövde şu ifadeleri korumalıdır: :phrases.',
+    ],
+
 ];

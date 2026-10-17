@@ -78,4 +78,17 @@ return [
         'cache_hit_rate' => 'Cache hit rate (last :days days)',
     ],
 
+    /*
+     * The four refusals saving a prompt override raises, each on the body or
+     * key field. `missing_phrases` names every phrase the body dropped, because
+     * the host's parser or its injection fence depends on them.
+     */
+    'refusals' => [
+        'unknown_key' => 'No prompt is registered as [:key].',
+        'blank_body' => 'The prompt body cannot be blank.',
+        'default_changed' => 'The code default of this prompt changed while you were editing. '
+            . 'Reload it and review the new default before saving.',
+        'missing_phrases' => 'The body must keep these phrases: :phrases.',
+    ],
+
 ];

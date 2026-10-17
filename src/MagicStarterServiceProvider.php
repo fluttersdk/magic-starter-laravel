@@ -156,6 +156,11 @@ class MagicStarterServiceProvider extends ServiceProvider
         $this->app->singleton(Support\AiPrompts\PromptRegistry::class);
         $this->app->bind(Contracts\ResolvesPrompts::class, Support\AiPrompts\PromptResolver::class);
 
+        // How staff tune a registered prompt. Unconditional like the AppRelease
+        // binds: a consumer swaps the action before it switches ai-prompts on.
+        $this->app->bind(Contracts\SavesAiPromptOverrides::class, Actions\SaveAiPromptOverride::class);
+        $this->app->bind(Contracts\DeletesAiPromptOverrides::class, Actions\DeleteAiPromptOverride::class);
+
         // Cashier is wired HERE and never in boot(), because boot() is already
         // too late: CashierServiceProvider::boot() registers the stripe/webhook
         // route under config('cashier.path') the moment it runs, and every
