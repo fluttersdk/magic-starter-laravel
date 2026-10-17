@@ -59,6 +59,7 @@ Stop rebuilding authentication, profile management, and team features from scrat
 | :desktop_computer: | **Sessions** | Active session listing and revocation |
 | :credit_card: | **Billing** | Entitlement columns on the subject you bill, a user or a team, plus one guarded write path so more than one payment rail can claim a tier without racing |
 | :rocket: | **Releases** | Staff write the release notes of each app version in the admin panel; clients read the published ones, with the latest iOS and Android build, from a public cached endpoint |
+| :robot: | **AI Runs** | Opt-in (`ai-runs`) log of the model calls your app makes: one run per call with its provider attempts, token usage, cost and masked bodies, pruned daily and read-only in the admin panel |
 | :scroll: | **Audit Trail** | Every model create, update and delete recorded after commit with the actor and request, secrets redacted, pruned on a schedule |
 | :control_knobs: | **Admin Panel** | Optional Filament plugin: users, teams, subscriptions, newsletter and audits, plus Horizon, Pulse and Telescope behind one gate. Every write goes through the action contracts |
 
