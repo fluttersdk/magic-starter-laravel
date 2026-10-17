@@ -162,6 +162,16 @@ Every key available in `config/magic-starter.php`:
 | `billing.revenuecat.api_v2_key` | `env('REVENUECAT_API_V2_KEY')` | RevenueCat v2 read key, used by `billing:doctor --remote` only |
 | `billing.revenuecat.project_id` | `env('REVENUECAT_PROJECT_ID')` | RevenueCat project id, used by `billing:doctor --remote` only |
 | `billing.stripe_test_mode.emails` | `env('MAGIC_STARTER_BILLING_STRIPE_TEST_EMAILS')`, comma list | Emails allowed to check out or swap while a Stripe key that is not provably live runs outside `local` and `testing`. Verified and lower-cased; empty refuses everybody |
+| `mail.brand.enabled` | `env('MAGIC_STARTER_MAIL_BRAND_ENABLED', false)` | Brand every markdown mail with the package layout and theme, see [Mail Branding](../basics/notifications.md#mail-branding) |
+| `mail.brand.name` | `env('APP_NAME', 'Laravel')` | Name beside the logo, the logo's alt text and the default footer |
+| `mail.brand.logo_url` | `null` | Absolute `http` or `https` URL of the header logo (a PNG); `null` shows the name only |
+| `mail.brand.logo_width` | `48` | Logo width in pixels, 1 to 600 |
+| `mail.brand.footer` | `null` | Footer line, Markdown, `:year` is the current year; `null` prints `© <year> <name>. All rights reserved.` |
+| `mail.brand.font_stack` | Laravel's system font stack | CSS `font-family` value: letters, digits, spaces, commas, quotes and hyphens |
+| `mail.brand.button_radius` | `4` | Button corner radius in pixels, 0 to 64 |
+| `mail.brand.card_radius` | `4` | Card corner radius in pixels, 0 to 64 |
+| `mail.brand.colors.light.*` | Laravel's default theme | Eight six-digit hex colours: `primary`, `on_primary`, `heading`, `text`, `muted`, `background`, `card`, `border` |
+| `mail.brand.colors.dark.*` | all `null` | The same eight keys for dark mode: all eight or none |
 
 <a name="authentication-identity"></a>
 ## Authentication Identity
@@ -451,3 +461,4 @@ All environment variables recognized by the package:
 | `REVENUECAT_API_V2_KEY` | `billing.revenuecat.api_v2_key` | `null` | v2 read key for `billing:doctor --remote` |
 | `REVENUECAT_PROJECT_ID` | `billing.revenuecat.project_id` | `null` | RevenueCat project id for `billing:doctor --remote` |
 | `MAGIC_STARTER_BILLING_STRIPE_TEST_EMAILS` | `billing.stripe_test_mode.emails` | empty | Comma-separated emails allowed to buy on a Stripe key that is not provably live, outside `local` and `testing` |
+| `MAGIC_STARTER_MAIL_BRAND_ENABLED` | `mail.brand.enabled` | `false` | Brand every markdown mail with the package layout and theme |
