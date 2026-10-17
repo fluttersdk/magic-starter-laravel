@@ -60,6 +60,7 @@ Stop rebuilding authentication, profile management, and team features from scrat
 | :credit_card: | **Billing** | Entitlement columns on the subject you bill, a user or a team, plus one guarded write path so more than one payment rail can claim a tier without racing |
 | :rocket: | **Releases** | Staff write the release notes of each app version in the admin panel; clients read the published ones, with the latest iOS and Android build, from a public cached endpoint |
 | :robot: | **AI Runs** | Opt-in (`ai-runs`) log of the model calls your app makes: one run per call with its provider attempts, token usage, cost and masked bodies, pruned hourly and read-only in the admin panel. See [AI Run Log](doc/ai-runs.md) |
+| :memo: | **AI Prompts** | Opt-in (`ai-prompts`) prompt overrides: register a prompt in code with its boundary and required phrases, and staff tune its body in the admin panel, with a diff against the code default and a stale check when the default changes. See [AI Prompt Overrides](doc/ai-prompts.md) |
 | :scroll: | **Audit Trail** | Every model create, update and delete recorded after commit with the actor and request, secrets redacted, pruned on a schedule |
 | :control_knobs: | **Admin Panel** | Optional Filament plugin: users, teams, subscriptions, newsletter and audits, plus Horizon, Pulse and Telescope behind one gate. Every write goes through the action contracts |
 
@@ -251,7 +252,8 @@ Request → Route (feature-gated, rate-limited)
 | [Notifications](https://magic.fluttersdk.com/packages/starter-laravel/basics/notifications) | Listing, unread count, mark read, preferences |
 | [Admin Panel](doc/basics/admin-panel.md) | Filament plugin, access gate, custom resources, eject, operations tools |
 | [Audit Trail](doc/basics/audit.md) | Recording, redaction, exclusion, pruning, what is not captured |
-| [AI Run Log](doc/ai-runs.md) | Recording model calls, tokens and cost, secret masking, pruning, the admin view |
+| [AI Run Log](doc/ai-runs.md) | Recording model calls and cache hits, tokens and cost, secret masking, pruning, the admin view |
+| [AI Prompt Overrides](doc/ai-prompts.md) | Registering and resolving prompts, the admin workbench, staleness, the boundary, failure mode |
 | [Service Provider](https://magic.fluttersdk.com/packages/starter-laravel/architecture/service-provider) | Contract bindings, route registration, rate limiters |
 | [Action Contracts](https://magic.fluttersdk.com/packages/starter-laravel/architecture/action-contracts) | Overriding business logic via singleton binding |
 | [Models](https://magic.fluttersdk.com/packages/starter-laravel/architecture/models) | Dynamic resolution, UUID support, traits |

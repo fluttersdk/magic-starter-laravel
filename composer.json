@@ -37,6 +37,7 @@
         "laravel/socialite": "^5.0",
         "onesignal/onesignal-php-api": "^5.3",
         "pragmarx/google2fa": "^8.0|^9.0",
+        "sebastian/diff": "^6.0 || ^7.0",
         "socialiteproviders/apple": "^6.1",
         "socialiteproviders/microsoft": "^4.9"
     },

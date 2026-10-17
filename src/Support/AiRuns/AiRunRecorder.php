@@ -112,38 +112,37 @@ class AiRunRecorder implements RecordsAiRuns
             return null;
         }
 
-        $masker = SecretMasker::fromConfig();
-
-        $attributes = [
-            'team_id' => $this->meta('team_id', $start->teamId),
-            'subject_type' => $this->meta('subject_type', $start->subjectType),
-            'subject_id' => $this->meta('subject_id', $start->subjectId),
-            'feature' => (string) $this->meta('feature', $start->feature),
-            'source' => $start->source,
-            'prompt_hash' => $this->meta('prompt_hash', $start->promptHash),
+        return $this->insert([
+            ...$this->opening($start),
             'status' => AiRunStatus::RUNNING,
-            'model' => $this->meta('model', $start->model),
-            'instructions' => $this->body($masker, $start->instructions),
-            'input' => $this->body($masker, $start->input),
-            'context' => $this->body($masker, $start->context),
-            'tools' => $this->storable($start->tools, PHP_INT_MAX),
             'started_at' => now(),
-        ];
-
-        $run = new AiRun;
-
-        $written = $this->write(self::RUNS, static fn (): bool => $run->fill($attributes)->save(), [
-            'feature' => $attributes['feature'],
         ]);
+    }
 
-        if (! $written) {
+    public function hit(AiRunStart $start, int|string $sourceRunId): int|string|null
+    {
+        if (! Features::hasAiRunFeatures()) {
             return null;
         }
 
-        /** @var int|string $key */
-        $key = $run->getKey();
-
-        return $key;
+        // A hit has no attempt to fold, so its zero spend is written here: every token column 0,
+        // the decimal column's zero and no cost source, which AiRun::foldAttempts() also answers
+        // for a run with no attempts.
+        return $this->insert([
+            ...$this->opening($start),
+            'status' => AiRunStatus::CACHE_HIT,
+            'source_run_id' => $sourceRunId,
+            'input_tokens' => 0,
+            'output_tokens' => 0,
+            'cache_read_tokens' => 0,
+            'cache_write_tokens' => 0,
+            'reasoning_tokens' => 0,
+            'cost_usd' => '0',
+            'cost_source' => null,
+            'duration_ms' => 0,
+            'started_at' => now(),
+            'finished_at' => now(),
+        ]);
     }
 
     public function attempt(int|string|null $run, AiRunAttemptData $attempt): void
@@ -219,6 +218,53 @@ class AiRunRecorder implements RecordsAiRuns
         }, [
             'run' => $run,
         ]);
+    }
+
+    /**
+     * The columns a run carries however it opens: who asked, what for, and the masked bodies.
+     *
+     * @return array<string, mixed>
+     */
+    private function opening(AiRunStart $start): array
+    {
+        $masker = SecretMasker::fromConfig();
+
+        return [
+            'team_id' => $this->meta('team_id', $start->teamId),
+            'subject_type' => $this->meta('subject_type', $start->subjectType),
+            'subject_id' => $this->meta('subject_id', $start->subjectId),
+            'feature' => (string) $this->meta('feature', $start->feature),
+            'source' => $start->source,
+            'prompt_hash' => $this->meta('prompt_hash', $start->promptHash),
+            'model' => $this->meta('model', $start->model),
+            'instructions' => $this->body($masker, $start->instructions),
+            'input' => $this->body($masker, $start->input),
+            'context' => $this->body($masker, $start->context),
+            'tools' => $this->storable($start->tools, PHP_INT_MAX),
+        ];
+    }
+
+    /**
+     * Write one run row and answer its key, or null when nothing was written.
+     *
+     * @param  array<string, mixed>  $attributes
+     */
+    private function insert(array $attributes): int|string|null
+    {
+        $run = new AiRun;
+
+        $written = $this->write(self::RUNS, static fn (): bool => $run->fill($attributes)->save(), [
+            'feature' => $attributes['feature'],
+        ]);
+
+        if (! $written) {
+            return null;
+        }
+
+        /** @var int|string $key */
+        $key = $run->getKey();
+
+        return $key;
     }
 
     /**

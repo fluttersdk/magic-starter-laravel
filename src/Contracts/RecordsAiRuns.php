@@ -30,6 +30,18 @@ interface RecordsAiRuns
     public function start(AiRunStart $start): int|string|null;
 
     /**
+     * Record a run a host answered from a stored result instead of calling a model.
+     *
+     * The row is already closed as `cache_hit`: no attempt, every token column 0, no cost, and it links
+     * the run that produced the stored answer through `source_run_id`. Like `start()`, it answers null
+     * when nothing was written.
+     *
+     * @param  int|string  $sourceRunId  The key of the run whose answer was served.
+     * @return int|string|null The hit's key, or null when nothing was written.
+     */
+    public function hit(AiRunStart $start, int|string $sourceRunId): int|string|null;
+
+    /**
      * Record one finished provider call inside the run.
      */
     public function attempt(int|string|null $run, AiRunAttemptData $attempt): void;
