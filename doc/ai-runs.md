@@ -4,6 +4,7 @@
 - [Enabling](#enabling)
 - [Configuration](#configuration)
 - [Recording a Run](#recording-a-run)
+- [Recording a Cache Hit](#recording-a-cache-hit)
 - [Tokens and Cost](#tokens-and-cost)
 - [Masking](#masking)
 - [Pruning](#pruning)
@@ -165,9 +166,38 @@ The host never branches on the recorder. A `null` run key (feature off, table mi
 - Every write builds its row and runs in its own savepoint, so a failed log row cannot roll back your transaction on PostgreSQL. A `QueryException`, a `JsonEncodingException` or a `DeadlockException` loses that one row and is logged at error level; a missing table is skipped with one warning. Anything else is a bug and propagates.
 - The one failure that does throw is configuration: an `extra_patterns` entry that does not compile stops the application from booting, with a message naming the pattern, instead of failing every recorded call.
 
-`AiRunStart` also takes `source` (`AiPromptSource::CODE` unless an override supplied the prompt, then `AiPromptSource::OVERRIDE`), `context` (named blocks sent with the prompt) and `tools` (the tool names offered). An attempt takes `toolCalls`, a list of `name`, `arguments` and `result`.
+`AiRunStart` also takes `source` (`AiPromptSource::CODE` unless an [override](ai-prompts.md) supplied the prompt, then `AiPromptSource::OVERRIDE`), `context` (named blocks sent with the prompt) and `tools` (the tool names offered). An attempt takes `toolCalls`, a list of `name`, `arguments` and `result`.
 
-The `ai_runs` table also holds a `cache_hit` status and a `source_run_id` column for a response cache of your own, which would record a run that reused another run's answer. No package API writes them yet.
+The `ai_runs` table also holds a `cache_hit` status and a `source_run_id` column for a run that reused another run's answer. [`hit()`](#recording-a-cache-hit) writes them.
+
+---
+
+<a name="recording-a-cache-hit"></a>
+## Recording a Cache Hit
+
+When your own response cache answers a call, record that nothing was spent with `hit()`:
+
+```php
+public function hit(AiRunStart $start, int|string $sourceRunId): int|string|null
+```
+
+```php
+$cached = $this->answers->find($hash);
+
+if ($cached !== null) {
+    $this->runs->hit(new AiRunStart(
+        feature: 'incident.analysis',
+        teamId: $incident->team_id,
+        promptHash: $hash,
+    ), sourceRunId: $cached->run_id);
+
+    return $cached->text;
+}
+```
+
+`$sourceRunId` is the key of the run that produced the answer you served; keep it next to the cached answer when you store it. The row is written already closed: status `cache_hit`, `source_run_id` set, every token count `0`, `cost_usd` `0`, no cost source, and a zero duration. It has no attempts, so there is nothing to `attempt()` or `finish()`.
+
+`hit()` answers the new run's key, or `null` when the feature is off, the table is missing or the write failed, and it never throws, on the same terms as `start()`. A custom `RecordsAiRuns` implementation has to provide it.
 
 ---
 
