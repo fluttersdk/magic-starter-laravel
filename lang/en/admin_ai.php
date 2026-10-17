@@ -91,4 +91,55 @@ return [
         'missing_phrases' => 'The body must keep these phrases: :phrases.',
     ],
 
+    /*
+     * The prompt workbench: staff replace the body of a prompt the host registered in code.
+     * `stale` means the code default changed after the edit, `orphaned` that the host no
+     * longer registers the key.
+     */
+    'prompts' => [
+        'navigation_label' => 'AI prompts',
+        'model_label' => 'AI prompt',
+        'plural_model_label' => 'AI prompts',
+
+        'columns' => [
+            'key' => 'Key',
+            'label' => 'Prompt',
+            'status' => 'Status',
+            'updated_at' => 'Updated',
+        ],
+
+        'statuses' => [
+            'current' => 'Current',
+            'stale' => 'Stale',
+            'orphaned' => 'Orphaned',
+        ],
+
+        'fields' => [
+            'key' => 'Prompt',
+            'body' => 'Body',
+            'diff' => 'Changes against the code default',
+            'reviewed' => 'I reviewed the diff against the new code default',
+            'default_body' => 'Code default',
+            'boundary' => 'Boundary (always appended, not editable)',
+        ],
+
+        'diff' => [
+            'from' => 'code default',
+            'to' => 'override',
+            'identical' => 'The body is the same as the code default.',
+        ],
+
+        'actions' => [
+            'create' => 'Override a prompt',
+            'download' => 'Download body',
+            'promoted' => [
+                'label' => 'Promoted to code, delete',
+                'heading' => 'Delete this override?',
+                'description' => 'Use this once the body lives in the code default. The prompt answers its code '
+                    . 'default again from the next call.',
+                'success' => 'Override deleted.',
+            ],
+        ],
+    ],
+
 ];
