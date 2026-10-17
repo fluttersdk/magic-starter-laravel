@@ -137,6 +137,51 @@ return [
         ],
     ],
 
+    /*
+     * Releases: the notes clients read from the public releases feed. Only a
+     * published release with a date is served.
+     */
+    'releases' => [
+        'navigation_label' => 'Releases',
+        'model_label' => 'release',
+        'plural_model_label' => 'releases',
+        'columns' => [
+            'version' => 'Version',
+            'status' => 'Status',
+            'published_at' => 'Published at',
+            'ios_build' => 'iOS build',
+            'android_build' => 'Android build',
+        ],
+        'fields' => [
+            'version' => 'Version',
+            'status' => 'Status',
+            'published_at' => 'Published at',
+            'ios_build' => 'iOS build',
+            'android_build' => 'Android build',
+            'items' => 'Release notes',
+            'type' => 'Type',
+            'text' => 'Text (:locale)',
+        ],
+        'statuses' => [
+            'draft' => 'Draft',
+            'published' => 'Published',
+        ],
+        'item_types' => [
+            'new' => 'New',
+            'improved' => 'Improved',
+            'fixed' => 'Fixed',
+        ],
+        'actions' => [
+            'create' => 'New release',
+            'delete' => [
+                'label' => 'Delete release',
+                'heading' => 'Delete this release?',
+                'description' => 'Clients stop seeing it in the release notes. This cannot be undone.',
+                'success' => 'Release deleted',
+            ],
+        ],
+    ],
+
     'dashboard' => [
         'stats' => [
             'users' => 'Users',

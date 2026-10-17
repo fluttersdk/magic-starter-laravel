@@ -139,6 +139,51 @@ return [
         ],
     ],
 
+    /*
+     * Releases: the notes clients read from the public releases feed. Only a
+     * published release with a date is served.
+     */
+    'releases' => [
+        'navigation_label' => 'Sürümler',
+        'model_label' => 'sürüm',
+        'plural_model_label' => 'sürümler',
+        'columns' => [
+            'version' => 'Sürüm',
+            'status' => 'Durum',
+            'published_at' => 'Yayın tarihi',
+            'ios_build' => 'iOS derlemesi',
+            'android_build' => 'Android derlemesi',
+        ],
+        'fields' => [
+            'version' => 'Sürüm',
+            'status' => 'Durum',
+            'published_at' => 'Yayın tarihi',
+            'ios_build' => 'iOS derlemesi',
+            'android_build' => 'Android derlemesi',
+            'items' => 'Sürüm notları',
+            'type' => 'Tür',
+            'text' => 'Metin (:locale)',
+        ],
+        'statuses' => [
+            'draft' => 'Taslak',
+            'published' => 'Yayımlandı',
+        ],
+        'item_types' => [
+            'new' => 'Yeni',
+            'improved' => 'İyileştirildi',
+            'fixed' => 'Düzeltildi',
+        ],
+        'actions' => [
+            'create' => 'Yeni sürüm',
+            'delete' => [
+                'label' => 'Sürümü sil',
+                'heading' => 'Bu sürüm silinsin mi?',
+                'description' => 'İstemciler bu sürümü sürüm notlarında artık görmez. Bu işlem geri alınamaz.',
+                'success' => 'Sürüm silindi',
+            ],
+        ],
+    ],
+
     'dashboard' => [
         'stats' => [
             'users' => 'Kullanıcılar',
