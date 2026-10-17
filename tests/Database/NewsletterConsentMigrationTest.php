@@ -106,6 +106,20 @@ class NewsletterConsentMigrationTest extends TestCase
         $this->assertEquals($exact, $this->subscriber('Casey@Example.com')->user_id);
     }
 
+    public function test_a_case_variant_row_goes_to_the_case_variant_user_still_free(): void
+    {
+        $this->buildLegacySchema();
+        $taken = $this->insertUser('Kim@example.com');
+        $free = $this->insertUser('kIm@example.com');
+        $this->insertSubscriber('Kim@example.com');
+        $this->insertSubscriber('KIM@example.com');
+
+        $this->consentMigration()->up();
+
+        $this->assertEquals($taken, $this->subscriber('Kim@example.com')->user_id);
+        $this->assertEquals($free, $this->subscriber('KIM@example.com')->user_id);
+    }
+
     public function test_a_legacy_row_gets_the_pre_e5a_consent_record(): void
     {
         $this->buildLegacySchema();

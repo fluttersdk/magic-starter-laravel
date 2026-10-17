@@ -130,11 +130,18 @@ return new class extends Migration
             ->select('id', 'email')
             ->chunkById(self::CHUNK, function (Collection $rows): void {
                 foreach ($rows as $row) {
+                    // The first case variant that owns no row yet, in a stable order.
                     $owner = DB::table('users')
-                        ->whereRaw('lower(email) = ?', [mb_strtolower((string) $row->email)])
-                        ->value('id');
+                        ->whereRaw('lower(users.email) = ?', [mb_strtolower((string) $row->email)])
+                        ->whereNotExists(static function ($query): void {
+                            $query->select(DB::raw(1))
+                                ->from(self::TABLE)
+                                ->whereColumn(self::TABLE . '.user_id', 'users.id');
+                        })
+                        ->orderBy('users.id')
+                        ->value('users.id');
 
-                    if ($owner === null || DB::table(self::TABLE)->where('user_id', $owner)->exists()) {
+                    if ($owner === null) {
                         continue;
                     }
 
