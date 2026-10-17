@@ -20,7 +20,7 @@ use Illuminate\Validation\ValidationException;
  * Default user creation action with optional feature-gated fields.
  *
  * When Features::extendedProfile() is enabled, stores locale and timezone.
- * When Features::newsletterSubscription() is enabled, creates a newsletter subscriber record.
+ * When Features::newsletterSubscription() is enabled, records the newsletter consent of a ticked box.
  * Supports phone-based registration: when `phone` is provided without `email`, email stays null.
  */
 class CreateUser implements CreatesUsers
@@ -123,18 +123,12 @@ class CreateUser implements CreatesUsers
         $userModel = MagicStarter::userModel();
         $user = $userModel::query()->create($attributes);
 
-        // 4. Handle newsletter subscription when feature is enabled.
+        // 4. Record the newsletter consent when the feature is enabled and the box was ticked.
         if (Features::hasNewsletterSubscriptionFeatures()
             && Arr::get($validated, 'subscribe_newsletter', false)
             && $user->email !== null
         ) {
-            NewsletterSubscriber::query()->firstOrCreate(
-                ['email' => $user->email],
-                [
-                    'source' => 'registration',
-                    'is_active' => true,
-                ],
-            );
+            NewsletterSubscriber::subscribeUser($user, 'registration');
         }
 
         // 5. Send email verification notification when feature is enabled.

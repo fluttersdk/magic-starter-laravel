@@ -222,32 +222,111 @@ class MiscResourcesTest extends FilamentTestCase
     // Newsletter subscribers
     // -------------------------------------------------------------------------
 
-    public function test_a_subscriber_can_be_toggled_inactive_and_active_again(): void
+    public function test_the_list_renders_the_consent_columns(): void
     {
-        Event::fake([AdminActionPerformed::class]);
-        $subscriber = NewsletterSubscriber::query()->create(['email' => 'reader@example.com', 'source' => 'footer']);
+        $subscriber = NewsletterSubscriber::query()->create([
+            'email' => 'reader@example.com',
+            'source' => 'footer',
+            'consented_at' => now()->subDay(),
+            'consent_version' => '2026-10',
+            'consent_source' => 'registration',
+        ]);
 
         $list = Livewire::actingAs($this->admin())
             ->test(ListNewsletterSubscribers::class)
-            ->assertCanSeeTableRecords([$subscriber]);
+            ->assertCanSeeTableRecords([$subscriber])
+            ->assertSee('2026-10')
+            ->assertSee('registration');
 
-        $list->callTableAction('toggleActive', $subscriber);
-        $this->assertFalse($subscriber->refresh()->is_active);
+        foreach (['email', 'is_active', 'consented_at', 'consent_version', 'consent_source', 'unsubscribed_at', 'created_at'] as $column) {
+            $list->assertTableColumnExists($column);
+        }
+    }
 
-        $list->callTableAction('toggleActive', $subscriber);
-        $this->assertTrue($subscriber->refresh()->is_active);
+    public function test_the_consent_dates_are_sortable(): void
+    {
+        $older = NewsletterSubscriber::query()->create([
+            'email' => 'older@example.com',
+            'consented_at' => now()->subDays(2),
+        ]);
+        $newer = NewsletterSubscriber::query()->create([
+            'email' => 'newer@example.com',
+            'consented_at' => now()->subDay(),
+        ]);
 
-        Event::assertDispatchedTimes(AdminActionPerformed::class, 2);
+        Livewire::actingAs($this->admin())
+            ->test(ListNewsletterSubscribers::class)
+            ->sortTable('consented_at')
+            ->assertCanSeeTableRecords([$older, $newer], inOrder: true)
+            ->sortTable('consented_at', 'desc')
+            ->assertCanSeeTableRecords([$newer, $older], inOrder: true)
+            ->assertTableColumnExists('unsubscribed_at', fn ($column): bool => $column->isSortable());
+    }
+
+    public function test_deactivating_withdraws_an_active_subscriber_and_audits_the_staff_action(): void
+    {
+        Event::fake([AdminActionPerformed::class]);
+        $subscriber = NewsletterSubscriber::query()->create([
+            'email' => 'reader@example.com',
+            'source' => 'footer',
+            'consented_at' => now(),
+        ]);
+
+        Livewire::actingAs($this->admin())
+            ->test(ListNewsletterSubscribers::class)
+            ->assertTableActionVisible('deactivate', $subscriber)
+            ->callTableAction('deactivate', $subscriber);
+
+        $subscriber->refresh();
+        $this->assertFalse($subscriber->is_active);
+        $this->assertNotNull($subscriber->unsubscribed_at);
+
+        Event::assertDispatchedTimes(AdminActionPerformed::class, 1);
         Event::assertDispatched(
             AdminActionPerformed::class,
-            static fn (AdminActionPerformed $event): bool => $event->action === 'newsletter.subscriber_toggled'
+            static fn (AdminActionPerformed $event): bool => $event->action === 'newsletter.subscriber_deactivated'
                 && $event->subject?->is($subscriber) === true,
+        );
+        $this->assertSame(
+            'staff',
+            Audit::query()->where('event', 'newsletter.unsubscribed')->firstOrFail()->context['via'],
         );
     }
 
-    public function test_the_export_streams_a_csv_with_the_seeded_email_and_neutralises_formulas(): void
+    public function test_staff_cannot_reactivate_a_withdrawn_subscriber(): void
     {
-        NewsletterSubscriber::query()->create(['email' => 'reader@example.com', 'source' => 'footer']);
+        $withdrawn = NewsletterSubscriber::query()->create([
+            'email' => 'gone@example.com',
+            'is_active' => false,
+            'consented_at' => now()->subDays(3),
+            'unsubscribed_at' => now()->subDay(),
+        ]);
+
+        $list = Livewire::actingAs($this->admin())
+            ->test(ListNewsletterSubscribers::class)
+            ->assertCanSeeTableRecords([$withdrawn])
+            ->assertTableActionHidden('deactivate', $withdrawn)
+            ->assertTableActionDoesNotExist('toggleActive')
+            ->assertTableActionDoesNotExist('activate');
+
+        $this->assertSame(
+            ['deactivate'],
+            array_keys($list->instance()->getTable()->getFlatActions()),
+        );
+        $this->assertFalse($withdrawn->refresh()->is_active);
+        $this->assertNotNull($withdrawn->unsubscribed_at);
+    }
+
+    public function test_the_export_streams_a_csv_with_the_consent_record_and_never_the_token(): void
+    {
+        $consentedAt = now()->subDays(2)->startOfSecond();
+        $reader = NewsletterSubscriber::query()->create([
+            'email' => 'reader@example.com',
+            'source' => 'footer',
+            'consented_at' => $consentedAt,
+            'consent_version' => '2026-10',
+            'consent_source' => 'registration',
+        ]);
         NewsletterSubscriber::query()->create(['email' => 'second@example.com', 'source' => '=HYPERLINK("x")']);
 
         $list = Livewire::actingAs($this->admin())
@@ -257,10 +336,17 @@ class MiscResourcesTest extends FilamentTestCase
 
         $csv = base64_decode((string) data_get($list->effects, 'download.content'));
 
-        $this->assertStringContainsString('email,is_active,source,created_at', $csv);
+        $this->assertStringContainsString(
+            'email,is_active,source,consented_at,consent_version,consent_source,unsubscribed_at,created_at',
+            $csv,
+        );
         $this->assertStringContainsString('reader@example.com', $csv);
+        $this->assertStringContainsString($consentedAt->toIso8601String(), $csv);
+        $this->assertStringContainsString('2026-10,registration', $csv);
         $this->assertStringContainsString("'=HYPERLINK", $csv);
         $this->assertStringNotContainsString(',=HYPERLINK', $csv);
+        $this->assertStringNotContainsString('unsubscribe_token', $csv);
+        $this->assertStringNotContainsString((string) $reader->unsubscribe_token, $csv);
     }
 
     // -------------------------------------------------------------------------

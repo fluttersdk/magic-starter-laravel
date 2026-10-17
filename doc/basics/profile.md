@@ -371,7 +371,7 @@ Available when the `newsletter-subscription` feature is enabled.
 | **Auth** | `auth:sanctum` |
 | **Controller** | `NewsletterController@show` |
 
-Returns the current subscription status keyed to the user's email.
+Returns the status of the user's own subscription. The subscription belongs to the user, not to an address, so it keeps working after the user changes their email.
 
 #### Response Example (subscribed)
 
@@ -404,7 +404,7 @@ Returns the current subscription status keyed to the user's email.
 |-------|------|-------|
 | `subscribe` | boolean | Required |
 
-Subscribing creates a `NewsletterSubscriber` record (via `firstOrCreate`) with `source` set to `profile` and `is_active` set to `true`. Unsubscribing sets `is_active` to `false` without deleting the record. Requires the user to have an email address; returns `400` otherwise.
+Subscribing records the user's [consent](#newsletter-consent) with `source` set to `profile` and sends the [confirmation mail](#newsletter-confirmation). Unsubscribing withdraws the consent without deleting the record. Requires the user to have an email address; returns `400` otherwise. The response shape is the same as `GET user/newsletter`, and `subscribed_at` is the time of the latest consent.
 
 #### Request Example
 
@@ -436,6 +436,66 @@ Content-Type: application/json
     "message": "Email address required for newsletter subscription."
 }
 ```
+
+### <a name="newsletter-consent"></a>Consent Record
+
+One `newsletter_subscribers` row per user (`user_id` is unique and the row goes with the user). Besides `email` (a copy kept in step with the user's), `is_active` and `source`, the row carries the consent behind it:
+
+| Column | Meaning |
+|--------|---------|
+| `consented_at` | When the user last gave consent |
+| `consent_version` | `magic-starter.newsletter.consent_version`, the version of your consent wording at that moment |
+| `consent_source` | Where the consent was given: `profile` or `registration` (the `subscribe_newsletter` flag of `POST auth/register`) |
+| `unsubscribed_at` | When the consent was withdrawn, `null` while it stands |
+| `unsubscribe_token` | The secret of the [unsubscribe link](#newsletter-unsubscribe), minted once and never rotated; hidden from serialization |
+
+Raise `consent_version` (`MAGIC_STARTER_NEWSLETTER_CONSENT_VERSION`) whenever the wording users agreed to changes, so each row says which text it rests on. Rows written before this record existed read `consent_version` `pre-e5a`, with `consented_at` set to their creation time.
+
+Subscribing again after a withdrawal reactivates the same row: the token stays, `unsubscribed_at` is cleared, and `consented_at`, `consent_version` and `consent_source` are rewritten with the new consent. Subscribing while already subscribed changes nothing but the consent record, and sends no second mail.
+
+### <a name="newsletter-confirmation"></a>Confirmation Mail
+
+Each time a user goes from not subscribed to subscribed, `NewsletterSubscribedNotification` is queued to their address, in their locale. It states the date of the consent and carries the unsubscribe link. It is a notice, not a double opt-in: the subscription is already active when it is sent. The queue worker has to be running, and a transport failure fails the queued job, not the request that recorded the consent. The mail copy lives in `lang/{en,tr}/newsletter.php` under `magic-starter::newsletter.mail`.
+
+### <a name="newsletter-unsubscribe"></a>One-Click Unsubscribe
+
+Every newsletter mail can carry the same link, built from the row's token:
+
+| Method | URI | What it does |
+|--------|-----|--------------|
+| `GET` | `/newsletter/unsubscribe/{token}` | Shows a confirmation page, or says it is already done. Changes nothing |
+| `POST` | `/newsletter/unsubscribe/{token}` | Withdraws the consent and answers `200` with the result page |
+
+The two routes are `magic-starter.newsletter.unsubscribe` and `magic-starter.newsletter.unsubscribe.store`. They are registered with the feature on, outside `magic-starter.route_prefix` and outside every middleware group, because the URL is baked into mail that was already sent. The token is the only credential: there is no session, cookie or CSRF token, and an unknown token answers `404` with a page that names nothing.
+
+`GET` is deliberately read-only, since mail scanners and link previews follow every link. The `POST` is the one a mail provider sends for RFC 8058 one-click unsubscribe, so a newsletter mail should carry both headers:
+
+```
+List-Unsubscribe: <https://api.example.com/newsletter/unsubscribe/{token}>
+List-Unsubscribe-Post: List-Unsubscribe=One-Click
+```
+
+The `POST` accepts any body (`List-Unsubscribe=One-Click` included), is idempotent, and is throttled per token by `magic-starter-newsletter-unsubscribe` (10 per minute); the page is throttled per IP by `magic-starter-newsletter-unsubscribe-page` (60 per minute). The page renders in the owner's locale and sends `Referrer-Policy: no-referrer`.
+
+### <a name="newsletter-audience"></a>Marketing Audience
+
+`NewsletterSubscriber::marketable()` is the only audience a sender may use. It selects rows that are active, have a `consented_at`, have no `unsubscribed_at` and belong to a user:
+
+```php
+use FlutterSdk\MagicStarter\Models\NewsletterSubscriber;
+
+NewsletterSubscriber::query()->marketable()->each(function (NewsletterSubscriber $subscriber): void {
+    // send, with $subscriber->unsubscribe_token in the footer link
+});
+```
+
+The package sends no campaigns itself.
+
+### <a name="newsletter-email-changes"></a>Email Changes and Deletion
+
+The subscription follows its user. When a user's email changes through the profile action, any `$user->update()` or the admin panel's user form, the row's address is rewritten to match. Deleting the account deletes the row with its audit rows, see [Account Deletion](account-deletion.md).
+
+A row written by address alone, as the previous release did, is claimed by the user whose address matches the first time that user reads or changes their subscription, and keeps working while old and new code run side by side during a deploy.
 
 ---
 

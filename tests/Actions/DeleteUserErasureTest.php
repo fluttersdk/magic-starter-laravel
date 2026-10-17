@@ -22,8 +22,8 @@ use PHPUnit\Framework\Attributes\DataProvider;
 /**
  * Deleting an account erases what the package stored about the person outside
  * the user row: database notifications, notification settings, the newsletter
- * subscription keyed by their email, and the audit rows describing those rows.
- * Another account's rows are untouched.
+ * subscription they own (or an unclaimed one under their address), and the audit
+ * rows describing those rows. Another account's rows are untouched.
  */
 final class DeleteUserErasureTest extends TestCase
 {
@@ -67,8 +67,8 @@ final class DeleteUserErasureTest extends TestCase
         $stayingNotification = $this->notify($staying, 'Staying only');
         $leavingSetting = $this->createSetting($leaving);
         $stayingSetting = $this->createSetting($staying);
-        $leavingSubscriber = $this->subscribe('leaving@example.com');
-        $stayingSubscriber = $this->subscribe('staying@example.com');
+        $leavingSubscriber = $this->subscribe($leaving);
+        $stayingSubscriber = $this->subscribe($staying);
 
         $this->assertSame(1, $this->auditsAbout($leavingSubscriber), 'The subscription must be audited first.');
         $this->assertSame(1, $this->auditsAbout($leavingSetting), 'The setting must be audited first.');
@@ -79,6 +79,7 @@ final class DeleteUserErasureTest extends TestCase
         // 1. The rows themselves.
         $this->assertSame(0, $leaving->notifications()->count());
         $this->assertSame(0, NotificationSetting::query()->whereKey($leavingSetting->getKey())->count());
+        $this->assertSame(0, NewsletterSubscriber::query()->where('user_id', $leaving->getKey())->count());
         $this->assertSame(0, NewsletterSubscriber::query()->where('email', 'leaving@example.com')->count());
 
         // 2. Their audit rows, and no new row written by the erasure itself.
@@ -94,7 +95,7 @@ final class DeleteUserErasureTest extends TestCase
         // 3. Another account keeps everything.
         $this->assertSame(1, $staying->notifications()->count());
         $this->assertSame(1, NotificationSetting::query()->whereKey($stayingSetting->getKey())->count());
-        $this->assertSame(1, NewsletterSubscriber::query()->where('email', 'staying@example.com')->count());
+        $this->assertSame(1, NewsletterSubscriber::query()->where('user_id', $staying->getKey())->count());
         $this->assertSame(1, $this->auditsAbout($stayingNotification));
         $this->assertSame(1, $this->auditsAbout($stayingSetting));
         $this->assertSame(1, $this->auditsAbout($stayingSubscriber));
@@ -119,6 +120,43 @@ final class DeleteUserErasureTest extends TestCase
         $this->assertNull(DeleteUserErasureTestUser::query()->find($user->getKey()));
     }
 
+    #[DataProvider('keyModes')]
+    public function test_deletion_erases_the_subscription_by_owner_even_after_an_email_change(bool $useUuids): void
+    {
+        $this->migrate($useUuids);
+
+        $leaving = $this->createUser('before@example.com');
+        $subscriber = $this->subscribe($leaving);
+        $leaving->update(['email' => 'after@example.com']);
+
+        $this->app->make(DeletesUsers::class)->delete($leaving);
+
+        $this->assertSame(0, NewsletterSubscriber::query()->count());
+        $this->assertSame(0, $this->auditsAbout($subscriber));
+        $this->assertStringNotContainsString('before@example.com', (string) json_encode(Audit::query()->get()->toArray()));
+    }
+
+    #[DataProvider('keyModes')]
+    public function test_deletion_erases_an_unclaimed_row_by_address(bool $useUuids): void
+    {
+        $this->migrate($useUuids);
+
+        $leaving = $this->createUser('legacy@example.com');
+        $staying = $this->createUser('staying@example.com');
+        $legacy = NewsletterSubscriber::query()->create([
+            'email' => 'legacy@example.com',
+            'is_active' => true,
+            'source' => 'registration',
+        ]);
+        $other = $this->subscribe($staying);
+
+        $this->app->make(DeletesUsers::class)->delete($leaving);
+
+        $this->assertSame(0, NewsletterSubscriber::query()->whereKey($legacy->getKey())->count());
+        $this->assertSame(0, $this->auditsAbout($legacy));
+        $this->assertSame(1, NewsletterSubscriber::query()->whereKey($other->getKey())->count());
+    }
+
     private function migrate(bool $useUuids): void
     {
         config()->set('magic-starter.use_uuids', $useUuids);
@@ -131,6 +169,7 @@ final class DeleteUserErasureTest extends TestCase
             'create_notifications_table',
             'create_notification_settings_table',
             'create_newsletter_subscribers_table',
+            'add_consent_to_newsletter_subscribers_table',
             'create_magic_starter_audits_table',
         ] as $migration) {
             (require __DIR__ . "/../../database/migrations/{$migration}.php")->up();
@@ -172,10 +211,11 @@ final class DeleteUserErasureTest extends TestCase
         ]);
     }
 
-    private function subscribe(string $email): NewsletterSubscriber
+    private function subscribe(DeleteUserErasureTestUser $user): NewsletterSubscriber
     {
         return NewsletterSubscriber::query()->create([
-            'email' => $email,
+            'user_id' => $user->getKey(),
+            'email' => $user->email,
             'is_active' => true,
             'source' => 'profile',
         ]);
