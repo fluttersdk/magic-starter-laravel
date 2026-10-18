@@ -24,6 +24,7 @@ use FlutterSdk\MagicStarter\Support\SupportAi\SupportHandoff;
 use FlutterSdk\MagicStarter\Support\SupportAi\SupportTurn;
 use FlutterSdk\MagicStarter\Support\SupportAi\SupportUsage;
 use FlutterSdk\MagicStarter\Support\SupportAttachmentResponse;
+use FlutterSdk\MagicStarter\Support\TeamKey;
 use Illuminate\Contracts\Cache\LockTimeoutException;
 use Illuminate\Contracts\Container\Container;
 use Illuminate\Contracts\Queue\ShouldQueue;
@@ -33,6 +34,7 @@ use Illuminate\Foundation\Queue\Queueable;
 use Illuminate\Queue\InteractsWithQueue;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Notification;
 use Throwable;
 
@@ -220,8 +222,15 @@ class RespondToSupportConversation implements ShouldQueue
         // 3. The deterministic classifier reads every message the desk still owes an answer to, before any
         //    model is called: a breach reported one message before a "hello?" is still a breach.
         //    A trigger that is only files has no question for the model, so it goes to staff here too.
-        $history = $this->history($conversation, $trigger);
+        [
+            'messages' => $history,
+            'truncated' => $historyTruncated,
+            'summary' => $summary,
+        ] = $this->history($conversation, $trigger);
         $uploads = $this->uploads($trigger);
+
+        // The boundary exactly as read, so the compare-and-set at persist time matches this row's value.
+        $summaryThroughId = $conversation->ai_summary_through_id;
         $verdict = $classifier->classify(
             $this->unansweredText($history, $trigger),
             attachmentOnly: ($uploads['images'] !== [] || $uploads['pdfs'] > 0)
@@ -269,6 +278,9 @@ class RespondToSupportConversation implements ShouldQueue
                 deadlineSeconds: max(1, (int) config('magic-starter.support.ai.deadline_seconds', 75) - $waitedSeconds),
                 images: $uploads['images'],
                 pdfCount: $uploads['pdfs'],
+                summary: $summary,
+                summaryThroughId: $summaryThroughId,
+                historyTruncated: $historyTruncated,
             ));
         } catch (Throwable $exception) {
             report($exception);
@@ -305,7 +317,7 @@ class RespondToSupportConversation implements ShouldQueue
         //    or tell the opener and refresh the thread, once it commits, and settle the tokens last, whatever
         //    happened before.
         try {
-            $message = $this->persist($desk, $answer);
+            $message = $this->persist($desk, $answer, $summaryThroughId);
 
             if ($message === null) {
                 return;
@@ -342,16 +354,35 @@ class RespondToSupportConversation implements ShouldQueue
     }
 
     /**
-     * The customer-visible thread before the trigger, oldest first, capped to `support.ai.history_messages`.
+     * The customer-visible thread after the summary's boundary and before the trigger, oldest first.
      *
-     * @return list<SupportMessage>
+     * Capped to `support.ai.history_messages`; `truncated` says the cap dropped older messages of that window.
+     * A boundary whose message is gone bounds nothing, so the whole thread is read again and the stored
+     * summary is left out: it covers messages the history now carries in full.
+     *
+     * @return array{messages: list<SupportMessage>, truncated: bool, summary: ?string}
      */
     private function history(SupportConversation $conversation, SupportMessage $trigger): array
     {
-        // Strictly before the trigger in the thread's own order, created_at then id, so a message written in
-        // the same second after it is not read as history.
-        return $conversation->messages()
+        $cap = max(0, (int) config('magic-starter.support.ai.history_messages', 12));
+        $boundary = $conversation->ai_summary_through_id === null
+            ? null
+            : $conversation->messages()->whereKey($conversation->ai_summary_through_id)->first();
+
+        // Both bounds are strict in the thread's own order, created_at then id, so a message written in the
+        // same second as the boundary or the trigger lands on its true side. One extra row tells a full
+        // window from a truncated one.
+        $messages = $conversation->messages()
             ->customerVisible()
+            ->when($boundary, function (Builder $after, SupportMessage $boundary): void {
+                $after->where(function (Builder $after) use ($boundary): void {
+                    $after->where('created_at', '>', $boundary->created_at)
+                        ->orWhere(function (Builder $sameSecond) use ($boundary): void {
+                            $sameSecond->where('created_at', $boundary->created_at)
+                                ->where($boundary->getKeyName(), '>', $boundary->getKey());
+                        });
+                });
+            })
             ->where(function (Builder $before) use ($trigger): void {
                 $before->where('created_at', '<', $trigger->created_at)
                     ->orWhere(function (Builder $sameSecond) use ($trigger): void {
@@ -361,11 +392,14 @@ class RespondToSupportConversation implements ShouldQueue
             })
             ->orderByDesc('created_at')
             ->orderByDesc('id')
-            ->limit(max(0, (int) config('magic-starter.support.ai.history_messages', 12)))
-            ->get()
-            ->reverse()
-            ->values()
-            ->all();
+            ->limit($cap + 1)
+            ->get();
+
+        return [
+            'messages' => $messages->take($cap)->reverse()->values()->all(),
+            'truncated' => $messages->count() > $cap,
+            'summary' => $boundary === null ? null : $conversation->ai_summary,
+        ];
     }
 
     /**
@@ -439,12 +473,20 @@ class RespondToSupportConversation implements ShouldQueue
      * with nobody owing the customer a reply. Nothing is announced here; the
      * caller does that after the commit.
      *
+     * A compaction rides on the same write, and only while the stored boundary
+     * is still `$readBoundary`, the one the turn was built from: a summary that
+     * another turn replaced meanwhile is newer than this one, so it stays.
+     *
+     * @param  int|string|null  $readBoundary  The `ai_summary_through_id` this turn read, null for none.
      * @return SupportMessage|null the stored answer, or null when the turn moved on while the model was
      *                             answering; nothing is written then
      */
-    private function persist(SupportHandoff $desk, SupportAnswer $answer): ?SupportMessage
-    {
-        return DB::transaction(function () use ($desk, $answer): ?SupportMessage {
+    private function persist(
+        SupportHandoff $desk,
+        SupportAnswer $answer,
+        int|string|null $readBoundary,
+    ): ?SupportMessage {
+        return DB::transaction(function () use ($desk, $answer, $readBoundary): ?SupportMessage {
             $conversation = SupportConversation::query()->lockForUpdate()->find($this->conversationId);
 
             if (! $conversation instanceof SupportConversation || ! $this->owns($conversation)) {
@@ -469,6 +511,7 @@ class RespondToSupportConversation implements ShouldQueue
                 'answered_message_id' => $this->triggerId,
                 'ai_failures' => 0,
                 'last_activity_at' => now(),
+                ...$this->compaction($conversation, $answer, $readBoundary),
             ])->save();
 
             // The row was read pending under this transaction's lock, so the conditional flip is this turn's.
@@ -478,6 +521,70 @@ class RespondToSupportConversation implements ShouldQueue
 
             return $message;
         });
+    }
+
+    /**
+     * The summary columns to store with the answer, or none when there is no compaction or the boundary moved.
+     *
+     * Compared as strings, as {@see self::owns()} compares keys, so an int column read back as a string still
+     * matches; null matches only null.
+     *
+     * @return array{ai_summary?: string, ai_summary_through_id?: int|string}
+     */
+    private function compaction(
+        SupportConversation $locked,
+        SupportAnswer $answer,
+        int|string|null $readBoundary,
+    ): array {
+        if ($answer->compaction === null) {
+            return [];
+        }
+
+        $stored = $locked->ai_summary_through_id;
+
+        if (($stored === null) !== ($readBoundary === null) || (string) $stored !== (string) $readBoundary) {
+            return [];
+        }
+
+        if (! $this->summarisable($locked, $answer->compaction->throughMessageId)) {
+            Log::warning('A support compaction named a message outside the turn\'s history; the summary is dropped.', [
+                'conversation_id' => (string) $locked->getKey(),
+                'through_message_id' => (string) $answer->compaction->throughMessageId,
+            ]);
+
+            return [];
+        }
+
+        return [
+            'ai_summary' => $answer->compaction->text,
+            'ai_summary_through_id' => $answer->compaction->throughMessageId,
+        ];
+    }
+
+    /**
+     * Whether `$throughId` is a message of this conversation sent before the trigger, so a later turn finds the
+     * boundary and reads exactly the messages after it.
+     *
+     * The key shape is checked first: PostgreSQL refuses a non-uuid literal in a uuid column, and that error
+     * inside this transaction would lose the answer with the summary.
+     */
+    private function summarisable(SupportConversation $locked, int|string $throughId): bool
+    {
+        if (! TeamKey::looksLikeOne((string) $throughId)) {
+            return false;
+        }
+
+        $boundary = $locked->messages()->whereKey($throughId)->first();
+        $trigger = $locked->messages()->whereKey($this->triggerId)->first();
+
+        if ($boundary === null || $trigger === null) {
+            return false;
+        }
+
+        // Strictly before the trigger in the thread's own order, created_at then id, as history() reads it. The
+        // keys compare uncast: integer keys numerically, uuid keys by their text, as the database orders them.
+        return $boundary->created_at->lt($trigger->created_at)
+            || ($boundary->created_at->eq($trigger->created_at) && $boundary->getKey() < $trigger->getKey());
     }
 
     /**

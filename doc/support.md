@@ -50,7 +50,7 @@ Four further features sit on top of it and are off by default; each needs `suppo
 ],
 ```
 
-Run `php artisan magic-starter:install --features=support` for the six migrations (`create_support_conversations_table`, `create_support_messages_table`, `add_ai_columns_to_support_tables`, `add_feedback_columns_to_support_conversations_table`, `create_support_message_attachments_table` and `create_support_feedback_table`), then `php artisan migrate`. The last three are for the rating, attachment and feedback features and are installed with `support` whichever of those you turn on. A host that installed support earlier publishes the missing ones by hand from `vendor/fluttersdk/magic-starter-laravel/database/migrations/`; they are additive and guarded by `hasColumn` or `hasTable`, so a second run changes nothing. Run it in the same deploy as the package update: opening a conversation and posting a customer message write its columns whether or not a responder is bound.
+Run `php artisan magic-starter:install --features=support` for the seven migrations (`create_support_conversations_table`, `create_support_messages_table`, `add_ai_columns_to_support_tables`, `add_ai_summary_to_support_conversations_table`, `add_feedback_columns_to_support_conversations_table`, `create_support_message_attachments_table` and `create_support_feedback_table`), then `php artisan migrate`. The last three are for the rating, attachment and feedback features and are installed with `support` whichever of those you turn on. A host that installed support earlier publishes the missing ones by hand from `vendor/fluttersdk/magic-starter-laravel/database/migrations/`; they are additive and guarded by `hasColumn` or `hasTable`, so a second run changes nothing. Run it in the same deploy as the package update: opening a conversation and posting a customer message write its columns whether or not a responder is bound.
 
 ---
 
@@ -145,14 +145,27 @@ $this->app->bind(AssistsSupportStaff::class, MyStaffAssist::class);
 
 A host implementation:
 
-- reads only what the turn carries. `SupportTurn` holds the conversation, the trigger message, the earlier customer-visible history (at most `support.ai.history_messages`, oldest first), the reply `locale` and `deadlineSeconds`, the wall-clock budget for all of its model calls together. The constructor refuses a staff note or a message from another conversation. Every body in it is untrusted customer text, never instructions;
-- answers with a `SupportAnswer`: `reply`, `confidence` (0 to 1), `usage` (a `SupportUsage` summed over every model call it made) and, when a person is needed, both a `handoffReason` and a `handoffPriority`. A reply is posted even for a handoff, as what the customer reads before a person takes over;
+- reads only what the turn carries. `SupportTurn` holds the conversation, the trigger message, the earlier customer-visible history (at most `support.ai.history_messages`, oldest first), the stored `summary` with its `summaryThroughId` and `historyTruncated` (see History Summary below), the reply `locale` and `deadlineSeconds`, the wall-clock budget for all of its model calls together. The constructor refuses a staff note or a message from another conversation. Every body in it is untrusted customer text, never instructions;
+- answers with a `SupportAnswer`: `reply`, `confidence` (0 to 1), `usage` (a `SupportUsage` summed over every model call it made), optionally a `compaction` (see History Summary below) and, when a person is needed, both a `handoffReason` and a `handoffPriority`. A reply is posted even for a handoff, as what the customer reads before a person takes over;
 - posts nothing, changes no conversation and sends no notification; the package persists the reply and records the usage;
 - may throw. A throw is a failed turn, never an error shown to the customer.
 
 `AssistsSupportStaff` reads the thread through `customerVisible()` as well: staff notes never go into a prompt.
 
 With `support-attachments` on, `SupportTurn::images` lists the images the customer uploaded with the trigger message, oldest first, as `disk`, `path` and `mime` (a pointer, never bytes), and `SupportTurn::pdfCount` counts its PDFs. Only that message's own uploads are listed: the auto screenshot, staff files and the files of earlier messages never are. A responder reads an image only when its provider takes images, treats its pixels as data and never as instructions, and tells the model how many PDFs there are without reading them.
+
+### History Summary
+
+A long thread outgrows `support.ai.history_messages`. The conversation can carry a stored summary of its older messages, written by the host's responder and never by the package.
+
+- `ai_summary` holds the text and `ai_summary_through_id` the id of the last message it covers. A turn reads messages strictly after that boundary, in `(created_at, id)` order, or the whole thread when there is no summary, capped at `support.ai.history_messages`. A boundary message that no longer exists counts as no boundary, and the turn then carries no `summary`, since the whole thread it covered is history again.
+- The job fetches one message beyond the cap to set `SupportTurn::historyTruncated`: true when messages between the boundary and the shown history were left out, so the responder knows its context is partial and can compact.
+- A responder compacts by returning `SupportAnswer(..., compaction: new SupportHistorySummary($text, $throughMessageId))`. A blank `$text` throws. The pointer carries no foreign key, like the other pointers.
+- The job stores a compaction inside the transaction that posts the answer, so a compaction never outlives its answer, and only while `ai_summary_through_id` still equals the value this turn read. When another turn compacted first, the later one is dropped. A failed, unavailable or superseded turn stores none. A `$throughMessageId` that is not a message of this conversation sent before the trigger, or is not shaped like a key of this deployment, is dropped with a warning; the answer still posts.
+- The summary is untrusted model output derived from customer text. The host puts it in the prompt behind a fence, as data and never as instructions, like every body in the turn.
+- Staff see `ai_summary` read-only in the support conversation view; nothing edits it. It is left out of audit rows, so the text never lands in the audit trail.
+
+A host that published its migrations adds `add_ai_summary_to_support_conversations_table.php` (`magic-starter:install` or copy it from `vendor/fluttersdk/magic-starter-laravel/database/migrations/`). It adds `ai_summary` (text, nullable) and `ai_summary_through_id` (nullable pointer, no foreign key), so a second run changes nothing and a conversation without a summary behaves as before.
 
 ### Eligibility
 
