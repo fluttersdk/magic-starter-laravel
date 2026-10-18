@@ -160,16 +160,14 @@ final class SecretMasker
 
         // A quoted value is masked whole, spaces included; an unquoted one runs to the end of
         // its line or the next separator, so a passphrase of several words is not half kept.
-        // The exception is a value glued to its `=` (`api_key=abc then ...`): the form and
-        // log-line shape, where the value is one token and the words after it are the log's.
-        return '/(?<![\w-])["\']?(?:' . $names . ')["\']?\s*'
-            . '(?|=(?:(?:Bearer|Token|Basic)\s+)?(?<secret>[^"\'\s,;&}]+)'
-            . '|[:=]\s*'
+        // That holds for a value glued to its `=` too: ending it at the first space would keep
+        // the later words of `password=two words` and the token of `authorization=Bot <token>`.
+        return '/(?<![\w-])["\']?(?:' . $names . ')["\']?\s*[:=]\s*'
             . '(?|"(?:(?:Bearer|Token|Basic)\s+)?(?<secret>[^"]+)"'
             . '|\'(?:(?:Bearer|Token|Basic)\s+)?(?<secret>[^\']+)\''
             // A quote that never closes: output cut at max_tokens, or a body cut at the cap.
             . '|["\'](?:(?:Bearer|Token|Basic)\s+)?(?<secret>[^"\'\r\n,;&}]*[^"\'\s,;&}])'
-            . '|(?:(?:Bearer|Token|Basic)\s+)?(?<secret>[^"\'\r\n,;&}]*[^"\'\s,;&}])))/i';
+            . '|(?:(?:Bearer|Token|Basic)\s+)?(?<secret>[^"\'\r\n,;&}]*[^"\'\s,;&}]))/i';
     }
 
     private function maskString(string $text): string

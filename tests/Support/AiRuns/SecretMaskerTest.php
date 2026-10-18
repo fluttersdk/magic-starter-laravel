@@ -163,51 +163,43 @@ class SecretMaskerTest extends TestCase
     }
 
     /**
-     * An unquoted value glued to its `=` is one token: the log text after it is kept.
+     * An unquoted value glued to its `=` still runs to the end of its line or the next
+     * separator: a regex cannot tell the log's next word from the secret's, and a word kept
+     * from a passphrase or an auth header is a secret stored in clear.
      *
      * @return iterable<string, array{0: string, 1: string, 2: string}>
      */
     public static function gluedEqualsVectors(): iterable
     {
-        yield 'trailing words' => [
-            'api_key=abc123def456 then the rest of the log line',
-            'api_key=[redacted] then the rest of the log line',
+        yield 'passphrase of several words' => [
+            "password=correct horse battery staple\nnext line",
+            "password=[redacted]\nnext line",
+            'horse battery staple',
+        ];
+        yield 'auth header with an unlisted scheme' => [
+            'authorization=Bot fake-bot-token-0123456789abcdef',
+            'authorization=[redacted]',
+            'fake-bot-token-0123456789abcdef',
+        ];
+        yield 'auth header with a listed scheme' => [
+            'authorization=Bearer abc123def456 sent upstream',
+            'authorization=Bearer [redacted]',
             'abc123def456',
         ];
-        yield 'ampersand' => [
+        yield 'separator ends it' => [
             'token=abc123def456&page=2 then more',
             'token=[redacted]&page=2 then more',
             'abc123def456',
         ];
-        yield 'comma' => [
-            'secret=abc123def456, retrying in 5s',
-            'secret=[redacted], retrying in 5s',
-            'abc123def456',
-        ];
-        yield 'semicolon' => [
-            'password=abc123def456; next step',
-            'password=[redacted]; next step',
-            'abc123def456',
-        ];
-        yield 'auth scheme' => [
-            'authorization=Bearer abc123def456 sent upstream',
-            'authorization=Bearer [redacted] sent upstream',
-            'abc123def456',
-        ];
-        yield 'newline' => [
+        yield 'newline ends it' => [
             "api_key=abc123def456\nnext line",
             "api_key=[redacted]\nnext line",
             'abc123def456',
         ];
-        yield 'spaced equals still runs to the end of the line' => [
-            "password = two words\nnext line",
-            "password = [redacted]\nnext line",
-            'two words',
-        ];
     }
 
     #[DataProvider('gluedEqualsVectors')]
-    public function test_a_value_glued_to_its_equals_sign_masks_only_that_token(
+    public function test_a_value_glued_to_its_equals_sign_is_masked_to_the_end_of_its_line(
         string $text,
         string $expected,
         string $secret,
