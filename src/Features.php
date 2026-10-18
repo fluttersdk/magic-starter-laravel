@@ -154,6 +154,14 @@ class Features
     }
 
     /**
+     * Enable subscription change proposals the AI desk records in a support conversation and staff approve.
+     */
+    public static function supportProposals(): string
+    {
+        return 'support-proposals';
+    }
+
+    /**
      * Enable image and PDF attachments on support messages.
      */
     public static function supportAttachments(): string
@@ -351,6 +359,19 @@ class Features
     public static function hasSupportFeedbackFeatures(): bool
     {
         return static::enabled(static::supportFeedback());
+    }
+
+    /**
+     * Determine whether support proposals are enabled.
+     *
+     * Needs the support desk to host them and billing to supply the owner gate (`manageBilling`) that decides who
+     * may ask for one, so listing the flag alone turns nothing on.
+     */
+    public static function hasSupportProposalFeatures(): bool
+    {
+        return static::enabled(static::supportProposals())
+            && static::hasSupportFeatures()
+            && static::hasBillingFeatures();
     }
 
     /**

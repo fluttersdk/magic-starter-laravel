@@ -232,4 +232,14 @@ class SupportConversation extends Model
     {
         return $this->hasMany(SupportMessageAttachment::class, 'conversation_id');
     }
+
+    /**
+     * Every subscription change proposed in the conversation, whatever its state.
+     *
+     * @return HasMany<SupportProposal, $this>
+     */
+    public function proposals(): HasMany
+    {
+        return $this->hasMany(SupportProposal::class, 'conversation_id');
+    }
 }

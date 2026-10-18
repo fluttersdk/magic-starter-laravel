@@ -178,6 +178,17 @@ return [
         ],
     ],
 
+    /*
+     * The subscription changes proposed inside a conversation.
+     */
+    'proposals' => [
+        'actions' => [
+            'extend_trial' => 'Deneme süresini uzat',
+            'cancel_at_period_end' => 'Dönem sonunda iptal et',
+            'resume' => 'Aboneliği sürdür',
+        ],
+    ],
+
     'refusals' => [
         'assignee_not_staff' => 'Atanan kişi bir destek ekibi üyesi olmalıdır.',
         'thread_url_missing' => 'Ziyaretçiye yanıt vermeden önce MAGIC_STARTER_SUPPORT_THREAD_URL ayarlanmalıdır: '

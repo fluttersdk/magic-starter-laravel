@@ -129,6 +129,11 @@ return [
     | conversation, at most `low_score_daily` new ones per user a day, and
     | `response_hours` is the time staff have to answer it.
     |
+    | `proposals` bounds the subscription changes suggested in a conversation
+    | (the `support-proposals` feature, which also needs `support` and
+    | `billing`): an open proposal can be approved for `expires_hours` hours,
+    | and a trial can be extended by at most `max_trial_extension_days` days.
+    |
     */
 
     'support' => [
@@ -182,6 +187,11 @@ return [
             'low_score_max' => 6,
             'response_hours' => 48,
             'low_score_daily' => 1,
+        ],
+
+        'proposals' => [
+            'expires_hours' => (int) env('MAGIC_STARTER_SUPPORT_PROPOSALS_EXPIRES_HOURS', 72),
+            'max_trial_extension_days' => (int) env('MAGIC_STARTER_SUPPORT_PROPOSALS_MAX_TRIAL_DAYS', 14),
         ],
 
         'ai' => [

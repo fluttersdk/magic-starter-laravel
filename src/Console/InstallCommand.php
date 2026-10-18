@@ -173,6 +173,8 @@ class InstallCommand extends Command
             'add_feedback_columns_to_support_conversations_table.php',
             'create_support_message_attachments_table.php',
             'create_support_feedback_table.php',
+            // Proposals point at conversations and messages, and at `users`.
+            'create_support_proposals_table.php',
         ],
         'releases' => [
             'create_app_releases_table.php',

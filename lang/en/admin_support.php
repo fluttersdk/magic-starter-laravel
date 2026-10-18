@@ -178,6 +178,17 @@ return [
         ],
     ],
 
+    /*
+     * The subscription changes proposed inside a conversation.
+     */
+    'proposals' => [
+        'actions' => [
+            'extend_trial' => 'Extend the trial',
+            'cancel_at_period_end' => 'Cancel at the end of the period',
+            'resume' => 'Resume the subscription',
+        ],
+    ],
+
     'refusals' => [
         'assignee_not_staff' => 'The assignee must be a support staff member.',
         'thread_url_missing' => 'Set MAGIC_STARTER_SUPPORT_THREAD_URL before replying to a visitor: '
