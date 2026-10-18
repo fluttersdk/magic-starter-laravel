@@ -156,6 +156,11 @@ class MagicStarterServiceProvider extends ServiceProvider
         $this->app->singleton(Support\AiPrompts\PromptRegistry::class);
         $this->app->bind(Contracts\ResolvesPrompts::class, Support\AiPrompts\PromptResolver::class);
 
+        // The support tools a host registers at boot. Unconditional like the
+        // prompt registry, and a singleton for the same reason: it IS the
+        // registration. It holds class-strings and builds tools per turn.
+        $this->app->singleton(Support\SupportAi\Tools\SupportToolRegistry::class);
+
         // How staff tune a registered prompt. Unconditional like the AppRelease
         // binds: a consumer swaps the action before it switches ai-prompts on.
         $this->app->bind(Contracts\SavesAiPromptOverrides::class, Actions\SaveAiPromptOverride::class);
