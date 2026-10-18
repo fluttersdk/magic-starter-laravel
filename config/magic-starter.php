@@ -196,6 +196,12 @@ return [
             'max_tokens_per_turn' => 1200,
             'pool_reservation_tokens' => 6000,
             'image_reservation_tokens' => 1600,
+            // Share of each cache bucket the quota charges. Reads are the cached prefix re-read every turn;
+            // writes are processed in full.
+            'cache_weights' => [
+                'read' => 0.0,
+                'write' => 1.0,
+            ],
             'failures_before_handoff' => 2,
             'sweep_after_minutes' => 5,
             'allowed_hosts' => [],

@@ -31,8 +31,10 @@ use Illuminate\Support\Facades\Cache;
  * `pool_reservation_tokens` and `quotas.user_daily_tokens`, fall back to
  * {@see self::DEFAULT_POOL_RESERVATION_TOKENS} and
  * {@see self::DEFAULT_USER_DAILY_TOKENS}, as does `image_reservation_tokens`
- * to {@see self::DEFAULT_IMAGE_RESERVATION_TOKENS}, because a host's published config
- * replaces the whole `support` block and would otherwise refuse every turn.
+ * to {@see self::DEFAULT_IMAGE_RESERVATION_TOKENS} and `cache_weights.read|write` to
+ * {@see self::DEFAULT_CACHE_READ_WEIGHT} and {@see self::DEFAULT_CACHE_WRITE_WEIGHT},
+ * because a host's published config replaces the whole `support` block and would
+ * otherwise refuse every turn.
  *
  * One turn is charged once however often it is reserved: the first outcome
  * (granted or refused) is recorded under the conversation and turn id and every
@@ -64,6 +66,16 @@ class SupportAiQuota
      * One opener's daily tokens when the host's config predates `support.ai.quotas.user_daily_tokens`.
      */
     public const DEFAULT_USER_DAILY_TOKENS = 60000;
+
+    /**
+     * Share of a cache read token charged when the host's config predates `support.ai.cache_weights.read`.
+     */
+    public const DEFAULT_CACHE_READ_WEIGHT = 0.0;
+
+    /**
+     * Share of a cache write token charged when the host's config predates `support.ai.cache_weights.write`.
+     */
+    public const DEFAULT_CACHE_WRITE_WEIGHT = 1.0;
 
     public function __construct(
         private readonly RateLimiter $limiter,
@@ -157,7 +169,7 @@ class SupportAiQuota
                     return;
                 }
 
-                $delta = $usage->total() - $reservation->tokens;
+                $delta = $this->chargedTokens($usage) - $reservation->tokens;
 
                 if ($delta !== 0) {
                     $this->limiter->increment(
@@ -176,6 +188,40 @@ class SupportAiQuota
                 Cache::put($recordKey, $record, self::DECAY_SECONDS);
             },
         );
+    }
+
+    /**
+     * The tokens a turn costs the quota: uncached input and completion in full, the cache buckets by weight.
+     *
+     * A cached prefix (the knowledge base and tools) is re-read on every turn and costs the provider a
+     * fraction of fresh input, so charging it at face value would drain the pool on the turns that cost
+     * least. The default bills a cache write as processed input and a cache read as free; a host tunes
+     * both under `support.ai.cache_weights`. A bucket with a weight above zero is never charged zero.
+     */
+    public function chargedTokens(SupportUsage $usage): int
+    {
+        $writeWeight = max(0.0, (float) config(
+            'magic-starter.support.ai.cache_weights.write',
+            self::DEFAULT_CACHE_WRITE_WEIGHT,
+        ));
+        $readWeight = max(0.0, (float) config(
+            'magic-starter.support.ai.cache_weights.read',
+            self::DEFAULT_CACHE_READ_WEIGHT,
+        ));
+
+        return $usage->promptTokens
+            + $usage->completionTokens
+            + $this->weighted($usage->cacheWriteTokens, $writeWeight)
+            + $this->weighted($usage->cacheReadTokens, $readWeight);
+    }
+
+    /**
+     * Round up so a weighted bucket is never free; the inner round strips float noise (10 * 1.1 is
+     * 11.000000000000002) that would otherwise charge one token too many.
+     */
+    private function weighted(int $tokens, float $weight): int
+    {
+        return (int) ceil(round($tokens * $weight, 6));
     }
 
     /**
