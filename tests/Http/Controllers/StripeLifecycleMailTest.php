@@ -18,6 +18,7 @@ use Illuminate\Notifications\RoutesNotifications;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Event;
 use Illuminate\Support\Facades\Notification;
+use Illuminate\Support\Facades\Schema;
 use Illuminate\Support\Str;
 use Illuminate\Testing\TestResponse;
 use Laravel\Cashier\Billable;
@@ -207,6 +208,32 @@ class StripeLifecycleMailTest extends TestCase
         Notification::assertSentTimes(TrialEndingNotification::class, 1);
         Notification::assertSentTo($owner, TrialEndingNotification::class);
         Notification::assertNotSentTo($member, TrialEndingNotification::class);
+    }
+
+    /**
+     * A team whose owner row is gone has nobody to tell: both mails skip it instead of failing the delivery.
+     */
+    public function test_a_team_without_an_owner_mails_nothing_and_answers_200(): void
+    {
+        Notification::fake();
+        config([
+            'magic-starter.billing.trial_ending_notification' => true,
+            'magic-starter.billing.payment_failed_notification' => true,
+        ]);
+
+        [$owner, , $team] = $this->createTeamBillable();
+        $team->subscriptions()->create([
+            'type' => 'default',
+            'stripe_id' => static::SUBSCRIPTION_ID,
+            'stripe_status' => 'active',
+            'stripe_price' => 'price_pro',
+        ]);
+        $owner->delete();
+
+        $this->postSignedWebhook($this->trialWillEndEvent('evt_trial_end_ownerless'))->assertOk();
+        $this->postSignedWebhook($this->paymentFailedEvent('evt_payment_failed_ownerless'))->assertOk();
+
+        Notification::assertNothingSent();
     }
 
     public function test_the_trial_ending_mail_is_off_by_default(): void
@@ -480,6 +507,35 @@ class StripeLifecycleMailTest extends TestCase
         Notification::assertNothingSent();
     }
 
+    public function test_a_failed_payment_for_an_unknown_customer_mails_nothing_and_answers_200(): void
+    {
+        Notification::fake();
+        config(['magic-starter.billing.payment_failed_notification' => true]);
+
+        $event = $this->paymentFailedEvent('evt_payment_failed_unknown');
+        $event['data']['object']['customer'] = 'cus_nobody';
+
+        $this->postSignedWebhook($event)->assertOk();
+
+        Notification::assertNothingSent();
+    }
+
+    /**
+     * The local subscription's price names no tier (a config gap): there is no plan to name, so no mail.
+     */
+    public function test_a_failed_payment_on_an_unmapped_price_mails_nothing(): void
+    {
+        Notification::fake();
+        config(['magic-starter.billing.payment_failed_notification' => true]);
+        $billable = $this->createBillable();
+        $this->seedActiveSubscription();
+        $billable->subscription('default')?->forceFill(['stripe_price' => 'price_unmapped'])->save();
+
+        $this->postSignedWebhook($this->paymentFailedEvent('evt_payment_failed_unmapped'))->assertOk();
+
+        Notification::assertNothingSent();
+    }
+
     public function test_the_payment_failed_mail_is_off_by_default(): void
     {
         Notification::fake();
@@ -657,14 +713,17 @@ class StripeLifecycleMailTest extends TestCase
      * The provider is re-registered so Cashier resolves the team, and the customer-columns migration runs again
      * because it adds `stripe_id` to whichever table the billable subject names.
      *
-     * @return array{0: LifecycleMailUser, 1: LifecycleMailUser}
+     * The subscriptions tables are rebuilt too: their foreign key follows the billable subject, so the user-keyed
+     * ones from setUp cannot hold a team's row.
+     *
+     * @return array{0: LifecycleMailUser, 1: LifecycleMailUser, 2: LifecycleMailTeam}
      */
     private function createTeamBillable(): array
     {
         config([
             'magic-starter.features' => [Features::teams(), Features::billing()],
             'magic-starter.billing.billable' => 'team',
-            'magic-starter.models.team' => ConcreteTeam::class,
+            'magic-starter.models.team' => LifecycleMailTeam::class,
         ]);
         MagicStarter::reset();
         (new MagicStarterServiceProvider($this->app))->register();
@@ -672,6 +731,11 @@ class StripeLifecycleMailTest extends TestCase
         $this->runMigration('create_teams_table.php');
         $this->runMigration('create_team_user_table.php');
         $this->runMigration('add_cashier_customer_columns_to_billable_table.php');
+
+        Schema::dropIfExists('subscription_items');
+        Schema::dropIfExists('subscriptions');
+        $this->runMigration('create_subscriptions_table.php');
+        $this->runMigration('create_subscription_items_table.php');
 
         $owner = LifecycleMailUser::query()->create([
             'name' => 'Owner',
@@ -684,7 +748,7 @@ class StripeLifecycleMailTest extends TestCase
             'password' => 'secret',
         ]);
 
-        $team = (new ConcreteTeam)->forceFill([
+        $team = (new LifecycleMailTeam)->forceFill([
             'user_id' => $owner->getKey(),
             'name' => 'Billing team',
             'personal_team' => false,
@@ -698,6 +762,7 @@ class StripeLifecycleMailTest extends TestCase
         return [
             $owner,
             $member,
+            $team,
         ];
     }
 
@@ -901,4 +966,14 @@ class LifecycleMailLocaleUser extends LifecycleMailUser implements HasLocalePref
     {
         return 'tr';
     }
+}
+
+/**
+ * A team that is a Cashier customer, so a team-billed subscription row can belong to it.
+ */
+class LifecycleMailTeam extends ConcreteTeam
+{
+    use Billable;
+
+    protected $table = 'teams';
 }
