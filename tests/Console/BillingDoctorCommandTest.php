@@ -1005,6 +1005,134 @@ class BillingDoctorCommandTest extends TestCase
         );
     }
 
+    public function test_remote_with_campaigns_on_passes_an_endpoint_listing_the_completed_checkout_event(): void
+    {
+        $this->fakeRevenueCat();
+        $this->enableCampaigns();
+
+        $doctor = $this->doctor(['--remote' => true]);
+
+        $this->assertSame(0, $doctor['exit'], json_encode($doctor['report'], JSON_PRETTY_PRINT) ?: '');
+        $this->assertSame('ok', $doctor['checks']['stripe.remote.webhook']['status']);
+    }
+
+    public function test_remote_with_campaigns_on_flags_an_endpoint_missing_the_completed_checkout_event(): void
+    {
+        $this->fakeRevenueCat();
+        $this->enableCampaigns();
+        $this->app->instance(StripePriceReader::class, $this->stripe(
+            $this->stripePrices(),
+            [$this->endpoint(['customer.subscription.created', 'invoice.payment_succeeded'])],
+        ));
+
+        $doctor = $this->doctor(['--remote' => true]);
+
+        $this->assertSame(1, $doctor['exit']);
+        $this->assertSame('error', $doctor['checks']['stripe.remote.webhook']['status']);
+        $this->assertStringContainsString(
+            'checkout.session.completed',
+            $doctor['checks']['stripe.remote.webhook']['message'],
+        );
+        $this->assertStringContainsString(
+            'cashier.webhook.events',
+            $doctor['checks']['stripe.remote.webhook']['message'],
+        );
+    }
+
+    public function test_remote_with_campaigns_on_accepts_an_endpoint_listening_to_every_event(): void
+    {
+        $this->fakeRevenueCat();
+        $this->enableCampaigns();
+        $this->app->instance(StripePriceReader::class, $this->stripe(
+            $this->stripePrices(),
+            [$this->endpoint(['*'])],
+        ));
+
+        $doctor = $this->doctor(['--remote' => true]);
+
+        $this->assertSame('ok', $doctor['checks']['stripe.remote.webhook']['status']);
+    }
+
+    public function test_remote_with_campaigns_on_flags_a_missing_endpoint_for_this_applications_url(): void
+    {
+        $this->fakeRevenueCat();
+        $this->enableCampaigns();
+        $this->app->instance(StripePriceReader::class, $this->stripe(
+            $this->stripePrices(),
+            [$this->endpoint(['checkout.session.completed'], 'https://elsewhere.example.test/stripe/webhook')],
+        ));
+
+        $doctor = $this->doctor(['--remote' => true]);
+
+        $this->assertSame(1, $doctor['exit']);
+        $this->assertSame('error', $doctor['checks']['stripe.remote.webhook']['status']);
+        $this->assertStringContainsString(
+            route('cashier.webhook'),
+            $doctor['checks']['stripe.remote.webhook']['message'],
+        );
+    }
+
+    public function test_remote_reports_a_refused_endpoint_read_by_class_and_status_only(): void
+    {
+        $this->fakeRevenueCat();
+        $this->enableCampaigns();
+        $this->app->instance(StripePriceReader::class, new class($this->stripePrices()) extends StripePriceReader
+        {
+            /**
+             * @param  array<string, array<string, mixed>>  $prices
+             */
+            public function __construct(private array $prices) {}
+
+            public function byLookupKeys(array $lookupKeys): array
+            {
+                return $this->prices;
+            }
+
+            public function webhookEndpoints(): array
+            {
+                throw AuthenticationException::factory('Invalid API Key provided: SENTINEL-stripe-secret', 401);
+            }
+        });
+
+        $doctor = $this->doctor(['--remote' => true]);
+
+        $this->assertSame(1, $doctor['exit']);
+        $this->assertSame(
+            'Stripe refused the webhook endpoint read (AuthenticationException, HTTP 401).',
+            $doctor['checks']['stripe.remote.webhook']['message'],
+        );
+        $this->assertStringNotContainsString('SENTINEL-stripe-secret', (string) json_encode($doctor['report']));
+    }
+
+    public function test_remote_without_campaigns_never_reads_the_webhook_endpoints(): void
+    {
+        $this->fakeRevenueCat();
+        $stripe = $this->stripe($this->stripePrices(), [$this->endpoint(['customer.subscription.created'])]);
+        $this->app->instance(StripePriceReader::class, $stripe);
+
+        $doctor = $this->doctor(['--remote' => true]);
+
+        $this->assertSame(0, $doctor['exit']);
+        $this->assertArrayNotHasKey('stripe.remote.webhook', $doctor['checks']);
+        $this->assertSame(0, $stripe->endpointReads);
+    }
+
+    public function test_campaigns_on_without_a_stripe_secret_reports_the_webhook_unreadable_without_asking(): void
+    {
+        config(['cashier.secret' => null]);
+        $this->fakeRevenueCat();
+        $this->enableCampaigns();
+        $stripe = $this->stripe($this->stripePrices());
+        $this->app->instance(StripePriceReader::class, $stripe);
+
+        $doctor = $this->doctor(['--remote' => true]);
+
+        $this->assertSame(1, $doctor['exit']);
+        $this->assertSame('error', $doctor['checks']['stripe.remote.webhook']['status']);
+        $this->assertStringContainsString('STRIPE_SECRET', $doctor['checks']['stripe.remote.webhook']['message']);
+        $this->assertSame(0, $stripe->endpointReads);
+    }
+
     public function test_remote_reports_a_revenuecat_it_cannot_reach(): void
     {
         Http::fake(['*' => Http::failedConnection()]);
@@ -1327,10 +1455,14 @@ class BillingDoctorCommandTest extends TestCase
 
     /**
      * @param  array<string, array<string, mixed>>  $prices
+     * @param  list<array{url: string, enabled_events: list<string>}>|null  $endpoints  Null holds one endpoint for this
+     *                                                                                  application that lists the event.
      */
-    private function stripe(array $prices): StripePriceReader
+    private function stripe(array $prices, ?array $endpoints = null): StripePriceReader
     {
-        return new class($prices) extends StripePriceReader
+        $endpoints ??= [$this->endpoint(['checkout.session.completed'])];
+
+        return new class($prices, $endpoints) extends StripePriceReader
         {
             /**
              * Every read, by the lookup keys it named.
@@ -1340,9 +1472,15 @@ class BillingDoctorCommandTest extends TestCase
             public array $reads = [];
 
             /**
-             * @param  array<string, array<string, mixed>>  $prices
+             * How many times the webhook endpoints were read.
              */
-            public function __construct(private array $prices) {}
+            public int $endpointReads = 0;
+
+            /**
+             * @param  array<string, array<string, mixed>>  $prices
+             * @param  list<array{url: string, enabled_events: list<string>}>  $endpoints
+             */
+            public function __construct(private array $prices, private array $endpoints) {}
 
             public function byLookupKeys(array $lookupKeys): array
             {
@@ -1350,6 +1488,32 @@ class BillingDoctorCommandTest extends TestCase
 
                 return array_intersect_key($this->prices, array_flip($lookupKeys));
             }
+
+            public function webhookEndpoints(): array
+            {
+                $this->endpointReads++;
+
+                return $this->endpoints;
+            }
         };
+    }
+
+    /**
+     * A Stripe webhook endpoint, by default the one this application serves.
+     *
+     * @param  list<string>  $events
+     * @return array{url: string, enabled_events: list<string>}
+     */
+    private function endpoint(array $events, ?string $url = null): array
+    {
+        return [
+            'url' => $url ?? route('cashier.webhook'),
+            'enabled_events' => $events,
+        ];
+    }
+
+    private function enableCampaigns(): void
+    {
+        config(['magic-starter.features' => [Features::billing(), Features::campaigns()]]);
     }
 }

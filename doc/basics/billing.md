@@ -12,6 +12,7 @@
 - [Refusals](#refusals)
 - [Trials](#trials)
 - [Promotion Codes](#promotion-codes)
+- [Campaigns](#campaigns)
 - [RevenueCat Webhook](#revenuecat-webhook)
 - [Agent Commands](#agent-commands)
 - [Audit Log](#audit-log)
@@ -496,6 +497,91 @@ The `checkout_started` row of the [audit log](#audit-log) records `promotion_cod
 
 ---
 
+<a name="campaigns"></a>
+## Campaigns
+
+A campaign is a time-boxed Stripe promotion code that staff offer on some catalogue products. It is a **web rail** feature: a store purchase is priced by the store. It is off by default.
+
+```php
+\FlutterSdk\MagicStarter\Features::campaigns(),
+```
+
+`php artisan magic-starter:install --features=campaigns` publishes the `create_campaigns_table.php` migration; an existing application copies it in, see [Upgrading](#upgrading). The `billing` feature has to be on as well.
+
+### Lifecycle
+
+Staff create campaigns in the [admin panel](admin-panel.md) (resource key `campaigns`). A campaign has a name, a window, the catalogue products it covers (sellable subscriptions with a Stripe price), a headline and a body per supported locale, and the id of a Stripe promotion code (`promo_...`, not the string customers type). The default locale's copy is required; a blank locale is served with the default's text. There is no delete: a campaign that should stop is switched off, which keeps the record of what ran.
+
+- **Running** means enabled, with `starts_at <= now < ends_at`. The clock starts and ends a campaign; nothing has to be saved at either moment. Back-to-back windows never both run.
+- **One enabled campaign at a time.** Saving an enabled campaign whose window overlaps another enabled one is refused, naming the other.
+- **The code is checked in Stripe on save**, only when the saved state is enabled and the campaign was not enabled before or its code, end or products changed. Editing copy or the start never calls Stripe, and neither does switching a campaign off. A refusal leaves the stored campaign as it was. Stripe refuses a code that is inactive, has no expiry or expires before the campaign ends, is limited to first-time transactions (a team that trialled or paid already has prior transactions), has a minimum amount (a trial checkout never meets one), is limited to one customer, belongs to the other Stripe mode, or sits on a coupon that does not cover every campaign product or, for an amount off, has no amount in every currency the campaign products sell in.
+- **The discount is a snapshot.** The coupon's percentage, or its amount per currency, is stored when the code is checked and is what the panel and the client show. It does not follow later edits to the coupon in Stripe: switch the campaign off and on again, or change its code, to read the coupon afresh.
+
+### Audience and the banner
+
+`GET billing/campaign` answers the campaign running now, or `{"data": null}`:
+
+```json
+{
+  "data": {
+    "id": "camp-1",
+    "starts_at": "2026-11-01T00:00:00+00:00",
+    "ends_at": "2026-11-08T00:00:00+00:00",
+    "products": ["pro_monthly", "pro_annual"],
+    "discount": { "type": "percent", "value": 20, "currency": null },
+    "headline": { "en": "Pro is 20% off this week" },
+    "body": { "en": "Upgrade before Sunday to keep the price." }
+  }
+}
+```
+
+`discount.type` is `percent` or `amount`; `currency` is set only for an amount. `headline` and `body` hold one key per supported locale.
+
+It is offered to a caller only when the billed subject holds the free floor (a trialing or paying subject never sees it) **and** the caller may manage that subject's billing, which is the team owner under team billing. Anyone else gets `{"data": null}`, not a 403. The client additionally shows it only on the web rail. While `Features::campaigns()` is off the route does not exist and answers `404`.
+
+The running campaign is cached (rebuilt after every save, and at most an hour old otherwise) and filtered by the clock on every read, so a campaign appears and disappears on time without a write.
+
+### Checkout
+
+When a campaign is running, `POST billing/checkout` for a product it covers, from a caller in the audience, applies the code by itself. The campaign is read from the table at that moment, never from the cached feed, so a campaign staff just switched off cannot discount a session. The session carries:
+
+- the campaign's promotion code as the session discount, and **no** `allow_promotion_codes`, even when `promotion_codes` is on: Stripe refuses a discount beside that key, so a campaign session shows no code field;
+- `client_reference_id`, the campaign's id, which is how the completed session is attributed;
+- `expires_at`, the campaign's end held between 30 minutes and 24 hours from now, the window Stripe accepts. A campaign ending in ten minutes still gives the customer 30; one ending next week gives 24 hours. A session opened in the last half hour of a campaign therefore outlives it; whether Stripe still honours the code after its own expiry was not measured.
+
+The `checkout_started` row then carries `campaign_id`, and `promotion_codes` is `false`.
+
+**A refused campaign code never blocks the purchase.** When Stripe refuses the session because of the code (a refusal on the discount parameter, or a `promotion_code_*` code such as `promotion_code_inactive`, `promotion_code_customer_not_first_time` or `promotion_code_amount_insufficient`), the package logs a warning, records a `campaign_code_refused` row (a refusal, so an alert on refusals sees a failing campaign) and opens the session again without the campaign, at the price the customer would pay anyway; `promotion_codes` then applies as it does without a campaign. Any other Stripe error propagates as it always did.
+
+### Attribution
+
+A completed checkout is recorded from Stripe's `checkout.session.completed` webhook. When the session's `client_reference_id` names a campaign (looked up by id; an unknown value, or another integration's reference, is ignored) the delivery leaves one `campaign_redeemed` row for the billable behind `customer`, with the campaign id, the redeemed promotion code and the discount in the currency's minor unit. The code is read from the payload's `discounts`; when the payload carries no discounts the session is retrieved from Stripe with `expand[]=discounts`, inside the delivery, and a failed read answers 500 so Stripe retries it. A session with no promotion code on it records nothing. Like every Stripe delivery it runs once per event id, so a re-delivery adds no second row.
+
+A $0 trial checkout counts: the admin panel's **Campaign checkouts** column counts these rows per campaign, whatever the first charge was. That is checkouts that redeemed the code, not revenue or conversions to paid. The payload shape of a completed session was exercised against fake Stripe payloads; completing a live Checkout needs a browser and was not measured.
+
+> [!WARNING]
+> **Add `checkout.session.completed` to your Stripe webhook endpoint.** Cashier's default events (`customer.subscription.*`, `invoice.payment_succeeded` and a few more) do not include it, so an endpoint created before campaigns existed never delivers it: campaigns keep working, every campaign checkout still gets its discount, and the redemption count stays at zero with nothing failing.
+
+Add the event to the endpoint in the Stripe dashboard. `cashier.webhook.events` shapes only the endpoint `php artisan cashier:webhook` creates, and that command never updates an existing one:
+
+```php
+// config/cashier.php
+use Laravel\Cashier\Console\WebhookCommand;
+
+'webhook' => [
+    'secret' => env('STRIPE_WEBHOOK_SECRET'),
+    'tolerance' => env('STRIPE_WEBHOOK_TOLERANCE', 300),
+    'events' => [
+        ...WebhookCommand::DEFAULT_EVENTS,
+        'checkout.session.completed',
+    ],
+],
+```
+
+`php artisan billing:doctor --remote` checks it while campaigns are on: the Stripe endpoint whose url is this application's `route('cashier.webhook')` has to list the event (an endpoint listening to `*` does), and the check `stripe.remote.webhook` is an `error` when no endpoint delivers to that url or the one that does lacks the event.
+
+---
+
 <a name="revenuecat-webhook"></a>
 ## RevenueCat Webhook
 
@@ -592,7 +678,7 @@ php artisan billing:doctor --json
 php artisan billing:doctor --json --remote
 ```
 
-Without `--remote` it checks the configuration: the catalogue validates, the rail secrets that a sold product needs are set, `REVENUECAT_WEBHOOK_SECRET` exists while the store rail is on, every web-sold product has a Stripe price id, store ids are listed, billable keys are UUIDs, the subscription tables are keyed the way their models write them (`schema.subscription_keys`), the `billing_trials` table exists while a product offers a trial (`schema.billing_trials`), the `billing_events` table exists (`schema.billing_events`), the `billing_grants` table exists (`schema.billing_grants`), the billable table carries `billing_currency` while `pricing.country_header` is set (`schema.billing_currency`), the sandbox allowlist is consistent (`revenuecat.sandbox_allowlist`), the Stripe test-mode guard is accounted for (`stripe.test_mode`), and the reconcile cadence suits the store rail. With `--remote` it also reads Stripe and RevenueCat and diffs them against the manifest: a Stripe price per lookup key (id, interval, amounts), and the RevenueCat apps, products, entitlements, `default` offering, packages and webhook (that one delivers to this application's URL). RevenueCat returns a webhook's signing secret only when it is rotated, so whether HMAC signing is on cannot be read: the doctor reports it as an `agent_check` for a person to confirm in the dashboard.
+Without `--remote` it checks the configuration: the catalogue validates, the rail secrets that a sold product needs are set, `REVENUECAT_WEBHOOK_SECRET` exists while the store rail is on, every web-sold product has a Stripe price id, store ids are listed, billable keys are UUIDs, the subscription tables are keyed the way their models write them (`schema.subscription_keys`), the `billing_trials` table exists while a product offers a trial (`schema.billing_trials`), the `billing_events` table exists (`schema.billing_events`), the `billing_grants` table exists (`schema.billing_grants`), the billable table carries `billing_currency` while `pricing.country_header` is set (`schema.billing_currency`), the sandbox allowlist is consistent (`revenuecat.sandbox_allowlist`), the Stripe test-mode guard is accounted for (`stripe.test_mode`), and the reconcile cadence suits the store rail. With `--remote` it also reads Stripe and RevenueCat and diffs them against the manifest: a Stripe price per lookup key (id, interval, amounts), and the RevenueCat apps, products, entitlements, `default` offering, packages and webhook (that one delivers to this application's URL). While the [campaigns](#campaigns) feature is on it also reads the Stripe webhook endpoints and checks that the one delivering to this application's URL lists `checkout.session.completed` (`stripe.remote.webhook`). RevenueCat returns a webhook's signing secret only when it is rotated, so whether HMAC signing is on cannot be read: the doctor reports it as an `agent_check` for a person to confirm in the dashboard.
 
 `REVENUECAT_API_V2_KEY` is a separate secret key scoped to `project_configuration:{apps,products,entitlements,offerings,packages,integrations}:read`, and `REVENUECAT_PROJECT_ID` names the project. Neither is needed to sell.
 
@@ -623,8 +709,9 @@ Every billing outcome leaves one row in `billing_events` and dispatches one Lara
 |--------|--------|----------|------------|
 | `entitlement_applied` | `webhook`, `reconcile`, `trial_check` | none | `before`, `after`, `changed`, `direction`, `cross_rail`. |
 | `entitlement_dropped` | any feeder | `stale`, `same_instant_revocation`, `undecidable_tier_order`, `cross_rail_revocation`, `projected_cross_rail_takeover` | The log context and `incoming_status`. |
-| `checkout_started` | `request` | none | `product`, `price_id`, `trial_days`, `promotion_codes`. |
+| `checkout_started` | `request` | none | `product`, `price_id`, `trial_days`, `promotion_codes`, and `campaign_id` on a [campaign](#campaigns) session. |
 | `campaign_code_refused` | `request` | none | `campaign_id`, `promotion_code_id`, `stripe_code`. |
+| `campaign_redeemed` | `webhook` | none | `campaign_id`, `promotion_code`, `amount_discount`. The `external_id` is the `checkout.session.completed` event id. |
 | `subscription_swapped` | `request` | none | `product`, `price_id`. |
 | `subscription_cancelled` | `request` | none | `ends_at`. |
 | `portal_opened` | `request` | none | none. |
@@ -668,7 +755,7 @@ Recording sits inside the Stripe webhook's own transaction, so the insert runs i
 
 ### Listening
 
-Each outcome is one class in `FlutterSdk\MagicStarter\Events\Billing` (`EntitlementApplied`, `EntitlementDropped`, `CheckoutStarted`, `SubscriptionSwapped`, `SubscriptionCancelled`, `PortalOpened`, `RequestRefused`, `DeliveryRefused`, `TrialRecorded`, `TrialRefused`, `TrialCancelled`, `TrialRefusalWithdrawn`, `GrantAdded`, `GrantRevoked`, `GrantExpired`, `TrialExtended`, `TrialEnded`, `SubscriptionResumed`, `InvoiceRefunded`, `EntitlementSynced`), and all of them implement `BillingOutcome`. They are dispatched after the surrounding transaction commits, so an outcome that rolled back never fires. The package registers no listener of its own.
+Each outcome is one class in `FlutterSdk\MagicStarter\Events\Billing` (`EntitlementApplied`, `EntitlementDropped`, `CheckoutStarted`, `CampaignCodeRefused`, `CampaignRedeemed`, `SubscriptionSwapped`, `SubscriptionCancelled`, `PortalOpened`, `RequestRefused`, `DeliveryRefused`, `TrialRecorded`, `TrialRefused`, `TrialCancelled`, `TrialRefusalWithdrawn`, `GrantAdded`, `GrantRevoked`, `GrantExpired`, `TrialExtended`, `TrialEnded`, `SubscriptionResumed`, `InvoiceRefunded`, `EntitlementSynced`), and all of them implement `BillingOutcome`. They are dispatched after the surrounding transaction commits, so an outcome that rolled back never fires. The package registers no listener of its own.
 
 A synchronous listener runs in the billing path, inside the webhook, request or job that produced the outcome. A listener that throws is reported through your exception handler and never propagated, so the delivery still answers 200 and the request still answers what it would have, but that listener's work is lost. Prefer a `ShouldQueue` listener for anything that can fail or take time.
 

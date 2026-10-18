@@ -3,6 +3,7 @@
 namespace FlutterSdk\MagicStarter\Console;
 
 use FlutterSdk\MagicStarter\Enums\BillingChannel;
+use FlutterSdk\MagicStarter\Features;
 use FlutterSdk\MagicStarter\MagicStarter;
 use FlutterSdk\MagicStarter\Models\BillingEvent;
 use FlutterSdk\MagicStarter\Models\BillingGrant;
@@ -55,6 +56,12 @@ class BillingDoctorCommand extends Command
     public const ERROR = 'error';
 
     public const AGENT_CHECK = 'agent_check';
+
+    /**
+     * The Stripe event a campaign redemption is recorded from. Cashier's default
+     * endpoint events lack it.
+     */
+    private const CAMPAIGN_WEBHOOK_EVENT = 'checkout.session.completed';
 
     /**
      * Integer column types as {@see \Illuminate\Database\Schema\Builder::getColumnType()}
@@ -119,6 +126,7 @@ class BillingDoctorCommand extends Command
             // 3. What the vendors hold, read and never written.
             if ($this->option('remote')) {
                 $this->checkStripeRemote($stripe, $manifest['stripe']['products']);
+                $this->checkCampaignWebhookRemote($stripe);
                 $this->checkRevenueCatRemote($revenueCat, $manifest['revenuecat']);
                 $this->addAgentChecks();
             }
@@ -643,6 +651,77 @@ class BillingDoctorCommand extends Command
         foreach ($expected as $price) {
             $this->checkStripePrice($price, $remote[$price['lookup_key']] ?? null);
         }
+    }
+
+    /**
+     * Whether a Stripe webhook endpoint delivering to this application lists
+     * `checkout.session.completed`, while the campaigns feature is on.
+     *
+     * Redemptions are recorded from that event, and Cashier's own endpoint
+     * events lack it, so an endpoint created before campaigns existed answers
+     * every campaign checkout with silence: the count of campaign checkouts
+     * stays at zero and nothing else fails. `*` counts as listing it, as Stripe
+     * means it. The refusal is reported by class and status alone, for the
+     * reason {@see self::checkStripeRemote()} gives.
+     */
+    private function checkCampaignWebhookRemote(StripePriceReader $stripe): void
+    {
+        if (! Features::hasCampaignFeatures()) {
+            return;
+        }
+
+        $id = 'stripe.remote.webhook';
+
+        if (! $this->isSet('cashier.secret')) {
+            $this->check($id, self::ERROR, 'Stripe cannot be read: STRIPE_SECRET is not set.');
+
+            return;
+        }
+
+        try {
+            $endpoints = $stripe->webhookEndpoints();
+        } catch (ApiErrorException $failure) {
+            $this->check($id, self::ERROR, sprintf(
+                'Stripe refused the webhook endpoint read (%s, HTTP %s).',
+                class_basename($failure),
+                $failure->getHttpStatus() ?? 'none',
+            ));
+
+            return;
+        }
+
+        $url = route('cashier.webhook');
+        $delivering = array_filter($endpoints, static fn (array $endpoint): bool => $endpoint['url'] === $url);
+
+        if ($delivering === []) {
+            $this->check($id, self::ERROR, sprintf(
+                'No Stripe webhook endpoint delivers to [%s], so no campaign redemption is recorded; create one '
+                . 'with php artisan cashier:webhook after adding %s to cashier.webhook.events.',
+                $url,
+                self::CAMPAIGN_WEBHOOK_EVENT,
+            ));
+
+            return;
+        }
+
+        $listing = array_filter($delivering, static fn (array $endpoint): bool => array_intersect(
+            [self::CAMPAIGN_WEBHOOK_EVENT, '*'],
+            $endpoint['enabled_events'],
+        ) !== []);
+
+        $listing === []
+            ? $this->check($id, self::ERROR, sprintf(
+                'The Stripe webhook endpoint for [%s] does not list %s, so no campaign redemption is recorded; '
+                . 'add it to the endpoint in the Stripe dashboard, and to cashier.webhook.events so an endpoint '
+                . 'created with php artisan cashier:webhook carries it.',
+                $url,
+                self::CAMPAIGN_WEBHOOK_EVENT,
+            ))
+            : $this->check($id, self::OK, sprintf(
+                'The Stripe webhook endpoint for [%s] lists %s.',
+                $url,
+                self::CAMPAIGN_WEBHOOK_EVENT,
+            ));
     }
 
     /**

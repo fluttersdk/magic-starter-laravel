@@ -246,6 +246,7 @@ class BillingEventTest extends TestCase
                 'invoice_refunded',
                 'entitlement_synced',
                 'campaign_code_refused',
+                'campaign_redeemed',
             ],
             array_map(static fn (BillingEventType $type): string => $type->value, BillingEventType::cases()),
         );

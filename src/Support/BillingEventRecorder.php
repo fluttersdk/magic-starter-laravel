@@ -217,6 +217,7 @@ class BillingEventRecorder
             BillingEventType::SUBSCRIPTION_RESUMED => 'A subscription was resumed by an operator.',
             BillingEventType::INVOICE_REFUNDED => 'An invoice was refunded by an operator.',
             BillingEventType::ENTITLEMENT_SYNCED => 'An entitlement was re-read from the paid rails by an operator.',
+            BillingEventType::CAMPAIGN_REDEEMED => 'A campaign promotion code was redeemed at checkout.',
             BillingEventType::ENTITLEMENT_DROPPED,
             BillingEventType::REQUEST_REFUSED,
             BillingEventType::DELIVERY_REFUSED,

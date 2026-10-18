@@ -12,6 +12,7 @@ use Filament\Tables\Filters\Filter;
 use Filament\Tables\Table;
 use FlutterSdk\MagicStarter\Contracts\CreatesCampaigns;
 use FlutterSdk\MagicStarter\Contracts\UpdatesCampaigns;
+use FlutterSdk\MagicStarter\Enums\BillingEventType;
 use FlutterSdk\MagicStarter\Events\AdminActionPerformed;
 use FlutterSdk\MagicStarter\Filament\Resources\Campaigns\Pages\CreateCampaign;
 use FlutterSdk\MagicStarter\Filament\Resources\Campaigns\Pages\EditCampaign;
@@ -40,12 +41,6 @@ class CampaignResource extends MagicStarterResource
      * The state path Filament's create and edit pages mount their form at.
      */
     protected const FORM_STATE_PATH = 'data';
-
-    /**
-     * The `billing_events.type` value of a campaign redemption. Read by its string because the
-     * enum case that writes it lands with the redemption webhook.
-     */
-    protected const REDEEMED_EVENT = 'campaign_redeemed';
 
     protected static string|BackedEnum|null $navigationIcon = Heroicon::OutlinedTag;
 
@@ -191,9 +186,10 @@ class CampaignResource extends MagicStarterResource
      */
     protected static function redemptionCount(Campaign $campaign): int
     {
+        // The webhook records the id as a string, so an integer key is cast to match it.
         return BillingEvent::query()
-            ->where('type', static::REDEEMED_EVENT)
-            ->where('properties->campaign_id', $campaign->getKey())
+            ->where('type', BillingEventType::CAMPAIGN_REDEEMED->value)
+            ->where('properties->campaign_id', (string) $campaign->getKey())
             ->count();
     }
 

@@ -145,6 +145,7 @@ Every resource sits behind the feature that owns its data.
 | Subscriptions | Read the list; run "Reconcile now" | `billing` |
 | Newsletter subscribers | Read the list and each row's consent record; deactivate an active subscriber; export CSV | `newsletter-subscription` |
 | Audits | List and view | `audit` |
+| Campaigns | Create and edit a time-boxed [campaign](billing.md#campaigns): window, products, copy per locale and the Stripe promotion code, which is checked in Stripe on save. Switch one off to stop it; there is no delete. The list shows the stored discount and a "Campaign checkouts" count of completed checkouts that redeemed the code (a $0 trial checkout counts) | `campaigns` and `billing` |
 
 The dashboard lives at `/dashboard` and shows headline counts, plus Horizon and Pulse summaries when those tools are enabled.
 

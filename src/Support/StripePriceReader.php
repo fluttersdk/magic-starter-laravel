@@ -7,11 +7,13 @@ use Stripe\Exception\ApiErrorException;
 use Stripe\Price;
 
 /**
- * The Stripe prices that answer to a set of lookup keys, read through Cashier's
- * Stripe client.
+ * The Stripe objects the billing flow reads, through Cashier's Stripe client:
+ * the prices that answer to a set of lookup keys, the account's webhook
+ * endpoints, and one completed Checkout Session.
  *
- * `billing:doctor --remote` resolves it from the container, so a test binds a
- * subclass instead of reaching Stripe. Read-only: a price list is the only call.
+ * `billing:doctor --remote` and the Stripe webhook controller resolve it from
+ * the container, so a test binds a subclass instead of reaching Stripe.
+ * Read-only: every call is a list or a retrieve.
  *
  * @phpstan-type RemotePrice array{
  *     id: string,
@@ -58,6 +60,45 @@ class StripePriceReader
         }
 
         return $prices;
+    }
+
+    /**
+     * Every webhook endpoint the Stripe account holds.
+     *
+     * @return list<array{url: string, enabled_events: list<string>}> `enabled_events` holds `*` for an
+     *                                                                endpoint that listens to everything.
+     *
+     * @throws ApiErrorException When Stripe refuses or cannot be reached.
+     */
+    public function webhookEndpoints(): array
+    {
+        $endpoints = [];
+
+        foreach (Cashier::stripe()->webhookEndpoints->all(['limit' => 100])->autoPagingIterator() as $endpoint) {
+            $endpoints[] = [
+                'url' => $endpoint->url,
+                'enabled_events' => array_values($endpoint->enabled_events),
+            ];
+        }
+
+        return $endpoints;
+    }
+
+    /**
+     * One Checkout Session with its `discounts` expanded, as the array Stripe sends.
+     *
+     * For a `checkout.session.completed` delivery whose payload carries no
+     * discounts: the promotion code is the id string in `discounts.*.promotion_code`.
+     *
+     * @return array<string, mixed>
+     *
+     * @throws ApiErrorException When Stripe refuses or cannot be reached.
+     */
+    public function checkoutSession(string $sessionId): array
+    {
+        return Cashier::stripe()->checkout->sessions
+            ->retrieve($sessionId, ['expand' => ['discounts']])
+            ->toArray();
     }
 
     /**
