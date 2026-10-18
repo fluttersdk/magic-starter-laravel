@@ -43,6 +43,8 @@ use Illuminate\Support\Carbon;
  * @property string|int|null $last_customer_message_id The newest customer message the AI desk owes an answer to.
  * @property string|int|null $answered_message_id The customer message the AI desk last answered.
  * @property int $ai_failures Failed AI turns, counted toward `support.ai.failures_before_handoff`.
+ * @property string|null $ai_summary The AI desk's stored summary of the older messages in the thread.
+ * @property string|int|null $ai_summary_through_id The newest message the stored summary covers.
  * @property Carbon|null $waiting_since
  * @property Carbon|null $first_reply_at
  * @property Carbon|null $last_activity_at
@@ -84,6 +86,8 @@ class SupportConversation extends Model
         'last_customer_message_id',
         'answered_message_id',
         'ai_failures',
+        'ai_summary',
+        'ai_summary_through_id',
         'waiting_since',
         'first_reply_at',
         'last_activity_at',
@@ -101,7 +105,8 @@ class SupportConversation extends Model
     /**
      * What the customer typed into the form, or their app sent about them: the audit rows (see {@see Redactor}) keep
      * the key and drop the value, since a subject often carries what the customer would not want copied into a log,
-     * and the client context names their route, device and locale.
+     * and the client context names their route, device and locale. The AI summary is a model paraphrase of the thread,
+     * so it carries the same words and is kept out of the audit rows too.
      *
      * @var list<string>
      */
@@ -111,6 +116,7 @@ class SupportConversation extends Model
         'name',
         'csat_comment',
         'client_context',
+        'ai_summary',
     ];
 
     /**
