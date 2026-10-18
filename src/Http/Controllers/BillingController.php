@@ -10,14 +10,18 @@ use FlutterSdk\MagicStarter\Enums\BillingChannel;
 use FlutterSdk\MagicStarter\Enums\BillingEventType;
 use FlutterSdk\MagicStarter\Enums\BillingProvider;
 use FlutterSdk\MagicStarter\Enums\BillingSource;
+use FlutterSdk\MagicStarter\Enums\PlanStatus;
 use FlutterSdk\MagicStarter\Enums\ProductType;
+use FlutterSdk\MagicStarter\Features;
 use FlutterSdk\MagicStarter\Http\Resources\SubscriptionResource;
 use FlutterSdk\MagicStarter\MagicStarter;
 use FlutterSdk\MagicStarter\Models\BillingTrial;
+use FlutterSdk\MagicStarter\Models\Campaign;
 use FlutterSdk\MagicStarter\Policies\BillingPolicy;
 use FlutterSdk\MagicStarter\Support\BillingCatalogue;
 use FlutterSdk\MagicStarter\Support\BillingEventRecorder;
 use FlutterSdk\MagicStarter\Support\BillingLog;
+use FlutterSdk\MagicStarter\Support\CampaignFeed;
 use FlutterSdk\MagicStarter\Support\JsonObject;
 use FlutterSdk\MagicStarter\Support\PriceTable;
 use FlutterSdk\MagicStarter\Support\ReadsBillableAttributes;
@@ -33,11 +37,13 @@ use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\Gate;
 use Illuminate\Validation\ValidationException;
+use Laravel\Cashier\Checkout;
 use Laravel\Cashier\Exceptions\IncompletePayment;
 use Laravel\Cashier\Invoice;
 use Laravel\Cashier\PaymentMethod;
 use Stripe\Exception\ApiErrorException;
 use Stripe\Exception\CardException;
+use Stripe\Exception\InvalidRequestException;
 use Stripe\StripeObject;
 use Stripe\Subscription as StripeSubscription;
 use Symfony\Component\HttpFoundation\Response as HttpResponse;
@@ -822,9 +828,10 @@ class BillingController
         //    The subscription NAME matters as much as the mode: `swap` and
         //    `cancel` below both act on `subscription('default')`, so a checkout
         //    opened under any other name would sell a subscription neither of
-        //    them could reach.
-        $subscription = $billable->newSubscription(StripeSubscriptionState::SUBSCRIPTION_TYPE, $priceId);
-
+        //    them could reach. The builder itself is made per session attempt
+        //    in {@see self::openCheckout()}, so a session reopened without the
+        //    campaign carries nothing of the refused one.
+        //
         // 7. The product's trial, for a caller who may have one. Eligibility is
         //    asked only when the product offers days, so a catalogue without
         //    trials never reads `billing_trials`. An ineligible caller (a guest,
@@ -841,13 +848,14 @@ class BillingController
         $trialDays = $this->trialDaysFor($validated['product']);
         $user = $request->user();
         $offeredTrialDays = 0;
+        $metadata = [];
 
         if ($trialDays > 0 && $this->trialEligibility->allows($user, $billable)) {
             $offeredTrialDays = $trialDays;
 
-            $subscription->withMetadata([
+            $metadata = [
                 BillingTrial::USER_METADATA_KEY => (string) $user->getKey(),
-            ]);
+            ];
         }
 
         // 7b. Stripe's promotion code field on the Checkout page, behind an
@@ -859,9 +867,10 @@ class BillingController
         //     trial block above.
         $promotionCodes = (bool) config('magic-starter.billing.promotion_codes', false);
 
-        if ($promotionCodes) {
-            $subscription->allowPromotionCodes();
-        }
+        // 7c. The running campaign, read from the TABLE rather than the cached
+        //     feed, and only for a product it covers and a caller it is
+        //     offered to. Nothing in the request names it.
+        $campaign = $this->checkoutCampaign($request, $billable, $validated['product']);
 
         // 8. A card is collected whatever the first total, and said explicitly
         //    rather than left to Stripe's default: a trial's first invoice is
@@ -893,29 +902,218 @@ class BillingController
             $sessionOptions['currency'] = strtolower($currency);
         }
 
-        $checkout = $subscription->checkout($sessionOptions);
+        // 8c. A campaign code Stripe refuses when the session opens (a customer
+        //     with prior transactions, a minimum amount a trial cannot meet, a
+        //     coupon not in this currency, an archived code) must never block
+        //     the purchase: it is recorded and the session opens again without
+        //     the campaign, at the price the customer would pay anyway. Any
+        //     other refusal is not the campaign's and propagates as before.
+        try {
+            $checkout = $this->openCheckout(
+                $billable,
+                $priceId,
+                $metadata,
+                $sessionOptions,
+                $promotionCodes,
+                $campaign,
+            );
+        } catch (InvalidRequestException $exception) {
+            if ($campaign === null || ! $this->refusesCampaignCode($exception)) {
+                throw $exception;
+            }
+
+            $this->recordCampaignCodeRefusal($request, $billable, $campaign, $exception);
+
+            $campaign = null;
+            $checkout = $this->openCheckout(
+                $billable,
+                $priceId,
+                $metadata,
+                $sessionOptions,
+                $promotionCodes,
+                null,
+            );
+        }
 
         // 9. Recorded once the session exists, never before: a Stripe error above
         //    leaves no row, and the row's external id is the session itself. The
         //    trial is the days OFFERED to this caller, which is 0 for one the
-        //    product's advertised days were withheld from.
+        //    product's advertised days were withheld from. `promotion_codes` is
+        //    whether THIS session shows the code field, which a campaign session
+        //    never does, and `campaign_id` is present only on a campaign session.
+        $properties = [
+            'product' => $validated['product'],
+            'price_id' => $priceId,
+            'trial_days' => $offeredTrialDays,
+            'promotion_codes' => $promotionCodes && $campaign === null,
+        ];
+
+        if ($campaign !== null) {
+            $properties['campaign_id'] = (string) $campaign->getKey();
+        }
+
         $this->recordRequest(
             BillingEventType::CHECKOUT_STARTED,
             $request,
             $billable,
             externalId: $checkout->id,
-            properties: [
-                'product' => $validated['product'],
-                'price_id' => $priceId,
-                'trial_days' => $offeredTrialDays,
-                'promotion_codes' => $promotionCodes,
-            ],
+            properties: $properties,
         );
 
         return response()->json([
             'checkout_url' => $checkout->url,
             'session_id' => $checkout->id,
         ]);
+    }
+
+    /**
+     * The campaign running now for the caller's billable, or `{"data": null}`.
+     *
+     * Open to any member like the other reads, and null rather than 403 for
+     * one who may not act on the offer: a member who cannot buy, or a subject
+     * already holding a paid tier (a trial included), is simply not offered
+     * it. The rows come from {@see CampaignFeed}, cached and filtered by the
+     * clock on every read.
+     */
+    public function campaign(Request $request): JsonResponse
+    {
+        $billable = $this->resolveBillable($request);
+
+        return response()->json([
+            'data' => $this->inCampaignAudience($request, $billable) ? CampaignFeed::active() : null,
+        ]);
+    }
+
+    /**
+     * Whether a campaign is offered to this caller for [$billable]: the subject
+     * holds the free floor and the caller may manage its billing.
+     *
+     * The floor test is {@see ReadsBillableAttributes::holdsPaidTier()}, the
+     * rule `HasEntitlement::onTier(<floor>)` answers, read here so a billable
+     * without that opt-in trait is judged the same way.
+     */
+    protected function inCampaignAudience(Request $request, Model $billable): bool
+    {
+        $holdsPaidTier = $this->holdsPaidTier(
+            $this->stringAttribute($billable, 'plan'),
+            PlanStatus::fromWire($this->stringAttribute($billable, 'plan_status')),
+        );
+
+        return ! $holdsPaidTier && Gate::forUser($request->user())->allows('manageBilling', $billable);
+    }
+
+    /**
+     * The campaign a checkout of catalogue product [$product] applies, or null.
+     *
+     * Read from the table at the moment of sale, never from the cached feed,
+     * so a campaign staff just disabled or edited cannot discount a session.
+     */
+    protected function checkoutCampaign(Request $request, Model $billable, string $product): ?Campaign
+    {
+        if (! Features::hasCampaignFeatures()) {
+            return null;
+        }
+
+        $campaign = Campaign::query()->activeAt(now())->first();
+
+        if ($campaign === null
+            || ! in_array($product, $campaign->products, true)
+            || ! $this->inCampaignAudience($request, $billable)
+        ) {
+            return null;
+        }
+
+        return $campaign;
+    }
+
+    /**
+     * Open one subscription Checkout Session, with [$campaign]'s code or
+     * without a campaign at all.
+     *
+     * A fresh builder per call, so a session reopened after a refused code
+     * carries nothing of the first attempt. A campaign session never calls
+     * `allowPromotionCodes()`: Stripe refuses `discounts` beside any
+     * `allow_promotion_codes`, false included. It names the campaign as
+     * `client_reference_id` and expires by the campaign's end, held between
+     * the 30 minutes and the 24 hours Stripe accepts.
+     *
+     * @param  array<string, string>  $metadata  The subscription metadata (the trial user tag), or none.
+     * @param  array<string, mixed>  $sessionOptions  Merged into the session payload by Cashier.
+     */
+    protected function openCheckout(
+        Model $billable,
+        string $priceId,
+        array $metadata,
+        array $sessionOptions,
+        bool $promotionCodes,
+        ?Campaign $campaign,
+    ): Checkout {
+        $subscription = $billable->newSubscription(StripeSubscriptionState::SUBSCRIPTION_TYPE, $priceId);
+
+        if ($metadata !== []) {
+            $subscription->withMetadata($metadata);
+        }
+
+        if ($campaign !== null) {
+            $subscription->withPromotionCode($campaign->stripe_promotion_code_id);
+
+            $now = now();
+            $sessionOptions['client_reference_id'] = (string) $campaign->getKey();
+            $sessionOptions['expires_at'] = $campaign->ends_at->copy()
+                ->max($now->copy()->addMinutes(30))
+                ->min($now->copy()->addHours(24))
+                ->getTimestamp();
+        } elseif ($promotionCodes) {
+            $subscription->allowPromotionCodes();
+        }
+
+        return $subscription->checkout($sessionOptions);
+    }
+
+    /**
+     * Whether Stripe refused the session because of the campaign's code: a
+     * refusal on the `discounts` parameter (an unknown code, a coupon not in
+     * the session's currency) or a `promotion_code_*` code (inactive, a
+     * customer with prior transactions, an amount below the code's minimum).
+     */
+    protected function refusesCampaignCode(InvalidRequestException $exception): bool
+    {
+        return str_starts_with((string) $exception->getStripeParam(), 'discounts')
+            || str_starts_with((string) $exception->getStripeCode(), 'promotion_code_');
+    }
+
+    /**
+     * Log and record a campaign code Stripe refused at checkout.
+     *
+     * A refusal row, so an operator alerting on refusals learns a campaign is
+     * failing its audience; the reason is the property `stripe_code`, null
+     * when Stripe named only the parameter, which the log line keeps.
+     */
+    protected function recordCampaignCodeRefusal(
+        Request $request,
+        Model $billable,
+        Campaign $campaign,
+        InvalidRequestException $exception,
+    ): void {
+        BillingLog::warning('Stripe refused the campaign promotion code; the checkout opens without it.', [
+            'campaign_id' => (string) $campaign->getKey(),
+            'promotion_code_id' => $campaign->stripe_promotion_code_id,
+            'billable_id' => $billable->getKey(),
+            'stripe_code' => $exception->getStripeCode(),
+            'stripe_param' => $exception->getStripeParam(),
+            'exception' => $exception->getMessage(),
+        ]);
+
+        $this->recordRequest(
+            BillingEventType::CAMPAIGN_CODE_REFUSED,
+            $request,
+            $billable,
+            properties: [
+                'campaign_id' => (string) $campaign->getKey(),
+                'promotion_code_id' => $campaign->stripe_promotion_code_id,
+                'stripe_code' => $exception->getStripeCode(),
+            ],
+        );
     }
 
     /**

@@ -3,7 +3,9 @@
 namespace FlutterSdk\MagicStarter\Models;
 
 use Carbon\CarbonInterface;
+use FlutterSdk\MagicStarter\Observers\CampaignObserver;
 use FlutterSdk\MagicStarter\Support\ConditionallyUsesUuids;
+use Illuminate\Database\Eloquent\Attributes\ObservedBy;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Support\Carbon;
@@ -31,6 +33,7 @@ use Illuminate\Support\Carbon;
  * @property Carbon|null $created_at
  * @property Carbon|null $updated_at
  */
+#[ObservedBy(CampaignObserver::class)]
 class Campaign extends Model
 {
     use ConditionallyUsesUuids;

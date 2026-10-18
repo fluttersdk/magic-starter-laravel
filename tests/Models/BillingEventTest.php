@@ -213,6 +213,7 @@ class BillingEventTest extends TestCase
             BillingEventType::REQUEST_REFUSED,
             BillingEventType::DELIVERY_REFUSED,
             BillingEventType::TRIAL_REFUSED,
+            BillingEventType::CAMPAIGN_CODE_REFUSED,
         ];
 
         foreach (BillingEventType::cases() as $type) {
@@ -244,6 +245,7 @@ class BillingEventTest extends TestCase
                 'subscription_resumed',
                 'invoice_refunded',
                 'entitlement_synced',
+                'campaign_code_refused',
             ],
             array_map(static fn (BillingEventType $type): string => $type->value, BillingEventType::cases()),
         );

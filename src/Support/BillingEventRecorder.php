@@ -220,7 +220,8 @@ class BillingEventRecorder
             BillingEventType::ENTITLEMENT_DROPPED,
             BillingEventType::REQUEST_REFUSED,
             BillingEventType::DELIVERY_REFUSED,
-            BillingEventType::TRIAL_REFUSED => null,
+            BillingEventType::TRIAL_REFUSED,
+            BillingEventType::CAMPAIGN_CODE_REFUSED => null,
         };
     }
 }

@@ -624,6 +624,7 @@ Every billing outcome leaves one row in `billing_events` and dispatches one Lara
 | `entitlement_applied` | `webhook`, `reconcile`, `trial_check` | none | `before`, `after`, `changed`, `direction`, `cross_rail`. |
 | `entitlement_dropped` | any feeder | `stale`, `same_instant_revocation`, `undecidable_tier_order`, `cross_rail_revocation`, `projected_cross_rail_takeover` | The log context and `incoming_status`. |
 | `checkout_started` | `request` | none | `product`, `price_id`, `trial_days`, `promotion_codes`. |
+| `campaign_code_refused` | `request` | none | `campaign_id`, `promotion_code_id`, `stripe_code`. |
 | `subscription_swapped` | `request` | none | `product`, `price_id`. |
 | `subscription_cancelled` | `request` | none | `ends_at`. |
 | `portal_opened` | `request` | none | none. |

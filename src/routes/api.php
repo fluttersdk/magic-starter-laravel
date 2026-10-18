@@ -277,6 +277,12 @@ Route::prefix((string) config('magic-starter.route_prefix', ''))
                 Route::get('billing/store-funded-team', [BillingController::class, 'storeFundedTeam']);
                 Route::get('billing/portal', [BillingController::class, 'portal']);
 
+                // The running campaign, or `{"data": null}`. Absent, so a 404,
+                // while campaigns are off: the client then shows no banner.
+                if (Features::hasCampaignFeatures()) {
+                    Route::get('billing/campaign', [BillingController::class, 'campaign']);
+                }
+
                 // Registered ONLY when a consumer has bound the usage contract,
                 // because this package cannot count what it does not know. An
                 // unbound application therefore 404s here, which is an honest

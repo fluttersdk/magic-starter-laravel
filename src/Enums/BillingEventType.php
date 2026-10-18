@@ -3,6 +3,7 @@
 namespace FlutterSdk\MagicStarter\Enums;
 
 use FlutterSdk\MagicStarter\Events\Billing\BillingOutcomeEvent;
+use FlutterSdk\MagicStarter\Events\Billing\CampaignCodeRefused;
 use FlutterSdk\MagicStarter\Events\Billing\CheckoutStarted;
 use FlutterSdk\MagicStarter\Events\Billing\DeliveryRefused;
 use FlutterSdk\MagicStarter\Events\Billing\EntitlementApplied;
@@ -78,6 +79,9 @@ enum BillingEventType: string
 
     case ENTITLEMENT_SYNCED = 'entitlement_synced';
 
+    /** Stripe refused the active campaign's promotion code at checkout, which then opened without it. */
+    case CAMPAIGN_CODE_REFUSED = 'campaign_code_refused';
+
     /**
      * True when the outcome is the package saying no, which is the subset an
      * operator alerts on.
@@ -85,7 +89,11 @@ enum BillingEventType: string
     public function isRefusal(): bool
     {
         return match ($this) {
-            self::ENTITLEMENT_DROPPED, self::REQUEST_REFUSED, self::DELIVERY_REFUSED, self::TRIAL_REFUSED => true,
+            self::ENTITLEMENT_DROPPED,
+            self::REQUEST_REFUSED,
+            self::DELIVERY_REFUSED,
+            self::TRIAL_REFUSED,
+            self::CAMPAIGN_CODE_REFUSED => true,
             self::ENTITLEMENT_APPLIED,
             self::CHECKOUT_STARTED,
             self::SUBSCRIPTION_SWAPPED,
@@ -133,6 +141,7 @@ enum BillingEventType: string
             self::SUBSCRIPTION_RESUMED => SubscriptionResumed::class,
             self::INVOICE_REFUNDED => InvoiceRefunded::class,
             self::ENTITLEMENT_SYNCED => EntitlementSynced::class,
+            self::CAMPAIGN_CODE_REFUSED => CampaignCodeRefused::class,
         };
     }
 }
