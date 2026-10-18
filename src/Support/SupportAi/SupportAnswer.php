@@ -21,6 +21,9 @@ final readonly class SupportAnswer
 {
     /**
      * @param  float  $confidence  The responder's own confidence in the reply, 0 to 1 inclusive.
+     * @param  SupportHistorySummary|null  $compaction  A new summary of the thread to store with the reply; it is
+     *                                                  dropped when the turn stores no reply, or when another turn
+     *                                                  replaced the summary this turn read.
      *
      * @throws InvalidArgumentException when the reply is blank, the confidence is outside 0..1
      *                                  or a handoff reason and priority do not come together
@@ -31,6 +34,7 @@ final readonly class SupportAnswer
         public SupportUsage $usage,
         public ?SupportHandoffReason $handoffReason = null,
         public ?SupportPriority $handoffPriority = null,
+        public ?SupportHistorySummary $compaction = null,
     ) {
         if (trim($reply) === '') {
             throw new InvalidArgumentException('A support answer needs a reply.');
