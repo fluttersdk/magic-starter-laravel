@@ -89,6 +89,14 @@ final class MailBrand
     }
 
     /**
+     * The footer line for the text part, where a Markdown link would print as raw syntax.
+     */
+    public function footerText(): string
+    {
+        return (string) preg_replace('/\[([^\]]+)\]\(([^)\s]+)\)/', '$1: $2', $this->footerLine());
+    }
+
+    /**
      * The value of the `color-scheme` and `supported-color-schemes` meta tags.
      *
      * A client that is told `light dark` may restyle a mail by itself, so it is

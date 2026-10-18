@@ -190,7 +190,30 @@ final class MailBrandRenderTest extends TestCase
         $text = (string) app(Markdown::class)->renderText('notifications::email', $this->mailMessage()->data());
 
         $this->assertStringContainsString('Northwind: ', $text);
-        $this->assertStringContainsString('© ' . date('Y') . ' Acme · [acme.test](https://acme.test)', $text);
+        $this->assertStringContainsString('© ' . date('Y') . ' Acme · acme.test: https://acme.test', $text);
+        $this->assertStringNotContainsString('[acme.test]', $text);
+    }
+
+    #[DefineEnvironment('brandOn')]
+    public function test_every_button_variant_reaches_a_44_pixel_tap_height(): void
+    {
+        $variants = [
+            'button-primary' => [new MailMessage, '#008560'],
+            'button-success' => [(new MailMessage)->success(), '#16a34a'],
+            'button-error' => [(new MailMessage)->error(), '#dc2626'],
+        ];
+
+        foreach ($variants as $class => [$message, $color]) {
+            $html = (string) $message->line('Body')->action('Go', 'https://acme.test/go')->render();
+
+            foreach (['top', 'bottom'] as $side) {
+                $this->assertMatchesRegularExpression(
+                    '/class="button ' . $class . '"[^>]*style="[^"]*border-' . $side . ': 11px solid ' . $color . '/',
+                    $html,
+                    "{$class} border-{$side}",
+                );
+            }
+        }
     }
 
     #[DefineEnvironment('brandOn')]

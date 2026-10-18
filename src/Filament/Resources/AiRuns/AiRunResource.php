@@ -3,6 +3,7 @@
 namespace FlutterSdk\MagicStarter\Filament\Resources\AiRuns;
 
 use BackedEnum;
+use Closure;
 use Filament\Actions\ViewAction;
 use Filament\Forms\Components\DatePicker;
 use Filament\Schemas\Schema;
@@ -134,12 +135,12 @@ class AiRunResource extends MagicStarterResource
                     // Filament shows the placeholder for a null state and never formats it.
                     ->formatStateUsing(static fn (string $state): string => static::usd($state, 6))
                     ->placeholder(static::ABSENT)
-                    ->sortable(),
+                    ->sortable(query: static::nullsLast('cost_usd')),
                 TextColumn::make('duration_ms')
                     ->label(__('magic-starter::admin_ai.columns.duration_ms'))
                     ->numeric()
                     ->placeholder(static::ABSENT)
-                    ->sortable(),
+                    ->sortable(query: static::nullsLast('duration_ms')),
             ])
             ->filters([
                 SelectFilter::make('feature')
@@ -238,6 +239,19 @@ class AiRunResource extends MagicStarterResource
     public static function statusLabel(AiRunStatus $status): string
     {
         return (string) __("magic-starter::admin_ai.statuses.{$status->value}");
+    }
+
+    /**
+     * A sort by a figure a run may not have reported, with those runs last in both directions:
+     * PostgreSQL lists nulls first descending and SQLite first ascending.
+     *
+     * @return Closure(Builder<AiRun>, string): Builder<AiRun>
+     */
+    protected static function nullsLast(string $column): Closure
+    {
+        return static fn (Builder $query, string $direction): Builder => $query
+            ->orderByRaw($query->getQuery()->getGrammar()->wrap($column) . ' is null')
+            ->orderBy($column, $direction);
     }
 
     /**
