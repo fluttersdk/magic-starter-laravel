@@ -249,29 +249,29 @@ img {
 .button-blue,
 .button-primary {
     background-color: {{ $brand->light['primary'] }};
-    border-bottom: 8px solid {{ $brand->light['primary'] }};
+    border-bottom: 11px solid {{ $brand->light['primary'] }};
     border-left: 18px solid {{ $brand->light['primary'] }};
     border-right: 18px solid {{ $brand->light['primary'] }};
-    border-top: 8px solid {{ $brand->light['primary'] }};
+    border-top: 11px solid {{ $brand->light['primary'] }};
     color: {{ $brand->light['on_primary'] }};
 }
 
 .button-green,
 .button-success {
     background-color: #16a34a;
-    border-bottom: 8px solid #16a34a;
+    border-bottom: 11px solid #16a34a;
     border-left: 18px solid #16a34a;
     border-right: 18px solid #16a34a;
-    border-top: 8px solid #16a34a;
+    border-top: 11px solid #16a34a;
 }
 
 .button-red,
 .button-error {
     background-color: #dc2626;
-    border-bottom: 8px solid #dc2626;
+    border-bottom: 11px solid #dc2626;
     border-left: 18px solid #dc2626;
     border-right: 18px solid #dc2626;
-    border-top: 8px solid #dc2626;
+    border-top: 11px solid #dc2626;
 }
 
 /* Panels */

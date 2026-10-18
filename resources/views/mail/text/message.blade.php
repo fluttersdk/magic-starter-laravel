@@ -22,7 +22,7 @@
     {{-- Footer --}}
     <x-slot:footer>
         <x-mail::footer>
-            {{ $brand->footerLine() }}
+            {{ $brand->footerText() }}
         </x-mail::footer>
     </x-slot:footer>
 </x-mail::layout>
