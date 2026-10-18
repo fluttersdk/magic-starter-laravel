@@ -164,13 +164,13 @@ return [
     ],
 
     /*
-     * The mail PaymentFailedNotification sends when a renewal payment is
-     * declined. Named apart from `refusals.payment_failed`, the inline sentence
+     * The mail PaymentFailedNotification sends when a subscription payment
+     * (a renewal or the first charge after a trial) is declined. Named apart from `refusals.payment_failed`, the inline sentence
      * an API caller reads, so the two are never confused.
      */
     'payment_failed_mail' => [
-        'subject' => 'Your :plan renewal payment was declined',
-        'declined' => 'The renewal payment for your :plan plan was declined.',
+        'subject' => 'Your :plan payment was declined',
+        'declined' => 'The payment for your :plan plan was declined.',
         'retry' => 'Stripe will retry automatically. Update your payment method to keep the plan.',
         'action' => 'Update payment method',
     ],

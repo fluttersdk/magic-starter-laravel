@@ -661,11 +661,13 @@ class BillingDoctorCommand extends Command
     {
         $required = [];
 
-        if (config('magic-starter.billing.trial_ending_notification') === true) {
+        // Read the way the webhook reads them (truthy), so a config without the
+        // (bool) cast cannot send mail while this check stays silent.
+        if ((bool) config('magic-starter.billing.trial_ending_notification', false)) {
             $required[] = 'customer.subscription.trial_will_end';
         }
 
-        if (config('magic-starter.billing.payment_failed_notification') === true) {
+        if ((bool) config('magic-starter.billing.payment_failed_notification', false)) {
             $required[] = 'invoice.payment_failed';
         }
 
@@ -685,7 +687,8 @@ class BillingDoctorCommand extends Command
             $this->check(
                 'stripe.webhook_events',
                 self::WARNING,
-                'No route is named cashier.webhook, so the Stripe webhook url cannot be checked. Name your webhook route cashier.webhook.',
+                'No route is named cashier.webhook, so the Stripe webhook url cannot be checked. '
+                    . 'Name your webhook route cashier.webhook.',
             );
 
             return;

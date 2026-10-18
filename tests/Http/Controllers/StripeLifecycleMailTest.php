@@ -293,6 +293,33 @@ class StripeLifecycleMailTest extends TestCase
         Notification::assertNothingSent();
     }
 
+    /**
+     * A refusal whose cancel is still owed (no `checked_at`) is not converting either. A short trial can meet
+     * trial_will_end while the card check runs, and the person then gets TrialRefusedNotification, not this.
+     */
+    public function test_a_refused_trial_whose_cancel_is_still_owed_mails_nothing(): void
+    {
+        Notification::fake();
+        config(['magic-starter.billing.trial_ending_notification' => true]);
+        $billable = $this->createBillable();
+
+        BillingTrial::query()->create([
+            'user_id' => $billable->getKey(),
+            'billable_type' => $billable->getMorphClass(),
+            'billable_id' => $billable->getKey(),
+            'stripe_subscription_id' => static::SUBSCRIPTION_ID,
+            'subscription_created_at' => now()->subDays(1),
+            'refused_at' => now()->subMinutes(5),
+        ]);
+
+        $this->postSignedWebhook($this->trialWillEndEvent(
+            'evt_trial_end_refusal_owed',
+            metadata: [BillingTrial::USER_METADATA_KEY => (string) $billable->getKey()],
+        ))->assertOk();
+
+        Notification::assertNothingSent();
+    }
+
     public function test_an_unknown_customer_mails_nothing_and_answers_200(): void
     {
         Notification::fake();
@@ -477,6 +504,29 @@ class StripeLifecycleMailTest extends TestCase
         $this->postSignedWebhook($event)->assertOk();
 
         Notification::assertSentTimes(PaymentFailedNotification::class, 1);
+    }
+
+    /**
+     * Stripe counts only automatic retries in `attempt_count`: a payer who retries the same invoice by hand fails
+     * again at attempt 1, under a new event id (observed on a sandbox test clock). The event-id dedup cannot see
+     * that, so the mail is claimed per invoice; the next renewal's invoice is news again.
+     */
+    public function test_a_manual_retry_of_the_same_invoice_mails_once_and_the_next_invoice_mails_again(): void
+    {
+        Notification::fake();
+        config(['magic-starter.billing.payment_failed_notification' => true]);
+        $this->createBillable();
+        $this->seedActiveSubscription();
+
+        $this->postSignedWebhook($this->paymentFailedEvent('evt_payment_failed_auto'))->assertOk();
+        $this->postSignedWebhook($this->paymentFailedEvent('evt_payment_failed_manual'))->assertOk();
+
+        Notification::assertSentTimes(PaymentFailedNotification::class, 1);
+
+        $this->postSignedWebhook($this->paymentFailedEvent('evt_payment_failed_next', invoiceId: 'in_next_cycle'))
+            ->assertOk();
+
+        Notification::assertSentTimes(PaymentFailedNotification::class, 2);
     }
 
     // -------------------------------------------------------------------------
@@ -760,8 +810,10 @@ class StripeLifecycleMailTest extends TestCase
         string $billingReason = 'subscription_cycle',
         int $amountDue = 1900,
         string $subscriptionId = self::SUBSCRIPTION_ID,
+        string $invoiceId = 'in_lifecycle_test',
     ): array {
         return $this->invoiceEvent($eventId, 'invoice.payment_failed', self::EVENT_AT + 60, [
+            'id' => $invoiceId,
             'attempt_count' => $attemptCount,
             'billing_reason' => $billingReason,
             'amount_due' => $amountDue,

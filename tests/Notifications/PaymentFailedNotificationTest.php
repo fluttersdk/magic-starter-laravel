@@ -9,8 +9,9 @@ use Illuminate\Contracts\Queue\ShouldQueue;
 use Illuminate\Support\Facades\URL;
 
 /**
- * Locks the "your renewal payment was declined" mail: the plan by display name, the fact, what happens next, and
- * one link to update the payment method. No amount and no pitch.
+ * Locks the "your payment was declined" mail: the plan by display name, the fact, what happens next, and one link
+ * to update the payment method. No amount and no pitch. "Renewal" is avoided on purpose: the same mail covers the
+ * first charge after a trial.
  */
 final class PaymentFailedNotificationTest extends TestCase
 {
@@ -43,9 +44,9 @@ final class PaymentFailedNotificationTest extends TestCase
     {
         $mail = (new PaymentFailedNotification('pro'))->toMail(new ConcreteUser);
 
-        $this->assertSame('Your Pro renewal payment was declined', $mail->subject);
+        $this->assertSame('Your Pro payment was declined', $mail->subject);
         $this->assertSame([
-            'The renewal payment for your Pro plan was declined.',
+            'The payment for your Pro plan was declined.',
             'Stripe will retry automatically. Update your payment method to keep the plan.',
         ], $mail->introLines);
         $this->assertSame('Update payment method', $mail->actionText);
@@ -55,7 +56,16 @@ final class PaymentFailedNotificationTest extends TestCase
     {
         $mail = (new PaymentFailedNotification('enterprise'))->toMail(new ConcreteUser);
 
-        $this->assertSame('Your enterprise renewal payment was declined', $mail->subject);
+        $this->assertSame('Your enterprise payment was declined', $mail->subject);
+    }
+
+    public function test_a_tier_with_an_empty_name_falls_back_to_its_id(): void
+    {
+        config(['magic-starter.billing.tiers.pro' => ['name' => '']]);
+
+        $mail = (new PaymentFailedNotification('pro'))->toMail(new ConcreteUser);
+
+        $this->assertSame('Your pro payment was declined', $mail->subject);
     }
 
     public function test_every_line_is_turkish_for_a_turkish_recipient(): void
@@ -64,10 +74,11 @@ final class PaymentFailedNotificationTest extends TestCase
 
         $mail = (new PaymentFailedNotification('pro'))->toMail(new ConcreteUser);
 
-        $this->assertSame('Pro yenileme ödemeniz reddedildi', $mail->subject);
+        $this->assertSame('Pro ödemeniz reddedildi', $mail->subject);
         $this->assertSame([
-            'Pro planınız için yenileme ödemesi reddedildi.',
-            'Stripe ödemeyi otomatik olarak yeniden deneyecek. Planınızı korumak için ödeme yönteminizi güncelleyin.',
+            'Pro planınız için yapılan ödeme reddedildi.',
+            'Stripe ödemeyi otomatik olarak yeniden deneyecek. '
+                . 'Planınızı korumak için ödeme yönteminizi güncelleyin.',
         ], $mail->introLines);
         $this->assertSame('Ödeme yöntemini güncelleyin', $mail->actionText);
     }

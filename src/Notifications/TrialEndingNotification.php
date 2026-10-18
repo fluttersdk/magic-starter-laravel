@@ -3,6 +3,7 @@
 namespace FlutterSdk\MagicStarter\Notifications;
 
 use Carbon\CarbonImmutable;
+use DateTimeZone;
 use FlutterSdk\MagicStarter\Support\BillingCatalogue;
 use FlutterSdk\MagicStarter\Support\BillingRecipient;
 use FlutterSdk\MagicStarter\Support\FrontendUrl;
@@ -73,7 +74,9 @@ class TrialEndingNotification extends Notification implements ShouldQueue
      */
     private function planName(): string
     {
-        return __((string) (BillingCatalogue::tiers()[$this->tier]['name'] ?? $this->tier));
+        $name = BillingCatalogue::tiers()[$this->tier]['name'] ?? null;
+
+        return __(is_string($name) && $name !== '' ? $name : $this->tier);
     }
 
     /**
@@ -85,7 +88,7 @@ class TrialEndingNotification extends Notification implements ShouldQueue
     {
         $timezone = data_get($notifiable, 'timezone');
 
-        if (! is_string($timezone) || ! in_array($timezone, timezone_identifiers_list(), true)) {
+        if (! is_string($timezone) || ! in_array($timezone, DateTimeZone::listIdentifiers(), true)) {
             $timezone = (string) config('app.timezone');
         }
 

@@ -11,7 +11,8 @@ use Illuminate\Notifications\Messages\MailMessage;
 use Illuminate\Notifications\Notification;
 
 /**
- * Tells the person who manages billing that a renewal payment was declined and what to do about it.
+ * Tells the person who manages billing that a subscription payment was declined and what to do about it: a
+ * renewal, or the first charge after a trial.
  *
  * Addressed to the {@see BillingRecipient} and gated by `magic-starter.billing.payment_failed_notification`. It
  * states the fact, that Stripe retries on its own, and one link to the billing screen to update the payment method.
@@ -61,7 +62,9 @@ class PaymentFailedNotification extends Notification implements ShouldQueue
      */
     private function planName(): string
     {
-        return __((string) (BillingCatalogue::tiers()[$this->tier]['name'] ?? $this->tier));
+        $name = BillingCatalogue::tiers()[$this->tier]['name'] ?? null;
+
+        return __(is_string($name) && $name !== '' ? $name : $this->tier);
     }
 
     /**
