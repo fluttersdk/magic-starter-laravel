@@ -21,6 +21,7 @@ use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Str;
 use PHPUnit\Framework\Attributes\DataProvider;
+use ReflectionMethod;
 
 /**
  * A record id in a panel url that is not a uuid answers 404 on a uuid-keyed resource instead of
@@ -104,11 +105,13 @@ class RecordBindingTest extends FilamentTestCase
      */
     public function test_an_integer_key_setup_is_not_guarded(): void
     {
-        $this->assertTrue(ExposedAiRunResource::judgesUnbindable('42'));
+        $judge = new ReflectionMethod(AiRunResource::class, 'cannotBeUuidKey');
+
+        $this->assertTrue($judge->invoke(null, '42'));
 
         config()->set('magic-starter.use_uuids', false);
 
-        $this->assertFalse(ExposedAiRunResource::judgesUnbindable('42'));
+        $this->assertFalse($judge->invoke(null, '42'));
     }
 
     /**
@@ -136,13 +139,5 @@ class RecordBindingTest extends FilamentTestCase
             'password' => 'secret',
             'email_verified_at' => Carbon::now(),
         ]);
-    }
-}
-
-final class ExposedAiRunResource extends AiRunResource
-{
-    public static function judgesUnbindable(string $key): bool
-    {
-        return self::cannotBeUuidKey($key);
     }
 }
