@@ -162,6 +162,63 @@ class SecretMaskerTest extends TestCase
         $this->assertSame($expected, $this->masker()->mask($text));
     }
 
+    /**
+     * An unquoted value glued to its `=` is one token: the log text after it is kept.
+     *
+     * @return iterable<string, array{0: string, 1: string, 2: string}>
+     */
+    public static function gluedEqualsVectors(): iterable
+    {
+        yield 'trailing words' => [
+            'api_key=abc123def456 then the rest of the log line',
+            'api_key=[redacted] then the rest of the log line',
+            'abc123def456',
+        ];
+        yield 'ampersand' => [
+            'token=abc123def456&page=2 then more',
+            'token=[redacted]&page=2 then more',
+            'abc123def456',
+        ];
+        yield 'comma' => [
+            'secret=abc123def456, retrying in 5s',
+            'secret=[redacted], retrying in 5s',
+            'abc123def456',
+        ];
+        yield 'semicolon' => [
+            'password=abc123def456; next step',
+            'password=[redacted]; next step',
+            'abc123def456',
+        ];
+        yield 'auth scheme' => [
+            'authorization=Bearer abc123def456 sent upstream',
+            'authorization=Bearer [redacted] sent upstream',
+            'abc123def456',
+        ];
+        yield 'newline' => [
+            "api_key=abc123def456\nnext line",
+            "api_key=[redacted]\nnext line",
+            'abc123def456',
+        ];
+        yield 'spaced equals still runs to the end of the line' => [
+            "password = two words\nnext line",
+            "password = [redacted]\nnext line",
+            'two words',
+        ];
+    }
+
+    #[DataProvider('gluedEqualsVectors')]
+    public function test_a_value_glued_to_its_equals_sign_masks_only_that_token(
+        string $text,
+        string $expected,
+        string $secret,
+    ): void {
+        $masked = $this->masker()->mask($text);
+
+        $this->assertIsString($masked);
+        $this->assertStringNotContainsString($secret, $masked);
+        $this->assertSame($expected, $masked);
+    }
+
     public function test_the_default_keys_carry_the_added_names(): void
     {
         $added = [

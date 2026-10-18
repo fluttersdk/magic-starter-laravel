@@ -17,6 +17,7 @@ use FlutterSdk\MagicStarter\Tests\Fixtures\ConcreteTeam;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\Route;
 use Livewire\Livewire;
+use PHPUnit\Framework\Attributes\DataProvider;
 use ReflectionMethod;
 
 /**
@@ -152,6 +153,43 @@ class AiRunResourceTest extends FilamentTestCase
             ->assertTableColumnStateSet('input_tokens', 1200, $run)
             ->assertTableColumnStateSet('cache_read_tokens', 800, $run)
             ->assertSee('0.012345');
+    }
+
+    /**
+     * SQLite puts nulls first ascending and PostgreSQL first descending, so each driver fails one
+     * direction without the explicit ordering.
+     *
+     * @return array<string, array{0: string, 1: string}>
+     */
+    public static function nullableSortColumns(): array
+    {
+        return [
+            'cost ascending' => ['cost_usd', 'asc'],
+            'cost descending' => ['cost_usd', 'desc'],
+            'duration ascending' => ['duration_ms', 'asc'],
+            'duration descending' => ['duration_ms', 'desc'],
+        ];
+    }
+
+    #[DataProvider('nullableSortColumns')]
+    public function test_a_run_that_did_not_report_the_sorted_figure_is_listed_last(
+        string $column,
+        string $direction,
+    ): void {
+        $values = [
+            'cost_usd' => ['0.00100000', '0.00200000'],
+            'duration_ms' => [100, 200],
+        ][$column];
+
+        $absent = $this->aiRun();
+        $low = $this->aiRun([$column => $values[0]]);
+        $high = $this->aiRun([$column => $values[1]]);
+        $reported = $direction === 'asc' ? [$low, $high] : [$high, $low];
+
+        Livewire::actingAs($this->staff())
+            ->test(ListAiRuns::class)
+            ->sortTable($column, $direction)
+            ->assertCanSeeTableRecords([...$reported, $absent], inOrder: true);
     }
 
     public function test_a_run_of_a_deleted_team_shows_its_team_id(): void

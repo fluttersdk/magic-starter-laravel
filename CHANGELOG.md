@@ -8,6 +8,11 @@ All notable changes to this project will be documented in this file.
 
 - **The support AI quota settles a turn at uncached input, completion and weighted cache buckets, so a cached prompt prefix no longer drains the pool.** `SupportUsage` takes two optional counts, `cacheReadTokens` and `cacheWriteTokens` (both default `0`), and `promptTokens` now means the uncached input only. `SupportAiQuota` settles uncached input plus completion, plus cache writes times `support.ai.cache_weights.write` and cache reads times `support.ai.cache_weights.read`, each weighted bucket rounded up; the defaults are write `1.0` and read `0.0`, and a negative weight reads as `0`. `SupportUsage::total()` stays the raw sum of all four counts. A caller that builds `SupportUsage` with two counts settles as before. A custom `RespondsToSupport` responder should pass `promptTokens` without the cache buckets, plus both buckets once its provider reports them. (`src/Support/SupportAi/SupportUsage.php`, `src/Support/SupportAi/SupportAiQuota.php`, `config/magic-starter.php`, `doc/support.md`)
 
+### Fixed
+
+- **An AI run body keeps the log text after an unquoted `key=value` secret.** A value glued to its `=` (`api_key=abc123 then the rest of the line`) is masked up to the first whitespace, `,`, `;`, `&` or `}`, so only the value becomes `[redacted]`. A `key: value` or `key = value` with whitespace after the separator is still masked to the end of the line, so a passphrase of several words is not half kept. (`src/Support/AiRuns/SecretMasker.php`)
+- **Sorting the AI run log by cost or duration lists the runs that did not report it last, in both directions.** PostgreSQL put them first when sorting descending, SQLite first when sorting ascending. (`src/Filament/Resources/AiRuns/AiRunResource.php`)
+
 ## [0.0.37] - 2026-10-18
 
 ### Added
