@@ -35,6 +35,18 @@ class EditAiPromptOverride extends EditRecord
     }
 
     /**
+     * The contract answers a fresh model, so the page's own record still carries the old default hash
+     * and the review tick would stay on screen for a row that is current now. Reread the row, and
+     * clear the tick so it is not already ticked if the row goes stale again.
+     */
+    protected function afterSave(): void
+    {
+        $this->getRecord()->refresh();
+
+        $this->data['reviewed'] = false;
+    }
+
+    /**
      * Plain actions rather than Filament's delete action: that one calls `$record->delete()`
      * and would skip the contract.
      */

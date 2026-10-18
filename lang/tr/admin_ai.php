@@ -79,7 +79,7 @@ return [
     ],
 
     /*
-     * Bir prompt geçersiz kılma kaydedilirken çıkan dört ret; her biri gövde
+     * Bir prompt geçersiz kılma kaydedilirken çıkan beş ret; her biri gövde
      * ya da anahtar alanına bağlanır. `missing_phrases` gövdenin düşürdüğü her
      * ifadeyi sayar, çünkü uygulamanın ayrıştırıcısı ya da enjeksiyon çiti
      * onlara dayanır.
@@ -87,6 +87,7 @@ return [
     'refusals' => [
         'unknown_key' => '[:key] adıyla kayıtlı bir prompt yok.',
         'blank_body' => 'Prompt gövdesi boş olamaz.',
+        'body_too_long' => 'Prompt gövdesi :max karakterden uzun olamaz.',
         'default_changed' => 'Bu promptun koddaki varsayılanı siz düzenlerken değişti. '
             . 'Yeniden yükleyip yeni varsayılanı gözden geçirin, sonra kaydedin.',
         'missing_phrases' => 'Gövde şu ifadeleri korumalıdır: :phrases.',
@@ -124,6 +125,10 @@ return [
             'reviewed' => 'Yeni koddaki varsayılana göre farkı gözden geçirdim',
             'default_body' => 'Koddaki varsayılan',
             'boundary' => 'Sınır bloğu (her zaman eklenir, düzenlenemez)',
+        ],
+
+        'validation' => [
+            'reviewed' => 'Yeni koddaki varsayılana göre farkı gözden geçirdiğinizi onaylamak için kutuyu işaretleyin.',
         ],
 
         'diff' => [

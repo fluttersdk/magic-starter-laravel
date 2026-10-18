@@ -156,6 +156,31 @@ class AiPromptOverrideActionsTest extends TestCase
         $this->assertSame(0, AiPromptOverride::query()->count());
     }
 
+    public function test_save_refuses_a_body_over_the_length_limit_and_names_the_limit(): void
+    {
+        $limit = SaveAiPromptOverride::MAX_BODY_LENGTH;
+        $prefix = 'Analyse this incident: ';
+
+        $message = $this->assertRefused('body', fn () => app(SavesAiPromptOverrides::class)->save(
+            new ConcreteUser,
+            $this->input(['body' => $prefix . str_repeat('a', $limit - mb_strlen($prefix) + 1)]),
+        ));
+
+        $this->assertStringContainsString((string) $limit, $message);
+        $this->assertSame(0, AiPromptOverride::query()->count());
+    }
+
+    public function test_save_counts_characters_not_bytes_for_the_length_limit(): void
+    {
+        $limit = SaveAiPromptOverride::MAX_BODY_LENGTH;
+        $prefix = 'Analyse this incident: ';
+        $body = $prefix . str_repeat('é', $limit - mb_strlen($prefix));
+
+        $override = app(SavesAiPromptOverrides::class)->save(new ConcreteUser, $this->input(['body' => $body]));
+
+        $this->assertSame($limit, mb_strlen($override->fresh()->body));
+    }
+
     public function test_save_then_delete_leaves_no_row(): void
     {
         $override = app(SavesAiPromptOverrides::class)->save(new ConcreteUser, $this->input());

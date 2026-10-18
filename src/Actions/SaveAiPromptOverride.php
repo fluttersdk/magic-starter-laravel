@@ -19,9 +19,17 @@ use Illuminate\Validation\ValidationException;
  * default that is live now, and an edit started on an older one is refused even
  * when its body is valid, so a changed default is reviewed instead of silently
  * overwritten.
+ *
+ * A body longer than {@see MAX_BODY_LENGTH} characters is refused: a prompt is sent with every call,
+ * so an unbounded one is an unbounded bill.
  */
 class SaveAiPromptOverride implements SavesAiPromptOverrides
 {
+    /**
+     * The longest body a save accepts, in characters.
+     */
+    public const MAX_BODY_LENGTH = 32000;
+
     public function __construct(
         private readonly PromptRegistry $registry,
     ) {}
@@ -53,12 +61,17 @@ class SaveAiPromptOverride implements SavesAiPromptOverrides
             throw $this->refusal('body', 'blank_body');
         }
 
-        // 3. The editor opened on a code default that has since changed.
+        // 3. A body past the limit is refused whole, never cut.
+        if (mb_strlen($body) > self::MAX_BODY_LENGTH) {
+            throw $this->refusal('body', 'body_too_long', ['max' => (string) self::MAX_BODY_LENGTH]);
+        }
+
+        // 4. The editor opened on a code default that has since changed.
         if (($input['loaded_default_hash'] ?? null) !== $definition->defaultHash()) {
             throw $this->refusal('body', 'default_changed');
         }
 
-        // 4. The body must keep every phrase the host's parser or fence depends on.
+        // 5. The body must keep every phrase the host's parser or fence depends on.
         $missing = RequiredPhrases::missing($body, $definition->requiredPhrases);
 
         if ($missing !== []) {
@@ -67,7 +80,7 @@ class SaveAiPromptOverride implements SavesAiPromptOverrides
             ]);
         }
 
-        // 5. One row per key, with the hash computed here and never taken from the client.
+        // 6. One row per key, with the hash computed here and never taken from the client.
         return AiPromptOverride::query()->updateOrCreate(
             ['key' => $key],
             [
