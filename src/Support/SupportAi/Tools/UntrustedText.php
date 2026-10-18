@@ -62,16 +62,17 @@ final class UntrustedText
 
     /**
      * Any scheme (`https://`, `ftp://`), a protocol-relative `//host`, a `www.`
-     * host, and a bare host followed by a port, a path, or a query or fragment
-     * (`evil.example:8080`, `evil.example/login`, `evil.example?x=1`). A bare
-     * name with nothing after it stays: `evil.example` reads the same as
-     * `Node.js` or `health.json`, and so does `Node.js?` ending a question. An
-     * email address is not a host with a path, so it stays.
+     * host, and a bare host followed by a path, a query or a fragment, with or
+     * without a port (`evil.example/login`, `evil.example:8080/login`,
+     * `evil.example?x=1`). A bare name with nothing after it stays:
+     * `evil.example` reads the same as `Node.js` or `health.json`, a bare
+     * `host:port` the same as the file location `app.js:42`, and a question may
+     * end in `Node.js?`. An email address is not a host with a path, so it stays.
      */
     private const LINK_PATTERN = '~\b[a-z][a-z0-9+.\-]*://\S+'
         . '|(?<![\w:/])//(?:[a-z0-9\-]+\.)+[a-z0-9\-]+\S*'
         . '|\bwww\.\S+'
-        . '|(?<![\w@.\-])(?:[a-z0-9](?:[a-z0-9\-]*[a-z0-9])?\.)+[a-z]{2,63}(?::\d{1,5}|(?=/|[?#]\S))\S*~iu';
+        . '|(?<![\w@.\-])(?:[a-z0-9](?:[a-z0-9\-]*[a-z0-9])?\.)+[a-z]{2,63}(?::\d{1,5})?(?=/|[?#]\S)\S*~iu';
 
     private const ELLIPSIS = '…';
 

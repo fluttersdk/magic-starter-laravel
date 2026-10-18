@@ -168,7 +168,7 @@ Each string is cleaned in a fixed order before the JSON is written:
 1. Invalid UTF-8 is made valid, so the patterns after it cannot blank the value.
 2. Invisible format characters (zero-width spaces and joiners, bidi overrides, the byte order mark, tag characters) are removed, so a marker split by one re-forms.
 3. Control characters and the Unicode line and paragraph separators become spaces, so the data is one line.
-4. A link becomes `[link]`: any scheme (`https://`, `ftp://`), a protocol-relative `//host`, a `www.` host and a bare host followed by a port, a path, or a query or fragment (`evil.example:8080`, `evil.example/login`, `evil.example?x=1`). A bare name with nothing after it (`evil.example`) stays, because it reads the same as `Node.js` or `health.json`, and so does an email address.
+4. A link becomes `[link]`: any scheme (`https://`, `ftp://`), a protocol-relative `//host`, a `www.` host and a bare host followed by a path, a query or a fragment, with or without a port (`evil.example/login`, `evil.example:8080/login`, `evil.example?x=1`). A bare name with nothing after it (`evil.example`) stays, because it reads the same as `Node.js` or `health.json`; so does a bare `host:port`, which reads the same as the file location `app.js:42` in an error message, and so does an email address.
 5. Runs of three or more `-` or `=`, and the uppercase words `UNTRUSTED` and `END UNTRUSTED`, become `[fence]`.
 6. The text is cut to the cap, counted in characters, with the trailing `…` inside it.
 7. The result is encoded as JSON, where a string is bounded by its quotes and escapes.

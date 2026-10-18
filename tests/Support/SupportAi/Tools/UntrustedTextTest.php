@@ -157,13 +157,14 @@ class UntrustedTextTest extends TestCase
             label: 'subject',
             text: 'a ftp://evil.example/f b //evil.example/x c evil.example/login d sub.evil-site.co.uk/ e '
                 . 'evil.example f Node.js g health.json h 1 // 2 i ops@example.com j evil.example:8080/login '
-                . 'k evil.example:8080 l evil.example?x=1 m evil.example#top n Is it Node.js? o',
+                . 'k evil.example:8080 l evil.example?x=1 m evil.example#top n Is it Node.js? o Error at app.js:42 '
+                . 'p evil.example:8080?x=1',
             maxLength: 500,
         ));
 
         $this->assertSame(
             'a [link] b [link] c [link] d [link] e evil.example f Node.js g health.json h 1 // 2 i ops@example.com '
-                . 'j [link] k [link] l [link] m [link] n Is it Node.js? o',
+                . 'j [link] k evil.example:8080 l [link] m [link] n Is it Node.js? o Error at app.js:42 p [link]',
             $decoded,
         );
     }
