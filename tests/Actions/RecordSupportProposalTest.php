@@ -40,7 +40,7 @@ use PHPUnit\Framework\Attributes\DataProvider;
  */
 class RecordSupportProposalTest extends TestCase
 {
-    private const RECORDED = 'Recorded. A teammate will review this request; '
+    private const RECORDED_TAIL = ' A teammate will review this request; '
         . 'tell the customer a person will confirm it here.';
 
     private const OWNER_ONLY = 'Only the account owner can request this change. '
@@ -147,7 +147,7 @@ class RecordSupportProposalTest extends TestCase
             $trigger->getKey(),
         );
 
-        $this->assertSame(self::RECORDED, $sentence);
+        $this->assertSame($this->recorded('extend the trial to 2026-10-20'), $sentence);
 
         $proposal = SupportProposal::query()->sole();
         $this->assertSame(SupportProposalStatus::DRAFT, $proposal->status);
@@ -195,13 +195,13 @@ class RecordSupportProposalTest extends TestCase
         ] as $until) {
             $sentence = $this->record($conversation, SupportProposalAction::EXTEND_TRIAL, ['until' => $until]);
 
-            $this->assertNotSame(self::RECORDED, $sentence, "{$until} is outside the window.");
+            $this->assertStringStartsNotWith('Recorded:', $sentence, "{$until} is outside the window.");
         }
 
         $this->assertSame(0, SupportProposal::query()->count());
 
         $this->assertSame(
-            self::RECORDED,
+            $this->recorded('extend the trial to 2026-10-27'),
             $this->record($conversation, SupportProposalAction::EXTEND_TRIAL, ['until' => '2026-10-27']),
         );
     }
@@ -235,7 +235,7 @@ class RecordSupportProposalTest extends TestCase
             $until === null ? [] : ['until' => $until],
         );
 
-        $this->assertNotSame(self::RECORDED, $sentence);
+        $this->assertStringStartsNotWith('Recorded:', $sentence);
         $this->assertStringContainsString('YYYY-MM-DD', $sentence);
         $this->assertSame(0, SupportProposal::query()->count());
     }
@@ -264,7 +264,7 @@ class RecordSupportProposalTest extends TestCase
 
         $sentence = $this->record($conversation, SupportProposalAction::CANCEL_AT_PERIOD_END, ['until' => 'x']);
 
-        $this->assertSame(self::RECORDED, $sentence);
+        $this->assertSame($this->recorded('cancel at the end of the period'), $sentence);
 
         $proposal = SupportProposal::query()->sole();
         $this->assertSame($member->getMorphClass(), $proposal->billable_type);
@@ -273,30 +273,94 @@ class RecordSupportProposalTest extends TestCase
         $this->assertSame([], $proposal->params);
     }
 
-    public function test_a_second_call_for_the_same_trigger_returns_success_without_a_second_row(): void
+    public function test_a_retry_while_still_a_draft_keeps_the_latest_call_in_one_row(): void
     {
         [$owner, $team] = $this->ownedTeam();
         $this->subscription($team, 'trialing', trialEndsAt: $this->now()->addDays(3));
         $conversation = $this->conversation($owner, $team);
         $trigger = $this->message($conversation);
-        $params = ['until' => '2026-10-20'];
 
         $this->assertSame(
-            self::RECORDED,
-            $this->record($conversation, SupportProposalAction::EXTEND_TRIAL, $params, null, $trigger->getKey()),
+            $this->recorded('extend the trial to 2026-10-25'),
+            $this->record(
+                $conversation,
+                SupportProposalAction::EXTEND_TRIAL,
+                ['until' => '2026-10-25'],
+                'First try.',
+                $trigger->getKey(),
+            ),
         );
         $this->assertSame(
-            self::RECORDED,
-            $this->record($conversation, SupportProposalAction::EXTEND_TRIAL, $params, null, $trigger->getKey()),
+            $this->recorded('extend the trial to 2026-10-27'),
+            $this->record(
+                $conversation,
+                SupportProposalAction::EXTEND_TRIAL,
+                ['until' => '2026-10-27'],
+                'Second try.',
+                $trigger->getKey(),
+            ),
         );
 
-        // A retry after the turn landed finds its own row promoted, and still answers success.
+        $proposal = SupportProposal::query()->sole();
+        $this->assertSame(SupportProposalStatus::DRAFT, $proposal->status);
+        $this->assertSame(['until' => '2026-10-27'], $proposal->params);
+        $this->assertSame('Second try.', $proposal->rationale);
+    }
+
+    public function test_a_retry_after_the_turn_landed_leaves_the_promoted_row_and_echoes_it(): void
+    {
+        [$owner, $team] = $this->ownedTeam();
+        $this->subscription($team, 'trialing', trialEndsAt: $this->now()->addDays(3));
+        $conversation = $this->conversation($owner, $team);
+        $trigger = $this->message($conversation);
+
+        $this->record(
+            $conversation,
+            SupportProposalAction::EXTEND_TRIAL,
+            ['until' => '2026-10-27'],
+            'What staff see.',
+            $trigger->getKey(),
+        );
         SupportProposal::promoteDrafts($conversation, $trigger->getKey());
 
         $this->assertSame(
-            self::RECORDED,
-            $this->record($conversation, SupportProposalAction::EXTEND_TRIAL, $params, null, $trigger->getKey()),
+            $this->recorded('extend the trial to 2026-10-27'),
+            $this->record(
+                $conversation,
+                SupportProposalAction::EXTEND_TRIAL,
+                ['until' => '2026-10-20'],
+                'A late retry.',
+                $trigger->getKey(),
+            ),
         );
+
+        $proposal = SupportProposal::query()->sole();
+        $this->assertSame(SupportProposalStatus::PENDING, $proposal->status);
+        $this->assertSame(['until' => '2026-10-27'], $proposal->params);
+        $this->assertSame('What staff see.', $proposal->rationale);
+    }
+
+    public function test_an_executing_row_blocks_a_new_one_for_the_same_action(): void
+    {
+        [$owner, $team] = $this->ownedTeam();
+        $this->subscription($team);
+        $conversation = $this->conversation($owner, $team);
+        $earlier = $this->message($conversation);
+        $later = $this->message($conversation);
+        $this->proposal($conversation, $team, $earlier, SupportProposalAction::CANCEL_AT_PERIOD_END, [
+            'status' => SupportProposalStatus::EXECUTING,
+            'expires_at' => $this->now()->subHour(),
+        ]);
+
+        $sentence = $this->record(
+            $conversation,
+            SupportProposalAction::CANCEL_AT_PERIOD_END,
+            [],
+            null,
+            $later->getKey(),
+        );
+
+        $this->assertSame(self::ALREADY_WAITING, $sentence);
         $this->assertSame(1, SupportProposal::query()->count());
     }
 
@@ -349,7 +413,7 @@ class RecordSupportProposalTest extends TestCase
             $current->getKey(),
         );
 
-        $this->assertSame(self::RECORDED, $sentence);
+        $this->assertSame($this->recorded('cancel at the end of the period'), $sentence);
         $this->assertSame(
             1,
             SupportProposal::query()->where('trigger_message_id', $current->getKey())->count(),
@@ -411,7 +475,7 @@ class RecordSupportProposalTest extends TestCase
 
         $sentence = $this->record($conversation, SupportProposalAction::CANCEL_AT_PERIOD_END);
 
-        $this->assertNotSame(self::RECORDED, $sentence);
+        $this->assertStringStartsNotWith('Recorded:', $sentence);
         $this->assertStringContainsString('account', $sentence);
         $this->assertSame(0, SupportProposal::query()->count());
     }
@@ -427,7 +491,7 @@ class RecordSupportProposalTest extends TestCase
             SupportProposalAction::CANCEL_AT_PERIOD_END,
         );
 
-        $this->assertNotSame(self::RECORDED, $sentence);
+        $this->assertStringStartsNotWith('Recorded:', $sentence);
         $this->assertNotSame(self::OWNER_ONLY, $sentence);
         $this->assertSame(0, SupportProposal::query()->count());
     }
@@ -477,7 +541,7 @@ class RecordSupportProposalTest extends TestCase
 
         $sentence = $this->record($conversation, $action, ['until' => '2026-10-20']);
 
-        $this->assertNotSame(self::RECORDED, $sentence);
+        $this->assertStringStartsNotWith('Recorded:', $sentence);
         $this->assertSame(0, SupportProposal::query()->count());
     }
 
@@ -498,7 +562,10 @@ class RecordSupportProposalTest extends TestCase
         $this->subscription($team, endsAt: $this->now()->addDays(5));
         $conversation = $this->conversation($owner, $team);
 
-        $this->assertSame(self::RECORDED, $this->record($conversation, SupportProposalAction::RESUME));
+        $this->assertSame(
+            $this->recorded('resume the subscription'),
+            $this->record($conversation, SupportProposalAction::RESUME),
+        );
         $this->assertSame(SupportProposalAction::RESUME, SupportProposal::query()->sole()->action);
     }
 
@@ -519,6 +586,14 @@ class RecordSupportProposalTest extends TestCase
             $rationale,
             $triggerMessageId,
         );
+    }
+
+    /**
+     * The success sentence, naming what is stored.
+     */
+    private function recorded(string $what): string
+    {
+        return "Recorded: {$what}." . self::RECORDED_TAIL;
     }
 
     private function now(): CarbonImmutable

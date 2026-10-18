@@ -4,10 +4,12 @@ namespace FlutterSdk\MagicStarter\Tests\Actions;
 
 use Carbon\CarbonImmutable;
 use Carbon\CarbonInterface;
+use Closure;
 use Filament\Facades\Filament;
 use Filament\Panel;
 use FlutterSdk\MagicStarter\Contracts\AdministersBilling;
 use FlutterSdk\MagicStarter\Contracts\DecidesSupportProposals;
+use FlutterSdk\MagicStarter\Enums\BillingProvider;
 use FlutterSdk\MagicStarter\Enums\SupportConversationSource;
 use FlutterSdk\MagicStarter\Enums\SupportConversationStatus;
 use FlutterSdk\MagicStarter\Enums\SupportMessageKind;
@@ -16,6 +18,7 @@ use FlutterSdk\MagicStarter\Enums\SupportProposalStatus;
 use FlutterSdk\MagicStarter\Enums\SupportSenderType;
 use FlutterSdk\MagicStarter\Events\SupportConversationUpdated;
 use FlutterSdk\MagicStarter\Features;
+use FlutterSdk\MagicStarter\Filament\MagicStarterPlugin;
 use FlutterSdk\MagicStarter\MagicStarter;
 use FlutterSdk\MagicStarter\Models\BillingGrant;
 use FlutterSdk\MagicStarter\Models\Subscription;
@@ -30,12 +33,15 @@ use Illuminate\Contracts\Auth\Authenticatable;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Event;
+use Illuminate\Support\Facades\Lang;
 use Illuminate\Support\Str;
 use Illuminate\Validation\ValidationException;
 use Laravel\Cashier\Billable;
 use Laravel\Cashier\Cashier;
 use Laravel\Cashier\Subscription as CashierSubscription;
 use RuntimeException;
+use Stripe\Exception\ApiConnectionException;
+use Stripe\Exception\InvalidRequestException;
 use Throwable;
 
 /**
@@ -50,6 +56,8 @@ use Throwable;
 class DecideSupportProposalTest extends FilamentTestCase
 {
     private const STAFF_EMAIL = 'staff@example.com';
+
+    private const SECOND_STAFF_EMAIL = 'second@example.com';
 
     private RecordingProposalBilling $billing;
 
@@ -77,7 +85,10 @@ class DecideSupportProposalTest extends FilamentTestCase
                 ],
             ],
             'magic-starter.billing.revenuecat.secret_api_key' => null,
-            'magic-starter.admin.emails' => [self::STAFF_EMAIL],
+            'magic-starter.admin.emails' => [
+                self::STAFF_EMAIL,
+                self::SECOND_STAFF_EMAIL,
+            ],
             'magic-starter.admin.billing_emails' => [],
         ]);
     }
@@ -193,7 +204,7 @@ class DecideSupportProposalTest extends FilamentTestCase
         ]);
 
         $this->assertRefused(
-            'This request expired before it was approved.',
+            'This request expired before it was decided.',
             fn () => $this->decider()->approve($this->staff(), $proposal, $this->panel()),
         );
 
@@ -411,7 +422,10 @@ class DecideSupportProposalTest extends FilamentTestCase
         $this->assertSame('The plan was already resumed by phone.', $fresh->decision_reason);
         $this->assertSame((string) $staff->getKey(), (string) $fresh->decided_by);
         $this->assertNotNull($fresh->decided_at);
-        $this->assertSame(['A teammate declined your request: Resume the subscription.'], $this->activityLines($conversation));
+        $this->assertSame(
+            ['A teammate declined your request: Resume the subscription.'],
+            $this->activityLines($conversation),
+        );
         $this->assertSame([], $this->billing->calls);
 
         $this->assertRefused(
@@ -430,7 +444,7 @@ class DecideSupportProposalTest extends FilamentTestCase
         ]);
 
         $this->assertRefused(
-            'Only a request whose approval is still running can be marked as failed.',
+            'Only a request whose approval is still running can be marked failed or applied.',
             fn () => $this->decider()->markFailed($this->staff(), $pending, $this->panel(), 'Stuck'),
         );
         $this->assertSame(SupportProposalStatus::PENDING, $pending->fresh()?->status);
@@ -458,6 +472,202 @@ class DecideSupportProposalTest extends FilamentTestCase
             ['Bir ekip arkadaşımız talebinizi onayladı: Aboneliği sürdür.'],
             $this->activityLines($conversation),
         );
+    }
+
+    public function test_a_stripe_connection_failure_leaves_the_proposal_executing_and_tells_nobody(): void
+    {
+        [$owner, $team] = $this->ownedTeam();
+        $conversation = $this->conversation($owner, $team);
+        $proposal = $this->proposal($conversation, $team, SupportProposalAction::CANCEL_AT_PERIOD_END);
+        $this->billing->failure = new BillingAdministrationRefused(
+            'rail_error',
+            BillingProvider::STRIPE,
+            new ApiConnectionException('timeout'),
+        );
+
+        try {
+            $this->decider()->approve($this->staff(), $proposal, $this->panel());
+            $this->fail('The refusal should propagate.');
+        } catch (BillingAdministrationRefused $refusal) {
+            $this->assertSame('rail_error', $refusal->reason());
+        }
+
+        $fresh = $proposal->fresh();
+        $this->assertSame(SupportProposalStatus::EXECUTING, $fresh?->status);
+        $this->assertNull($fresh->decision_reason);
+        $this->assertSame([], $this->activityLines($conversation));
+    }
+
+    public function test_a_rail_error_stripe_answered_leaves_the_proposal_failed(): void
+    {
+        [$owner, $team] = $this->ownedTeam();
+        $conversation = $this->conversation($owner, $team);
+        $proposal = $this->proposal($conversation, $team, SupportProposalAction::CANCEL_AT_PERIOD_END);
+        $this->billing->failure = new BillingAdministrationRefused(
+            'rail_error',
+            BillingProvider::STRIPE,
+            new InvalidRequestException('No such subscription.'),
+        );
+
+        try {
+            $this->decider()->approve($this->staff(), $proposal, $this->panel());
+            $this->fail('The refusal should propagate.');
+        } catch (BillingAdministrationRefused) {
+            // Expected: the refusal reaches the panel.
+        }
+
+        $this->assertFailedWith('rail_error', $proposal);
+        $this->assertCount(1, $this->activityLines($conversation));
+    }
+
+    public function test_the_billing_gate_reads_the_panel_passed_in_not_the_current_one(): void
+    {
+        [$owner, $team] = $this->ownedTeam();
+        $conversation = $this->conversation($owner, $team);
+        $proposal = $this->proposal($conversation, $team, SupportProposalAction::CANCEL_AT_PERIOD_END);
+        $strict = Panel::make()
+            ->id('strict')
+            ->plugin(MagicStarterPlugin::make()->authorizeBillingUsing(static fn (): bool => false));
+
+        Filament::setCurrentPanel(null);
+
+        $this->assertRefused(
+            'You are not allowed to decide billing requests.',
+            fn () => $this->decider()->approve($this->staff(), $proposal, $strict),
+        );
+
+        $this->assertSame([], $this->billing->calls);
+        $this->assertSame(SupportProposalStatus::PENDING, $proposal->fresh()?->status);
+    }
+
+    public function test_a_mark_failed_while_billing_runs_stands_and_no_approved_line_is_posted(): void
+    {
+        [$owner, $team] = $this->ownedTeam();
+        $conversation = $this->conversation($owner, $team);
+        $proposal = $this->proposal($conversation, $team, SupportProposalAction::CANCEL_AT_PERIOD_END);
+        $second = $this->staff(self::SECOND_STAFF_EMAIL);
+        $this->billing->during = function () use ($second, $proposal): void {
+            $this->decider()->markFailed($second, $proposal, $this->panel(), 'Looked stuck.');
+        };
+
+        $this->decider()->approve($this->staff(), $proposal, $this->panel());
+
+        $this->assertCount(1, $this->billing->calls);
+        $this->assertFailedWith('Looked stuck.', $proposal);
+        $this->assertSame((string) $second->getKey(), (string) $proposal->fresh()?->decided_by);
+        $this->assertSame([], $this->activityLines($conversation));
+    }
+
+    public function test_reject_on_an_expired_pending_row_expires_it_and_refuses(): void
+    {
+        [$owner, $team] = $this->ownedTeam();
+        $conversation = $this->conversation($owner, $team);
+        $proposal = $this->proposal($conversation, $team, SupportProposalAction::RESUME, [], [
+            'expires_at' => $this->now(),
+        ]);
+
+        $this->assertRefused(
+            'This request expired before it was decided.',
+            fn () => $this->decider()->reject($this->staff(), $proposal, $this->panel(), 'Too late.'),
+        );
+
+        $this->assertSame(SupportProposalStatus::EXPIRED, $proposal->fresh()?->status);
+        $this->assertSame([], $this->activityLines($conversation));
+    }
+
+    public function test_mark_failed_records_the_staff_member_who_marked_it(): void
+    {
+        [$owner, $team] = $this->ownedTeam();
+        $conversation = $this->conversation($owner, $team);
+        $approver = $this->staff();
+        $marker = $this->staff(self::SECOND_STAFF_EMAIL);
+        $executing = $this->proposal($conversation, $team, SupportProposalAction::RESUME, [], [
+            'status' => SupportProposalStatus::EXECUTING,
+            'decided_by' => $approver->getKey(),
+            'decided_at' => $this->now()->subHour(),
+        ]);
+
+        $this->decider()->markFailed($marker, $executing, $this->panel(), 'Stripe shows no change.');
+
+        $fresh = $executing->fresh();
+        $this->assertSame((string) $marker->getKey(), (string) $fresh?->decided_by);
+        $this->assertTrue($fresh->decided_at?->equalTo($this->now()));
+    }
+
+    public function test_mark_applied_closes_an_executing_row_as_approved_and_tells_the_customer(): void
+    {
+        Event::fake([SupportConversationUpdated::class]);
+        [$owner, $team] = $this->ownedTeam();
+        $owner->forceFill([
+            'locale' => 'tr',
+        ])->save();
+        $conversation = $this->conversation($owner, $team);
+        $marker = $this->staff(self::SECOND_STAFF_EMAIL);
+        $pending = $this->proposal($conversation, $team, SupportProposalAction::CANCEL_AT_PERIOD_END);
+        $executing = $this->proposal($conversation, $team, SupportProposalAction::RESUME, [], [
+            'status' => SupportProposalStatus::EXECUTING,
+            'decided_by' => $this->staff()->getKey(),
+            'decided_at' => $this->now()->subHour(),
+        ]);
+
+        $this->assertRefused(
+            'Only a request whose approval is still running can be marked failed or applied.',
+            fn () => $this->decider()->markApplied($marker, $pending, $this->panel(), 'Applied'),
+        );
+        $this->assertSame(SupportProposalStatus::PENDING, $pending->fresh()?->status);
+
+        $this->decider()->markApplied($marker, $executing, $this->panel(), 'The billing events show the resume.');
+
+        $fresh = $executing->fresh();
+        $this->assertSame(SupportProposalStatus::APPROVED, $fresh?->status);
+        $this->assertSame('The billing events show the resume.', $fresh->decision_reason);
+        $this->assertSame((string) $marker->getKey(), (string) $fresh->decided_by);
+        $this->assertTrue($fresh->decided_at?->equalTo($this->now()));
+        $this->assertSame(
+            ['Bir ekip arkadaşımız talebinizi onayladı: Aboneliği sürdür.'],
+            $this->activityLines($conversation),
+        );
+        $this->assertSame([], $this->billing->calls);
+        Event::assertDispatchedTimes(SupportConversationUpdated::class, 1);
+    }
+
+    public function test_mark_applied_is_refused_to_a_staff_member_outside_the_billing_allowlist(): void
+    {
+        config()->set('magic-starter.admin.billing_emails', ['finance@example.com']);
+        [$owner, $team] = $this->ownedTeam();
+        $conversation = $this->conversation($owner, $team);
+        $executing = $this->proposal($conversation, $team, SupportProposalAction::RESUME, [], [
+            'status' => SupportProposalStatus::EXECUTING,
+        ]);
+
+        $this->assertRefused(
+            'You are not allowed to decide billing requests.',
+            fn () => $this->decider()->markApplied($this->staff(), $executing, $this->panel(), 'Applied'),
+        );
+
+        $this->assertSame(SupportProposalStatus::EXECUTING, $executing->fresh()?->status);
+    }
+
+    public function test_the_refusals_are_staff_copy_and_the_customer_file_keeps_only_the_thread_lines(): void
+    {
+        $this->assertSame(
+            'This request has already been decided.',
+            __('magic-starter::admin_support.proposals.refusals.already_decided'),
+        );
+
+        foreach ([
+            'en',
+            'tr',
+        ] as $locale) {
+            $this->assertSame(
+                [
+                    'approved',
+                    'declined',
+                    'failed',
+                ],
+                array_keys((array) Lang::get('magic-starter::support.proposals', [], $locale)),
+            );
+        }
     }
 
     private function decider(): DecidesSupportProposals
@@ -635,11 +845,24 @@ class DecisionTeam extends ConcreteTeam
 class RecordingProposalBilling implements AdministersBilling
 {
     /**
-     * @var list<array{method: string, actor: Authenticatable, billable: Model, until: CarbonInterface|null, transactionLevel: int}>
+     * @var list<array{
+     *     method: string,
+     *     actor: Authenticatable,
+     *     billable: Model,
+     *     until: CarbonInterface|null,
+     *     transactionLevel: int,
+     * }>
      */
     public array $calls = [];
 
     public ?Throwable $failure = null;
+
+    /**
+     * Runs inside the billing call, where another staff member's decision can land while Stripe answers.
+     *
+     * @var (Closure(): void)|null
+     */
+    public ?Closure $during = null;
 
     public function grant(
         Authenticatable $actor,
@@ -700,8 +923,12 @@ class RecordingProposalBilling implements AdministersBilling
         return null;
     }
 
-    private function record(string $method, Authenticatable $actor, Model $billable, ?CarbonInterface $until = null): void
-    {
+    private function record(
+        string $method,
+        Authenticatable $actor,
+        Model $billable,
+        ?CarbonInterface $until = null,
+    ): void {
         $this->calls[] = [
             'method' => $method,
             'actor' => $actor,
@@ -709,6 +936,10 @@ class RecordingProposalBilling implements AdministersBilling
             'until' => $until,
             'transactionLevel' => DB::transactionLevel(),
         ];
+
+        if ($this->during !== null) {
+            ($this->during)();
+        }
 
         if ($this->failure !== null) {
             throw $this->failure;

@@ -27,6 +27,7 @@ use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Gate;
 use Illuminate\Support\Facades\Lang;
 use Illuminate\Validation\ValidationException;
+use Stripe\Exception\ApiConnectionException;
 
 /**
  * Decides a support proposal for a staff member of the admin panel.
@@ -36,14 +37,18 @@ use Illuminate\Validation\ValidationException;
  * in one short transaction, then calls {@see AdministersBilling} with nothing
  * open: the rail call and the `billing_events` rows it writes commit on their
  * own, and a crash leaves the row `executing` for staff to confirm by hand
- * rather than a second approval charging twice. A refusal found under the lock
- * is returned from the transaction, never thrown inside it, so the status it
- * wrote (expired, failed) commits before the ValidationException leaves.
+ * rather than a second approval charging twice. A Stripe call that never got an
+ * answer is treated the same way: it may have applied, so the row stays
+ * `executing` until staff check the billing events and mark it applied or
+ * failed. A refusal found under the lock is returned from the transaction,
+ * never thrown inside it, so the status it wrote (expired, failed) commits
+ * before the ValidationException leaves.
  */
 class DecideSupportProposal implements DecidesSupportProposals
 {
     public function __construct(
         private readonly AdministersBilling $billing,
+        private readonly SupportHandoff $handoff,
     ) {}
 
     public function approve(Authenticatable $staff, SupportProposal $proposal, Panel $panel): void
@@ -65,11 +70,14 @@ class DecideSupportProposal implements DecidesSupportProposals
             throw $this->refusal($claim);
         }
 
-        // 4. Run the change with no transaction open. Any other failure leaves the row executing.
+        // 4. Run the change with no transaction open. Any other failure, and a refusal whose outcome
+        //    is unknown, leaves the row executing for staff to check.
         try {
             $claim();
         } catch (BillingAdministrationRefused $refusal) {
-            $this->settle($proposal, SupportProposalStatus::FAILED, $refusal->reason(), 'failed');
+            if (! $this->outcomeUnknown($refusal)) {
+                $this->settle($proposal, SupportProposalStatus::FAILED, $refusal->reason(), 'failed');
+            }
 
             throw $refusal;
         }
@@ -80,13 +88,23 @@ class DecideSupportProposal implements DecidesSupportProposals
 
     public function reject(Authenticatable $staff, SupportProposal $proposal, Panel $panel, string $reason): void
     {
+        // 1. Only a billing-cleared member of this panel decides.
         $this->authorize($staff, $panel);
 
+        // 2. Decline a row still pending before its deadline; a lapsed one is expired instead, as approval does.
         $refusal = DB::transaction(function () use ($staff, $proposal, $reason): ?string {
             $locked = $this->lock($proposal);
 
             if ($locked?->status !== SupportProposalStatus::PENDING) {
                 return 'already_decided';
+            }
+
+            if ($locked->expires_at->lte(now())) {
+                $locked->forceFill([
+                    'status' => SupportProposalStatus::EXPIRED,
+                ])->save();
+
+                return 'expired';
             }
 
             $locked->forceFill([
@@ -103,6 +121,7 @@ class DecideSupportProposal implements DecidesSupportProposals
 
         $proposal->refresh();
 
+        // 3. Refuse with what the lock found, or push the declined line to the thread.
         if ($refusal !== null) {
             throw $this->refusal($refusal);
         }
@@ -112,28 +131,81 @@ class DecideSupportProposal implements DecidesSupportProposals
 
     public function markFailed(Authenticatable $staff, SupportProposal $proposal, Panel $panel, string $reason): void
     {
+        // 1. Only a billing-cleared member of this panel decides.
         $this->authorize($staff, $panel);
 
-        $refusal = DB::transaction(function () use ($proposal, $reason): ?string {
+        // 2. Close the running approval as failed, recorded as this staff member's decision; nobody is told.
+        $closed = $this->closeExecuting($staff, $proposal, SupportProposalStatus::FAILED, $reason, null);
+
+        // 3. Refuse a row that is not executing.
+        if (! $closed) {
+            throw $this->refusal('not_executing');
+        }
+    }
+
+    public function markApplied(Authenticatable $staff, SupportProposal $proposal, Panel $panel, string $reason): void
+    {
+        // 1. Only a billing-cleared member of this panel decides.
+        $this->authorize($staff, $panel);
+
+        // 2. Close the running approval as approved, as this staff member, and tell the customer it applied.
+        $closed = $this->closeExecuting($staff, $proposal, SupportProposalStatus::APPROVED, $reason, 'approved');
+
+        // 3. Refuse a row that is not executing, or push the approved line to the thread.
+        if (! $closed) {
+            throw $this->refusal('not_executing');
+        }
+
+        $this->refreshThread($proposal);
+    }
+
+    /**
+     * Whether a refusal leaves it unknown if the change applied: a Stripe call
+     * that could not connect or never answered may still have gone through.
+     */
+    private function outcomeUnknown(BillingAdministrationRefused $refusal): bool
+    {
+        return $refusal->reason() === 'rail_error' && $refusal->getPrevious() instanceof ApiConnectionException;
+    }
+
+    /**
+     * Under the row lock, close an `executing` row by hand as `$status`, with
+     * `$staff` as the final decider, and post `$line` to the customer when one
+     * is given. Returns false, writing nothing, when the row is not executing.
+     *
+     * @param  string|null  $line  A key of `support.proposals`, or null to tell the customer nothing.
+     */
+    private function closeExecuting(
+        Authenticatable $staff,
+        SupportProposal $proposal,
+        SupportProposalStatus $status,
+        string $reason,
+        ?string $line,
+    ): bool {
+        $closed = DB::transaction(function () use ($staff, $proposal, $status, $reason, $line): bool {
             $locked = $this->lock($proposal);
 
             if ($locked?->status !== SupportProposalStatus::EXECUTING) {
-                return 'not_executing';
+                return false;
             }
 
             $locked->forceFill([
-                'status' => SupportProposalStatus::FAILED,
+                'status' => $status,
+                'decided_by' => $staff->getAuthIdentifier(),
+                'decided_at' => now(),
                 'decision_reason' => $reason,
             ])->save();
 
-            return null;
+            if ($line !== null) {
+                $this->tellCustomer($locked, $line);
+            }
+
+            return true;
         });
 
         $proposal->refresh();
 
-        if ($refusal !== null) {
-            throw $this->refusal($refusal);
-        }
+        return $closed;
     }
 
     /**
@@ -267,6 +339,10 @@ class DecideSupportProposal implements DecidesSupportProposals
     /**
      * Write an approval's final status and the customer's line together, after the billing call returned.
      *
+     * The row is re-read under its lock and written only while it is still
+     * `executing`: another staff member may have marked it applied or failed
+     * while the billing call ran, and that decision stands, with no second line.
+     *
      * @param  string  $line  A key of `support.proposals`: `approved` or `failed`.
      */
     private function settle(
@@ -275,16 +351,28 @@ class DecideSupportProposal implements DecidesSupportProposals
         ?string $reason,
         string $line,
     ): void {
-        DB::transaction(function () use ($proposal, $status, $reason, $line): void {
-            $proposal->forceFill([
+        $settled = DB::transaction(function () use ($proposal, $status, $reason, $line): bool {
+            $locked = $this->lock($proposal);
+
+            if ($locked?->status !== SupportProposalStatus::EXECUTING) {
+                return false;
+            }
+
+            $locked->forceFill([
                 'status' => $status,
                 'decision_reason' => $reason,
             ])->save();
 
-            $this->tellCustomer($proposal, $line);
+            $this->tellCustomer($locked, $line);
+
+            return true;
         });
 
-        $this->refreshThread($proposal);
+        $proposal->refresh();
+
+        if ($settled) {
+            $this->refreshThread($proposal);
+        }
     }
 
     /**
@@ -307,7 +395,7 @@ class DecideSupportProposal implements DecidesSupportProposals
     private function tellCustomer(SupportProposal $proposal, string $line): void
     {
         $conversation = $proposal->conversation;
-        $locale = $this->locale($conversation);
+        $locale = $this->handoff->locale($conversation);
         $action = $proposal->action->label($locale);
 
         $conversation->messages()->create([
@@ -323,16 +411,6 @@ class DecideSupportProposal implements DecidesSupportProposals
     }
 
     /**
-     * The conversation's language, resolved as {@see SupportHandoff::locale()} resolves it.
-     */
-    private function locale(SupportConversation $conversation): string
-    {
-        $locale = $conversation->user?->getAttribute('locale');
-
-        return is_string($locale) && $locale !== '' ? $locale : (string) config('app.locale', 'en');
-    }
-
-    /**
      * The proposal's row re-read under `FOR UPDATE`, or null once it is gone.
      */
     private function lock(SupportProposal $proposal): ?SupportProposal
@@ -344,13 +422,17 @@ class DecideSupportProposal implements DecidesSupportProposals
     }
 
     /**
-     * Refuse unless `$staff` may enter the panel and run its billing actions.
+     * Refuse unless `$staff` may enter `$panel` and run billing actions there, by that panel's own rule.
      *
      * @throws ValidationException
      */
     private function authorize(Authenticatable $staff, Panel $panel): void
     {
-        if ($staff instanceof FilamentUser && $staff->canAccessPanel($panel) && BillingAuthorization::allows($staff)) {
+        if (
+            $staff instanceof FilamentUser
+            && $staff->canAccessPanel($panel)
+            && BillingAuthorization::allows($staff, $panel)
+        ) {
             return;
         }
 
@@ -363,7 +445,7 @@ class DecideSupportProposal implements DecidesSupportProposals
     private function refusal(string $key): ValidationException
     {
         return ValidationException::withMessages([
-            'proposal' => __('magic-starter::support.proposals.refusals.' . $key),
+            'proposal' => __('magic-starter::admin_support.proposals.refusals.' . $key),
         ]);
     }
 }

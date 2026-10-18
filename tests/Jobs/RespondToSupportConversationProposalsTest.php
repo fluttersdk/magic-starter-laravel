@@ -8,7 +8,9 @@ use FlutterSdk\MagicStarter\Contracts\RespondsToSupport;
 use FlutterSdk\MagicStarter\Enums\SupportAiPool;
 use FlutterSdk\MagicStarter\Enums\SupportConversationSource;
 use FlutterSdk\MagicStarter\Enums\SupportConversationStatus;
+use FlutterSdk\MagicStarter\Enums\SupportHandoffReason;
 use FlutterSdk\MagicStarter\Enums\SupportMessageKind;
+use FlutterSdk\MagicStarter\Enums\SupportPriority;
 use FlutterSdk\MagicStarter\Enums\SupportProposalAction;
 use FlutterSdk\MagicStarter\Enums\SupportProposalStatus;
 use FlutterSdk\MagicStarter\Enums\SupportSenderType;
@@ -141,6 +143,31 @@ class RespondToSupportConversationProposalsTest extends TestCase
         );
     }
 
+    public function test_a_turn_that_hands_off_and_promotes_a_draft_alerts_staff_once_for_the_handoff(): void
+    {
+        [$conversation, $trigger] = $this->pendingTurn();
+        $this->bindResponder(function (SupportTurn $turn): SupportAnswer {
+            $this->recordDraft($turn);
+
+            return new SupportAnswer(
+                'A teammate will take this from here.',
+                0.9,
+                new SupportUsage(300, 100),
+                SupportHandoffReason::BILLING,
+                SupportPriority::NORMAL,
+            );
+        });
+
+        $this->runTurn($conversation, $trigger);
+
+        $this->assertSame(SupportProposalStatus::PENDING, SupportProposal::query()->sole()->status);
+        Event::assertDispatchedTimes(SupportConversationNeedsStaff::class, 1);
+        Event::assertDispatched(
+            SupportConversationNeedsStaff::class,
+            static fn (SupportConversationNeedsStaff $event): bool => $event->reason === 'handoff',
+        );
+    }
+
     public function test_a_turn_that_loses_ownership_leaves_the_draft_hidden_and_alerts_nobody(): void
     {
         [$conversation, $trigger] = $this->pendingTurn();
@@ -256,7 +283,7 @@ class RespondToSupportConversationProposalsTest extends TestCase
             $turn->trigger->getKey(),
         );
 
-        $this->assertStringStartsWith('Recorded.', $sentence);
+        $this->assertStringStartsWith('Recorded:', $sentence);
     }
 
     private function answer(): SupportAnswer

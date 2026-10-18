@@ -12,6 +12,7 @@ use FlutterSdk\MagicStarter\Models\SupportProposal;
 use FlutterSdk\MagicStarter\Support\StripeBillingState;
 use FlutterSdk\MagicStarter\Support\SupportAi\SupportProposalBillable;
 use FlutterSdk\MagicStarter\Support\SupportAi\SupportProposalTrialWindow;
+use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Gate;
@@ -34,7 +35,8 @@ class RecordSupportProposal implements RecordsSupportProposals
     /** The longest rationale kept, matching the tool schema's `reason`. */
     public const RATIONALE_MAX_LENGTH = 500;
 
-    private const RECORDED = 'Recorded. A teammate will review this request; '
+    /** What follows the stored request in the success sentence. */
+    private const RECORDED_TAIL = 'A teammate will review this request; '
         . 'tell the customer a person will confirm it here.';
 
     public function record(
@@ -96,11 +98,14 @@ class RecordSupportProposal implements RecordsSupportProposals
             return $refusal;
         }
 
-        // 7. Write one draft per trigger, and none while one waits for a decision.
+        // 7. Write one draft per trigger, and none while one waits for a decision or runs.
+        $params = $until === null ? [] : ['until' => $until->format('Y-m-d')];
+        $rationale = $this->rationale($rationale);
+
         return DB::transaction(function () use (
             $conversation,
             $action,
-            $until,
+            $params,
             $rationale,
             $triggerMessageId,
             $billable,
@@ -115,20 +120,33 @@ class RecordSupportProposal implements RecordsSupportProposals
                 return 'This conversation no longer exists, so nothing was recorded.';
             }
 
-            // 7a. A retried turn reruns its tool calls; its own row answers it whatever it became.
+            // 7a. A retried turn reruns its tool calls. While its row is still a hidden draft the latest call
+            //     wins; once promoted, staff may be reading it, so it stays as it is. Either way the sentence
+            //     names what is stored, so the reply cannot promise a day staff will not see.
             $retried = $locked->proposals()
                 ->where('trigger_message_id', $triggerMessageId)
                 ->where('action', $action->value)
-                ->exists();
+                ->first();
 
-            if ($retried) {
-                return self::RECORDED;
+            if ($retried !== null) {
+                if ($retried->status === SupportProposalStatus::DRAFT) {
+                    $retried->forceFill([
+                        'params' => $params,
+                        'rationale' => $rationale,
+                    ])->save();
+                }
+
+                return $this->recorded($action, $retried->params);
             }
 
+            // 7b. A pending request still before its deadline, or an approval already running, is waiting.
             $waiting = $locked->proposals()
                 ->where('action', $action->value)
-                ->where('status', SupportProposalStatus::PENDING->value)
-                ->where('expires_at', '>', now())
+                ->where(static fn (Builder $query): Builder => $query
+                    ->where('status', SupportProposalStatus::EXECUTING->value)
+                    ->orWhere(static fn (Builder $pending): Builder => $pending
+                        ->where('status', SupportProposalStatus::PENDING->value)
+                        ->where('expires_at', '>', now())))
                 ->exists();
 
             if ($waiting) {
@@ -140,15 +158,31 @@ class RecordSupportProposal implements RecordsSupportProposals
                 'billable_id' => $billable->getKey(),
                 'requested_by' => $opener->getKey(),
                 'action' => $action,
-                'params' => $until === null ? [] : ['until' => $until->format('Y-m-d')],
-                'rationale' => $this->rationale($rationale),
+                'params' => $params,
+                'rationale' => $rationale,
                 'trigger_message_id' => $triggerMessageId,
                 'status' => SupportProposalStatus::DRAFT,
                 'expires_at' => now()->addHours((int) config('magic-starter.support.proposals.expires_hours', 72)),
             ]);
 
-            return self::RECORDED;
+            return $this->recorded($action, $params);
         });
+    }
+
+    /**
+     * The success sentence, naming the request as it is stored.
+     *
+     * @param  array<string, mixed>  $params  The stored row's params, so a retry echoes what staff will see.
+     */
+    private function recorded(SupportProposalAction $action, array $params): string
+    {
+        $what = match ($action) {
+            SupportProposalAction::EXTEND_TRIAL => 'extend the trial to ' . ($params['until'] ?? ''),
+            SupportProposalAction::CANCEL_AT_PERIOD_END => 'cancel at the end of the period',
+            SupportProposalAction::RESUME => 'resume the subscription',
+        };
+
+        return "Recorded: {$what}. " . self::RECORDED_TAIL;
     }
 
     /**

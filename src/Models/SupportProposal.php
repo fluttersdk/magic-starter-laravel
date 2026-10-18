@@ -9,6 +9,7 @@ use FlutterSdk\MagicStarter\Support\ConditionallyUsesUuids;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
+use Illuminate\Database\Eloquent\Relations\MorphTo;
 use Illuminate\Support\Carbon;
 
 /**
@@ -37,6 +38,7 @@ use Illuminate\Support\Carbon;
  * @property Carbon|null $created_at
  * @property Carbon|null $updated_at
  * @property-read SupportConversation $conversation
+ * @property-read Model|null $billable
  * @property-read SupportMessage|null $triggerMessage
  * @property-read Model|null $requester
  * @property-read Model|null $decider
@@ -131,6 +133,17 @@ class SupportProposal extends Model
     public function conversation(): BelongsTo
     {
         return $this->belongsTo(SupportConversation::class, 'conversation_id');
+    }
+
+    /**
+     * The account the change would touch, resolved from `billable_type` as it
+     * was written (`getMorphClass()`), or null once that account is deleted.
+     *
+     * @return MorphTo<Model, $this>
+     */
+    public function billable(): MorphTo
+    {
+        return $this->morphTo();
     }
 
     /**

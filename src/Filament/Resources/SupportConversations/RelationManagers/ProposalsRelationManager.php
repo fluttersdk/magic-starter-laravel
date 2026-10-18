@@ -28,7 +28,6 @@ use Illuminate\Auth\AuthenticationException;
 use Illuminate\Contracts\Auth\Authenticatable;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\Model;
-use Illuminate\Database\Eloquent\Relations\Relation;
 use LogicException;
 
 /**
@@ -112,6 +111,7 @@ class ProposalsRelationManager extends RelationManager
                 $this->approveAction(),
                 $this->rejectAction(),
                 $this->markFailedAction(),
+                $this->markAppliedAction(),
             ]);
     }
 
@@ -145,7 +145,7 @@ class ProposalsRelationManager extends RelationManager
                 $this->decide(
                     $action,
                     $record,
-                    'support.proposal.approve',
+                    'support.proposal_approved',
                     static fn (DecidesSupportProposals $decider, Authenticatable $staff, Panel $panel) => $decider
                         ->approve($staff, $record, $panel),
                 );
@@ -165,7 +165,7 @@ class ProposalsRelationManager extends RelationManager
                 $this->decide(
                     $action,
                     $record,
-                    'support.proposal.reject',
+                    'support.proposal_rejected',
                     static fn (DecidesSupportProposals $decider, Authenticatable $staff, Panel $panel) => $decider
                         ->reject($staff, $record, $panel, $reason),
                 );
@@ -173,8 +173,8 @@ class ProposalsRelationManager extends RelationManager
     }
 
     /**
-     * Closes an approval a crash left running, once staff checked by hand that
-     * the change did not apply.
+     * Closes an approval left running (a crash, or a Stripe call that never
+     * answered), once staff checked by hand that the change did not apply.
      */
     protected function markFailedAction(): Action
     {
@@ -190,9 +190,34 @@ class ProposalsRelationManager extends RelationManager
                 $this->decide(
                     $action,
                     $record,
-                    'support.proposal.mark_failed',
+                    'support.proposal_marked_failed',
                     static fn (DecidesSupportProposals $decider, Authenticatable $staff, Panel $panel) => $decider
                         ->markFailed($staff, $record, $panel, $reason),
+                );
+            });
+    }
+
+    /**
+     * Closes an approval left running whose change did apply, once staff
+     * checked the billing events; billing is not called again.
+     */
+    protected function markAppliedAction(): Action
+    {
+        return $this
+            ->decisionAction('markApplied', Heroicon::OutlinedCheckBadge, SupportProposalStatus::EXECUTING)
+            ->color('success')
+            ->schema([
+                $this->reasonField(),
+            ])
+            ->action(function (Action $action, SupportProposal $record, array $data): void {
+                $reason = (string) $data['reason'];
+
+                $this->decide(
+                    $action,
+                    $record,
+                    'support.proposal_marked_applied',
+                    static fn (DecidesSupportProposals $decider, Authenticatable $staff, Panel $panel) => $decider
+                        ->markApplied($staff, $record, $panel, $reason),
                 );
             });
     }
@@ -334,7 +359,7 @@ class ProposalsRelationManager extends RelationManager
      */
     protected static function trialEndsAt(SupportProposal $proposal): mixed
     {
-        $billable = static::billable($proposal);
+        $billable = $proposal->billable;
 
         if ($billable === null) {
             return null;
@@ -369,21 +394,6 @@ class ProposalsRelationManager extends RelationManager
             ->where('kind', SupportMessageKind::MESSAGE->value)
             ->where('created_at', '>', $proposal->created_at)
             ->count();
-    }
-
-    /**
-     * The account the request names, read by its recorded type and key, or
-     * null once it is gone or its type no longer maps to a model.
-     */
-    protected static function billable(SupportProposal $proposal): ?Model
-    {
-        $class = Relation::getMorphedModel($proposal->billable_type) ?? $proposal->billable_type;
-
-        if (! is_a($class, Model::class, true)) {
-            return null;
-        }
-
-        return $class::query()->find($proposal->billable_id);
     }
 
     protected static function statusLabel(SupportProposalStatus $status): string

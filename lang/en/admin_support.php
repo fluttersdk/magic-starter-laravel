@@ -179,9 +179,6 @@ return [
     ],
 
     /*
-     * The subscription changes proposed inside a conversation.
-     */
-    /*
      * The billing requests the AI desk recorded for the account owner, decided by staff on the thread page.
      */
     'proposals' => [
@@ -243,6 +240,26 @@ return [
                     . 'The customer is not told; follow up in the thread.',
                 'success' => 'Request marked failed',
             ],
+            'mark_applied' => [
+                'label' => 'Mark applied',
+                'heading' => 'Mark applied: :action',
+                'description' => 'Only after you confirmed in the billing events that the change did apply. '
+                    . 'Billing is not called again; the customer is told the request was approved.',
+                'success' => 'Request marked applied',
+            ],
+        ],
+        'refusals' => [
+            'unauthorized' => 'You are not allowed to decide billing requests.',
+            'in_transaction' => 'Approval must run outside a database transaction, '
+                . 'so the billing change commits on its own.',
+            'already_decided' => 'This request has already been decided.',
+            'expired' => 'This request expired before it was decided.',
+            'no_billable' => 'The conversation no longer has a billing account to change.',
+            'billable_changed' => 'The conversation now belongs to another billing account than the one '
+                . 'the request was made for.',
+            'owner_changed' => 'The customer who asked is no longer the account owner.',
+            'params_stale' => 'The requested trial end is no longer valid for the current trial.',
+            'not_executing' => 'Only a request whose approval is still running can be marked failed or applied.',
         ],
     ],
 

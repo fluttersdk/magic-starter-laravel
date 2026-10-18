@@ -9,7 +9,10 @@ namespace FlutterSdk\MagicStarter\Enums;
  */
 enum SupportProposalAction: string
 {
-    /** Move the trial end to a later date, at most `support.proposals.max_trial_extension_days` past the current end. */
+    /**
+     * Move the trial end to a later date, at most `support.proposals.max_trial_extension_days`
+     * past the current end.
+     */
     case EXTEND_TRIAL = 'extend_trial';
 
     /** Keep the subscription running to the end of the paid period and then stop it. */

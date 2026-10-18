@@ -33,26 +33,14 @@ return [
     ],
 
     /*
-     * A staff decision on a billing change the customer asked the AI for. The
-     * three lines are posted into the thread in the conversation's language;
-     * the refusals are what the deciding staff member reads in the panel.
+     * A staff decision on a billing change the customer asked the AI for, posted
+     * into the thread in the conversation's language. The staff refusals live in
+     * admin_support.php.
      */
     'proposals' => [
         'approved' => 'Bir ekip arkadaşımız talebinizi onayladı: :action.',
         'declined' => 'Bir ekip arkadaşımız talebinizi reddetti: :action.',
         'failed' => 'Talebinizi uygulayamadık (:action). Bir ekip arkadaşımız size buradan dönüş yapacak.',
-        'refusals' => [
-            'unauthorized' => 'Fatura taleplerine karar verme yetkiniz yok.',
-            'in_transaction' => 'Onay bir veritabanı işleminin dışında çalışmalıdır, '
-                . 'böylece faturalama değişikliği kendi başına kaydedilir.',
-            'already_decided' => 'Bu talep için zaten karar verildi.',
-            'expired' => 'Bu talebin süresi onaylanmadan doldu.',
-            'no_billable' => 'Görüşmede değiştirilecek bir fatura hesabı artık yok.',
-            'billable_changed' => 'Görüşme artık talebin yapıldığı fatura hesabından farklı bir hesaba ait.',
-            'owner_changed' => 'Talepte bulunan müşteri artık hesap sahibi değil.',
-            'params_stale' => 'İstenen deneme bitiş tarihi mevcut deneme için artık geçerli değil.',
-            'not_executing' => 'Yalnızca onayı hâlâ süren bir talep başarısız olarak işaretlenebilir.',
-        ],
     ],
 
     /*

@@ -13,6 +13,7 @@ use FlutterSdk\MagicStarter\Enums\SupportMessageKind;
 use FlutterSdk\MagicStarter\Enums\SupportProposalAction;
 use FlutterSdk\MagicStarter\Enums\SupportProposalStatus;
 use FlutterSdk\MagicStarter\Enums\SupportSenderType;
+use FlutterSdk\MagicStarter\Events\AdminActionPerformed;
 use FlutterSdk\MagicStarter\Features;
 use FlutterSdk\MagicStarter\Filament\Resources\SupportConversations\Pages\ViewSupportConversation;
 use FlutterSdk\MagicStarter\Filament\Resources\SupportConversations\RelationManagers\ProposalsRelationManager;
@@ -28,6 +29,7 @@ use FlutterSdk\MagicStarter\Tests\Fixtures\ConcreteAdminUser;
 use FlutterSdk\MagicStarter\Tests\Fixtures\ConcreteTeam;
 use Illuminate\Contracts\Auth\Authenticatable;
 use Illuminate\Database\Eloquent\Model;
+use Illuminate\Support\Facades\Event;
 use Illuminate\Support\Str;
 use Laravel\Cashier\Billable;
 use Laravel\Cashier\Cashier;
@@ -225,6 +227,77 @@ class SupportProposalsRelationManagerTest extends FilamentTestCase
             ->assertHasNoTableActionErrors();
 
         $this->assertSame(SupportProposalStatus::FAILED, $executing->fresh()?->status);
+    }
+
+    public function test_mark_applied_is_offered_only_for_an_executing_row_needs_a_reason_and_approves_it(): void
+    {
+        [$conversation, $team] = $this->arrange();
+        $pending = $this->proposal($conversation, $team, SupportProposalAction::CANCEL_AT_PERIOD_END);
+        $executing = $this->proposal($conversation, $team, SupportProposalAction::RESUME, [], [
+            'status' => SupportProposalStatus::EXECUTING,
+        ]);
+
+        $this->tab($conversation)
+            ->assertTableActionHidden('markApplied', $pending)
+            ->assertTableActionVisible('markApplied', $executing)
+            ->callTableAction('markApplied', $executing, data: ['reason' => ''])
+            ->assertHasTableActionErrors(['reason' => 'required']);
+
+        $this->assertSame(SupportProposalStatus::EXECUTING, $executing->fresh()?->status);
+
+        $this->tab($conversation)
+            ->callTableAction('markApplied', $executing, data: ['reason' => 'The billing events show the resume.'])
+            ->assertHasNoTableActionErrors();
+
+        $fresh = $executing->fresh();
+        $this->assertSame(SupportProposalStatus::APPROVED, $fresh?->status);
+        $this->assertSame('The billing events show the resume.', $fresh->decision_reason);
+        $this->assertSame([], $this->billing->calls);
+    }
+
+    public function test_mark_applied_is_hidden_from_staff_outside_the_billing_allowlist(): void
+    {
+        config()->set('magic-starter.admin.billing_emails', ['money@example.com']);
+        [$conversation, $team] = $this->arrange();
+        $executing = $this->proposal($conversation, $team, SupportProposalAction::RESUME, [], [
+            'status' => SupportProposalStatus::EXECUTING,
+        ]);
+
+        $this->tab($conversation)
+            ->assertTableActionHidden('markApplied', $executing)
+            ->assertTableActionHidden('markFailed', $executing);
+    }
+
+    public function test_each_decision_is_audited_under_its_past_tense_name(): void
+    {
+        Event::fake([AdminActionPerformed::class]);
+        [$conversation, $team] = $this->arrange();
+        $approved = $this->proposal($conversation, $team, SupportProposalAction::CANCEL_AT_PERIOD_END);
+        $rejected = $this->proposal($conversation, $team, SupportProposalAction::RESUME);
+        $failed = $this->proposal($conversation, $team, SupportProposalAction::RESUME, [], [
+            'status' => SupportProposalStatus::EXECUTING,
+        ]);
+        $applied = $this->proposal($conversation, $team, SupportProposalAction::RESUME, [], [
+            'status' => SupportProposalStatus::EXECUTING,
+        ]);
+
+        $this->tab($conversation)->callTableAction('approve', $approved);
+        $this->tab($conversation)->callTableAction('reject', $rejected, data: ['reason' => 'No.']);
+        $this->tab($conversation)->callTableAction('markFailed', $failed, data: ['reason' => 'Not applied.']);
+        $this->tab($conversation)->callTableAction('markApplied', $applied, data: ['reason' => 'Applied.']);
+
+        foreach ([
+            'support.proposal_approved' => $approved,
+            'support.proposal_rejected' => $rejected,
+            'support.proposal_marked_failed' => $failed,
+            'support.proposal_marked_applied' => $applied,
+        ] as $name => $proposal) {
+            Event::assertDispatched(
+                AdminActionPerformed::class,
+                static fn (AdminActionPerformed $event): bool => $event->action === $name
+                    && $proposal->is($event->subject),
+            );
+        }
     }
 
     public function test_the_details_show_the_facts_and_escape_customer_and_ai_text(): void

@@ -118,12 +118,12 @@ The tool checks these before it writes, with the predicates the operator's own a
 | `draft` | Written during an AI turn, hidden from staff |
 | `pending` | The turn that wrote it was stored; staff may decide until `expires_at` |
 | `executing` | An approval claimed it and is calling billing; the outcome is not yet known |
-| `approved` | The change ran |
+| `approved` | The change ran, or staff confirmed by hand that it applied |
 | `failed` | The change was refused, or the request no longer held at approval |
 | `rejected` | A staff member declined it |
-| `expired` | The deadline passed with no decision |
+| `expired` | The deadline passed with no decision, found by an approval or a rejection |
 
-A draft stays hidden because the customer has not read the answer that announces it. When `RespondToSupportConversation` stores the turn, it promotes that turn's drafts to `pending` and sends staff a `SupportConversationNeedsStaff` alert with the reason `proposal`. A turn that fails or is superseded never lands, so its draft stays hidden and never blocks a new request: a retried turn finds its own row by trigger message and action, and answers as if it had just recorded it.
+A draft stays hidden because the customer has not read the answer that announces it. When `RespondToSupportConversation` stores the turn, it promotes that turn's drafts to `pending` and sends staff a `SupportConversationNeedsStaff` alert with the reason `proposal`. A turn that also hands the conversation to staff sends one alert only, the `handoff` one, because staff open that thread anyway and find the request on it. A turn that fails or is superseded never lands, so its draft stays hidden and never blocks a new request: a retried turn finds its own row by trigger message and action. While that row is still a draft, the retry's parameters and reason replace the earlier ones, so the latest call wins; once it is `pending` or later, staff may be reading it and it is left as it is. Either way the tool answers with what is stored, such as `Recorded: extend the trial to 2026-10-27.`, so the AI never promises a day staff will not see. A new request for an action is refused while another one for it is `pending` before its deadline or `executing`.
 
 Approval reads the world again under a row lock instead of trusting the snapshot taken at recording. It moves a proposal to `failed`, with the reason on the row, when:
 
@@ -131,7 +131,7 @@ Approval reads the world again under a row lock instead of trusting the snapshot
 - the customer who asked is no longer the account owner (`owner_changed`);
 - an `extend_trial` day no longer fits the trial as it stands (`params_stale`).
 
-A proposal found past `expires_at` is set to `expired` and not run.
+A proposal found past `expires_at` is set to `expired` and not run. A rejection of such a proposal does the same: it is set to `expired` and the customer is not told it was declined.
 
 ---
 
@@ -140,7 +140,7 @@ A proposal found past `expires_at` is set to `expired` and not run.
 
 **The owner gate.** Only the account owner asks. The tool resolves the billing account from the conversation, then asks `Gate::forUser($opener)->allows('manageBilling', $billable)`, the gate the billing endpoints apply. That gate belongs to the billing features, which is why `support-proposals` needs them. A member of a team who is not its owner gets a sentence telling them to write in from the owner's account. Approval asks the gate again, so an owner who was replaced between the request and the decision fails the proposal.
 
-**The billing staff gate.** Only a staff member the admin panel clears for billing decides. `DecidesSupportProposals` requires a `FilamentUser` that can access the panel and passes `BillingAuthorization::allows()`: an empty `magic-starter.admin.billing_emails` lets every panel admin through, a non-empty one admits only the addresses it lists, and an `authorizeBillingUsing()` callback on the plugin replaces both. The decision buttons are hidden from everyone else, and the contract re-checks on its own, so a crafted Livewire call is refused.
+**The billing staff gate.** Only a staff member the admin panel clears for billing decides. `DecidesSupportProposals` requires a `FilamentUser` that can access the panel it is given and passes `BillingAuthorization::allows($staff, $panel)` for that same panel, so the plugin rule of the panel the decision is made in applies even when no panel is current, as in a queued job or a test: an empty `magic-starter.admin.billing_emails` lets every panel admin through, a non-empty one admits only the addresses it lists, and an `authorizeBillingUsing()` callback on the plugin replaces both. The decision buttons are hidden from everyone else, and the contract re-checks on its own, so a crafted Livewire call is refused.
 
 `DecidesSupportProposals` is bound only where Filament is installed.
 
@@ -153,12 +153,13 @@ Stripe has no rollback. A charge or a trial change that already happened stays, 
 
 1. In one short transaction, under a row lock, it re-checks the request and claims the row as `executing`. A second approval finds the row no longer `pending` and stops.
 2. With **no database transaction open**, it calls `AdministersBilling`. The Stripe call and the `billing_events` rows it writes commit on their own.
-3. In a second short transaction it writes `approved` and posts the customer's line.
+3. In a second short transaction it re-reads the row under its lock and, only while it is still `executing`, writes `approved` and posts the customer's line. If another staff member marked it applied or failed while billing ran, that decision stands and no second line is posted.
 
 Two outcomes follow:
 
 - A `BillingAdministrationRefused` (the subscription is no longer on a trial, Stripe rejected the call) leaves the row `failed` with the refusal's reason.
-- Any other fault, such as a process killed mid-call, leaves the row `executing`. **That status means the outcome is unknown.** Open the account's billing events, check whether the change applied, and use **Mark failed** with a reason if it did not. Never approve twice by other means: the claim exists so that a second approval cannot charge again.
+- A `rail_error` refusal caused by a Stripe connection failure (`Stripe\Exception\ApiConnectionException`: a timeout, a dropped connection) is the exception: the request may have reached Stripe and applied, so the row stays `executing`, the customer is told nothing, and the refusal still reaches the panel.
+- Any other fault, such as a process killed mid-call, leaves the row `executing`. **That status means the outcome is unknown.** Open the account's billing events and check whether the change applied: use **Mark applied** with a reason if it did, which sets `approved` and tells the customer, or **Mark failed** with a reason if it did not, which tells the customer nothing. Either one records you as the final decider. Never approve twice by other means: the claim exists so that a second approval cannot charge again, and neither mark calls billing.
 
 > [!WARNING]
 > `DecidesSupportProposals::approve()` refuses to run inside an open database transaction, because a rollback would hide a billing call that already happened. The proposals tab opts its Approve action out of the panel's transaction itself (`->databaseTransaction(false)`), so a panel that calls `databaseTransactions()` still approves. Code of your own that calls `approve()` must call it outside a transaction.
@@ -179,7 +180,7 @@ The details of a request carry what a staff member needs to decide:
 
 The customer's words and the rationale are untrusted text. They are shown as escaped plain text, never HTML or Markdown, and labelled unverified: the rationale is the model's reading of the customer, not a fact.
 
-The tab offers **Approve** and **Reject** (with a reason) on a pending request before its deadline, and **Mark failed** (with a reason) on an `executing` one. Each decision is audited as `support.proposal.approve`, `support.proposal.reject` or `support.proposal.mark_failed`.
+The tab offers **Approve** and **Reject** (with a reason) on a pending request before its deadline, and **Mark applied** and **Mark failed** (each with a reason) on an `executing` one. Each decision is audited as `support.proposal_approved`, `support.proposal_rejected`, `support.proposal_marked_applied` or `support.proposal_marked_failed`.
 
 ---
 
@@ -190,8 +191,8 @@ The customer never sees a proposal row. The AI tells them in its answer that a p
 
 | Outcome | Line |
 |---------|------|
-| Approved | A teammate approved your request: Extend the trial. |
+| Approved, or marked applied | A teammate approved your request: Extend the trial. |
 | Rejected | A teammate declined your request: Extend the trial. |
 | Billing refused the change | We could not apply your request (Extend the trial). A teammate will follow up here. |
 
-The thread refreshes through `SupportConversationUpdated`. A request that fails the re-check at approval, an expired request and a **Mark failed** post no line, because nothing was decided that the customer can act on; staff follow up in the thread.
+The thread refreshes through `SupportConversationUpdated`. A request that fails the re-check at approval, an expired request, an approval left `executing` and a **Mark failed** post no line, because nothing was decided that the customer can act on; staff follow up in the thread.

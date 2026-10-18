@@ -330,7 +330,8 @@ class RespondToSupportConversation implements ShouldQueue
                 rescue(static fn () => event(new SupportConversationUpdated($conversation)), report: true);
             }
 
-            if ($promoted > 0) {
+            // A handoff already alerted staff, and they find the request on the thread they open.
+            if ($promoted > 0 && ! $answer->handsOff()) {
                 rescue(
                     static fn () => event(new SupportConversationNeedsStaff($conversation, 'proposal')),
                     report: true,

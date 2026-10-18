@@ -179,9 +179,6 @@ return [
     ],
 
     /*
-     * The subscription changes proposed inside a conversation.
-     */
-    /*
      * The billing requests the AI desk recorded for the account owner, decided by staff on the thread page.
      */
     'proposals' => [
@@ -243,6 +240,25 @@ return [
                     . 'Müşteriye bildirilmez; görüşmede siz takip edin.',
                 'success' => 'Talep başarısız olarak işaretlendi',
             ],
+            'mark_applied' => [
+                'label' => 'Uygulandı olarak işaretle',
+                'heading' => 'Uygulandı olarak işaretle: :action',
+                'description' => 'Yalnızca değişikliğin uygulandığını fatura olaylarında doğruladıktan sonra. '
+                    . 'Faturalama yeniden çağrılmaz; müşteriye talebin onaylandığı bildirilir.',
+                'success' => 'Talep uygulandı olarak işaretlendi',
+            ],
+        ],
+        'refusals' => [
+            'unauthorized' => 'Fatura taleplerine karar verme yetkiniz yok.',
+            'in_transaction' => 'Onay bir veritabanı işleminin dışında çalışmalıdır, '
+                . 'böylece faturalama değişikliği kendi başına kaydedilir.',
+            'already_decided' => 'Bu talep için zaten karar verildi.',
+            'expired' => 'Bu talebin süresi karar verilmeden doldu.',
+            'no_billable' => 'Görüşmede değiştirilecek bir fatura hesabı artık yok.',
+            'billable_changed' => 'Görüşme artık talebin yapıldığı fatura hesabından farklı bir hesaba ait.',
+            'owner_changed' => 'Talepte bulunan müşteri artık hesap sahibi değil.',
+            'params_stale' => 'İstenen deneme bitiş tarihi mevcut deneme için artık geçerli değil.',
+            'not_executing' => 'Yalnızca onayı hâlâ süren bir talep başarısız ya da uygulandı olarak işaretlenebilir.',
         ],
     ],
 
@@ -263,7 +279,7 @@ return [
             'handoff' => 'Yapay zekâ masası bir görüşmeyi ekibe devretti: :reason.',
             'negative_rating' => 'Bir müşteri çözülmüş bir görüşmeyi olumsuz puanladı.',
             'feedback' => 'Bir müşteri uygulama içi geri bildirimde düşük puan verdi.',
-            'proposal' => 'Yapay zekâ masası, bir ekip arkadaşının onayını bekleyen bir faturalama talebi kaydetti.',
+            'proposal' => 'Yapay zekâ masası, bir ekip arkadaşının onayını bekleyen bir fatura talebi kaydetti.',
             'open_panel' => 'Yanıtlamak için yönetim panelini açın.',
             'open_action' => 'Görüşmeyi açın',
         ],
