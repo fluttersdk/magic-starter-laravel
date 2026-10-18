@@ -4,6 +4,8 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [0.0.37] - 2026-10-18
+
 ### Added
 
 - **Two opt-in lifecycle mails tell a person about a trial ending and a failed renewal, both off by default.** `billing.trial_ending_notification` (`MAGIC_STARTER_TRIAL_ENDING_NOTIFICATION`) sends `TrialEndingNotification` on Stripe's `customer.subscription.trial_will_end`, and `billing.payment_failed_notification` (`MAGIC_STARTER_PAYMENT_FAILED_NOTIFICATION`) sends `PaymentFailedNotification` on the first failed attempt of a cycle invoice (a renewal or the first charge after a trial) on `invoice.payment_failed`, once per invoice. Both go to the team owner or the user, after the webhook commits, in the recipient's locale, with no price or upsell; a replayed event sends nothing. Enable both events on the Stripe endpoint and turn off Stripe's own trial and failed-payment customer emails to avoid a double mail. (`src/Notifications/TrialEndingNotification.php`, `src/Notifications/PaymentFailedNotification.php`, `src/Http/Controllers/StripeWebhookController.php`, `src/Support/BillingRecipient.php`, `config/magic-starter.php`, `lang/en/billing.php`, `lang/tr/billing.php`, `doc/basics/billing.md`, `resources/boost/skills/magic-starter-development/references/billing-setup.md`)
@@ -15,6 +17,10 @@ All notable changes to this project will be documented in this file.
 - **A record id that is not a uuid answers 404 in the admin panel instead of 500 on PostgreSQL.** `MagicStarterResource::resolveRecordRouteBinding()` binds to nothing, without a query, when the model keys on uuids (`use_uuids` on and `ConditionallyUsesUuids`) and the id in the url is not one, as in `/ai-prompts/ai-prompt-overrides/not-a-real-id/edit`; PostgreSQL refused to compare the uuid column with text (SQLSTATE 22P02). It covers every package resource; integer keys and host models are untouched. (`src/Filament/Resources/MagicStarterResource.php`)
 - **A prompt body is limited to 32,000 characters.** `SaveAiPromptOverride::MAX_BODY_LENGTH` is enforced by the save action as a `body` refusal (`admin_ai.refusals.body_too_long`, en and tr) and mirrored as `maxLength` on the workbench textarea; a body that was already longer can be read and downloaded but must be shortened to be saved. (`src/Actions/SaveAiPromptOverride.php`, `src/Filament/Resources/AiPrompts/Schemas/AiPromptOverrideForm.php`, `lang/en/admin_ai.php`, `lang/tr/admin_ai.php`)
 - **Saving a stale prompt without the review tick says what to do, and the tick is gone after a save.** The missing tick shows "Tick the box to confirm you reviewed the diff against the new code default." (en and tr) instead of the raw "The i reviewed the diff ... field must be accepted."; after a successful save the edit page rereads the row, so the tick is hidden for a row that is current now and is cleared. (`src/Filament/Resources/AiPrompts/Schemas/AiPromptOverrideForm.php`, `src/Filament/Resources/AiPrompts/Pages/EditAiPromptOverride.php`, `lang/en/admin_ai.php`, `lang/tr/admin_ai.php`)
+
+### Upgrading
+
+- **The admin panel's action buttons stay 36 px high; size them panel-wide in your app.** The package sets no button size of its own, so a taller tap target on the prompt workbench or any other page comes from your panel provider, for example `Action::configureUsing(fn (Action $action) => $action->size(Size::Large))`, which keeps every page consistent.
 
 ## [0.0.36] - 2026-10-18
 
