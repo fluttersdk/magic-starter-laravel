@@ -168,6 +168,7 @@ class InstallCommand extends Command
             'create_support_conversations_table.php',
             'create_support_messages_table.php',
             'add_ai_columns_to_support_tables.php',
+            'add_ai_summary_to_support_conversations_table.php',
             // The attachments and the feedback rows point at conversations (and
             // the attachments at messages), so they follow the tables above.
             'add_feedback_columns_to_support_conversations_table.php',

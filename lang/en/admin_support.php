@@ -15,6 +15,8 @@ return [
     'waiting' => 'waiting :time',
     'note_hidden' => 'customer cannot see',
     'overdue' => 'Overdue',
+    'ai_summary' => 'AI summary of earlier messages',
+    'ai_summary_hint' => 'Written by the AI to keep the thread short. It is a paraphrase, not a record.',
 
     'fields' => [
         'number' => 'Number',

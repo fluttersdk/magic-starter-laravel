@@ -15,6 +15,8 @@ return [
     'waiting' => ':time bekliyor',
     'note_hidden' => 'müşteri göremez',
     'overdue' => 'Gecikti',
+    'ai_summary' => 'Önceki mesajların yapay zeka özeti',
+    'ai_summary_hint' => 'Görüşmeyi kısa tutmak için yapay zeka yazar. Bir kayıt değil, bir özettir.',
 
     'fields' => [
         'number' => 'Numara',

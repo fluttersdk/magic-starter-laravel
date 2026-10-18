@@ -492,6 +492,11 @@ class SupportConversationResource extends MagicStarterResource
                 ->label(static::fieldLabel('handoff_reason'))
                 ->formatStateUsing(static fn (SupportHandoffReason $state): string => static::enumLabel($state))
                 ->visible(static fn (SupportConversation $record): bool => $record->handoff_reason !== null),
+            // Plain text on purpose: the summary paraphrases customer words, so it is never rendered as HTML.
+            TextEntry::make('ai_summary')
+                ->label((string) __('magic-starter::admin_support.ai_summary'))
+                ->helperText((string) __('magic-starter::admin_support.ai_summary_hint'))
+                ->visible(static fn (SupportConversation $record): bool => filled($record->ai_summary)),
             TextEntry::make('created_at')
                 ->label(static::fieldLabel('opened'))
                 ->dateTime(),
