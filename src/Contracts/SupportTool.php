@@ -5,13 +5,18 @@ namespace FlutterSdk\MagicStarter\Contracts;
 use FlutterSdk\MagicStarter\Support\SupportAi\Tools\SupportToolContext;
 
 /**
- * One read the support AI may make about the customer's own account while it
- * drafts an answer.
+ * One read, or one recorded proposal, the support AI may make about the
+ * customer's own account while it drafts an answer.
  *
  * The host registers the class with {@see \FlutterSdk\MagicStarter\Support\SupportAi\Tools\SupportToolRegistry}
- * and maps it onto its own AI SDK; the package never imports one. Three rules
+ * and maps it onto its own AI SDK; the package never imports one. Four rules
  * hold for every tool, because what it returns lands in a model prompt:
  *
+ * - Never execute a change. A tool reads, or records a proposal that a staff
+ *   member approves or rejects later (see
+ *   {@see \FlutterSdk\MagicStarter\Support\SupportAi\Tools\ProposeBillingChangeTool});
+ *   only that approval changes anything, so a model talked into a call can
+ *   never move money or data by itself.
  * - Never throw for a data reason (no team, nothing found, a refused
  *   argument): return a short refusal sentence the model can relay. Only a
  *   genuine fault, such as a dead database, may propagate.
