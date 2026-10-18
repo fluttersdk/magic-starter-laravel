@@ -4,6 +4,8 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [0.0.40] - 2026-10-18
+
 ### Fixed
 
 - **The "Billing requests" tab fits the panel at desktop and phone widths.** Its row actions (Details, Approve, Reject, Mark applied, Mark failed) moved into one menu behind a 44 px trigger, so a decision no longer sits off-screen behind a horizontal scroll with the sidebar open or on a phone. Below `lg` the table shows only the request and its status; the parameters, requester and dates stay in the details, and the status notes a request whose deadline passed. (`src/Filament/Resources/SupportConversations/RelationManagers/ProposalsRelationManager.php`, `doc/support-proposals.md`)
