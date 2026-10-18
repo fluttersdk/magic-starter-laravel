@@ -150,4 +150,29 @@ return [
         'action' => 'View plans',
     ],
 
+    /*
+     * The mail TrialEndingNotification sends three days before a trial ends: the
+     * date, whether the saved card is charged then, and a link to the billing
+     * screen. No price and no pitch.
+     */
+    'trial_ending' => [
+        'subject' => 'Your :plan trial ends soon',
+        'ends_on' => 'Your :plan trial ends on :date.',
+        'charge' => 'Your saved card will be charged then and the plan continues.',
+        'cancelled' => 'The subscription is cancelled, so nothing will be charged and your account returns to the free plan.',
+        'action' => 'View your plan',
+    ],
+
+    /*
+     * The mail PaymentFailedNotification sends when a subscription payment
+     * (a renewal or the first charge after a trial) is declined. Named apart from `refusals.payment_failed`, the inline sentence
+     * an API caller reads, so the two are never confused.
+     */
+    'payment_failed_mail' => [
+        'subject' => 'Your :plan payment was declined',
+        'declined' => 'The payment for your :plan plan was declined.',
+        'retry' => 'Stripe will retry automatically. Update your payment method to keep the plan.',
+        'action' => 'Update payment method',
+    ],
+
 ];
