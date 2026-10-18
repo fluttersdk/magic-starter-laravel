@@ -71,6 +71,11 @@ final class SupportToolContext
         return $this->team()?->getKey();
     }
 
+    /**
+     * The conversation the turn started with. Its `team_id` and its `team`
+     * relation skip the membership check: read the team through
+     * {@see self::team()} instead.
+     */
     public function conversation(): ?SupportConversation
     {
         return $this->conversation;

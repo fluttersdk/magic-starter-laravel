@@ -135,6 +135,27 @@ class SupportToolRegistryTest extends TestCase
         $registry->register(SupportToolRegistryTestUptimeTool::class);
     }
 
+    public function test_register_refuses_an_abstract_tool(): void
+    {
+        $this->expectException(InvalidArgumentException::class);
+
+        $this->registry()->register(SupportToolRegistryTestAbstractTool::class);
+    }
+
+    public function test_register_refuses_a_name_that_is_not_snake_case(): void
+    {
+        $registry = $this->registry();
+
+        try {
+            $registry->register(SupportToolRegistryTestDottedNameTool::class);
+            $this->fail('A tool named [account.plan] was registered.');
+        } catch (InvalidArgumentException $exception) {
+            $this->assertStringContainsString('[account.plan]', $exception->getMessage());
+        }
+
+        $this->assertTrue($registry->isEmpty());
+    }
+
     private function registry(): SupportToolRegistry
     {
         return $this->app->make(SupportToolRegistry::class);
@@ -172,6 +193,16 @@ class SupportToolRegistryTestUptimeTool implements SupportTool
 }
 
 class SupportToolRegistryTestUptimeTwinTool extends SupportToolRegistryTestUptimeTool {}
+
+abstract class SupportToolRegistryTestAbstractTool extends SupportToolRegistryTestUptimeTool {}
+
+class SupportToolRegistryTestDottedNameTool extends SupportToolRegistryTestUptimeTool
+{
+    public function name(): string
+    {
+        return 'account.plan';
+    }
+}
 
 class SupportToolRegistryTestIncidentsTool implements SupportTool
 {

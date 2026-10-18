@@ -5,6 +5,7 @@ namespace FlutterSdk\MagicStarter\Support\SupportAi\Tools;
 use FlutterSdk\MagicStarter\Contracts\SupportTool;
 use Illuminate\Contracts\Container\Container;
 use InvalidArgumentException;
+use ReflectionClass;
 
 /**
  * Every support tool the host registered, as class-strings in registration order.
@@ -12,7 +13,9 @@ use InvalidArgumentException;
  * Bound as a singleton and filled once at boot. It keeps class-strings, not
  * instances, because one Horizon worker answers turns for many teams: an
  * instance kept here could carry a lookup from one team's turn into the next,
- * so {@see self::resolve()} builds fresh ones for every turn. The order is the
+ * so {@see self::resolve()} builds fresh ones for every turn (as long as the
+ * host does not bind a tool, or a stateful dependency of one, as a singleton
+ * or scoped instance, which the container would then hand back). The order is the
  * registration order, so the tool list a host sends stays byte-stable for
  * prompt caching.
  *
@@ -29,17 +32,27 @@ final class SupportToolRegistry
     ) {}
 
     /**
-     * @throws InvalidArgumentException When the class is not a SupportTool or its name is taken.
+     * Builds the tool once through the container to read its name, so its
+     * constructor dependencies resolve at registration.
+     *
+     * @throws InvalidArgumentException When the class is not an instantiable SupportTool, or its name
+     *                                  is not snake_case (the shape every model provider accepts) or is taken.
      */
     public function register(string $toolClass): void
     {
-        if (! is_subclass_of($toolClass, SupportTool::class)) {
+        if (! is_subclass_of($toolClass, SupportTool::class) || ! (new ReflectionClass($toolClass))->isInstantiable()) {
             throw new InvalidArgumentException(
-                "The support tool [{$toolClass}] does not implement " . SupportTool::class . '.',
+                "The support tool [{$toolClass}] is not an instantiable " . SupportTool::class . '.',
             );
         }
 
         $name = $this->make($toolClass)->name();
+
+        if (preg_match('/^[a-z][a-z0-9_]{0,63}$/', $name) !== 1) {
+            throw new InvalidArgumentException(
+                "The support tool name [{$name}] of [{$toolClass}] must be snake_case, at most 64 characters.",
+            );
+        }
 
         if (isset($this->tools[$name])) {
             throw new InvalidArgumentException(
