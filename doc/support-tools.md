@@ -5,6 +5,7 @@
 - [Registering a Tool](#registering-a-tool)
 - [Wiring Tools Into Your SDK](#wiring-tools-into-your-sdk)
 - [Customer Text](#customer-text)
+- [Write Proposals](#write-proposals)
 - [Security Notes](#security-notes)
 
 ---
@@ -177,11 +178,18 @@ The line is for the model's attention and the JSON is the mechanism. Neither is 
 
 ---
 
+<a name="write-proposals"></a>
+## Write Proposals
+
+A tool never executes a change. The one tool the package ships that writes, `ProposeBillingChangeTool`, only records a request that a staff member approves or rejects in the admin panel; the approval, not the tool, changes the subscription. If your own tool needs to change something, give it the same shape: record a proposal and let a person decide. See [Support Proposals](support-proposals.md) for the lifecycle, the gates and how to register the tool.
+
+---
+
 <a name="security-notes"></a>
 ## Security Notes
 
 - **Prompt injection (OWASP LLM01).** Tenant text is data: it is fenced as JSON under a provenance line, and that lowers the risk without removing it, because no delimiter fully stops a model from following text it reads.
-- **Excessive agency (OWASP LLM06).** Tools are read-only, and the team is decided in code from the conversation, never from an argument the model chose.
+- **Excessive agency (OWASP LLM06).** Tools read, and the one that records a [proposal](support-proposals.md) only writes a row for staff to decide. The team is decided in code from the conversation, never from an argument the model chose.
 
 > [!WARNING]
 > A tool that writes, sends or deletes changes the second note. This core is built for reads; give a write its own review before it joins the registry.

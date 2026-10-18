@@ -25,7 +25,7 @@ Throughout this document `{prefix}` is `config('magic-starter.route_prefix')`.
 
 **Feature:** `Features::support()`. No support route, listener or panel resource exists while the feature is off.
 
-Four further features sit on top of it and are off by default; each needs `support` on and adds its own routes, fields and panel parts:
+Five further features sit on top of it and are off by default; each needs `support` on and adds its own routes, fields and panel parts:
 
 | Feature | Adds |
 |---------|------|
@@ -33,6 +33,7 @@ Four further features sit on top of it and are off by default; each needs `suppo
 | `Features::supportFeedback()` (`support-feedback`) | The occasional 0-10 feedback card and the staff feedback list |
 | `Features::supportAttachments()` (`support-attachments`) | Images and PDFs on a message |
 | `Features::supportDiagnostics()` (`support-diagnostics`) | The client info and the screenshot a new conversation carries |
+| `Features::supportProposals()` (`support-proposals`) | Billing changes the AI desk records for staff to approve; also needs billing. See [Support Proposals](support-proposals.md) |
 
 ---
 

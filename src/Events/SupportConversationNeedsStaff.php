@@ -14,13 +14,15 @@ use FlutterSdk\MagicStarter\Models\SupportConversation;
  * `negative_rating` fires once per resolution, when the opener rates it down,
  * and `feedback` when a low in-app feedback score opens a new one; a score that
  * continues an open feedback conversation alerts as `customer_message`.
+ * `proposal` fires once per AI turn that lands with a billing proposal the
+ * account owner asked for, now waiting for a staff member's approval.
  *
  * The seam a staff alert hooks into; the package itself sends nothing from it.
  */
 class SupportConversationNeedsStaff
 {
     /**
-     * @param  string  $reason  `opened`, `customer_message`, `handoff`, `negative_rating` or `feedback`
+     * @param  string  $reason  `opened`, `customer_message`, `handoff`, `negative_rating`, `feedback` or `proposal`
      */
     public function __construct(
         public readonly SupportConversation $conversation,

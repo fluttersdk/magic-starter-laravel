@@ -3,6 +3,7 @@
 namespace FlutterSdk\MagicStarter\Filament\Support;
 
 use Filament\Facades\Filament;
+use Filament\Panel;
 use FlutterSdk\MagicStarter\Filament\MagicStarterPlugin;
 use Illuminate\Contracts\Auth\Authenticatable;
 use Illuminate\Database\Eloquent\Model;
@@ -26,14 +27,20 @@ class BillingAuthorization
      * `magic-starter.admin.billing_emails` lets every panel admin through, and
      * a non-empty one admits only the addresses it lists, compared trimmed and
      * lowercased on both sides.
+     *
+     * @param  Panel|null  $panel  The panel whose plugin decides; the current panel when null. A caller that
+     *                             already holds the panel it acts for passes it, so the rule does not depend
+     *                             on which panel, if any, the request happened to boot.
      */
-    public static function allows(Authenticatable $admin): bool
+    public static function allows(Authenticatable $admin, ?Panel $panel = null): bool
     {
+        $panel ??= Filament::getCurrentPanel();
+
         // 1. An application rule replaces the list entirely.
-        $callback = static::plugin()?->getAuthorizeBillingUsing();
+        $callback = static::plugin($panel)?->getAuthorizeBillingUsing();
 
         if ($callback !== null) {
-            return $callback($admin, Filament::getCurrentPanel()) === true;
+            return $callback($admin, $panel) === true;
         }
 
         // 2. No list: billing is every admin's job.
@@ -53,12 +60,10 @@ class BillingAuthorization
     }
 
     /**
-     * The plugin on the current panel, or null when that panel does not carry it.
+     * The plugin on `$panel`, or null when there is no panel or it does not carry the plugin.
      */
-    protected static function plugin(): ?MagicStarterPlugin
+    protected static function plugin(?Panel $panel): ?MagicStarterPlugin
     {
-        $panel = Filament::getCurrentPanel();
-
         if ($panel === null || ! $panel->hasPlugin(MagicStarterPlugin::ID)) {
             return null;
         }

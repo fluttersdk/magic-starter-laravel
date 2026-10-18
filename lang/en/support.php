@@ -33,6 +33,17 @@ return [
     ],
 
     /*
+     * A staff decision on a billing change the customer asked the AI for, posted
+     * into the thread in the conversation's language. The staff refusals live in
+     * admin_support.php.
+     */
+    'proposals' => [
+        'approved' => 'A teammate approved your request: :action.',
+        'declined' => 'A teammate declined your request: :action.',
+        'failed' => 'We could not apply your request (:action). A teammate will follow up here.',
+    ],
+
+    /*
      * Package copy only: a mail line is Markdown, so nothing the customer typed ever goes into one.
      */
     'mail' => [

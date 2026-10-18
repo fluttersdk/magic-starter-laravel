@@ -113,6 +113,17 @@ class MagicStarterServiceProvider extends ServiceProvider
         $this->app->bind(Contracts\RepliesToSupport::class, Actions\ReplyToSupportConversation::class);
         $this->app->bind(Contracts\ChangesSupportConversations::class, Actions\ChangeSupportConversation::class);
 
+        // How the support AI records a billing change for staff to decide. Unconditional
+        // like the AppRelease binds: the action answers its own refusal while the
+        // support-proposals feature is off, and a consumer swaps it before switching it on.
+        $this->app->bind(Contracts\RecordsSupportProposals::class, Actions\RecordSupportProposal::class);
+
+        // How staff decide those proposals. Only staff of a Filament panel decide, and the
+        // action checks panel access and billing clearance, so it exists only where Filament does.
+        if (class_exists(Panel::class)) {
+            $this->app->bind(Contracts\DecidesSupportProposals::class, Actions\DecideSupportProposal::class);
+        }
+
         // How staff curate app releases. Unconditional like every binding above it.
         $this->app->bind(Contracts\CreatesAppReleases::class, Actions\CreateAppRelease::class);
         $this->app->bind(Contracts\UpdatesAppReleases::class, Actions\UpdateAppRelease::class);

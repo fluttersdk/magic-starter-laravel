@@ -28,6 +28,7 @@ use FlutterSdk\MagicStarter\Features;
 use FlutterSdk\MagicStarter\Filament\Resources\MagicStarterResource;
 use FlutterSdk\MagicStarter\Filament\Resources\SupportConversations\Pages\ListSupportConversations;
 use FlutterSdk\MagicStarter\Filament\Resources\SupportConversations\Pages\ViewSupportConversation;
+use FlutterSdk\MagicStarter\Filament\Resources\SupportConversations\RelationManagers\ProposalsRelationManager;
 use FlutterSdk\MagicStarter\Filament\Resources\SupportConversations\Schemas\CustomerContextPanel;
 use FlutterSdk\MagicStarter\Http\Resources\SupportMessageResource;
 use FlutterSdk\MagicStarter\Models\SupportConversation;
@@ -271,6 +272,20 @@ class SupportConversationResource extends MagicStarterResource
                         ->columnSpan(1),
                 ]),
         ]);
+    }
+
+    /**
+     * The billing requests tab, only while the application lets the AI desk record them.
+     *
+     * @return list<class-string>
+     */
+    public static function getRelations(): array
+    {
+        return Features::hasSupportProposalFeatures()
+            ? [
+                ProposalsRelationManager::class,
+            ]
+            : [];
     }
 
     public static function getPages(): array

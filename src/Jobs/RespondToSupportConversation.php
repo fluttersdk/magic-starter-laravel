@@ -9,11 +9,13 @@ use FlutterSdk\MagicStarter\Enums\SupportConversationStatus;
 use FlutterSdk\MagicStarter\Enums\SupportHandoffReason;
 use FlutterSdk\MagicStarter\Enums\SupportMessageKind;
 use FlutterSdk\MagicStarter\Enums\SupportSenderType;
+use FlutterSdk\MagicStarter\Events\SupportConversationNeedsStaff;
 use FlutterSdk\MagicStarter\Events\SupportConversationUpdated;
 use FlutterSdk\MagicStarter\Features;
 use FlutterSdk\MagicStarter\Models\SupportConversation;
 use FlutterSdk\MagicStarter\Models\SupportMessage;
 use FlutterSdk\MagicStarter\Models\SupportMessageAttachment;
+use FlutterSdk\MagicStarter\Models\SupportProposal;
 use FlutterSdk\MagicStarter\Notifications\SupportReplyNotification;
 use FlutterSdk\MagicStarter\Support\SupportAi\HandoffClassifier;
 use FlutterSdk\MagicStarter\Support\SupportAi\ReplyGuard;
@@ -315,9 +317,10 @@ class RespondToSupportConversation implements ShouldQueue
 
         // 8. Persist the answer, and a handoff it asks for, in one transaction under the row lock; tell staff,
         //    or tell the opener and refresh the thread, once it commits, and settle the tokens last, whatever
-        //    happened before.
+        //    happened before. Proposals the turn drafted go to staff only once that answer is stored.
         try {
-            $message = $this->persist($desk, $answer, $summaryThroughId);
+            $promoted = 0;
+            $message = $this->persist($desk, $answer, $summaryThroughId, $promoted);
 
             if ($message === null) {
                 return;
@@ -337,6 +340,14 @@ class RespondToSupportConversation implements ShouldQueue
                     report: true,
                 );
                 rescue(static fn () => event(new SupportConversationUpdated($conversation)), report: true);
+            }
+
+            // A handoff already alerted staff, and they find the request on the thread they open.
+            if ($promoted > 0 && ! $answer->handsOff()) {
+                rescue(
+                    static fn () => event(new SupportConversationNeedsStaff($conversation, 'proposal')),
+                    report: true,
+                );
             }
         } finally {
             $quota->reconcile($reservation, $answer->usage);
@@ -470,14 +481,17 @@ class RespondToSupportConversation implements ShouldQueue
      *
      * An answer that asks for a person hands off in the same transaction, under
      * the same lock and predicate, so a committed answer is never left pending
-     * with nobody owing the customer a reply. Nothing is announced here; the
-     * caller does that after the commit.
+     * with nobody owing the customer a reply. The billing proposals the turn
+     * drafted turn pending in the same transaction, so a discarded turn leaves
+     * its drafts hidden. Nothing is announced here; the caller does that after
+     * the commit.
      *
      * A compaction rides on the same write, and only while the stored boundary
      * is still `$readBoundary`, the one the turn was built from: a summary that
      * another turn replaced meanwhile is newer than this one, so it stays.
      *
      * @param  int|string|null  $readBoundary  The `ai_summary_through_id` this turn read, null for none.
+     * @param  int  $promoted  Set to how many drafts became pending; stays 0 when nothing was written.
      * @return SupportMessage|null the stored answer, or null when the turn moved on while the model was
      *                             answering; nothing is written then
      */
@@ -485,8 +499,9 @@ class RespondToSupportConversation implements ShouldQueue
         SupportHandoff $desk,
         SupportAnswer $answer,
         int|string|null $readBoundary,
+        int &$promoted,
     ): ?SupportMessage {
-        return DB::transaction(function () use ($desk, $answer, $readBoundary): ?SupportMessage {
+        return DB::transaction(function () use ($desk, $answer, $readBoundary, &$promoted): ?SupportMessage {
             $conversation = SupportConversation::query()->lockForUpdate()->find($this->conversationId);
 
             if (! $conversation instanceof SupportConversation || ! $this->owns($conversation)) {
@@ -517,6 +532,10 @@ class RespondToSupportConversation implements ShouldQueue
             // The row was read pending under this transaction's lock, so the conditional flip is this turn's.
             if ($answer->handsOff()) {
                 $desk->moveToStaff($conversation, $answer->handoffReason, $answer->handoffPriority);
+            }
+
+            if (Features::hasSupportProposalFeatures()) {
+                $promoted = SupportProposal::promoteDrafts($conversation, $this->triggerId);
             }
 
             return $message;

@@ -180,6 +180,90 @@ return [
         ],
     ],
 
+    /*
+     * The billing requests the AI desk recorded for the account owner, decided by staff on the thread page.
+     */
+    'proposals' => [
+        'title' => 'Fatura talepleri',
+        'actions' => [
+            'extend_trial' => 'Deneme süresini uzat',
+            'cancel_at_period_end' => 'Dönem sonunda iptal et',
+            'resume' => 'Aboneliği sürdür',
+        ],
+        'columns' => [
+            'action' => 'Talep',
+            'params' => 'Ayrıntı',
+            'status' => 'Durum',
+            'requested_by' => 'Talep eden',
+            'created_at' => 'Talep zamanı',
+            'expires_at' => 'Geçerlilik sonu',
+        ],
+        'statuses' => [
+            'draft' => 'Taslak',
+            'pending' => 'Bekliyor',
+            'executing' => 'Uygulanıyor',
+            'approved' => 'Onaylandı',
+            'rejected' => 'Reddedildi',
+            'failed' => 'Başarısız',
+            'expired' => 'Süresi doldu',
+        ],
+        'labels' => [
+            'until' => ':date tarihine kadar',
+            'owner' => ':name (hesap sahibi)',
+            'expired' => 'süresi doldu',
+            'customer_words' => 'Müşterinin kendi sözleri (doğrulanmadı)',
+            'rationale' => 'Yapay zekâ gerekçesi (doğrulanmadı)',
+            'trial_ends_at' => 'Mevcut deneme sonu',
+            'prior_extensions' => 'Önceki deneme uzatmaları',
+            'messages_since' => 'Talepten sonraki müşteri mesajları',
+            'reason' => 'Neden',
+        ],
+        'decisions' => [
+            'view' => [
+                'label' => 'Ayrıntılar',
+            ],
+            'approve' => [
+                'label' => 'Onayla',
+                'heading' => 'Onayla: :action',
+                'description' => 'Onay, bu değişikliği müşterinin faturalandırmasına hemen uygular. '
+                    . 'Aşağıdaki müşteri sözleri ve yapay zekâ gerekçesi doğrulanmamıştır.',
+                'success' => 'Talep onaylandı',
+            ],
+            'reject' => [
+                'label' => 'Reddet',
+                'heading' => 'Reddet: :action',
+                'description' => 'Müşteriye talebin reddedildiği bildirilir. Yazdığınız neden ekipte kalır.',
+                'success' => 'Talep reddedildi',
+            ],
+            'mark_failed' => [
+                'label' => 'Başarısız olarak işaretle',
+                'heading' => 'Başarısız olarak işaretle: :action',
+                'description' => 'Yalnızca değişikliğin uygulanmadığını ödeme sağlayıcısında doğruladıktan sonra. '
+                    . 'Müşteriye bildirilmez; görüşmede siz takip edin.',
+                'success' => 'Talep başarısız olarak işaretlendi',
+            ],
+            'mark_applied' => [
+                'label' => 'Uygulandı olarak işaretle',
+                'heading' => 'Uygulandı olarak işaretle: :action',
+                'description' => 'Yalnızca değişikliğin uygulandığını fatura olaylarında doğruladıktan sonra. '
+                    . 'Faturalama yeniden çağrılmaz; müşteriye talebin onaylandığı bildirilir.',
+                'success' => 'Talep uygulandı olarak işaretlendi',
+            ],
+        ],
+        'refusals' => [
+            'unauthorized' => 'Fatura taleplerine karar verme yetkiniz yok.',
+            'in_transaction' => 'Onay bir veritabanı işleminin dışında çalışmalıdır, '
+                . 'böylece faturalama değişikliği kendi başına kaydedilir.',
+            'already_decided' => 'Bu talep için zaten karar verildi.',
+            'expired' => 'Bu talebin süresi karar verilmeden doldu.',
+            'no_billable' => 'Görüşmede değiştirilecek bir fatura hesabı artık yok.',
+            'billable_changed' => 'Görüşme artık talebin yapıldığı fatura hesabından farklı bir hesaba ait.',
+            'owner_changed' => 'Talepte bulunan müşteri artık hesap sahibi değil.',
+            'params_stale' => 'İstenen deneme bitiş tarihi mevcut deneme için artık geçerli değil.',
+            'not_executing' => 'Yalnızca onayı hâlâ süren bir talep başarısız ya da uygulandı olarak işaretlenebilir.',
+        ],
+    ],
+
     'refusals' => [
         'assignee_not_staff' => 'Atanan kişi bir destek ekibi üyesi olmalıdır.',
         'thread_url_missing' => 'Ziyaretçiye yanıt vermeden önce MAGIC_STARTER_SUPPORT_THREAD_URL ayarlanmalıdır: '
@@ -197,6 +281,7 @@ return [
             'handoff' => 'Yapay zekâ masası bir görüşmeyi ekibe devretti: :reason.',
             'negative_rating' => 'Bir müşteri çözülmüş bir görüşmeyi olumsuz puanladı.',
             'feedback' => 'Bir müşteri uygulama içi geri bildirimde düşük puan verdi.',
+            'proposal' => 'Yapay zekâ masası, bir ekip arkadaşının onayını bekleyen bir fatura talebi kaydetti.',
             'open_panel' => 'Yanıtlamak için yönetim panelini açın.',
             'open_action' => 'Görüşmeyi açın',
         ],

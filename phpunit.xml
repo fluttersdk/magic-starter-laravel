@@ -9,8 +9,9 @@
         </testsuite>
     </testsuites>
     <php>
-        <!-- The suite peaks just under PHP's 128M default; Filament's boot pushes it over. -->
-        <ini name="memory_limit" value="512M"/>
+        <!-- Each test's application boot leaves memory behind, so the peak grows with the suite:
+             about 500M at 3,500 tests on Laravel 13 and past 512M on Laravel 12. -->
+        <ini name="memory_limit" value="1G"/>
     </php>
     <source>
         <include>

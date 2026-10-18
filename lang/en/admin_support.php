@@ -180,6 +180,91 @@ return [
         ],
     ],
 
+    /*
+     * The billing requests the AI desk recorded for the account owner, decided by staff on the thread page.
+     */
+    'proposals' => [
+        'title' => 'Billing requests',
+        'actions' => [
+            'extend_trial' => 'Extend the trial',
+            'cancel_at_period_end' => 'Cancel at the end of the period',
+            'resume' => 'Resume the subscription',
+        ],
+        'columns' => [
+            'action' => 'Request',
+            'params' => 'Details',
+            'status' => 'Status',
+            'requested_by' => 'Requested by',
+            'created_at' => 'Requested',
+            'expires_at' => 'Expires',
+        ],
+        'statuses' => [
+            'draft' => 'Draft',
+            'pending' => 'Pending',
+            'executing' => 'Running',
+            'approved' => 'Approved',
+            'rejected' => 'Rejected',
+            'failed' => 'Failed',
+            'expired' => 'Expired',
+        ],
+        'labels' => [
+            'until' => 'until :date',
+            'owner' => ':name (owner)',
+            'expired' => 'expired',
+            'customer_words' => 'Customer\'s own words (unverified)',
+            'rationale' => 'AI rationale (unverified)',
+            'trial_ends_at' => 'Current trial end',
+            'prior_extensions' => 'Earlier trial extensions',
+            'messages_since' => 'Customer messages since the request',
+            'reason' => 'Reason',
+        ],
+        'decisions' => [
+            'view' => [
+                'label' => 'Details',
+            ],
+            'approve' => [
+                'label' => 'Approve',
+                'heading' => 'Approve: :action',
+                'description' => 'Approving runs this change on the customer\'s billing now. '
+                    . 'The customer\'s words and the AI rationale below are not verified.',
+                'success' => 'Request approved',
+            ],
+            'reject' => [
+                'label' => 'Reject',
+                'heading' => 'Reject: :action',
+                'description' => 'The customer is told the request was declined. Your reason stays with the staff.',
+                'success' => 'Request rejected',
+            ],
+            'mark_failed' => [
+                'label' => 'Mark failed',
+                'heading' => 'Mark failed: :action',
+                'description' => 'Only after you confirmed on the billing provider that the change did not apply. '
+                    . 'The customer is not told; follow up in the thread.',
+                'success' => 'Request marked failed',
+            ],
+            'mark_applied' => [
+                'label' => 'Mark applied',
+                'heading' => 'Mark applied: :action',
+                'description' => 'Only after you confirmed in the billing events that the change did apply. '
+                    . 'Billing is not called again; the customer is told the request was approved.',
+                'success' => 'Request marked applied',
+            ],
+        ],
+        'refusals' => [
+            'unauthorized' => 'You are not allowed to decide billing requests.',
+            'in_transaction' => 'Approval must run outside a database transaction, '
+                . 'so the billing change commits on its own.',
+            'already_decided' => 'This request has already been decided.',
+            'expired' => 'This request expired before it was decided.',
+            'no_billable' => 'The conversation no longer has a billing account to change.',
+            'billable_changed' => 'The conversation now belongs to another billing account than the one '
+                . 'the request was made for.',
+            'owner_changed' => 'The customer who asked is no longer the account owner.',
+            'params_stale' => 'The requested trial end is no longer valid for the current trial.',
+            'not_executing' => 'Only a request whose approval is still running can be marked failed or applied.',
+        ],
+    ],
+
     'refusals' => [
         'assignee_not_staff' => 'The assignee must be a support staff member.',
         'thread_url_missing' => 'Set MAGIC_STARTER_SUPPORT_THREAD_URL before replying to a visitor: '
@@ -197,6 +282,7 @@ return [
             'handoff' => 'The AI desk handed a conversation to staff: :reason.',
             'negative_rating' => 'A customer rated a resolved conversation thumbs down.',
             'feedback' => 'A customer left a low score in the in-app feedback.',
+            'proposal' => 'The AI desk recorded a billing request that needs a teammate\'s approval.',
             'open_panel' => 'Open the admin panel to answer it.',
             'open_action' => 'Open conversation',
         ],
