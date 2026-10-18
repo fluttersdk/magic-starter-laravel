@@ -132,6 +132,12 @@ class StripeWebhookController extends CashierWebhookController
      * The dedup key prefix the payment-failed mail claims per invoice, in the
      * same table as the event ids. Never a Stripe event id shape (`evt_`), so
      * the two cannot collide.
+     *
+     * `billing:prune` deletes these rows with the event ids once they pass
+     * `webhook_retention_days` (31 at least, 90 by default), and that is safe:
+     * the claim only has to outlive the manual retries of one open invoice, and
+     * the next cycle bills a new invoice id that is news again anyway. A claim
+     * pruned while its invoice is still open costs at most one more mail.
      */
     protected const PAYMENT_FAILED_MAIL_CLAIM = 'mail.payment_failed.';
 
