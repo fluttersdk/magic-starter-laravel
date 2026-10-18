@@ -4,6 +4,11 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Added
+
+- **Two opt-in lifecycle mails tell a person about a trial ending and a failed renewal, both off by default.** `billing.trial_ending_notification` (`MAGIC_STARTER_TRIAL_ENDING_NOTIFICATION`) sends `TrialEndingNotification` on Stripe's `customer.subscription.trial_will_end`, and `billing.payment_failed_notification` (`MAGIC_STARTER_PAYMENT_FAILED_NOTIFICATION`) sends `PaymentFailedNotification` on the first failed renewal attempt of `invoice.payment_failed`. Both go to the team owner or the user, after the webhook commits, in the recipient's locale, with no price or upsell; a replayed event sends nothing. Enable both events on the Stripe endpoint and turn off Stripe's own trial and failed-payment customer emails to avoid a double mail. (`src/Notifications/TrialEndingNotification.php`, `src/Notifications/PaymentFailedNotification.php`, `src/Http/Controllers/StripeWebhookController.php`, `src/Support/BillingRecipient.php`, `config/magic-starter.php`, `lang/en/billing.php`, `lang/tr/billing.php`, `doc/basics/billing.md`)
+- **`billing:doctor --remote` checks the Stripe endpoint's events and route while a lifecycle mail is on.** The `stripe.webhook_events` check is an ERROR when `STRIPE_SECRET` is unset or Stripe refuses the read, and a WARN when no enabled endpoint posts to `route('cashier.webhook')` or a required event is missing. (`src/Console/BillingDoctorCommand.php`, `src/Support/StripeWebhookEndpointReader.php`, `doc/basics/billing.md`)
+
 ## [0.0.36] - 2026-10-18
 
 ### Added

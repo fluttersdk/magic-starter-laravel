@@ -440,6 +440,32 @@ A check settles the trials one hop from its own row. A chain (A shares a card wi
 
 Set `trial_refused_notification` `false` to send your own message instead. The sentences are `magic-starter::billing.trial_refused.*` in `en` and `tr`; a published `lang/vendor/magic-starter/` copy wins over the package's own.
 
+### Lifecycle mails
+
+Two opt-in mails follow the Stripe subscription lifecycle. Both are off by default.
+
+| Config key | Env | Default |
+|------------|-----|---------|
+| `magic-starter.billing.trial_ending_notification` | `MAGIC_STARTER_TRIAL_ENDING_NOTIFICATION` | `false` |
+| `magic-starter.billing.payment_failed_notification` | `MAGIC_STARTER_PAYMENT_FAILED_NOTIFICATION` | `false` |
+
+`TrialEndingNotification` is sent from the Stripe webhook on `customer.subscription.trial_will_end`, which Stripe fires three days before a trial ends. It goes out only for the `default` subscription while it is still `trialing` with a trial end in the future, for a trial the card check did not refuse, and for a price mapped to a tier. It has two variants. When the saved card will be charged, the mail says so. When `cancel_at_period_end` is true, or `cancel_at` falls on or before the trial end, the mail says nothing will be charged and the account returns to the free plan. The date is rendered in the recipient's `timezone` attribute when it is valid, otherwise in the app timezone, and in the mail locale.
+
+`PaymentFailedNotification` is sent on `invoice.payment_failed` for the first attempt (`attempt_count` 1) of a renewal (`billing_reason` `subscription_cycle`) with a positive amount due, on the `default` subscription. A declined card on a plan swap is reported inline, and a Checkout failure happens in front of the payer, so neither mails.
+
+The recipient is `BillingRecipient::for()`: the team owner for a team billable, the user for a user billable, and no mail when there is neither. This matches `BillingPolicy::manage`. Both mails are queued after the webhook transaction commits and use the recipient's locale. A replayed Stripe event sends nothing, because the webhook dedup already claimed it. Neither mail carries a price or an upsell, and neither appears in the notification preference matrix.
+
+Enable both events on the Stripe endpoint. Cashier's default `cashier:webhook` list does not include them, so add them to `cashier.webhook.events`:
+
+- `customer.subscription.trial_will_end`
+- `invoice.payment_failed`
+
+Then turn off Stripe's own "trial ending reminder" and "failed payment" customer emails in the Dashboard under Billing settings, Customer emails. Leave them on and the customer is mailed twice for the same event.
+
+The sentences are `magic-starter::billing.trial_ending.*` and `magic-starter::billing.payment_failed_mail.*` in `en` and `tr`. A published `lang/vendor/magic-starter/` copy wins over the package's own.
+
+`billing:doctor --remote` checks the endpoint as `stripe.webhook_events`. The check runs only while a lifecycle mail is on. It reports ERROR when `STRIPE_SECRET` is unset or Stripe refuses the read. It reports WARN when no route is named `cashier.webhook`, when no enabled endpoint posts to `route('cashier.webhook')`, or when a required event is missing (`*` covers all). The route check follows `APP_URL`, so `APP_URL` must be the host the endpoint posts to.
+
 ### The table
 
 `billing_trials` has one row per trialing subscription a package checkout opened, and is the anti-abuse record behind the rules above. A fresh `magic-starter:install --features=billing` publishes `create_billing_trials_table.php` with the other billing migrations; an existing application copies it in, see [Upgrading](#upgrading). Keys follow `use_uuids`. `billing:doctor` reports a table missing while a product offers a trial as `schema.billing_trials`.
