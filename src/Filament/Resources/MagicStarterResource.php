@@ -2,10 +2,14 @@
 
 namespace FlutterSdk\MagicStarter\Filament\Resources;
 
+use Closure;
 use Filament\Resources\Resource;
 use FlutterSdk\MagicStarter\Filament\MagicStarterPlugin;
+use FlutterSdk\MagicStarter\Support\ConditionallyUsesUuids;
+use FlutterSdk\MagicStarter\Support\MigrationHelper;
 use Illuminate\Contracts\Auth\Authenticatable;
 use Illuminate\Database\Eloquent\Model;
+use Illuminate\Support\Str;
 use LogicException;
 use UnitEnum;
 
@@ -18,6 +22,9 @@ use UnitEnum;
  * - Never auto-discovered: the plugin decides what is mounted, under its gates.
  * - Policies are skipped: panel access is the gate, and the explicit refusals
  *   (deleting an owner, a last admin) live in the resources and the contracts.
+ * - A record id in the url that cannot be a uuid binds to nothing, which Filament answers as a
+ *   404, when the model keys on uuids: PostgreSQL refuses to compare a uuid column with text
+ *   (SQLSTATE 22P02) and the panel would answer 500.
  * - Writes leave through {@see updateRecordUsing()} and {@see createRecordUsing()},
  *   which call the package contracts rather than `Model::update()`.
  *
@@ -52,6 +59,18 @@ abstract class MagicStarterResource extends Resource
         return true;
     }
 
+    /**
+     * Answers null without a query when the model keys on uuids and the id is not one.
+     */
+    public static function resolveRecordRouteBinding(int|string $key, ?Closure $modifyQuery = null): ?Model
+    {
+        if (static::cannotBeUuidKey($key)) {
+            return null;
+        }
+
+        return parent::resolveRecordRouteBinding($key, $modifyQuery);
+    }
+
     public static function getNavigationGroup(): string|UnitEnum|null
     {
         return static::$navigationGroup ?? MagicStarterPlugin::get()->getNavigationGroup();
@@ -79,5 +98,27 @@ abstract class MagicStarterResource extends Resource
     public static function createRecordUsing(array $data, Authenticatable $actor): Model
     {
         throw new LogicException('[' . static::class . '] does not support creating records.');
+    }
+
+    /**
+     * Whether the id is looked up against a uuid primary key and is not a uuid.
+     *
+     * Only the package's own uuid models are judged: a host model that keys on something else, or
+     * a resource bound to another column, goes to the database as before.
+     */
+    protected static function cannotBeUuidKey(int|string $key): bool
+    {
+        $model = app(static::getModel());
+
+        $keysOnUuids = MigrationHelper::usesUuids()
+            && in_array(ConditionallyUsesUuids::class, class_uses_recursive($model), true);
+
+        if (! $keysOnUuids) {
+            return false;
+        }
+
+        $routeKey = static::getRecordRouteKeyName() ?? $model->getRouteKeyName();
+
+        return $routeKey === $model->getKeyName() && ! Str::isUuid((string) $key);
     }
 }

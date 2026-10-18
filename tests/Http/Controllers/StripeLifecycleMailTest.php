@@ -13,6 +13,7 @@ use FlutterSdk\MagicStarter\Tests\Fixtures\ConcreteTeam;
 use FlutterSdk\MagicStarter\Tests\Fixtures\ConcreteUser;
 use FlutterSdk\MagicStarter\Tests\TestCase;
 use Illuminate\Contracts\Translation\HasLocalePreference;
+use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Notifications\Events\NotificationSending;
 use Illuminate\Notifications\RoutesNotifications;
 use Illuminate\Support\Facades\DB;
@@ -221,19 +222,20 @@ class StripeLifecycleMailTest extends TestCase
             'magic-starter.billing.payment_failed_notification' => true,
         ]);
 
-        [$owner, , $team] = $this->createTeamBillable();
+        [, , $team] = $this->createTeamBillable(LifecycleMailOwnerlessTeam::class);
         $team->subscriptions()->create([
             'type' => 'default',
             'stripe_id' => static::SUBSCRIPTION_ID,
             'stripe_status' => 'active',
             'stripe_price' => 'price_pro',
         ]);
-        $owner->delete();
 
         $this->postSignedWebhook($this->trialWillEndEvent('evt_trial_end_ownerless'))->assertOk();
         $this->postSignedWebhook($this->paymentFailedEvent('evt_payment_failed_ownerless'))->assertOk();
 
         Notification::assertNothingSent();
+        // The per-invoice claim sits after the recipient lookup, so a mail that never went out spends no claim.
+        $this->assertFalse(ProcessedWebhookEvent::query()->where('event_id', 'like', 'mail.payment_failed.%')->exists());
     }
 
     public function test_the_trial_ending_mail_is_off_by_default(): void
@@ -716,14 +718,15 @@ class StripeLifecycleMailTest extends TestCase
      * The subscriptions tables are rebuilt too: their foreign key follows the billable subject, so the user-keyed
      * ones from setUp cannot hold a team's row.
      *
+     * @param  class-string<LifecycleMailTeam>  $teamModel
      * @return array{0: LifecycleMailUser, 1: LifecycleMailUser, 2: LifecycleMailTeam}
      */
-    private function createTeamBillable(): array
+    private function createTeamBillable(string $teamModel = LifecycleMailTeam::class): array
     {
         config([
             'magic-starter.features' => [Features::teams(), Features::billing()],
             'magic-starter.billing.billable' => 'team',
-            'magic-starter.models.team' => LifecycleMailTeam::class,
+            'magic-starter.models.team' => $teamModel,
         ]);
         MagicStarter::reset();
         (new MagicStarterServiceProvider($this->app))->register();
@@ -748,7 +751,7 @@ class StripeLifecycleMailTest extends TestCase
             'password' => 'secret',
         ]);
 
-        $team = (new LifecycleMailTeam)->forceFill([
+        $team = (new $teamModel)->forceFill([
             'user_id' => $owner->getKey(),
             'name' => 'Billing team',
             'personal_team' => false,
@@ -976,4 +979,18 @@ class LifecycleMailTeam extends ConcreteTeam
     use Billable;
 
     protected $table = 'teams';
+}
+
+/**
+ * A team whose owner relation resolves to nobody.
+ *
+ * Deleting the owner row cannot stand in for this: `teams.user_id` cascades on delete, so on PostgreSQL the team
+ * goes with its owner and the delivery resolves no customer at all, never reaching the recipient lookup.
+ */
+class LifecycleMailOwnerlessTeam extends LifecycleMailTeam
+{
+    public function owner(): BelongsTo
+    {
+        return parent::owner()->whereRaw('1 = 0');
+    }
 }

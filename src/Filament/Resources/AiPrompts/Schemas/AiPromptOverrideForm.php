@@ -13,6 +13,7 @@ use Filament\Schemas\Components\Utilities\Get;
 use Filament\Schemas\Components\Utilities\Set;
 use Filament\Schemas\Schema;
 use Filament\Support\Enums\FontFamily;
+use FlutterSdk\MagicStarter\Actions\SaveAiPromptOverride;
 use FlutterSdk\MagicStarter\Filament\Resources\AiPrompts\AiPromptOverrideResource;
 use FlutterSdk\MagicStarter\Filament\Resources\AiRuns\AiRunResource;
 use FlutterSdk\MagicStarter\Models\AiPromptOverride;
@@ -54,6 +55,7 @@ class AiPromptOverrideForm
                 Textarea::make('body')
                     ->label(__('magic-starter::admin_ai.prompts.fields.body'))
                     ->required()
+                    ->maxLength(SaveAiPromptOverride::MAX_BODY_LENGTH)
                     ->rows(24)
                     ->extraInputAttributes(['style' => 'font-family: ui-monospace, monospace'])
                     ->rules([
@@ -75,11 +77,16 @@ class AiPromptOverrideForm
                 Checkbox::make('reviewed')
                     ->label(__('magic-starter::admin_ai.prompts.fields.reviewed'))
                     ->accepted()
+                    ->validationMessages([
+                        'accepted' => __('magic-starter::admin_ai.prompts.validation.reviewed'),
+                    ])
                     ->dehydrated(false)
                     ->visible(static fn (?Model $record): bool => $record instanceof AiPromptOverride
                         && AiPromptOverrideResource::status($record)->needsReview()),
                 static::codeBlock('default_body', static fn (PromptDefinition $prompt): string => $prompt->body())
-                    ->copyable(),
+                    ->copyable()
+                    // The shown value is markup that keeps the line breaks; the clipboard gets the text.
+                    ->copyableState(static fn (string $state): string => $state),
                 static::codeBlock('boundary', static fn (PromptDefinition $prompt): string => $prompt->boundary()),
             ]);
     }
@@ -128,6 +135,7 @@ class AiPromptOverrideForm
                 $record,
                 $get('key'),
             ) !== null)
+            ->formatStateUsing(AiRunResource::keepingLineBreaks(...))
             ->fontFamily(FontFamily::Mono)
             ->extraAttributes(AiRunResource::WRAP_ANYWHERE)
             ->columnSpanFull();
