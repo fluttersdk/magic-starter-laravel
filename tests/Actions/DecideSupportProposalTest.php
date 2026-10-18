@@ -369,8 +369,8 @@ class DecideSupportProposalTest extends FilamentTestCase
 
         try {
             $this->assertRefused(
-                'Approval must run outside a database transaction; '
-                . 'the panel must not wrap actions in databaseTransactions().',
+                'Approval must run outside a database transaction, '
+                . 'so the billing change commits on its own.',
                 fn () => $this->decider()->approve($this->staff(), $proposal, $this->panel()),
             );
         } finally {

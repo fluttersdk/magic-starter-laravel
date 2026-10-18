@@ -43,8 +43,8 @@ return [
         'failed' => 'We could not apply your request (:action). A teammate will follow up here.',
         'refusals' => [
             'unauthorized' => 'You are not allowed to decide billing requests.',
-            'in_transaction' => 'Approval must run outside a database transaction; '
-                . 'the panel must not wrap actions in databaseTransactions().',
+            'in_transaction' => 'Approval must run outside a database transaction, '
+                . 'so the billing change commits on its own.',
             'already_decided' => 'This request has already been decided.',
             'expired' => 'This request expired before it was approved.',
             'no_billable' => 'The conversation no longer has a billing account to change.',

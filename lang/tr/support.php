@@ -43,8 +43,8 @@ return [
         'failed' => 'Talebinizi uygulayamadık (:action). Bir ekip arkadaşımız size buradan dönüş yapacak.',
         'refusals' => [
             'unauthorized' => 'Fatura taleplerine karar verme yetkiniz yok.',
-            'in_transaction' => 'Onay bir veritabanı işleminin dışında çalışmalıdır; '
-                . 'panel eylemleri databaseTransactions() ile sarmalamamalıdır.',
+            'in_transaction' => 'Onay bir veritabanı işleminin dışında çalışmalıdır, '
+                . 'böylece faturalama değişikliği kendi başına kaydedilir.',
             'already_decided' => 'Bu talep için zaten karar verildi.',
             'expired' => 'Bu talebin süresi onaylanmadan doldu.',
             'no_billable' => 'Görüşmede değiştirilecek bir fatura hesabı artık yok.',
