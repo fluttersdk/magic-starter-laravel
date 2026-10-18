@@ -200,28 +200,32 @@ class SupportAiQuota
      */
     public function chargedTokens(SupportUsage $usage): int
     {
-        $writeWeight = max(0.0, (float) config(
-            'magic-starter.support.ai.cache_weights.write',
-            self::DEFAULT_CACHE_WRITE_WEIGHT,
-        ));
-        $readWeight = max(0.0, (float) config(
-            'magic-starter.support.ai.cache_weights.read',
-            self::DEFAULT_CACHE_READ_WEIGHT,
-        ));
-
         return $usage->promptTokens
             + $usage->completionTokens
-            + $this->weighted($usage->cacheWriteTokens, $writeWeight)
-            + $this->weighted($usage->cacheReadTokens, $readWeight);
+            + $this->weighted($usage->cacheWriteTokens, $this->weight('write', self::DEFAULT_CACHE_WRITE_WEIGHT))
+            + $this->weighted($usage->cacheReadTokens, $this->weight('read', self::DEFAULT_CACHE_READ_WEIGHT));
+    }
+
+    /**
+     * One bucket's configured weight; a negative one reads as zero.
+     */
+    private function weight(string $bucket, float $default): float
+    {
+        return max(0.0, (float) config('magic-starter.support.ai.cache_weights.' . $bucket, $default));
     }
 
     /**
      * Round up so a weighted bucket is never free; the inner round strips float noise (10 * 1.1 is
-     * 11.000000000000002) that would otherwise charge one token too many.
+     * 11.000000000000002) that would otherwise charge one token too many, and the floor of one keeps a
+     * tiny weight from rounding a non-empty bucket away.
      */
     private function weighted(int $tokens, float $weight): int
     {
-        return (int) ceil(round($tokens * $weight, 6));
+        if ($tokens === 0 || $weight === 0.0) {
+            return 0;
+        }
+
+        return max(1, (int) ceil(round($tokens * $weight, 6)));
     }
 
     /**

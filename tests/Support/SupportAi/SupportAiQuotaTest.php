@@ -395,8 +395,23 @@ class SupportAiQuotaTest extends TestCase
             cacheWriteTokens: 1500,
         ));
 
+        $this->assertSame(1600, $quota->chargedTokens(new SupportUsage(60, 40, 0, 1500)));
         // The pool holds 1600: another 1200 no longer fits.
         $this->assertNull($quota->reserve($conversation, 'turn-2', SupportAiPool::FREE));
+    }
+
+    /**
+     * A weight so small that rounding would wipe a non-empty bucket still charges one token.
+     */
+    public function test_a_tiny_positive_weight_never_charges_a_non_empty_bucket_zero(): void
+    {
+        config()->set('magic-starter.support.ai.cache_weights', [
+            'read' => 0.0000001,
+            'write' => 1.0,
+        ]);
+
+        $this->assertSame(101, $this->quota()->chargedTokens(new SupportUsage(60, 40, 1, 0)));
+        $this->assertSame(100, $this->quota()->chargedTokens(new SupportUsage(60, 40, 0, 0)));
     }
 
     public function test_reconcile_weighs_cache_reads_by_the_configured_read_weight_rounded_up(): void
@@ -405,7 +420,7 @@ class SupportAiQuotaTest extends TestCase
             'read' => 0.1,
             'write' => 1.0,
         ]);
-        $this->setPools(free: 2400);
+        $this->setPools(free: 2600);
         $conversation = $this->createConversation($this->createUser());
         $quota = $this->quota();
 
@@ -420,7 +435,8 @@ class SupportAiQuotaTest extends TestCase
         ));
 
         $this->assertSame(101, $quota->chargedTokens(new SupportUsage(0, 0, 1005, 0)));
-        // 201 + 1200 fits under 2400, and 1401 + 1200 does not.
+        // 201 + 1200 = 1401 fits under 2600; a third 1200 (2601) is refused only because the reads were
+        // charged: at weight 0.0 the pool would hold 100 + 1200 + 1200 = 2500 and grant it.
         $this->assertNotNull($quota->reserve($conversation, 'turn-2', SupportAiPool::FREE));
         $this->assertNull($quota->reserve($conversation, 'turn-3', SupportAiPool::FREE));
     }

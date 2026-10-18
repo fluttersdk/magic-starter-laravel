@@ -3,9 +3,9 @@
 namespace FlutterSdk\MagicStarter\Tests\Support\SupportAi;
 
 use FlutterSdk\MagicStarter\Support\SupportAi\SupportUsage;
+use FlutterSdk\MagicStarter\Tests\TestCase;
 use InvalidArgumentException;
 use PHPUnit\Framework\Attributes\DataProvider;
-use PHPUnit\Framework\TestCase;
 
 /**
  * Locks the token counts a turn reports: the cache buckets ride beside the
@@ -28,8 +28,12 @@ class SupportUsageTest extends TestCase
     }
 
     #[DataProvider('negativeCounts')]
-    public function test_a_negative_count_in_any_bucket_throws(int $prompt, int $completion, int $read, int $write): void
-    {
+    public function test_a_negative_count_in_any_bucket_throws(
+        int $prompt,
+        int $completion,
+        int $read,
+        int $write,
+    ): void {
         $this->expectException(InvalidArgumentException::class);
 
         new SupportUsage($prompt, $completion, $read, $write);
