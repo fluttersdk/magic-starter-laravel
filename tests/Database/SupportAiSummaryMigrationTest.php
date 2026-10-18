@@ -7,6 +7,7 @@ use FlutterSdk\MagicStarter\Enums\SupportConversationSource;
 use FlutterSdk\MagicStarter\Models\SupportConversation;
 use FlutterSdk\MagicStarter\Tests\TestCase;
 use Illuminate\Support\Facades\Schema;
+use Illuminate\Support\Str;
 use PHPUnit\Framework\Attributes\DataProvider;
 
 class SupportAiSummaryMigrationTest extends TestCase
@@ -59,14 +60,17 @@ class SupportAiSummaryMigrationTest extends TestCase
         $this->assertNull($conversation->ai_summary);
         $this->assertNull($conversation->ai_summary_through_id);
 
+        // The pointer takes the key type of the run: PostgreSQL rejects an integer in a uuid column.
+        $throughId = config('magic-starter.use_uuids') ? (string) Str::uuid7() : 7;
+
         $conversation->update([
             'ai_summary' => 'The customer asked about a double charge.',
-            'ai_summary_through_id' => 7,
+            'ai_summary_through_id' => $throughId,
         ]);
         $conversation->refresh();
 
         $this->assertSame('The customer asked about a double charge.', $conversation->ai_summary);
-        $this->assertSame('7', (string) $conversation->ai_summary_through_id);
+        $this->assertSame((string) $throughId, (string) $conversation->ai_summary_through_id);
     }
 
     public function test_running_up_again_is_a_no_op(): void

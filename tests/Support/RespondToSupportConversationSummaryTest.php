@@ -7,6 +7,7 @@ use FlutterSdk\MagicStarter\Contracts\OpensSupportConversations;
 use FlutterSdk\MagicStarter\Contracts\PostsCustomerSupportMessages;
 use FlutterSdk\MagicStarter\Contracts\RespondsToSupport;
 use FlutterSdk\MagicStarter\Enums\SupportAiPool;
+use FlutterSdk\MagicStarter\Enums\SupportConversationSource;
 use FlutterSdk\MagicStarter\Enums\SupportConversationStatus;
 use FlutterSdk\MagicStarter\Enums\SupportHandoffReason;
 use FlutterSdk\MagicStarter\Enums\SupportMessageKind;
@@ -29,6 +30,7 @@ use FlutterSdk\MagicStarter\Tests\TestCase;
 use Illuminate\Database\Schema\Blueprint;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\Event;
+use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Notification;
 use Illuminate\Support\Facades\Queue;
 use Illuminate\Support\Facades\Schema;
@@ -281,6 +283,43 @@ class RespondToSupportConversationSummaryTest extends TestCase
         $this->assertSame(1, $this->aiReplies()->count());
     }
 
+    public function test_a_compaction_through_another_conversations_message_is_dropped_and_logged(): void
+    {
+        [$conversation] = $this->thread();
+        $other = SupportConversation::create([
+            'email' => 'other@example.com',
+            'subject' => 'Another thread',
+            'source' => SupportConversationSource::IN_APP,
+        ]);
+        $foreign = $this->message($other, 'Elsewhere.', '10:01:30');
+
+        $this->assertCompactionRefused($conversation, $foreign->getKey());
+    }
+
+    public function test_a_compaction_through_the_trigger_itself_is_dropped_and_logged(): void
+    {
+        [$conversation] = $this->thread();
+        $this->bindResponder(fn (SupportTurn $turn): SupportAnswer => $this->compacting(
+            'A summary that swallows the question.',
+            $turn->trigger->getKey(),
+        ));
+        $trigger = $this->message($conversation, 'Third question.', '10:03:00');
+        Log::spy();
+
+        $this->answer($conversation, $trigger);
+
+        $this->assertNoSummary($conversation);
+        $this->assertSame(1, $this->aiReplies()->count());
+        Log::shouldHaveReceived('warning')->once();
+    }
+
+    public function test_a_compaction_through_a_key_of_the_wrong_shape_is_dropped_without_a_query_error(): void
+    {
+        [$conversation] = $this->thread();
+
+        $this->assertCompactionRefused($conversation, 'not-a-message-key');
+    }
+
     public function test_a_failed_turn_never_stores_a_compaction(): void
     {
         [$conversation, $first] = $this->thread();
@@ -447,6 +486,23 @@ class RespondToSupportConversationSummaryTest extends TestCase
     private function bodies(SupportTurn $turn): array
     {
         return array_map(static fn (SupportMessage $message): string => $message->body, $turn->history);
+    }
+
+    /**
+     * The answer to a turn whose compaction points at `$throughId` posts, the summary is not stored, and the
+     * refusal is logged once.
+     */
+    private function assertCompactionRefused(SupportConversation $conversation, int|string $throughId): void
+    {
+        $this->bindResponder(fn (): SupportAnswer => $this->compacting('A misplaced summary.', $throughId));
+        $trigger = $this->message($conversation, 'Third question.', '10:03:00');
+        Log::spy();
+
+        $this->answer($conversation, $trigger);
+
+        $this->assertNoSummary($conversation);
+        $this->assertSame(1, $this->aiReplies()->count());
+        Log::shouldHaveReceived('warning')->once();
     }
 
     private function assertNoSummary(SupportConversation $conversation): void

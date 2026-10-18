@@ -24,6 +24,7 @@ use FlutterSdk\MagicStarter\Support\SupportAi\SupportHandoff;
 use FlutterSdk\MagicStarter\Support\SupportAi\SupportTurn;
 use FlutterSdk\MagicStarter\Support\SupportAi\SupportUsage;
 use FlutterSdk\MagicStarter\Support\SupportAttachmentResponse;
+use FlutterSdk\MagicStarter\Support\TeamKey;
 use Illuminate\Contracts\Cache\LockTimeoutException;
 use Illuminate\Contracts\Container\Container;
 use Illuminate\Contracts\Queue\ShouldQueue;
@@ -33,6 +34,7 @@ use Illuminate\Foundation\Queue\Queueable;
 use Illuminate\Queue\InteractsWithQueue;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Notification;
 use Throwable;
 
@@ -544,10 +546,45 @@ class RespondToSupportConversation implements ShouldQueue
             return [];
         }
 
+        if (! $this->summarisable($locked, $answer->compaction->throughMessageId)) {
+            Log::warning('A support compaction named a message outside the turn\'s history; the summary is dropped.', [
+                'conversation_id' => (string) $locked->getKey(),
+                'through_message_id' => (string) $answer->compaction->throughMessageId,
+            ]);
+
+            return [];
+        }
+
         return [
             'ai_summary' => $answer->compaction->text,
             'ai_summary_through_id' => $answer->compaction->throughMessageId,
         ];
+    }
+
+    /**
+     * Whether `$throughId` is a message of this conversation sent before the trigger, so a later turn finds the
+     * boundary and reads exactly the messages after it.
+     *
+     * The key shape is checked first: PostgreSQL refuses a non-uuid literal in a uuid column, and that error
+     * inside this transaction would lose the answer with the summary.
+     */
+    private function summarisable(SupportConversation $locked, int|string $throughId): bool
+    {
+        if (! TeamKey::looksLikeOne((string) $throughId)) {
+            return false;
+        }
+
+        $boundary = $locked->messages()->whereKey($throughId)->first();
+        $trigger = $locked->messages()->whereKey($this->triggerId)->first();
+
+        if ($boundary === null || $trigger === null) {
+            return false;
+        }
+
+        // Strictly before the trigger in the thread's own order, created_at then id, as history() reads it. The
+        // keys compare uncast: integer keys numerically, uuid keys by their text, as the database orders them.
+        return $boundary->created_at->lt($trigger->created_at)
+            || ($boundary->created_at->eq($trigger->created_at) && $boundary->getKey() < $trigger->getKey());
     }
 
     /**
