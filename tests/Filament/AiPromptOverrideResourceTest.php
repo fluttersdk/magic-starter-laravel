@@ -3,8 +3,10 @@
 namespace FlutterSdk\MagicStarter\Tests\Filament;
 
 use Filament\Forms\Components\Select;
+use Filament\Forms\Components\Textarea;
 use Filament\Notifications\Notification as FilamentNotification;
 use Filament\Panel;
+use FlutterSdk\MagicStarter\Actions\SaveAiPromptOverride;
 use FlutterSdk\MagicStarter\Enums\AiPromptOverrideStatus;
 use FlutterSdk\MagicStarter\Events\AdminActionPerformed;
 use FlutterSdk\MagicStarter\Features;
@@ -235,6 +237,78 @@ class AiPromptOverrideResourceTest extends FilamentTestCase
         $this->assertSame(hash('sha256', $this->default), $override->default_hash);
     }
 
+    public function test_the_missing_review_tick_is_refused_with_a_readable_message(): void
+    {
+        $override = $this->override(self::KEY, 'Analyse this incident.', hash('sha256', 'an older default'));
+
+        $edit = Livewire::actingAs($this->staff())->test(EditAiPromptOverride::class, ['record' => $override->getKey()])
+            ->fillForm(['body' => 'Analyse every incident, then summarise it.'])
+            ->call('save')
+            ->assertHasFormErrors(['reviewed' => 'accepted']);
+
+        $message = $edit->errors()->first('data.reviewed');
+
+        $this->assertSame((string) __('magic-starter::admin_ai.prompts.validation.reviewed'), $message);
+        $this->assertStringNotContainsString('The i reviewed', $message);
+
+        app()->setLocale('tr');
+
+        $this->assertSame(
+            'Yeni koddaki varsayılana göre farkı gözden geçirdiğinizi onaylamak için kutuyu işaretleyin.',
+            (string) __('magic-starter::admin_ai.prompts.validation.reviewed'),
+        );
+    }
+
+    public function test_the_review_tick_is_gone_and_cleared_once_a_stale_row_is_saved(): void
+    {
+        $override = $this->override(self::KEY, 'Analyse this incident.', hash('sha256', 'an older default'));
+
+        Livewire::actingAs($this->staff())->test(EditAiPromptOverride::class, ['record' => $override->getKey()])
+            ->assertFormFieldIsVisible('reviewed')
+            ->fillForm(['body' => 'Analyse every incident, then summarise it.', 'reviewed' => true])
+            ->call('save')
+            ->assertHasNoFormErrors()
+            ->assertFormFieldIsHidden('reviewed')
+            ->assertFormSet(['reviewed' => false]);
+    }
+
+    public function test_the_body_field_carries_the_length_limit(): void
+    {
+        $override = $this->override(self::KEY, 'Analyse this incident.', hash('sha256', $this->default));
+
+        $edit = Livewire::actingAs($this->staff())->test(EditAiPromptOverride::class, ['record' => $override->getKey()])
+            ->assertFormFieldExists(
+                'body',
+                checkFieldUsing: static fn (Textarea $field): bool => $field->getMaxLength()
+                    === SaveAiPromptOverride::MAX_BODY_LENGTH,
+            );
+
+        $edit->fillForm(['body' => 'Analyse incident ' . str_repeat('a', SaveAiPromptOverride::MAX_BODY_LENGTH)])
+            ->call('save')
+            ->assertHasFormErrors(['body' => 'max']);
+
+        $this->assertSame('Analyse this incident.', $override->refresh()->body);
+    }
+
+    public function test_the_code_blocks_do_not_pre_wrap_their_wrapper(): void
+    {
+        $this->default = "Analyse the incident\ncarefully.";
+        $override = $this->override(self::KEY, 'Analyse this incident.', hash('sha256', $this->default));
+
+        $html = Livewire::actingAs($this->staff())
+            ->test(EditAiPromptOverride::class, ['record' => $override->getKey()])
+            ->html();
+
+        $this->assertStringNotContainsString('white-space: pre-wrap;', $this->entryOpeningTags($html));
+        $this->assertStringContainsString('overflow-wrap: anywhere', $this->entryOpeningTags($html));
+        // The clipboard gets the text, not the markup that keeps its line breaks.
+        $this->assertStringContainsString("copy('Analyse the incident\\ncarefully.'", $html);
+        $this->assertStringContainsString(
+            '<span style="white-space: pre-wrap;">Analyse the incident' . "\n" . 'carefully.</span>',
+            $html,
+        );
+    }
+
     public function test_a_current_row_asks_for_no_review_tick(): void
     {
         $override = $this->override(self::KEY, 'Analyse this incident.', hash('sha256', $this->default));
@@ -311,6 +385,16 @@ class AiPromptOverrideResourceTest extends FilamentTestCase
             AdminActionPerformed::class,
             static fn (AdminActionPerformed $event): bool => $event->action === 'ai_prompt.deleted',
         );
+    }
+
+    /**
+     * The opening tags of every text entry value in the page, where an entry's extra attributes land.
+     */
+    private function entryOpeningTags(string $html): string
+    {
+        preg_match_all('/<div\b[^>]*\bfi-in-text\b[^>]*>/s', $html, $matches);
+
+        return implode("\n", $matches[0]);
     }
 
     private function override(string $key, string $body, string $defaultHash): AiPromptOverride
