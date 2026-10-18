@@ -265,6 +265,51 @@ class AiRunResourceTest extends FilamentTestCase
             ->assertDontSee('Bodies pruned on');
     }
 
+    public function test_the_view_wraps_long_values_without_pre_wrapping_the_template_whitespace(): void
+    {
+        $run = $this->aiRun([
+            'error_class' => 'App\\Exceptions\\ProviderRefusedTheRequestException',
+            'prompt_hash' => str_repeat('ab', 32),
+            'input' => "First line\nSecond line",
+            'context' => ['locale' => 'tr'],
+            'error_message' => "Both providers refused\n  indented detail",
+        ]);
+        $this->attempt($run, 1, [
+            'status' => 'failed',
+            'error_message' => "overloaded\nretry later",
+            'tool_calls' => [['name' => 'lookup_monitor']],
+        ]);
+
+        $html = Livewire::actingAs($this->staff())
+            ->test(ViewAiRun::class, ['record' => $run->getKey()])
+            ->html();
+
+        preg_match_all('/<div\b[^>]*\bfi-in-text\b[^>]*>/s', $html, $entries);
+
+        // The wrapper holds the template's own indentation and newlines, so it must not preserve them.
+        $this->assertNotEmpty($entries[0]);
+        $this->assertStringNotContainsString('white-space: pre-wrap', implode("\n", $entries[0]));
+        $this->assertStringContainsString('overflow-wrap: anywhere', implode("\n", $entries[0]));
+
+        // A body keeps its own line breaks, and only its own.
+        $this->assertStringContainsString(
+            '<span style="white-space: pre-wrap;">First line' . "\n" . 'Second line</span>',
+            $html,
+        );
+        $this->assertStringContainsString('&quot;locale&quot;: &quot;tr&quot;', $html);
+        $this->assertStringContainsString('overloaded' . "\n" . 'retry later', $html);
+    }
+
+    public function test_a_body_is_escaped_before_it_keeps_its_line_breaks(): void
+    {
+        $run = $this->aiRun(['input' => "<script>alert(1)</script>\nnext"]);
+
+        Livewire::actingAs($this->staff())
+            ->test(ViewAiRun::class, ['record' => $run->getKey()])
+            ->assertDontSee('<script>alert(1)</script>', escape: false)
+            ->assertSee('&lt;script&gt;alert(1)&lt;/script&gt;', escape: false);
+    }
+
     public function test_the_view_renders_a_pruned_run_with_the_pruned_note(): void
     {
         $run = $this->aiRun([

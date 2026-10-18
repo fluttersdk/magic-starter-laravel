@@ -79,13 +79,14 @@ return [
     ],
 
     /*
-     * The four refusals saving a prompt override raises, each on the body or
+     * The five refusals saving a prompt override raises, each on the body or
      * key field. `missing_phrases` names every phrase the body dropped, because
      * the host's parser or its injection fence depends on them.
      */
     'refusals' => [
         'unknown_key' => 'No prompt is registered as [:key].',
         'blank_body' => 'The prompt body cannot be blank.',
+        'body_too_long' => 'The prompt body cannot be longer than :max characters.',
         'default_changed' => 'The code default of this prompt changed while you were editing. '
             . 'Reload it and review the new default before saving.',
         'missing_phrases' => 'The body must keep these phrases: :phrases.',
@@ -122,6 +123,10 @@ return [
             'reviewed' => 'I reviewed the diff against the new code default',
             'default_body' => 'Code default',
             'boundary' => 'Boundary (always appended, not editable)',
+        ],
+
+        'validation' => [
+            'reviewed' => 'Tick the box to confirm you reviewed the diff against the new code default.',
         ],
 
         'diff' => [

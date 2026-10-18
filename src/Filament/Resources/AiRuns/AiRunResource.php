@@ -22,6 +22,7 @@ use FlutterSdk\MagicStarter\Models\AiRun;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Support\Carbon;
+use Illuminate\Support\HtmlString;
 
 /**
  * The AI run log, read-only: a run is a reading of what a model call did and is
@@ -39,10 +40,14 @@ class AiRunResource extends MagicStarterResource
     public const ABSENT = '-';
 
     /**
-     * Ids, prompts and JSON break anywhere rather than stretching their cell
-     * or the page, and keep their line breaks.
+     * Ids, prompts and JSON break anywhere rather than stretching their cell or the page.
+     *
+     * Not `white-space: pre-wrap`: the entry that carries these attributes also holds the template's
+     * own indentation and newlines, which would then render as blank lines and a deep indent between
+     * the label and the value. A value that must keep its line breaks goes through
+     * {@see keepingLineBreaks()}.
      */
-    public const WRAP_ANYWHERE = ['style' => 'overflow-wrap: anywhere; white-space: pre-wrap;'];
+    public const WRAP_ANYWHERE = ['style' => 'overflow-wrap: anywhere;'];
 
     /**
      * How many teams or team ids a team search offers.
@@ -193,6 +198,16 @@ class AiRunResource extends MagicStarterResource
         $name = $run->team?->getAttribute('name');
 
         return is_string($name) ? $name : $run->team_id;
+    }
+
+    /**
+     * The value escaped, with its own line breaks and indentation kept and nothing else.
+     *
+     * For a `formatStateUsing()` on an entry that shows a prompt, a JSON body or an error message.
+     */
+    public static function keepingLineBreaks(mixed $state): HtmlString
+    {
+        return new HtmlString('<span style="white-space: pre-wrap;">' . e((string) $state) . '</span>');
     }
 
     /**

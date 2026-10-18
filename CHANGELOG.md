@@ -4,6 +4,13 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Fixed
+
+- **A read-only value in the AI run view and the prompt workbench no longer renders with blank lines and a deep indent.** The wrapper of `AiRunResource::WRAP_ANYWHERE` carried `white-space: pre-wrap`, which also preserved the entry template's own indentation and newlines, so "Error class", "Prompt hash" and "Reused run" sat far below their labels. The constant is now `overflow-wrap: anywhere;` only, and a prompt, a JSON body or an error message keeps its own line breaks through `AiRunResource::keepingLineBreaks()`, an escaped value in a `pre-wrap` span. The workbench "Code default" copy button still copies the plain text. (`src/Filament/Resources/AiRuns/AiRunResource.php`, `src/Filament/Resources/AiRuns/Schemas/AiRunInfolist.php`, `src/Filament/Resources/AiPrompts/Schemas/AiPromptOverrideForm.php`)
+- **A record id that is not a uuid answers 404 in the admin panel instead of 500 on PostgreSQL.** `MagicStarterResource::resolveRecordRouteBinding()` binds to nothing, without a query, when the model keys on uuids (`use_uuids` on and `ConditionallyUsesUuids`) and the id in the url is not one, as in `/ai-prompts/ai-prompt-overrides/not-a-real-id/edit`; PostgreSQL refused to compare the uuid column with text (SQLSTATE 22P02). It covers every package resource; integer keys and host models are untouched. (`src/Filament/Resources/MagicStarterResource.php`)
+- **A prompt body is limited to 32,000 characters.** `SaveAiPromptOverride::MAX_BODY_LENGTH` is enforced by the save action as a `body` refusal (`admin_ai.refusals.body_too_long`, en and tr) and mirrored as `maxLength` on the workbench textarea; a body that was already longer can be read and downloaded but must be shortened to be saved. (`src/Actions/SaveAiPromptOverride.php`, `src/Filament/Resources/AiPrompts/Schemas/AiPromptOverrideForm.php`, `lang/en/admin_ai.php`, `lang/tr/admin_ai.php`)
+- **Saving a stale prompt without the review tick says what to do, and the tick is gone after a save.** The missing tick shows "Tick the box to confirm you reviewed the diff against the new code default." (en and tr) instead of the raw "The i reviewed the diff ... field must be accepted."; after a successful save the edit page rereads the row, so the tick is hidden for a row that is current now and is cleared. (`src/Filament/Resources/AiPrompts/Schemas/AiPromptOverrideForm.php`, `src/Filament/Resources/AiPrompts/Pages/EditAiPromptOverride.php`, `lang/en/admin_ai.php`, `lang/tr/admin_ai.php`)
+
 ## [0.0.36] - 2026-10-18
 
 ### Added
