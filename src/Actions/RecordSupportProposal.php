@@ -11,6 +11,7 @@ use FlutterSdk\MagicStarter\Models\SupportConversation;
 use FlutterSdk\MagicStarter\Models\SupportProposal;
 use FlutterSdk\MagicStarter\Support\StripeBillingState;
 use FlutterSdk\MagicStarter\Support\SupportAi\SupportProposalBillable;
+use FlutterSdk\MagicStarter\Support\SupportAi\SupportProposalTrialWindow;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Gate;
@@ -74,7 +75,7 @@ class RecordSupportProposal implements RecordsSupportProposals
         $until = null;
 
         if ($action === SupportProposalAction::EXTEND_TRIAL) {
-            $until = $this->parseDate($params['until'] ?? null);
+            $until = SupportProposalTrialWindow::day($params['until'] ?? null);
 
             if ($until === null) {
                 return 'Give the new trial end as a real calendar day written YYYY-MM-DD.';
@@ -151,24 +152,6 @@ class RecordSupportProposal implements RecordsSupportProposals
     }
 
     /**
-     * The day a strict `Y-m-d` string names, at its start, or null.
-     *
-     * The pattern runs first because PHP rolls an out-of-range month or day
-     * over (`2026-13-01` becomes `2027-01-01`), and the round trip catches
-     * exactly that roll-over.
-     */
-    private function parseDate(mixed $value): ?CarbonInterface
-    {
-        if (! is_string($value) || preg_match('/^\d{4}-\d{2}-\d{2}$/', $value) !== 1) {
-            return null;
-        }
-
-        $date = Carbon::createFromFormat('!Y-m-d', $value);
-
-        return $date instanceof CarbonInterface && $date->format('Y-m-d') === $value ? $date : null;
-    }
-
-    /**
      * Why the subscription cannot take the action, or null when it can.
      *
      * Mirrors the operator's extendTrial, cancel and resume refusals, plus
@@ -207,15 +190,12 @@ class RecordSupportProposal implements RecordsSupportProposals
 
         // onTrial() holds, so the trial end is set.
         $trialEndsAt = Carbon::instance($subscription->trial_ends_at);
-        $maxDays = (int) config('magic-starter.support.proposals.max_trial_extension_days', 14);
 
-        $latest = $trialEndsAt->copy()->addDays($maxDays);
-
-        if ($until === null || ! $until->greaterThan($trialEndsAt) || $until->greaterThan($latest)) {
+        if ($until === null || ! SupportProposalTrialWindow::fits($until, $trialEndsAt)) {
             return sprintf(
                 'The new trial end must be after the current one, %s, and at most %d days later.',
                 $trialEndsAt->format('Y-m-d'),
-                $maxDays,
+                SupportProposalTrialWindow::maxDays(),
             );
         }
 

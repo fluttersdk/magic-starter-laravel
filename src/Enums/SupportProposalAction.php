@@ -20,9 +20,12 @@ enum SupportProposalAction: string
 
     /**
      * The translated, human-readable name of this action.
+     *
+     * @param  string|null  $locale  The language to name it in; the app's current locale when null, so a line
+     *                               written for the customer can follow the conversation's language instead.
      */
-    public function label(): string
+    public function label(?string $locale = null): string
     {
-        return (string) __('magic-starter::admin_support.proposals.actions.' . $this->value);
+        return (string) __('magic-starter::admin_support.proposals.actions.' . $this->value, [], $locale);
     }
 }

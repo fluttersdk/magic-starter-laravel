@@ -206,6 +206,7 @@ return [
             'handoff' => 'The AI desk handed a conversation to staff: :reason.',
             'negative_rating' => 'A customer rated a resolved conversation thumbs down.',
             'feedback' => 'A customer left a low score in the in-app feedback.',
+            'proposal' => 'The AI desk recorded a billing request that needs a teammate\'s approval.',
             'open_panel' => 'Open the admin panel to answer it.',
             'open_action' => 'Open conversation',
         ],

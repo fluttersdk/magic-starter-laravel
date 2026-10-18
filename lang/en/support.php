@@ -33,6 +33,30 @@ return [
     ],
 
     /*
+     * A staff decision on a billing change the customer asked the AI for. The
+     * three lines are posted into the thread in the conversation's language;
+     * the refusals are what the deciding staff member reads in the panel.
+     */
+    'proposals' => [
+        'approved' => 'A teammate approved your request: :action.',
+        'declined' => 'A teammate declined your request: :action.',
+        'failed' => 'We could not apply your request (:action). A teammate will follow up here.',
+        'refusals' => [
+            'unauthorized' => 'You are not allowed to decide billing requests.',
+            'in_transaction' => 'Approval must run outside a database transaction; '
+                . 'the panel must not wrap actions in databaseTransactions().',
+            'already_decided' => 'This request has already been decided.',
+            'expired' => 'This request expired before it was approved.',
+            'no_billable' => 'The conversation no longer has a billing account to change.',
+            'billable_changed' => 'The conversation now belongs to another billing account than the one '
+                . 'the request was made for.',
+            'owner_changed' => 'The customer who asked is no longer the account owner.',
+            'params_stale' => 'The requested trial end is no longer valid for the current trial.',
+            'not_executing' => 'Only a request whose approval is still running can be marked as failed.',
+        ],
+    ],
+
+    /*
      * Package copy only: a mail line is Markdown, so nothing the customer typed ever goes into one.
      */
     'mail' => [

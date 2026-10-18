@@ -206,6 +206,7 @@ return [
             'handoff' => 'Yapay zekâ masası bir görüşmeyi ekibe devretti: :reason.',
             'negative_rating' => 'Bir müşteri çözülmüş bir görüşmeyi olumsuz puanladı.',
             'feedback' => 'Bir müşteri uygulama içi geri bildirimde düşük puan verdi.',
+            'proposal' => 'Yapay zekâ masası, bir ekip arkadaşının onayını bekleyen bir faturalama talebi kaydetti.',
             'open_panel' => 'Yanıtlamak için yönetim panelini açın.',
             'open_action' => 'Görüşmeyi açın',
         ],
