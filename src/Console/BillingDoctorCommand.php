@@ -3,6 +3,7 @@
 namespace FlutterSdk\MagicStarter\Console;
 
 use FlutterSdk\MagicStarter\Enums\BillingChannel;
+use FlutterSdk\MagicStarter\Features;
 use FlutterSdk\MagicStarter\MagicStarter;
 use FlutterSdk\MagicStarter\Models\BillingEvent;
 use FlutterSdk\MagicStarter\Models\BillingGrant;
@@ -652,10 +653,13 @@ class BillingDoctorCommand extends Command
     }
 
     /**
-     * A lifecycle mail rides a Stripe event, and an endpoint that is not
-     * subscribed to it fails silently: the mail is switched on and never goes out.
-     * Reports its own missing secret, because checkStripeRemote returns before
-     * its secret check when the manifest holds no prices.
+     * An event the package acts on rides a Stripe webhook endpoint, and an
+     * endpoint that is not subscribed to it fails silently: a lifecycle mail is
+     * switched on and never goes out, or a campaign checkout records no
+     * redemption and its count stays at zero. Cashier's default endpoint events
+     * lack every one of them. `*` counts as listing every event, as Stripe means
+     * it. Reports its own missing secret, because checkStripeRemote returns
+     * before its secret check when the manifest holds no prices.
      */
     private function checkStripeWebhookEvents(StripeWebhookEndpointReader $webhookEndpoints): void
     {
@@ -669,6 +673,11 @@ class BillingDoctorCommand extends Command
 
         if ((bool) config('magic-starter.billing.payment_failed_notification', false)) {
             $required[] = 'invoice.payment_failed';
+        }
+
+        // Campaign redemptions are recorded from the completed Checkout Session.
+        if (Features::hasCampaignFeatures()) {
+            $required[] = 'checkout.session.completed';
         }
 
         if ($required === []) {
@@ -723,7 +732,10 @@ class BillingDoctorCommand extends Command
 
         if ($missing !== []) {
             $this->check('stripe.webhook_events', self::WARNING, sprintf(
-                'The Stripe webhook endpoint at %s is not subscribed to %s; the matching mail never goes out.',
+                'The Stripe webhook endpoint at %s is not subscribed to %s; what rides it (a lifecycle mail, '
+                    . 'a campaign redemption) never happens. Add it to the endpoint in the Stripe dashboard, '
+                    . 'and to cashier.webhook.events so an endpoint created with php artisan cashier:webhook '
+                    . 'carries it.',
                 $url,
                 implode(', ', $missing),
             ));

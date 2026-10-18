@@ -1008,6 +1008,149 @@ class BillingDoctorCommandTest extends TestCase
         );
     }
 
+    public function test_remote_with_campaigns_on_passes_an_endpoint_listing_the_completed_checkout_event(): void
+    {
+        $this->fakeRevenueCat();
+        $this->enableCampaigns();
+        $this->app->instance(StripeWebhookEndpointReader::class, $this->webhookEndpoints([
+            $this->webhookEndpoint(['checkout.session.completed']),
+        ]));
+
+        $doctor = $this->doctor(['--remote' => true]);
+
+        $this->assertSame(0, $doctor['exit'], json_encode($doctor['report'], JSON_PRETTY_PRINT) ?: '');
+        $this->assertSame('ok', $doctor['checks']['stripe.webhook_events']['status']);
+    }
+
+    public function test_remote_with_campaigns_on_flags_an_endpoint_missing_the_completed_checkout_event(): void
+    {
+        $this->fakeRevenueCat();
+        $this->enableCampaigns();
+        $this->app->instance(StripeWebhookEndpointReader::class, $this->webhookEndpoints([
+            $this->webhookEndpoint(['customer.subscription.created', 'invoice.payment_succeeded']),
+        ]));
+
+        $doctor = $this->doctor(['--remote' => true]);
+
+        $check = $doctor['checks']['stripe.webhook_events'];
+        $this->assertSame('warning', $check['status']);
+        $this->assertStringContainsString('checkout.session.completed', $check['message']);
+        $this->assertStringContainsString('cashier.webhook.events', $check['message']);
+    }
+
+    public function test_remote_with_campaigns_and_lifecycle_mails_on_names_only_the_missing_event(): void
+    {
+        $this->lifecycleMails(trial: true, payment: true);
+        $this->fakeRevenueCat();
+        $this->enableCampaigns();
+        $this->app->instance(StripeWebhookEndpointReader::class, $this->webhookEndpoints([
+            $this->webhookEndpoint(['customer.subscription.trial_will_end', 'invoice.payment_failed']),
+        ]));
+
+        $doctor = $this->doctor(['--remote' => true]);
+
+        $check = $doctor['checks']['stripe.webhook_events'];
+        $this->assertSame('warning', $check['status']);
+        $this->assertStringContainsString('checkout.session.completed', $check['message']);
+        $this->assertStringNotContainsString('trial_will_end', $check['message']);
+        $this->assertStringNotContainsString('invoice.payment_failed', $check['message']);
+    }
+
+    public function test_remote_with_campaigns_on_accepts_an_endpoint_listening_to_every_event(): void
+    {
+        $this->fakeRevenueCat();
+        $this->enableCampaigns();
+        $this->app->instance(StripeWebhookEndpointReader::class, $this->webhookEndpoints([
+            $this->webhookEndpoint(['*']),
+        ]));
+
+        $doctor = $this->doctor(['--remote' => true]);
+
+        $this->assertSame('ok', $doctor['checks']['stripe.webhook_events']['status']);
+    }
+
+    public function test_remote_with_campaigns_on_flags_a_missing_endpoint_for_this_applications_url(): void
+    {
+        $this->fakeRevenueCat();
+        $this->enableCampaigns();
+        $this->app->instance(StripeWebhookEndpointReader::class, $this->webhookEndpoints([
+            $this->webhookEndpoint(
+                ['checkout.session.completed'],
+                url: 'https://elsewhere.example.test/stripe/webhook',
+            ),
+        ]));
+
+        $doctor = $this->doctor(['--remote' => true]);
+
+        $check = $doctor['checks']['stripe.webhook_events'];
+        $this->assertSame('warning', $check['status']);
+        $this->assertStringContainsString(route('cashier.webhook'), $check['message']);
+    }
+
+    public function test_remote_with_campaigns_on_matches_an_endpoint_url_differing_only_in_case_and_trailing_slash(): void
+    {
+        $this->fakeRevenueCat();
+        $this->enableCampaigns();
+        $url = str_replace('https://app.example.test', 'HTTPS://APP.Example.Test', route('cashier.webhook')) . '/';
+        $this->app->instance(StripeWebhookEndpointReader::class, $this->webhookEndpoints([
+            $this->webhookEndpoint(['checkout.session.completed'], url: $url),
+        ]));
+
+        $doctor = $this->doctor(['--remote' => true]);
+
+        $this->assertSame('ok', $doctor['checks']['stripe.webhook_events']['status']);
+    }
+
+    /**
+     * An adopter who called `MagicStarter::ignoreRoutes()` may serve the webhook
+     * under a route name of their own, so the check warns instead of crashing on
+     * `route()`, and asks Stripe nothing.
+     */
+    public function test_remote_with_campaigns_on_and_the_package_routes_ignored_is_a_warning_not_a_crash(): void
+    {
+        $this->fakeRevenueCat();
+        $this->enableCampaigns();
+        $reader = $this->webhookEndpoints([]);
+        $this->app->instance(StripeWebhookEndpointReader::class, $reader);
+        $this->app['router']->setRoutes(new RouteCollection);
+
+        $doctor = $this->doctor(['--remote' => true]);
+
+        $check = $doctor['checks']['stripe.webhook_events'];
+        $this->assertSame('warning', $check['status']);
+        $this->assertStringContainsString('cashier.webhook', $check['message']);
+        $this->assertSame([], $reader->urls);
+    }
+
+    public function test_remote_without_campaigns_or_lifecycle_mails_never_reads_the_webhook_endpoints(): void
+    {
+        $this->fakeRevenueCat();
+        $reader = $this->webhookEndpoints([$this->webhookEndpoint(['customer.subscription.created'])]);
+        $this->app->instance(StripeWebhookEndpointReader::class, $reader);
+
+        $doctor = $this->doctor(['--remote' => true]);
+
+        $this->assertSame(0, $doctor['exit']);
+        $this->assertArrayNotHasKey('stripe.webhook_events', $doctor['checks']);
+        $this->assertSame([], $reader->urls);
+    }
+
+    public function test_campaigns_on_without_a_stripe_secret_reports_the_webhook_unreadable_without_asking(): void
+    {
+        config(['cashier.secret' => null]);
+        $this->fakeRevenueCat();
+        $this->enableCampaigns();
+        $reader = $this->webhookEndpoints([$this->webhookEndpoint(['*'])]);
+        $this->app->instance(StripeWebhookEndpointReader::class, $reader);
+
+        $doctor = $this->doctor(['--remote' => true]);
+
+        $this->assertSame(1, $doctor['exit']);
+        $this->assertSame('error', $doctor['checks']['stripe.webhook_events']['status']);
+        $this->assertStringContainsString('STRIPE_SECRET', $doctor['checks']['stripe.webhook_events']['message']);
+        $this->assertSame([], $reader->urls);
+    }
+
     public function test_remote_reports_a_revenuecat_it_cannot_reach(): void
     {
         Http::fake(['*' => Http::failedConnection()]);
@@ -1613,5 +1756,10 @@ class BillingDoctorCommandTest extends TestCase
                 return array_intersect_key($this->prices, array_flip($lookupKeys));
             }
         };
+    }
+
+    private function enableCampaigns(): void
+    {
+        config(['magic-starter.features' => [Features::billing(), Features::campaigns()]]);
     }
 }

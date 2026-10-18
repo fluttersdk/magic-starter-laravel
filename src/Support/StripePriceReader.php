@@ -7,11 +7,13 @@ use Stripe\Exception\ApiErrorException;
 use Stripe\Price;
 
 /**
- * The Stripe prices that answer to a set of lookup keys, read through Cashier's
- * Stripe client.
+ * The Stripe objects the billing flow reads, through Cashier's Stripe client:
+ * the prices that answer to a set of lookup keys and one completed Checkout
+ * Session.
  *
- * `billing:doctor --remote` resolves it from the container, so a test binds a
- * subclass instead of reaching Stripe. Read-only: a price list is the only call.
+ * `billing:doctor --remote` and the Stripe webhook controller resolve it from
+ * the container, so a test binds a subclass instead of reaching Stripe.
+ * Read-only: every call is a list or a retrieve.
  *
  * @phpstan-type RemotePrice array{
  *     id: string,
@@ -58,6 +60,23 @@ class StripePriceReader
         }
 
         return $prices;
+    }
+
+    /**
+     * One Checkout Session with its `discounts` expanded, as the array Stripe sends.
+     *
+     * For a `checkout.session.completed` delivery whose payload carries no
+     * discounts: the promotion code is the id string in `discounts.*.promotion_code`.
+     *
+     * @return array<string, mixed>
+     *
+     * @throws ApiErrorException When Stripe refuses or cannot be reached.
+     */
+    public function checkoutSession(string $sessionId): array
+    {
+        return Cashier::stripe()->checkout->sessions
+            ->retrieve($sessionId, ['expand' => ['discounts']])
+            ->toArray();
     }
 
     /**
