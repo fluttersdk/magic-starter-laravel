@@ -4,6 +4,10 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Added
+
+- **The support AI quota settles a turn at uncached input, completion and weighted cache buckets, so a cached prompt prefix no longer drains the pool.** `SupportUsage` takes two optional counts, `cacheReadTokens` and `cacheWriteTokens` (both default `0`), and `promptTokens` now means the uncached input only. `SupportAiQuota` settles uncached input plus completion, plus cache writes times `support.ai.cache_weights.write` and cache reads times `support.ai.cache_weights.read`, each weighted bucket rounded up; the defaults are write `1.0` and read `0.0`, and a negative weight reads as `0`. `SupportUsage::total()` stays the raw sum of all four counts. A caller that builds `SupportUsage` with two counts settles as before. A custom `RespondsToSupport` responder should pass `promptTokens` without the cache buckets, plus both buckets once its provider reports them. (`src/Support/SupportAi/SupportUsage.php`, `src/Support/SupportAi/SupportAiQuota.php`, `config/magic-starter.php`, `doc/support.md`)
+
 ## [0.0.37] - 2026-10-18
 
 ### Added

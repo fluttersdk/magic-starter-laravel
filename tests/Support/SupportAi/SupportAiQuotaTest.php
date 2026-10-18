@@ -360,6 +360,138 @@ class SupportAiQuotaTest extends TestCase
         $this->assertNull($quota->reserve($conversation, 'turn-3', SupportAiPool::FREE));
     }
 
+    public function test_reconcile_with_only_cache_reads_charges_prompt_and_completion_under_default_weights(): void
+    {
+        $this->setPools(free: 2400);
+        $conversation = $this->createConversation($this->createUser());
+        $quota = $this->quota();
+
+        $first = $quota->reserve($conversation, 'turn-1', SupportAiPool::FREE);
+        $this->assertNotNull($first);
+
+        $quota->reconcile($first, new SupportUsage(
+            promptTokens: 60,
+            completionTokens: 40,
+            cacheReadTokens: 50000,
+        ));
+
+        // The pool holds 100, not 50100: turn 2 (1300) fits and turn 3 (2500) does not.
+        $this->assertNotNull($quota->reserve($conversation, 'turn-2', SupportAiPool::FREE));
+        $this->assertNull($quota->reserve($conversation, 'turn-3', SupportAiPool::FREE));
+    }
+
+    public function test_reconcile_charges_a_cache_write_in_full_under_default_weights(): void
+    {
+        $this->setPools(free: 2400);
+        $conversation = $this->createConversation($this->createUser());
+        $quota = $this->quota();
+
+        $first = $quota->reserve($conversation, 'turn-1', SupportAiPool::FREE);
+        $this->assertNotNull($first);
+
+        $quota->reconcile($first, new SupportUsage(
+            promptTokens: 60,
+            completionTokens: 40,
+            cacheWriteTokens: 1500,
+        ));
+
+        $this->assertSame(1600, $quota->chargedTokens(new SupportUsage(60, 40, 0, 1500)));
+        // The pool holds 1600: another 1200 no longer fits.
+        $this->assertNull($quota->reserve($conversation, 'turn-2', SupportAiPool::FREE));
+    }
+
+    /**
+     * A weight so small that rounding would wipe a non-empty bucket still charges one token.
+     */
+    public function test_a_tiny_positive_weight_never_charges_a_non_empty_bucket_zero(): void
+    {
+        config()->set('magic-starter.support.ai.cache_weights', [
+            'read' => 0.0000001,
+            'write' => 1.0,
+        ]);
+
+        $this->assertSame(101, $this->quota()->chargedTokens(new SupportUsage(60, 40, 1, 0)));
+        $this->assertSame(100, $this->quota()->chargedTokens(new SupportUsage(60, 40, 0, 0)));
+    }
+
+    public function test_reconcile_weighs_cache_reads_by_the_configured_read_weight_rounded_up(): void
+    {
+        config()->set('magic-starter.support.ai.cache_weights', [
+            'read' => 0.1,
+            'write' => 1.0,
+        ]);
+        $this->setPools(free: 2600);
+        $conversation = $this->createConversation($this->createUser());
+        $quota = $this->quota();
+
+        $first = $quota->reserve($conversation, 'turn-1', SupportAiPool::FREE);
+        $this->assertNotNull($first);
+
+        // 1005 reads at 0.1 charge 101: the pool holds 60 + 40 + 101 = 201.
+        $quota->reconcile($first, new SupportUsage(
+            promptTokens: 60,
+            completionTokens: 40,
+            cacheReadTokens: 1005,
+        ));
+
+        $this->assertSame(101, $quota->chargedTokens(new SupportUsage(0, 0, 1005, 0)));
+        // 201 + 1200 = 1401 fits under 2600; a third 1200 (2601) is refused only because the reads were
+        // charged: at weight 0.0 the pool would hold 100 + 1200 + 1200 = 2500 and grant it.
+        $this->assertNotNull($quota->reserve($conversation, 'turn-2', SupportAiPool::FREE));
+        $this->assertNull($quota->reserve($conversation, 'turn-3', SupportAiPool::FREE));
+    }
+
+    public function test_a_published_config_without_cache_weights_charges_writes_in_full_and_reads_nothing(): void
+    {
+        /** @var array<string, mixed> $ai */
+        $ai = config('magic-starter.support.ai');
+        unset($ai['cache_weights']);
+        config()->set('magic-starter.support.ai', $ai);
+
+        $this->assertNull(config('magic-starter.support.ai.cache_weights'));
+        $this->assertSame(
+            100 + 700,
+            $this->quota()->chargedTokens(new SupportUsage(60, 40, 90000, 700)),
+        );
+    }
+
+    public function test_a_negative_configured_weight_reads_as_zero(): void
+    {
+        config()->set('magic-starter.support.ai.cache_weights', [
+            'read' => -0.5,
+            'write' => -2.0,
+        ]);
+
+        $this->assertSame(100, $this->quota()->chargedTokens(new SupportUsage(60, 40, 1000, 1000)));
+    }
+
+    public function test_float_noise_does_not_overcharge_a_token(): void
+    {
+        config()->set('magic-starter.support.ai.cache_weights', [
+            'read' => 0.0,
+            'write' => 1.1,
+        ]);
+
+        // 10 * 1.1 is 11.000000000000002 in floating point: it charges 11, not 12.
+        $this->assertSame(11, $this->quota()->chargedTokens(new SupportUsage(0, 0, 0, 10)));
+    }
+
+    public function test_a_usage_without_cache_tokens_settles_exactly_as_before(): void
+    {
+        $this->setPools(free: 2400);
+        $conversation = $this->createConversation($this->createUser());
+        $quota = $this->quota();
+
+        $first = $quota->reserve($conversation, 'turn-1', SupportAiPool::FREE);
+        $this->assertNotNull($first);
+
+        $quota->reconcile($first, new SupportUsage(promptTokens: 60, completionTokens: 40));
+
+        $this->assertSame(100, $quota->chargedTokens(new SupportUsage(60, 40)));
+        $this->assertNotNull($quota->reserve($conversation, 'turn-2', SupportAiPool::FREE));
+        $this->assertNull($quota->reserve($conversation, 'turn-3', SupportAiPool::FREE));
+    }
+
     public function test_the_pool_is_reserved_at_pool_reservation_tokens_not_the_completion_cap(): void
     {
         config()->set('magic-starter.support.ai.max_tokens_per_turn', 1200);
