@@ -118,6 +118,17 @@ class MagicStarterServiceProvider extends ServiceProvider
         $this->app->bind(Contracts\UpdatesAppReleases::class, Actions\UpdateAppRelease::class);
         $this->app->bind(Contracts\DeletesAppReleases::class, Actions\DeleteAppRelease::class);
 
+        // How staff curate campaigns. Unconditional like the AppRelease binds:
+        // a consumer swaps the action before it switches campaigns on. The code
+        // check gets Cashier's client so it shares the rail's key and pinned
+        // API version; a test or a custom Stripe wrapper binds over it.
+        $this->app->bind(Contracts\CreatesCampaigns::class, Actions\CreateCampaign::class);
+        $this->app->bind(Contracts\UpdatesCampaigns::class, Actions\UpdateCampaign::class);
+        $this->app->bind(
+            Support\CampaignCodeValidator::class,
+            static fn (): Support\CampaignCodeValidator => new Support\CampaignCodeValidator(Cashier::stripe()),
+        );
+
         // Bound unconditionally, like every binding above it: the billing
         // feature gates the SCHEMA (see InstallCommand), not the arbitration
         // contract. A consumer has to be able to bind its own entitlement

@@ -63,6 +63,7 @@ class InstallCommand extends Command
         'audit' => 'Audit trail (model changes and admin actions)',
         'support' => 'Support desk (customer conversations and staff inbox)',
         'releases' => 'App releases (curated release notes and latest builds)',
+        'campaigns' => 'Campaigns (time-boxed Stripe promotion code offers)',
         'ai-runs' => 'AI run log (model calls with usage, cost and attempts)',
         'ai-prompts' => 'AI prompt overrides (staff tune prompts in the admin panel)',
     ];
@@ -85,6 +86,7 @@ class InstallCommand extends Command
         'audit' => 'audit',
         'support' => 'support',
         'releases' => 'releases',
+        'campaigns' => 'campaigns',
         'ai-runs' => 'aiRuns',
         'ai-prompts' => 'aiPrompts',
     ];
@@ -174,6 +176,9 @@ class InstallCommand extends Command
         ],
         'releases' => [
             'create_app_releases_table.php',
+        ],
+        'campaigns' => [
+            'create_campaigns_table.php',
         ],
         // Attempts point at runs, so the runs table is stamped first.
         'ai-runs' => [

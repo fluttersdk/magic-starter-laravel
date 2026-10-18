@@ -55,6 +55,7 @@ return [
         // \FlutterSdk\MagicStarter\Features::releases(),
         // \FlutterSdk\MagicStarter\Features::aiRuns(),
         // \FlutterSdk\MagicStarter\Features::aiPrompts(),
+        // \FlutterSdk\MagicStarter\Features::campaigns(),
     ],
 
     /*

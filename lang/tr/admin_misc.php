@@ -185,6 +185,42 @@ return [
         ],
     ],
 
+    /*
+     * Campaigns: time-boxed Stripe promotion codes offered on some products. The
+     * discount shown is the coupon as Stripe described it when the code was last
+     * checked on save.
+     */
+    'campaigns' => [
+        'navigation_label' => 'Kampanyalar',
+        'model_label' => 'kampanya',
+        'plural_model_label' => 'kampanyalar',
+        'columns' => [
+            'name' => 'Ad',
+            'starts_at' => 'Başlangıç',
+            'ends_at' => 'Bitiş',
+            'enabled' => 'Etkin',
+            'discount' => 'İndirim',
+            'campaign_checkouts' => 'Kampanya ödemeleri',
+        ],
+        'fields' => [
+            'name' => 'Ad',
+            'enabled' => 'Etkin',
+            'starts_at' => 'Başlangıç',
+            'ends_at' => 'Bitiş',
+            'products' => 'Ürünler',
+            'headline' => 'Başlık (:locale)',
+            'body' => 'Metin (:locale)',
+            'stripe_promotion_code_id' => 'Promosyon kodu kimliği',
+            'discount' => 'İndirim (Stripe\'ın son kontrolde bildirdiği)',
+        ],
+        'filters' => [
+            'active_now' => 'Şu an aktif',
+        ],
+        'actions' => [
+            'create' => 'Yeni kampanya',
+        ],
+    ],
+
     'dashboard' => [
         'stats' => [
             'users' => 'Kullanıcılar',

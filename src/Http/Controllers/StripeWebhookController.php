@@ -10,9 +10,11 @@ use FlutterSdk\MagicStarter\Enums\BillingEventType;
 use FlutterSdk\MagicStarter\Enums\BillingProvider;
 use FlutterSdk\MagicStarter\Enums\BillingSource;
 use FlutterSdk\MagicStarter\Enums\PlanStatus;
+use FlutterSdk\MagicStarter\Features;
 use FlutterSdk\MagicStarter\Jobs\CheckTrialCard;
 use FlutterSdk\MagicStarter\MagicStarter;
 use FlutterSdk\MagicStarter\Models\BillingTrial;
+use FlutterSdk\MagicStarter\Models\Campaign;
 use FlutterSdk\MagicStarter\Models\ProcessedWebhookEvent;
 use FlutterSdk\MagicStarter\Notifications\PaymentFailedNotification;
 use FlutterSdk\MagicStarter\Notifications\TrialEndingNotification;
@@ -22,6 +24,7 @@ use FlutterSdk\MagicStarter\Support\BillingRecipient;
 use FlutterSdk\MagicStarter\Support\EntitlementWrite;
 use FlutterSdk\MagicStarter\Support\MailLocale;
 use FlutterSdk\MagicStarter\Support\ReadsBillableAttributes;
+use FlutterSdk\MagicStarter\Support\StripePriceReader;
 use FlutterSdk\MagicStarter\Support\StripeSubscriptionState;
 use FlutterSdk\MagicStarter\Support\TeamKey;
 use Illuminate\Contracts\Auth\Authenticatable;
@@ -125,6 +128,16 @@ use Symfony\Component\HttpFoundation\Response;
  * owed does not, so its local row keeps saying what Stripe says until the
  * check finishes it. Its deletion event runs as any other does and revokes
  * nothing while the survivor still grants.
+ *
+ * ## Campaign redemptions are recorded from `checkout.session.completed`
+ *
+ * Cashier's default endpoint events do not include it, so an adopter adds it to
+ * `cashier.webhook.events` (or the dashboard endpoint), and `billing:doctor
+ * --remote` flags the endpoint that lacks it. A session whose
+ * `client_reference_id` names a campaign leaves a `campaign_redeemed` row. This
+ * is the one handler that may call Stripe, and only when the payload does not
+ * carry the redeemed promotion code itself: a failed read-back throws, which
+ * rolls the dedup claim back and lets Stripe's retry record it.
  */
 class StripeWebhookController extends CashierWebhookController
 {
@@ -155,8 +168,9 @@ class StripeWebhookController extends CashierWebhookController
      * @param  WritesEntitlement  $entitlements  the only code path allowed to
      *                                           write the entitlement columns
      * @param  BillingEventRecorder  $recorder  leaves the audit row for a delivery
-     *                                          this feeder refuses and for a trial
-     *                                          it records; the entitlement writes
+     *                                          this feeder refuses, for a trial
+     *                                          it records and for a campaign
+     *                                          redemption; the entitlement writes
      *                                          are recorded by the write path itself
      */
     public function __construct(
@@ -244,6 +258,24 @@ class StripeWebhookController extends CashierWebhookController
             );
 
             return $response;
+        });
+    }
+
+    /**
+     * Handle a completed Checkout Session.
+     *
+     * Cashier has no handler for it, so this one only records a campaign
+     * redemption and writes no entitlement: the subscription events the same
+     * checkout produces do that.
+     *
+     * @param  array<string, mixed>  $payload
+     */
+    protected function handleCheckoutSessionCompleted(array $payload): Response
+    {
+        return $this->processOnce($payload, function (array $payload): Response {
+            $this->recordCampaignRedemption($payload);
+
+            return $this->successMethod();
         });
     }
 
@@ -787,6 +819,137 @@ class StripeWebhookController extends CashierWebhookController
         $userModel = MagicStarter::userModel();
 
         return $userModel::query()->whereKey($userId)->first();
+    }
+
+    /**
+     * Leave the `campaign_redeemed` row for a completed session that carried a
+     * campaign's promotion code.
+     *
+     * A session names a campaign through the `client_reference_id` the
+     * checkout set; any other session (another integration's, a plan bought
+     * with no campaign) is none of this package's business and leaves nothing.
+     * A $0 trial checkout counts: the redemption is the code, not the money.
+     *
+     * @param  array<string, mixed>  $payload
+     */
+    protected function recordCampaignRedemption(array $payload): void
+    {
+        $object = $payload['data']['object'] ?? [];
+
+        // 1. The campaigns table exists only where the feature was installed,
+        //    so a deployment without it must not query it on a payment path.
+        if (! Features::hasCampaignFeatures() || ! is_array($object)) {
+            return;
+        }
+
+        $campaign = $this->campaignNamedBy($object['client_reference_id'] ?? null);
+
+        if ($campaign === null) {
+            return;
+        }
+
+        // 2. The subject. A customer nothing here bills has no redemption to keep.
+        $billable = $this->resolveBillable($object['customer'] ?? null);
+
+        if ($billable === null) {
+            return;
+        }
+
+        // 3. What Stripe says was redeemed, not what the campaign holds now:
+        //    staff may have changed the code since the session opened.
+        $session = $this->sessionWithDiscounts($object);
+        $promotionCode = $this->promotionCodeIn($session);
+
+        if ($promotionCode === null) {
+            return;
+        }
+
+        $amountDiscount = $session['total_details']['amount_discount'] ?? 0;
+
+        $this->recorder->record(
+            type: BillingEventType::CAMPAIGN_REDEEMED,
+            source: BillingSource::WEBHOOK,
+            billable: $billable,
+            provider: BillingProvider::STRIPE,
+            externalId: $payload['id'],
+            properties: [
+                'campaign_id' => (string) $campaign->getKey(),
+                'promotion_code' => $promotionCode,
+                'amount_discount' => is_int($amountDiscount) ? $amountDiscount : 0,
+            ],
+        );
+    }
+
+    /**
+     * The campaign a `client_reference_id` names, or null for any other value.
+     *
+     * Only the {@see Campaign::CLIENT_REFERENCE_PREFIX} reference the checkout
+     * writes counts: another integration's session may carry a bare key that
+     * happens to be a campaign's. The key's shape is then checked before the
+     * lookup for the reason {@see self::existingUser()} gives: on a PostgreSQL
+     * `uuid` key free text would raise inside the webhook transaction instead
+     * of answering "no campaign".
+     */
+    protected function campaignNamedBy(mixed $reference): ?Campaign
+    {
+        if (! is_string($reference) || ! str_starts_with($reference, Campaign::CLIENT_REFERENCE_PREFIX)) {
+            return null;
+        }
+
+        $key = substr($reference, strlen(Campaign::CLIENT_REFERENCE_PREFIX));
+
+        // TeamKey's shape rule follows `use_uuids`, which keys every package model, not only teams.
+        if (! TeamKey::looksLikeOne($key)) {
+            return null;
+        }
+
+        return Campaign::query()->find($key);
+    }
+
+    /**
+     * The session as Stripe holds it when the payload cannot say what was
+     * redeemed: the payload itself when it carries both the promotion code and
+     * the discount amount, otherwise the session read back with its discounts
+     * expanded.
+     *
+     * @param  array<string, mixed>  $object
+     * @return array<string, mixed>
+     */
+    protected function sessionWithDiscounts(array $object): array
+    {
+        $complete = $this->promotionCodeIn($object) !== null
+            && is_int($object['total_details']['amount_discount'] ?? null);
+
+        // Resolved here and not injected: the read happens for a campaign
+        // session only, and a constructor parameter would break every subclass
+        // that already calls `parent::__construct()` with two arguments.
+        return $complete
+            ? $object
+            : app(StripePriceReader::class)->checkoutSession((string) $object['id']);
+    }
+
+    /**
+     * The promotion code id in a session's `discounts`, or null.
+     *
+     * Stripe writes it as an id string; an object carrying `id` is what an
+     * integration that expanded the code would see.
+     *
+     * @param  array<string, mixed>  $session
+     */
+    protected function promotionCodeIn(array $session): ?string
+    {
+        $discounts = $session['discounts'] ?? null;
+
+        foreach (is_array($discounts) ? $discounts : [] as $discount) {
+            $code = is_array($discount) ? ($discount['promotion_code'] ?? null) : null;
+            $code = is_array($code) ? ($code['id'] ?? null) : $code;
+
+            if (is_string($code) && $code !== '') {
+                return $code;
+            }
+        }
+
+        return null;
     }
 
     /**

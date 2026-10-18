@@ -24,7 +24,8 @@ class StripeWebhookEndpointReader
     /**
      * The union of the events of every ENABLED endpoint posting to [$url], or
      * null when none does. `*` is kept as Stripe writes it: it subscribes the
-     * endpoint to every event.
+     * endpoint to every event. Urls are compared as {@see self::normalisedUrl()}
+     * spells them, since Stripe and the router may each spell one differently.
      *
      * @return list<string>|null
      *
@@ -33,9 +34,10 @@ class StripeWebhookEndpointReader
     public function enabledEventsFor(string $url): ?array
     {
         $events = null;
+        $url = $this->normalisedUrl($url);
 
         foreach ($this->endpoints() as $endpoint) {
-            if ($endpoint['url'] !== $url || $endpoint['status'] !== 'enabled') {
+            if ($this->normalisedUrl($endpoint['url']) !== $url || $endpoint['status'] !== 'enabled') {
                 continue;
             }
 
@@ -43,6 +45,27 @@ class StripeWebhookEndpointReader
         }
 
         return $events;
+    }
+
+    /**
+     * A url with its scheme and host lowercased, since both are case-insensitive,
+     * and no trailing slash. The path keeps its case: it is case-sensitive.
+     */
+    protected function normalisedUrl(string $url): string
+    {
+        $url = rtrim($url, '/');
+        $scheme = parse_url($url, PHP_URL_SCHEME);
+        $host = parse_url($url, PHP_URL_HOST);
+
+        if (! is_string($scheme) || ! is_string($host)) {
+            return $url;
+        }
+
+        $prefix = $scheme . '://' . $host;
+
+        return str_starts_with($url, $prefix)
+            ? strtolower($prefix) . substr($url, strlen($prefix))
+            : $url;
     }
 
     /**

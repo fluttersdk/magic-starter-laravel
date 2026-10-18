@@ -76,6 +76,7 @@ The main features and their toggle methods:
 | `phone-otp` | `Features::phoneOtp()` | `Features::hasPhoneOtpFeatures()` | Phone-based OTP verification flow |
 | `timezones` | `Features::timezones()` | `Features::hasTimezoneFeatures()` | Timezone detection and per-user timezone storage |
 | `releases` | `Features::releases()` | `Features::hasReleaseFeatures()` | Release notes staff curate and clients read from `GET releases` |
+| `campaigns` | `Features::campaigns()` | `Features::hasCampaignFeatures()` | Time-boxed Stripe promotion codes staff run from the admin panel, applied at checkout and served at `GET billing/campaign` (needs `billing`) |
 
 <a name="programmatic-feature-checking"></a>
 ## Programmatic Feature Checking

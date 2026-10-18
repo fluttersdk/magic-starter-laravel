@@ -183,6 +183,42 @@ return [
         ],
     ],
 
+    /*
+     * Campaigns: time-boxed Stripe promotion codes offered on some products. The
+     * discount shown is the coupon as Stripe described it when the code was last
+     * checked on save.
+     */
+    'campaigns' => [
+        'navigation_label' => 'Campaigns',
+        'model_label' => 'campaign',
+        'plural_model_label' => 'campaigns',
+        'columns' => [
+            'name' => 'Name',
+            'starts_at' => 'Starts at',
+            'ends_at' => 'Ends at',
+            'enabled' => 'Enabled',
+            'discount' => 'Discount',
+            'campaign_checkouts' => 'Campaign checkouts',
+        ],
+        'fields' => [
+            'name' => 'Name',
+            'enabled' => 'Enabled',
+            'starts_at' => 'Starts at',
+            'ends_at' => 'Ends at',
+            'products' => 'Products',
+            'headline' => 'Headline (:locale)',
+            'body' => 'Body (:locale)',
+            'stripe_promotion_code_id' => 'Promotion code id',
+            'discount' => 'Discount (as Stripe described it on the last check)',
+        ],
+        'filters' => [
+            'active_now' => 'Active now',
+        ],
+        'actions' => [
+            'create' => 'New campaign',
+        ],
+    ],
+
     'dashboard' => [
         'stats' => [
             'users' => 'Users',

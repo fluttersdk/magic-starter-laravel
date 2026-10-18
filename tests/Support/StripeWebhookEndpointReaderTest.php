@@ -61,6 +61,18 @@ final class StripeWebhookEndpointReaderTest extends TestCase
         ], $events);
     }
 
+    public function test_an_endpoint_url_differing_only_in_scheme_and_host_case_or_a_trailing_slash_matches(): void
+    {
+        $this->stripe->answer($this->page([
+            $this->endpoint('HTTPS://APP.Example.Test/stripe/webhook/', 'enabled', ['checkout.session.completed']),
+            $this->endpoint('https://app.example.test/Stripe/webhook', 'enabled', ['invoice.payment_failed']),
+        ]));
+
+        $events = (new StripeWebhookEndpointReader)->enabledEventsFor('https://app.example.test/stripe/webhook');
+
+        $this->assertSame(['checkout.session.completed'], $events);
+    }
+
     public function test_no_enabled_endpoint_on_the_url_answers_null(): void
     {
         $this->stripe->answer($this->page([
