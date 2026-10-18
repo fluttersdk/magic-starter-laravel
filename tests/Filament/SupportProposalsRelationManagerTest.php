@@ -4,6 +4,8 @@ namespace FlutterSdk\MagicStarter\Tests\Filament;
 
 use Carbon\CarbonImmutable;
 use Carbon\CarbonInterface;
+use Filament\Actions\ActionGroup;
+use Filament\Support\Enums\Size;
 use FlutterSdk\MagicStarter\Contracts\AdministersBilling;
 use FlutterSdk\MagicStarter\Enums\BillingEventType;
 use FlutterSdk\MagicStarter\Enums\BillingSource;
@@ -205,6 +207,59 @@ class SupportProposalsRelationManagerTest extends FilamentTestCase
             ->assertTableActionHidden('approve', $expired)
             ->assertTableActionHidden('reject', $expired)
             ->assertSee((string) __('magic-starter::admin_support.proposals.labels.expired'));
+    }
+
+    public function test_the_row_decisions_share_one_menu_with_a_44_px_trigger(): void
+    {
+        [$conversation] = $this->arrange();
+
+        $actions = array_values($this->tab($conversation)->instance()->getTable()->getRecordActions());
+
+        $this->assertCount(1, $actions);
+        $this->assertInstanceOf(ActionGroup::class, $actions[0]);
+        $this->assertSame(Size::ExtraLarge, $actions[0]->getSize());
+        $this->assertSame(
+            [
+                'view',
+                'approve',
+                'reject',
+                'markFailed',
+                'markApplied',
+            ],
+            array_keys($actions[0]->getFlatActions()),
+        );
+    }
+
+    public function test_the_secondary_columns_show_from_the_lg_breakpoint(): void
+    {
+        [$conversation] = $this->arrange();
+
+        $table = $this->tab($conversation)->instance()->getTable();
+
+        foreach (['params_summary', 'requester_name', 'created_at', 'expires_at'] as $name) {
+            $this->assertSame('lg', $table->getColumn($name)?->getVisibleFrom(), $name);
+        }
+
+        $this->assertNull($table->getColumn('action')?->getVisibleFrom());
+        $this->assertNull($table->getColumn('status')?->getVisibleFrom());
+        $this->assertTrue($table->getColumn('action')?->canWrap());
+    }
+
+    public function test_the_status_column_says_a_lapsed_request_expired_since_its_deadline_column_hides_below_lg(): void
+    {
+        [$conversation, $team] = $this->arrange();
+        $lapsed = $this->proposal($conversation, $team, SupportProposalAction::RESUME, [], [
+            'expires_at' => $this->now()->subMinute(),
+        ]);
+        $open = $this->proposal($conversation, $team, SupportProposalAction::CANCEL_AT_PERIOD_END);
+
+        $status = $this->tab($conversation)->instance()->getTable()->getColumn('status');
+
+        $this->assertSame(
+            (string) __('magic-starter::admin_support.proposals.labels.expired'),
+            $status?->record($lapsed)->getDescriptionBelow(),
+        );
+        $this->assertNull($status?->record($open)->getDescriptionBelow());
     }
 
     public function test_mark_failed_is_offered_only_for_an_executing_row_and_needs_a_reason(): void
