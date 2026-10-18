@@ -234,6 +234,7 @@ final class AiRunInfolist
                         TextEntry::make('tool_calls')
                             ->label(self::attemptLabel('tool_calls'))
                             ->state(static fn (AiRunAttempt $record): ?string => self::json($record->tool_calls))
+                            ->formatStateUsing(AiRunResource::keepingLineBreaks(...))
                             ->fontFamily(FontFamily::Mono)
                             ->extraAttributes(AiRunResource::WRAP_ANYWHERE)
                             ->placeholder(AiRunResource::ABSENT),
@@ -241,6 +242,7 @@ final class AiRunInfolist
                             ->label(self::attemptLabel('error'))
                             ->state(static fn (AiRunAttempt $record): ?string => $record->error_message
                                 ?? $record->error_class)
+                            ->formatStateUsing(AiRunResource::keepingLineBreaks(...))
                             ->extraAttributes(AiRunResource::WRAP_ANYWHERE)
                             ->placeholder(AiRunResource::ABSENT),
                     ]),
@@ -248,13 +250,14 @@ final class AiRunInfolist
     }
 
     /**
-     * The entry shared by every body: labelled, monospaced, wrapped, and shown
-     * only while the prune has not blanked it. The caller sets the state.
+     * The entry shared by every body: labelled, monospaced, wrapped, keeping its line breaks,
+     * and shown only while the prune has not blanked it. The caller sets the state.
      */
     private static function bodyEntry(string $field): TextEntry
     {
         return TextEntry::make($field)
             ->label(__("magic-starter::admin_ai.view.{$field}"))
+            ->formatStateUsing(AiRunResource::keepingLineBreaks(...))
             ->fontFamily(FontFamily::Mono)
             ->extraAttributes(AiRunResource::WRAP_ANYWHERE)
             ->columnSpanFull()
