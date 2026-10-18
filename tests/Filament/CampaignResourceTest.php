@@ -20,6 +20,7 @@ use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Event;
 use Illuminate\Support\Str;
 use Illuminate\Validation\ValidationException;
+use Laravel\Cashier\Cashier;
 use Livewire\Livewire;
 
 /**
@@ -330,8 +331,13 @@ class CampaignResourceTest extends FilamentTestCase
         Livewire::actingAs($this->staff())->test(ListCampaigns::class)
             ->assertCanSeeTableRecords([$percent, $amount])
             ->assertTableColumnStateSet('discount', '25%', $percent)
-            ->assertSee('$5')
-            ->assertSee('₺150')
+            // Through Cashier's formatter, since its output follows the host's ICU build ("$5.00"
+            // locally, "$ 5.00" and "TRY 150.00" on CI): the column's job is every currency, joined.
+            ->assertTableColumnStateSet(
+                'discount',
+                Cashier::formatAmount(500, 'USD') . ' / ' . Cashier::formatAmount(15000, 'TRY'),
+                $amount,
+            )
             ->assertTableColumnStateSet('campaign_checkouts', 2, $percent)
             ->assertTableColumnStateSet('campaign_checkouts', 1, $amount);
     }
