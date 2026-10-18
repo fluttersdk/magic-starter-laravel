@@ -15,6 +15,13 @@ use Illuminate\Support\Facades\DB;
  * handler is expected to call {@see self::recordIfNew()} BEFORE running its
  * side effects (insert-then-handle), so a re-delivered event is a total
  * no-op instead of double-processing.
+ *
+ * Not every row is an event id: the Stripe webhook also claims one
+ * payment-failed mail per invoice here, keyed `mail.payment_failed.<invoice id>`
+ * (`StripeWebhookController::PAYMENT_FAILED_MAIL_CLAIM`), so the mail rides the
+ * same transactional, unique insert. `billing:prune` ages both kinds out
+ * together, which is safe for the mail claims for the reason given on that
+ * constant.
  */
 class ProcessedWebhookEvent extends Model
 {

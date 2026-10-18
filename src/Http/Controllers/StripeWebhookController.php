@@ -16,9 +16,13 @@ use FlutterSdk\MagicStarter\MagicStarter;
 use FlutterSdk\MagicStarter\Models\BillingTrial;
 use FlutterSdk\MagicStarter\Models\Campaign;
 use FlutterSdk\MagicStarter\Models\ProcessedWebhookEvent;
+use FlutterSdk\MagicStarter\Notifications\PaymentFailedNotification;
+use FlutterSdk\MagicStarter\Notifications\TrialEndingNotification;
 use FlutterSdk\MagicStarter\Support\BillingEventRecorder;
 use FlutterSdk\MagicStarter\Support\BillingLog;
+use FlutterSdk\MagicStarter\Support\BillingRecipient;
 use FlutterSdk\MagicStarter\Support\EntitlementWrite;
+use FlutterSdk\MagicStarter\Support\MailLocale;
 use FlutterSdk\MagicStarter\Support\ReadsBillableAttributes;
 use FlutterSdk\MagicStarter\Support\StripePriceReader;
 use FlutterSdk\MagicStarter\Support\StripeSubscriptionState;
@@ -26,7 +30,9 @@ use FlutterSdk\MagicStarter\Support\TeamKey;
 use Illuminate\Contracts\Auth\Authenticatable;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Notification;
 use Laravel\Cashier\Http\Controllers\WebhookController as CashierWebhookController;
+use Stripe\Invoice as StripeInvoice;
 use Stripe\Subscription as StripeSubscription;
 use Symfony\Component\HttpFoundation\Response;
 
@@ -135,6 +141,19 @@ use Symfony\Component\HttpFoundation\Response;
  */
 class StripeWebhookController extends CashierWebhookController
 {
+    /**
+     * The dedup key prefix the payment-failed mail claims per invoice, in the
+     * same table as the event ids. Never a Stripe event id shape (`evt_`), so
+     * the two cannot collide.
+     *
+     * `billing:prune` deletes these rows with the event ids once they pass
+     * `webhook_retention_days` (31 at least, 90 by default), and that is safe:
+     * the claim only has to outlive the manual retries of one open invoice, and
+     * the next cycle bills a new invoice id that is news again anyway. A claim
+     * pruned while its invoice is still open costs at most one more mail.
+     */
+    protected const PAYMENT_FAILED_MAIL_CLAIM = 'mail.payment_failed.';
+
     /**
      * The provenance columns are decoded through the shared readers rather than
      * read straight off the model. The package ships the columns and not the
@@ -258,6 +277,224 @@ class StripeWebhookController extends CashierWebhookController
 
             return $this->successMethod();
         });
+    }
+
+    /**
+     * Mail the person who manages billing that a `default` trial ends in three days.
+     *
+     * Cashier defines no handler for this event, so there is no parent call. Each guard exists because Stripe
+     * sends this event in a case that is not "the trial ends soon":
+     *
+     *  - Stripe fires it IMMEDIATELY when a trial is ended early, with the subscription already `active`, and
+     *    its docs say to check the status: so `trialing` and a `trial_end` strictly in the future.
+     *  - Only the `default` type is the plan the billing screen shows, the same scope every other feeder reads.
+     *  - A trial the card check refused, finished or with its cancel still owed, is being taken away rather
+     *    than about to convert: a short trial can meet this event while the check runs, and the person then
+     *    gets TrialRefusedNotification instead.
+     *  - An unmapped price names no plan to talk about; the subscription events already warn about it.
+     *
+     * The cancelled variant is read off the payload twice over: API basil deprecates `cancel_at_period_end`,
+     * and a Billing Portal cancel may set only `cancel_at`, which cancels before any charge when it falls on or
+     * before the trial end.
+     *
+     * The mail is queued `afterCommit`, because this runs inside {@see self::processOnce()}: a delivery that
+     * rolls back is retried by Stripe and must not have queued a mail its retry queues again. Every field comes
+     * out of the payload, so nothing here calls Stripe (see the class docblock).
+     *
+     * @param  array<string, mixed>  $payload
+     */
+    protected function handleCustomerSubscriptionTrialWillEnd(array $payload): Response
+    {
+        return $this->processOnce($payload, function (array $payload): Response {
+            $this->mailTrialEnding($payload);
+
+            return $this->successMethod();
+        });
+    }
+
+    /**
+     * Mail the person who manages billing that a `default` subscription's cycle payment (a renewal, or the
+     * first charge after a trial) was declined.
+     *
+     * Cashier defines no handler for this event, so there is no parent call. Each guard narrows Stripe's event
+     * to the one failure nobody has been told about yet:
+     *
+     *  - Stripe fires it on EVERY attempt, so only `attempt_count` 1; the retries are Stripe's own dunning.
+     *    A manual retry stays at attempt 1, so the mail is also claimed once per invoice id.
+     *  - Only `subscription_cycle`, a renewal. A declined plan swap is reported inline to the person who asked
+     *    for it (`BillingController` swaps with `errorIfPaymentFails()`), and `subscription_create` happens
+     *    inside Checkout, in front of the payer.
+     *  - A positive `amount_due`, because a zero invoice charges nobody.
+     *  - The invoice must belong to the billable's local `default` subscription, read at
+     *    `parent.subscription_details` where API basil carries it, so a failure on another subscription is not
+     *    reported as the plan the mail names.
+     *
+     * Queued `afterCommit` and free of Stripe calls for the same reasons as
+     * {@see self::handleCustomerSubscriptionTrialWillEnd()}.
+     *
+     * @param  array<string, mixed>  $payload
+     */
+    protected function handleInvoicePaymentFailed(array $payload): Response
+    {
+        return $this->processOnce($payload, function (array $payload): Response {
+            $this->mailPaymentFailed($payload);
+
+            return $this->successMethod();
+        });
+    }
+
+    /**
+     * Send the trial-ending mail when every guard on {@see self::handleCustomerSubscriptionTrialWillEnd()}
+     * holds; otherwise do nothing.
+     *
+     * @param  array<string, mixed>  $payload
+     */
+    protected function mailTrialEnding(array $payload): void
+    {
+        $object = $payload['data']['object'] ?? [];
+
+        if (! is_array($object) || ! config('magic-starter.billing.trial_ending_notification', false)) {
+            return;
+        }
+
+        // 1. Only a `default` trial that is still running and ends in the future.
+        $trialEnd = $object['trial_end'] ?? null;
+
+        if ($this->subscriptionType($payload) !== StripeSubscriptionState::SUBSCRIPTION_TYPE
+            || ($object['status'] ?? null) !== StripeSubscription::STATUS_TRIALING
+            || ! is_int($trialEnd)
+            || $trialEnd <= now()->getTimestamp()
+            || $this->hasRefusedTrial($object['id'] ?? null)
+        ) {
+            return;
+        }
+
+        // 2. The subject, the plan it trials and the person who manages it.
+        $billable = $this->resolveBillable($object['customer'] ?? null);
+        $tier = StripeSubscriptionState::planForPrice($object['items']['data'][0]['price']['id'] ?? null);
+
+        if ($billable === null || $tier === null) {
+            return;
+        }
+
+        $recipient = BillingRecipient::for($billable);
+
+        if ($recipient === null) {
+            return;
+        }
+
+        // 3. Whether the trial end charges anything at all.
+        $cancelAt = $object['cancel_at'] ?? null;
+        $cancelling = ($object['cancel_at_period_end'] ?? null) === true
+            || (is_int($cancelAt) && $cancelAt <= $trialEnd);
+
+        $this->sendLifecycleMail(
+            $recipient,
+            new TrialEndingNotification($tier, CarbonImmutable::createFromTimestamp($trialEnd), $cancelling),
+        );
+    }
+
+    /**
+     * Send the payment-failed mail when every guard on {@see self::handleInvoicePaymentFailed()} holds;
+     * otherwise do nothing.
+     *
+     * @param  array<string, mixed>  $payload
+     */
+    protected function mailPaymentFailed(array $payload): void
+    {
+        $object = $payload['data']['object'] ?? [];
+
+        if (! is_array($object) || ! config('magic-starter.billing.payment_failed_notification', false)) {
+            return;
+        }
+
+        // 1. Only the first declined attempt at a renewal that charges something.
+        $amountDue = $object['amount_due'] ?? null;
+
+        if (($object['attempt_count'] ?? null) !== 1
+            || ($object['billing_reason'] ?? null) !== StripeInvoice::BILLING_REASON_SUBSCRIPTION_CYCLE
+            || ! is_int($amountDue)
+            || $amountDue <= 0
+        ) {
+            return;
+        }
+
+        // 2. The subject and its local `default` subscription, which this invoice must belong to. The trait
+        //    is checked rather than assumed, as reaffirmEntitlementFromInvoice() does.
+        $billable = $this->resolveBillable($object['customer'] ?? null);
+
+        if ($billable === null || ! method_exists($billable, 'subscription')) {
+            return;
+        }
+
+        $subscription = $billable->subscription(StripeSubscriptionState::SUBSCRIPTION_TYPE);
+        $invoiceSubscription = $object['parent']['subscription_details']['subscription'] ?? null;
+
+        if (! $subscription instanceof Model
+            || ! is_string($invoiceSubscription)
+            || $this->stringAttribute($subscription, 'stripe_id') !== $invoiceSubscription
+        ) {
+            return;
+        }
+
+        // 3. The plan being renewed and the person who manages it.
+        $tier = StripeSubscriptionState::planForPrice($this->stringAttribute($subscription, 'stripe_price'));
+
+        if ($tier === null) {
+            return;
+        }
+
+        $recipient = BillingRecipient::for($billable);
+
+        if ($recipient === null) {
+            return;
+        }
+
+        // 4. One mail per invoice. Stripe counts only automatic retries in
+        //    `attempt_count`, so a payer who retries this invoice by hand fails
+        //    again at attempt 1 under a new event id, which processOnce() lets
+        //    through. The claim shares the webhook transaction, so a delivery
+        //    that rolls back releases it with the mail.
+        $invoiceId = $object['id'] ?? null;
+
+        if (! is_string($invoiceId)
+            || ! ProcessedWebhookEvent::recordIfNew(self::PAYMENT_FAILED_MAIL_CLAIM . $invoiceId, $payload['type'])
+        ) {
+            return;
+        }
+
+        $this->sendLifecycleMail($recipient, new PaymentFailedNotification($tier));
+    }
+
+    /**
+     * Whether the card check refused this subscription's trial, whether its cancel is finished or still owed.
+     *
+     * Wider than {@see self::isRefusedTrial()}, which only skips a finished refusal because an owed one must keep
+     * its local row in step with Stripe; for a mail, an owed refusal is already a trial that will not convert.
+     */
+    protected function hasRefusedTrial(mixed $subscriptionId): bool
+    {
+        return is_string($subscriptionId)
+            && BillingTrial::query()
+                ->where('stripe_subscription_id', $subscriptionId)
+                ->whereNotNull('refused_at')
+                ->exists();
+    }
+
+    /**
+     * Queue a lifecycle mail in the recipient's language, released only once the webhook transaction commits.
+     *
+     * The locale is pinned here because the mail is built in Stripe's request, which carries no person's
+     * locale, and rendered later on a worker, which carries none either.
+     */
+    protected function sendLifecycleMail(
+        Model $recipient,
+        TrialEndingNotification|PaymentFailedNotification $notification,
+    ): void {
+        Notification::send(
+            $recipient,
+            $notification->locale(MailLocale::for($recipient))->afterCommit(),
+        );
     }
 
     /**

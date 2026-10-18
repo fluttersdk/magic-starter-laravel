@@ -9,6 +9,7 @@ use FlutterSdk\MagicStarter\Models\Subscription;
 use FlutterSdk\MagicStarter\Models\SubscriptionItem;
 use FlutterSdk\MagicStarter\Support\RevenueCatProjectClient;
 use FlutterSdk\MagicStarter\Support\StripePriceReader;
+use FlutterSdk\MagicStarter\Support\StripeWebhookEndpointReader;
 use FlutterSdk\MagicStarter\Tests\TestCase;
 use GuzzleHttp\Promise\PromiseInterface;
 use Illuminate\Database\Schema\Blueprint;
@@ -17,6 +18,7 @@ use Illuminate\Http\Client\Request;
 use Illuminate\Routing\RouteCollection;
 use Illuminate\Support\Facades\Artisan;
 use Illuminate\Support\Facades\Http;
+use Illuminate\Support\Facades\Route;
 use Illuminate\Support\Facades\Schema;
 use Illuminate\Support\Sleep;
 use Laravel\Cashier\Cashier;
@@ -1010,67 +1012,79 @@ class BillingDoctorCommandTest extends TestCase
     {
         $this->fakeRevenueCat();
         $this->enableCampaigns();
+        $this->app->instance(StripeWebhookEndpointReader::class, $this->webhookEndpoints([
+            $this->webhookEndpoint(['checkout.session.completed']),
+        ]));
 
         $doctor = $this->doctor(['--remote' => true]);
 
         $this->assertSame(0, $doctor['exit'], json_encode($doctor['report'], JSON_PRETTY_PRINT) ?: '');
-        $this->assertSame('ok', $doctor['checks']['stripe.remote.webhook']['status']);
+        $this->assertSame('ok', $doctor['checks']['stripe.webhook_events']['status']);
     }
 
     public function test_remote_with_campaigns_on_flags_an_endpoint_missing_the_completed_checkout_event(): void
     {
         $this->fakeRevenueCat();
         $this->enableCampaigns();
-        $this->app->instance(StripePriceReader::class, $this->stripe(
-            $this->stripePrices(),
-            [$this->endpoint(['customer.subscription.created', 'invoice.payment_succeeded'])],
-        ));
+        $this->app->instance(StripeWebhookEndpointReader::class, $this->webhookEndpoints([
+            $this->webhookEndpoint(['customer.subscription.created', 'invoice.payment_succeeded']),
+        ]));
 
         $doctor = $this->doctor(['--remote' => true]);
 
-        $this->assertSame(1, $doctor['exit']);
-        $this->assertSame('error', $doctor['checks']['stripe.remote.webhook']['status']);
-        $this->assertStringContainsString(
-            'checkout.session.completed',
-            $doctor['checks']['stripe.remote.webhook']['message'],
-        );
-        $this->assertStringContainsString(
-            'cashier.webhook.events',
-            $doctor['checks']['stripe.remote.webhook']['message'],
-        );
+        $check = $doctor['checks']['stripe.webhook_events'];
+        $this->assertSame('warning', $check['status']);
+        $this->assertStringContainsString('checkout.session.completed', $check['message']);
+        $this->assertStringContainsString('cashier.webhook.events', $check['message']);
+    }
+
+    public function test_remote_with_campaigns_and_lifecycle_mails_on_names_only_the_missing_event(): void
+    {
+        $this->lifecycleMails(trial: true, payment: true);
+        $this->fakeRevenueCat();
+        $this->enableCampaigns();
+        $this->app->instance(StripeWebhookEndpointReader::class, $this->webhookEndpoints([
+            $this->webhookEndpoint(['customer.subscription.trial_will_end', 'invoice.payment_failed']),
+        ]));
+
+        $doctor = $this->doctor(['--remote' => true]);
+
+        $check = $doctor['checks']['stripe.webhook_events'];
+        $this->assertSame('warning', $check['status']);
+        $this->assertStringContainsString('checkout.session.completed', $check['message']);
+        $this->assertStringNotContainsString('trial_will_end', $check['message']);
+        $this->assertStringNotContainsString('invoice.payment_failed', $check['message']);
     }
 
     public function test_remote_with_campaigns_on_accepts_an_endpoint_listening_to_every_event(): void
     {
         $this->fakeRevenueCat();
         $this->enableCampaigns();
-        $this->app->instance(StripePriceReader::class, $this->stripe(
-            $this->stripePrices(),
-            [$this->endpoint(['*'])],
-        ));
+        $this->app->instance(StripeWebhookEndpointReader::class, $this->webhookEndpoints([
+            $this->webhookEndpoint(['*']),
+        ]));
 
         $doctor = $this->doctor(['--remote' => true]);
 
-        $this->assertSame('ok', $doctor['checks']['stripe.remote.webhook']['status']);
+        $this->assertSame('ok', $doctor['checks']['stripe.webhook_events']['status']);
     }
 
     public function test_remote_with_campaigns_on_flags_a_missing_endpoint_for_this_applications_url(): void
     {
         $this->fakeRevenueCat();
         $this->enableCampaigns();
-        $this->app->instance(StripePriceReader::class, $this->stripe(
-            $this->stripePrices(),
-            [$this->endpoint(['checkout.session.completed'], 'https://elsewhere.example.test/stripe/webhook')],
-        ));
+        $this->app->instance(StripeWebhookEndpointReader::class, $this->webhookEndpoints([
+            $this->webhookEndpoint(
+                ['checkout.session.completed'],
+                url: 'https://elsewhere.example.test/stripe/webhook',
+            ),
+        ]));
 
         $doctor = $this->doctor(['--remote' => true]);
 
-        $this->assertSame(1, $doctor['exit']);
-        $this->assertSame('error', $doctor['checks']['stripe.remote.webhook']['status']);
-        $this->assertStringContainsString(
-            route('cashier.webhook'),
-            $doctor['checks']['stripe.remote.webhook']['message'],
-        );
+        $check = $doctor['checks']['stripe.webhook_events'];
+        $this->assertSame('warning', $check['status']);
+        $this->assertStringContainsString(route('cashier.webhook'), $check['message']);
     }
 
     public function test_remote_with_campaigns_on_matches_an_endpoint_url_differing_only_in_case_and_trailing_slash(): void
@@ -1078,82 +1092,47 @@ class BillingDoctorCommandTest extends TestCase
         $this->fakeRevenueCat();
         $this->enableCampaigns();
         $url = str_replace('https://app.example.test', 'HTTPS://APP.Example.Test', route('cashier.webhook')) . '/';
-        $this->app->instance(StripePriceReader::class, $this->stripe(
-            $this->stripePrices(),
-            [$this->endpoint(['checkout.session.completed'], $url)],
-        ));
+        $this->app->instance(StripeWebhookEndpointReader::class, $this->webhookEndpoints([
+            $this->webhookEndpoint(['checkout.session.completed'], url: $url),
+        ]));
 
         $doctor = $this->doctor(['--remote' => true]);
 
-        $this->assertSame('ok', $doctor['checks']['stripe.remote.webhook']['status']);
+        $this->assertSame('ok', $doctor['checks']['stripe.webhook_events']['status']);
     }
 
     /**
-     * An adopter who called `MagicStarter::ignoreRoutes()` serves the webhook
-     * under a url of their own, which the doctor cannot name, so the check is
-     * left to a person instead of crashing on `route()`.
+     * An adopter who called `MagicStarter::ignoreRoutes()` may serve the webhook
+     * under a route name of their own, so the check warns instead of crashing on
+     * `route()`, and asks Stripe nothing.
      */
-    public function test_remote_with_campaigns_on_and_the_package_routes_ignored_leaves_the_webhook_to_a_person(): void
+    public function test_remote_with_campaigns_on_and_the_package_routes_ignored_is_a_warning_not_a_crash(): void
     {
         $this->fakeRevenueCat();
         $this->enableCampaigns();
-        $stripe = $this->stripe($this->stripePrices());
-        $this->app->instance(StripePriceReader::class, $stripe);
+        $reader = $this->webhookEndpoints([]);
+        $this->app->instance(StripeWebhookEndpointReader::class, $reader);
         $this->app['router']->setRoutes(new RouteCollection);
 
         $doctor = $this->doctor(['--remote' => true]);
 
-        $this->assertSame('agent_check', $doctor['checks']['stripe.remote.webhook']['status']);
-        $this->assertStringContainsString(
-            'checkout.session.completed',
-            $doctor['checks']['stripe.remote.webhook']['message'],
-        );
-        $this->assertSame(0, $stripe->endpointReads);
+        $check = $doctor['checks']['stripe.webhook_events'];
+        $this->assertSame('warning', $check['status']);
+        $this->assertStringContainsString('cashier.webhook', $check['message']);
+        $this->assertSame([], $reader->urls);
     }
 
-    public function test_remote_reports_a_refused_endpoint_read_by_class_and_status_only(): void
+    public function test_remote_without_campaigns_or_lifecycle_mails_never_reads_the_webhook_endpoints(): void
     {
         $this->fakeRevenueCat();
-        $this->enableCampaigns();
-        $this->app->instance(StripePriceReader::class, new class($this->stripePrices()) extends StripePriceReader
-        {
-            /**
-             * @param  array<string, array<string, mixed>>  $prices
-             */
-            public function __construct(private array $prices) {}
-
-            public function byLookupKeys(array $lookupKeys): array
-            {
-                return $this->prices;
-            }
-
-            public function webhookEndpoints(): array
-            {
-                throw AuthenticationException::factory('Invalid API Key provided: SENTINEL-stripe-secret', 401);
-            }
-        });
-
-        $doctor = $this->doctor(['--remote' => true]);
-
-        $this->assertSame(1, $doctor['exit']);
-        $this->assertSame(
-            'Stripe refused the webhook endpoint read (AuthenticationException, HTTP 401).',
-            $doctor['checks']['stripe.remote.webhook']['message'],
-        );
-        $this->assertStringNotContainsString('SENTINEL-stripe-secret', (string) json_encode($doctor['report']));
-    }
-
-    public function test_remote_without_campaigns_never_reads_the_webhook_endpoints(): void
-    {
-        $this->fakeRevenueCat();
-        $stripe = $this->stripe($this->stripePrices(), [$this->endpoint(['customer.subscription.created'])]);
-        $this->app->instance(StripePriceReader::class, $stripe);
+        $reader = $this->webhookEndpoints([$this->webhookEndpoint(['customer.subscription.created'])]);
+        $this->app->instance(StripeWebhookEndpointReader::class, $reader);
 
         $doctor = $this->doctor(['--remote' => true]);
 
         $this->assertSame(0, $doctor['exit']);
-        $this->assertArrayNotHasKey('stripe.remote.webhook', $doctor['checks']);
-        $this->assertSame(0, $stripe->endpointReads);
+        $this->assertArrayNotHasKey('stripe.webhook_events', $doctor['checks']);
+        $this->assertSame([], $reader->urls);
     }
 
     public function test_campaigns_on_without_a_stripe_secret_reports_the_webhook_unreadable_without_asking(): void
@@ -1161,15 +1140,15 @@ class BillingDoctorCommandTest extends TestCase
         config(['cashier.secret' => null]);
         $this->fakeRevenueCat();
         $this->enableCampaigns();
-        $stripe = $this->stripe($this->stripePrices());
-        $this->app->instance(StripePriceReader::class, $stripe);
+        $reader = $this->webhookEndpoints([$this->webhookEndpoint(['*'])]);
+        $this->app->instance(StripeWebhookEndpointReader::class, $reader);
 
         $doctor = $this->doctor(['--remote' => true]);
 
         $this->assertSame(1, $doctor['exit']);
-        $this->assertSame('error', $doctor['checks']['stripe.remote.webhook']['status']);
-        $this->assertStringContainsString('STRIPE_SECRET', $doctor['checks']['stripe.remote.webhook']['message']);
-        $this->assertSame(0, $stripe->endpointReads);
+        $this->assertSame('error', $doctor['checks']['stripe.webhook_events']['status']);
+        $this->assertStringContainsString('STRIPE_SECRET', $doctor['checks']['stripe.webhook_events']['message']);
+        $this->assertSame([], $reader->urls);
     }
 
     public function test_remote_reports_a_revenuecat_it_cannot_reach(): void
@@ -1290,6 +1269,205 @@ class BillingDoctorCommandTest extends TestCase
         );
         $this->assertSame([], $this->checksStartingWith($doctor, 'revenuecat.package.'));
         Http::assertNotSent(fn (Request $request): bool => str_contains($request->url(), '/packages'));
+    }
+
+    public function test_the_webhook_events_are_not_read_while_both_lifecycle_mails_are_off(): void
+    {
+        $this->fakeRevenueCat();
+        $reader = $this->webhookEndpoints([]);
+        $this->app->instance(StripeWebhookEndpointReader::class, $reader);
+
+        $doctor = $this->doctor(['--remote' => true]);
+
+        $this->assertArrayNotHasKey('stripe.webhook_events', $doctor['checks']);
+        $this->assertSame([], $reader->urls);
+    }
+
+    public function test_the_webhook_events_are_not_read_without_remote(): void
+    {
+        $this->lifecycleMails(trial: true, payment: true);
+        $reader = $this->webhookEndpoints([]);
+        $this->app->instance(StripeWebhookEndpointReader::class, $reader);
+
+        $doctor = $this->doctor();
+
+        $this->assertArrayNotHasKey('stripe.webhook_events', $doctor['checks']);
+        $this->assertSame([], $reader->urls);
+    }
+
+    public function test_a_webhook_route_under_another_name_is_a_warning_not_a_crash(): void
+    {
+        $this->lifecycleMails(trial: true, payment: true);
+        $this->fakeRevenueCat();
+        $reader = $this->webhookEndpoints([]);
+        $this->app->instance(StripeWebhookEndpointReader::class, $reader);
+        Route::setRoutes(new RouteCollection);
+
+        $doctor = $this->doctor(['--remote' => true]);
+
+        $check = $doctor['checks']['stripe.webhook_events'];
+        $this->assertSame('warning', $check['status']);
+        $this->assertStringContainsString('cashier.webhook', $check['message']);
+        $this->assertSame([], $reader->urls);
+    }
+
+    public function test_an_endpoint_with_both_events_passes(): void
+    {
+        $this->lifecycleMails(trial: true, payment: true);
+        $this->fakeRevenueCat();
+        $this->app->instance(StripeWebhookEndpointReader::class, $this->webhookEndpoints([
+            $this->webhookEndpoint(['customer.subscription.trial_will_end', 'invoice.payment_failed']),
+        ]));
+
+        $doctor = $this->doctor(['--remote' => true]);
+
+        $this->assertSame('ok', $doctor['checks']['stripe.webhook_events']['status']);
+        $this->assertSame(0, $doctor['exit']);
+    }
+
+    public function test_a_missing_event_is_a_warning_that_names_it(): void
+    {
+        $this->lifecycleMails(trial: true, payment: true);
+        $this->fakeRevenueCat();
+        $this->app->instance(StripeWebhookEndpointReader::class, $this->webhookEndpoints([
+            $this->webhookEndpoint(['customer.subscription.trial_will_end']),
+        ]));
+
+        $doctor = $this->doctor(['--remote' => true]);
+
+        $check = $doctor['checks']['stripe.webhook_events'];
+        $this->assertSame('warning', $check['status']);
+        $this->assertStringContainsString('invoice.payment_failed', $check['message']);
+        $this->assertStringNotContainsString('trial_will_end', $check['message']);
+        $this->assertSame(0, $doctor['exit']);
+    }
+
+    public function test_an_event_whose_mail_is_off_is_not_required(): void
+    {
+        $this->lifecycleMails(trial: true, payment: false);
+        $this->fakeRevenueCat();
+        $this->app->instance(StripeWebhookEndpointReader::class, $this->webhookEndpoints([
+            $this->webhookEndpoint(['customer.subscription.trial_will_end']),
+        ]));
+
+        $doctor = $this->doctor(['--remote' => true]);
+
+        $this->assertSame('ok', $doctor['checks']['stripe.webhook_events']['status']);
+    }
+
+    public function test_a_wildcard_subscription_passes(): void
+    {
+        $this->lifecycleMails(trial: true, payment: true);
+        $this->fakeRevenueCat();
+        $this->app->instance(StripeWebhookEndpointReader::class, $this->webhookEndpoints([
+            $this->webhookEndpoint(['*']),
+        ]));
+
+        $doctor = $this->doctor(['--remote' => true]);
+
+        $this->assertSame('ok', $doctor['checks']['stripe.webhook_events']['status']);
+    }
+
+    public function test_events_are_the_union_of_every_enabled_endpoint_on_the_url(): void
+    {
+        $this->lifecycleMails(trial: true, payment: true);
+        $this->fakeRevenueCat();
+        $this->app->instance(StripeWebhookEndpointReader::class, $this->webhookEndpoints([
+            $this->webhookEndpoint(['customer.subscription.trial_will_end']),
+            $this->webhookEndpoint(['invoice.payment_failed']),
+        ]));
+
+        $doctor = $this->doctor(['--remote' => true]);
+
+        $this->assertSame('ok', $doctor['checks']['stripe.webhook_events']['status']);
+    }
+
+    public function test_no_endpoint_on_the_url_is_a_warning_naming_the_url(): void
+    {
+        $this->lifecycleMails(trial: true, payment: true);
+        $this->fakeRevenueCat();
+        $this->app->instance(StripeWebhookEndpointReader::class, $this->webhookEndpoints([
+            $this->webhookEndpoint(['*'], url: 'https://elsewhere.example.test/stripe/webhook'),
+        ]));
+
+        $doctor = $this->doctor(['--remote' => true]);
+
+        $check = $doctor['checks']['stripe.webhook_events'];
+        $this->assertSame('warning', $check['status']);
+        $this->assertSame(
+            'No enabled Stripe webhook endpoint posts to ' . route('cashier.webhook') . '.',
+            $check['message'],
+        );
+    }
+
+    public function test_a_disabled_endpoint_is_ignored(): void
+    {
+        $this->lifecycleMails(trial: true, payment: true);
+        $this->fakeRevenueCat();
+        $this->app->instance(StripeWebhookEndpointReader::class, $this->webhookEndpoints([
+            $this->webhookEndpoint(['*'], status: 'disabled'),
+        ]));
+
+        $doctor = $this->doctor(['--remote' => true]);
+
+        $check = $doctor['checks']['stripe.webhook_events'];
+        $this->assertSame('warning', $check['status']);
+        $this->assertStringContainsString('No enabled Stripe webhook endpoint', $check['message']);
+    }
+
+    public function test_the_reader_is_asked_for_the_cashier_webhook_url(): void
+    {
+        $this->lifecycleMails(trial: false, payment: true);
+        $this->fakeRevenueCat();
+        $reader = $this->webhookEndpoints([$this->webhookEndpoint(['*'])]);
+        $this->app->instance(StripeWebhookEndpointReader::class, $reader);
+
+        $this->doctor(['--remote' => true]);
+
+        $this->assertSame([route('cashier.webhook')], $reader->urls);
+        $this->assertStringEndsWith('/stripe/webhook', $reader->urls[0]);
+    }
+
+    public function test_an_unset_stripe_secret_is_an_error_without_asking(): void
+    {
+        $this->lifecycleMails(trial: true, payment: true);
+        $this->fakeRevenueCat();
+        config(['cashier.secret' => null]);
+        $reader = $this->webhookEndpoints([$this->webhookEndpoint(['*'])]);
+        $this->app->instance(StripeWebhookEndpointReader::class, $reader);
+
+        $doctor = $this->doctor(['--remote' => true]);
+
+        $this->assertSame(1, $doctor['exit']);
+        $this->assertSame('error', $doctor['checks']['stripe.webhook_events']['status']);
+        $this->assertSame(
+            'Stripe cannot be read: STRIPE_SECRET is not set.',
+            $doctor['checks']['stripe.webhook_events']['message'],
+        );
+        $this->assertSame([], $reader->urls);
+    }
+
+    public function test_a_stripe_refusal_on_the_endpoint_read_is_an_error_by_class_and_status_only(): void
+    {
+        $this->lifecycleMails(trial: true, payment: true);
+        $this->fakeRevenueCat();
+        $this->app->instance(StripeWebhookEndpointReader::class, new class extends StripeWebhookEndpointReader
+        {
+            public function enabledEventsFor(string $url): ?array
+            {
+                throw AuthenticationException::factory('Invalid API Key provided: SENTINEL-stripe-secret', 401);
+            }
+        });
+
+        $doctor = $this->doctor(['--remote' => true]);
+
+        $this->assertSame(1, $doctor['exit']);
+        $this->assertSame('error', $doctor['checks']['stripe.webhook_events']['status']);
+        $this->assertSame(
+            'Stripe refused the webhook endpoint read (AuthenticationException, HTTP 401).',
+            $doctor['checks']['stripe.webhook_events']['message'],
+        );
+        $this->assertStringNotContainsString('SENTINEL-stripe-secret', (string) json_encode($doctor['report']));
     }
 
     /**
@@ -1492,16 +1670,72 @@ class BillingDoctorCommandTest extends TestCase
         return $prices;
     }
 
+    private function lifecycleMails(bool $trial, bool $payment): void
+    {
+        config([
+            'magic-starter.billing.trial_ending_notification' => $trial,
+            'magic-starter.billing.payment_failed_notification' => $payment,
+        ]);
+    }
+
+    /**
+     * @param  list<string>  $events
+     * @return array{url: string, status: string, enabled_events: list<string>}
+     */
+    private function webhookEndpoint(
+        array $events,
+        string $status = 'enabled',
+        ?string $url = null,
+    ): array {
+        return [
+            'url' => $url ?? route('cashier.webhook'),
+            'status' => $status,
+            'enabled_events' => $events,
+        ];
+    }
+
+    /**
+     * A reader fed from a fixed endpoint list, so the url and status filtering
+     * is the real one.
+     *
+     * @param  list<array{url: string, status: string, enabled_events: list<string>}>  $endpoints
+     */
+    private function webhookEndpoints(array $endpoints): StripeWebhookEndpointReader
+    {
+        return new class($endpoints) extends StripeWebhookEndpointReader
+        {
+            /**
+             * Every url the reader was asked about.
+             *
+             * @var list<string>
+             */
+            public array $urls = [];
+
+            /**
+             * @param  list<array{url: string, status: string, enabled_events: list<string>}>  $endpoints
+             */
+            public function __construct(private array $endpoints) {}
+
+            public function enabledEventsFor(string $url): ?array
+            {
+                $this->urls[] = $url;
+
+                return parent::enabledEventsFor($url);
+            }
+
+            protected function endpoints(): iterable
+            {
+                return $this->endpoints;
+            }
+        };
+    }
+
     /**
      * @param  array<string, array<string, mixed>>  $prices
-     * @param  list<array{url: string, enabled_events: list<string>}>|null  $endpoints  Null holds one endpoint for this
-     *                                                                                  application that lists the event.
      */
-    private function stripe(array $prices, ?array $endpoints = null): StripePriceReader
+    private function stripe(array $prices): StripePriceReader
     {
-        $endpoints ??= [$this->endpoint(['checkout.session.completed'])];
-
-        return new class($prices, $endpoints) extends StripePriceReader
+        return new class($prices) extends StripePriceReader
         {
             /**
              * Every read, by the lookup keys it named.
@@ -1511,15 +1745,9 @@ class BillingDoctorCommandTest extends TestCase
             public array $reads = [];
 
             /**
-             * How many times the webhook endpoints were read.
-             */
-            public int $endpointReads = 0;
-
-            /**
              * @param  array<string, array<string, mixed>>  $prices
-             * @param  list<array{url: string, enabled_events: list<string>}>  $endpoints
              */
-            public function __construct(private array $prices, private array $endpoints) {}
+            public function __construct(private array $prices) {}
 
             public function byLookupKeys(array $lookupKeys): array
             {
@@ -1527,28 +1755,7 @@ class BillingDoctorCommandTest extends TestCase
 
                 return array_intersect_key($this->prices, array_flip($lookupKeys));
             }
-
-            public function webhookEndpoints(): array
-            {
-                $this->endpointReads++;
-
-                return $this->endpoints;
-            }
         };
-    }
-
-    /**
-     * A Stripe webhook endpoint, by default the one this application serves.
-     *
-     * @param  list<string>  $events
-     * @return array{url: string, enabled_events: list<string>}
-     */
-    private function endpoint(array $events, ?string $url = null): array
-    {
-        return [
-            'url' => $url ?? route('cashier.webhook'),
-            'enabled_events' => $events,
-        ];
     }
 
     private function enableCampaigns(): void

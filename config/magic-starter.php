@@ -894,6 +894,19 @@ return [
     | Set it false to send your own message instead. A config published before
     | this key existed has no key at all and gets the default.
     |
+    | 'trial_ending_notification' (default false) mails the person who manages
+    | billing three days before a trial ends: the date, whether the saved card
+    | is charged then, and a link to the billing screen. It is off by default
+    | because Stripe can send its own trial reminder; enabling it on Stripe and
+    | here mails the customer twice. The webhook endpoint must be subscribed to
+    | `customer.subscription.trial_will_end`.
+    |
+    | 'payment_failed_notification' (default false) mails the same person when
+    | a renewal payment fails: Stripe retries on its own, and the mail links to
+    | the billing screen to update the payment method. It is off by default for
+    | the same double-mail reason as above, and the endpoint must be subscribed
+    | to `invoice.payment_failed`.
+    |
     | 'promotion_codes' (default false) shows Stripe's promotion code field on
     | every subscription checkout, trial or not. The codes themselves are
     | created in the Stripe dashboard; see doc/basics/billing.md, Promotion
@@ -978,6 +991,10 @@ return [
         ],
 
         'trial_refused_notification' => (bool) env('MAGIC_STARTER_TRIAL_REFUSED_NOTIFICATION', true),
+
+        'trial_ending_notification' => (bool) env('MAGIC_STARTER_TRIAL_ENDING_NOTIFICATION', false),
+
+        'payment_failed_notification' => (bool) env('MAGIC_STARTER_PAYMENT_FAILED_NOTIFICATION', false),
 
         'promotion_codes' => (bool) env('MAGIC_STARTER_BILLING_PROMOTION_CODES', false),
 

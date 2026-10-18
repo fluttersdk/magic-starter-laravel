@@ -8,8 +8,8 @@ use Stripe\Price;
 
 /**
  * The Stripe objects the billing flow reads, through Cashier's Stripe client:
- * the prices that answer to a set of lookup keys, the account's webhook
- * endpoints, and one completed Checkout Session.
+ * the prices that answer to a set of lookup keys and one completed Checkout
+ * Session.
  *
  * `billing:doctor --remote` and the Stripe webhook controller resolve it from
  * the container, so a test binds a subclass instead of reaching Stripe.
@@ -60,28 +60,6 @@ class StripePriceReader
         }
 
         return $prices;
-    }
-
-    /**
-     * Every webhook endpoint the Stripe account holds.
-     *
-     * @return list<array{url: string, enabled_events: list<string>}> `enabled_events` holds `*` for an
-     *                                                                endpoint that listens to everything.
-     *
-     * @throws ApiErrorException When Stripe refuses or cannot be reached.
-     */
-    public function webhookEndpoints(): array
-    {
-        $endpoints = [];
-
-        foreach (Cashier::stripe()->webhookEndpoints->all(['limit' => 100])->autoPagingIterator() as $endpoint) {
-            $endpoints[] = [
-                'url' => $endpoint->url,
-                'enabled_events' => array_values($endpoint->enabled_events),
-            ];
-        }
-
-        return $endpoints;
     }
 
     /**

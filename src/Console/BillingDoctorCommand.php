@@ -15,6 +15,7 @@ use FlutterSdk\MagicStarter\Support\RevenueCatProjectClient;
 use FlutterSdk\MagicStarter\Support\StoreRailConfiguration;
 use FlutterSdk\MagicStarter\Support\StripePriceReader;
 use FlutterSdk\MagicStarter\Support\StripeTestMode;
+use FlutterSdk\MagicStarter\Support\StripeWebhookEndpointReader;
 use Illuminate\Console\Command;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Http\Client\ConnectionException;
@@ -59,12 +60,6 @@ class BillingDoctorCommand extends Command
     public const AGENT_CHECK = 'agent_check';
 
     /**
-     * The Stripe event a campaign redemption is recorded from. Cashier's default
-     * endpoint events lack it.
-     */
-    private const CAMPAIGN_WEBHOOK_EVENT = 'checkout.session.completed';
-
-    /**
      * Integer column types as {@see \Illuminate\Database\Schema\Builder::getColumnType()}
      * names them on SQLite, MySQL, MariaDB, PostgreSQL and SQL Server.
      *
@@ -99,8 +94,11 @@ class BillingDoctorCommand extends Command
      */
     private array $checks = [];
 
-    public function handle(RevenueCatProjectClient $revenueCat, StripePriceReader $stripe): int
-    {
+    public function handle(
+        RevenueCatProjectClient $revenueCat,
+        StripePriceReader $stripe,
+        StripeWebhookEndpointReader $webhookEndpoints,
+    ): int {
         // Reset per run: Artisan reuses one command instance within a process.
         $this->checks = [];
 
@@ -127,7 +125,7 @@ class BillingDoctorCommand extends Command
             // 3. What the vendors hold, read and never written.
             if ($this->option('remote')) {
                 $this->checkStripeRemote($stripe, $manifest['stripe']['products']);
-                $this->checkCampaignWebhookRemote($stripe);
+                $this->checkStripeWebhookEvents($webhookEndpoints);
                 $this->checkRevenueCatRemote($revenueCat, $manifest['revenuecat']);
                 $this->addAgentChecks();
             }
@@ -655,46 +653,63 @@ class BillingDoctorCommand extends Command
     }
 
     /**
-     * Whether a Stripe webhook endpoint delivering to this application lists
-     * `checkout.session.completed`, while the campaigns feature is on.
-     *
-     * Redemptions are recorded from that event, and Cashier's own endpoint
-     * events lack it, so an endpoint created before campaigns existed answers
-     * every campaign checkout with silence: the count of campaign checkouts
-     * stays at zero and nothing else fails. `*` counts as listing it, as Stripe
-     * means it. The refusal is reported by class and status alone, for the
-     * reason {@see self::checkStripeRemote()} gives.
+     * An event the package acts on rides a Stripe webhook endpoint, and an
+     * endpoint that is not subscribed to it fails silently: a lifecycle mail is
+     * switched on and never goes out, or a campaign checkout records no
+     * redemption and its count stays at zero. Cashier's default endpoint events
+     * lack every one of them. `*` counts as listing every event, as Stripe means
+     * it. Reports its own missing secret, because checkStripeRemote returns
+     * before its secret check when the manifest holds no prices.
      */
-    private function checkCampaignWebhookRemote(StripePriceReader $stripe): void
+    private function checkStripeWebhookEvents(StripeWebhookEndpointReader $webhookEndpoints): void
     {
-        if (! Features::hasCampaignFeatures()) {
-            return;
+        $required = [];
+
+        // Read the way the webhook reads them (truthy), so a config without the
+        // (bool) cast cannot send mail while this check stays silent.
+        if ((bool) config('magic-starter.billing.trial_ending_notification', false)) {
+            $required[] = 'customer.subscription.trial_will_end';
         }
 
-        $id = 'stripe.remote.webhook';
+        if ((bool) config('magic-starter.billing.payment_failed_notification', false)) {
+            $required[] = 'invoice.payment_failed';
+        }
+
+        // Campaign redemptions are recorded from the completed Checkout Session.
+        if (Features::hasCampaignFeatures()) {
+            $required[] = 'checkout.session.completed';
+        }
+
+        if ($required === []) {
+            return;
+        }
 
         if (! $this->isSet('cashier.secret')) {
-            $this->check($id, self::ERROR, 'Stripe cannot be read: STRIPE_SECRET is not set.');
+            $this->check('stripe.webhook_events', self::ERROR, 'Stripe cannot be read: STRIPE_SECRET is not set.');
 
             return;
         }
 
-        // An adopter who called MagicStarter::ignoreRoutes() serves the webhook
-        // at a url of their own, which nothing here can name.
+        // An adopter on MagicStarter::ignoreRoutes() registers the webhook
+        // itself and may not keep Cashier's route name; route() would throw.
         if (! Route::has('cashier.webhook')) {
-            $this->check($id, self::AGENT_CHECK, sprintf(
-                'No route is named cashier.webhook (package routes ignored?), so the endpoint delivering to this '
-                . 'application cannot be found; confirm in the Stripe dashboard that it lists %s.',
-                self::CAMPAIGN_WEBHOOK_EVENT,
-            ));
+            $this->check(
+                'stripe.webhook_events',
+                self::WARNING,
+                'No route is named cashier.webhook, so the Stripe webhook url cannot be checked. '
+                    . 'Name your webhook route cashier.webhook.',
+            );
 
             return;
         }
+
+        // The URL Cashier's own webhook:create registers; it follows APP_URL.
+        $url = route('cashier.webhook');
 
         try {
-            $endpoints = $stripe->webhookEndpoints();
+            $events = $webhookEndpoints->enabledEventsFor($url);
         } catch (ApiErrorException $failure) {
-            $this->check($id, self::ERROR, sprintf(
+            $this->check('stripe.webhook_events', self::ERROR, sprintf(
                 'Stripe refused the webhook endpoint read (%s, HTTP %s).',
                 class_basename($failure),
                 $failure->getHttpStatus() ?? 'none',
@@ -703,62 +718,36 @@ class BillingDoctorCommand extends Command
             return;
         }
 
-        $url = route('cashier.webhook');
-        $delivering = array_filter(
-            $endpoints,
-            fn (array $endpoint): bool => $this->normalisedUrl($endpoint['url']) === $this->normalisedUrl($url),
-        );
+        if ($events === null) {
+            $this->check(
+                'stripe.webhook_events',
+                self::WARNING,
+                "No enabled Stripe webhook endpoint posts to {$url}.",
+            );
 
-        if ($delivering === []) {
-            $this->check($id, self::ERROR, sprintf(
-                'No Stripe webhook endpoint delivers to [%s], so no campaign redemption is recorded; create one '
-                . 'with php artisan cashier:webhook after adding %s to cashier.webhook.events.',
+            return;
+        }
+
+        $missing = in_array('*', $events, true) ? [] : array_values(array_diff($required, $events));
+
+        if ($missing !== []) {
+            $this->check('stripe.webhook_events', self::WARNING, sprintf(
+                'The Stripe webhook endpoint at %s is not subscribed to %s; what rides it (a lifecycle mail, '
+                    . 'a campaign redemption) never happens. Add it to the endpoint in the Stripe dashboard, '
+                    . 'and to cashier.webhook.events so an endpoint created with php artisan cashier:webhook '
+                    . 'carries it.',
                 $url,
-                self::CAMPAIGN_WEBHOOK_EVENT,
+                implode(', ', $missing),
             ));
 
             return;
         }
 
-        $listing = array_filter($delivering, static fn (array $endpoint): bool => array_intersect(
-            [self::CAMPAIGN_WEBHOOK_EVENT, '*'],
-            $endpoint['enabled_events'],
-        ) !== []);
-
-        $listing === []
-            ? $this->check($id, self::ERROR, sprintf(
-                'The Stripe webhook endpoint for [%s] does not list %s, so no campaign redemption is recorded; '
-                . 'add it to the endpoint in the Stripe dashboard, and to cashier.webhook.events so an endpoint '
-                . 'created with php artisan cashier:webhook carries it.',
-                $url,
-                self::CAMPAIGN_WEBHOOK_EVENT,
-            ))
-            : $this->check($id, self::OK, sprintf(
-                'The Stripe webhook endpoint for [%s] lists %s.',
-                $url,
-                self::CAMPAIGN_WEBHOOK_EVENT,
-            ));
-    }
-
-    /**
-     * A url as Stripe and the router may each spell it: the scheme and host
-     * lowercased, since both are case-insensitive, and no trailing slash.
-     */
-    private function normalisedUrl(string $url): string
-    {
-        $url = rtrim($url, '/');
-        $scheme = parse_url($url, PHP_URL_SCHEME);
-        $host = parse_url($url, PHP_URL_HOST);
-
-        if (! is_string($scheme) || ! is_string($host)) {
-            return $url;
-        }
-
-        $prefix = $scheme . '://' . $host;
-
-        return str_starts_with($url, $prefix)
-            ? strtolower($prefix) . substr($url, strlen($prefix))
-            : $url;
+        $this->check(
+            'stripe.webhook_events',
+            self::OK,
+            'The Stripe webhook endpoint is subscribed to ' . implode(', ', $required) . '.',
+        );
     }
 
     /**
