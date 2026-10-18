@@ -194,6 +194,14 @@ class Features
     }
 
     /**
+     * Enable campaigns: staff-managed, time-boxed Stripe promotion codes on catalogue products.
+     */
+    public static function campaigns(): string
+    {
+        return 'campaigns';
+    }
+
+    /**
      * Determine whether the given feature is enabled.
      */
     public static function enabled(string $feature): bool
@@ -383,6 +391,14 @@ class Features
     public static function hasAiPromptFeatures(): bool
     {
         return static::enabled(static::aiPrompts());
+    }
+
+    /**
+     * Determine whether the campaigns feature is enabled.
+     */
+    public static function hasCampaignFeatures(): bool
+    {
+        return static::enabled(static::campaigns());
     }
 
     /**
