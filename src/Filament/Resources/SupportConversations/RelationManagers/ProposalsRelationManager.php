@@ -4,11 +4,13 @@ namespace FlutterSdk\MagicStarter\Filament\Resources\SupportConversations\Relati
 
 use Closure;
 use Filament\Actions\Action;
+use Filament\Actions\ActionGroup;
 use Filament\Facades\Filament;
 use Filament\Forms\Components\Textarea;
 use Filament\Infolists\Components\TextEntry;
 use Filament\Panel;
 use Filament\Resources\RelationManagers\RelationManager;
+use Filament\Support\Enums\Size;
 use Filament\Support\Icons\Heroicon;
 use Filament\Tables\Columns\TextColumn;
 use Filament\Tables\Table;
@@ -71,6 +73,15 @@ class ProposalsRelationManager extends RelationManager
         return false;
     }
 
+    /**
+     * Sized to fit the panel's content width with the sidebar open, and a phone.
+     *
+     * The decisions share one menu behind a 44 px trigger, so Approve and Reject
+     * are reached without scrolling the table sideways. Below `lg` only the
+     * request, wrapped, and its status stay: the rest is repeated in the Details and
+     * decision modals, and the status says when a request lapsed, since the
+     * deadline column is hidden there.
+     */
     public function table(Table $table): Table
     {
         return $table
@@ -80,38 +91,46 @@ class ProposalsRelationManager extends RelationManager
             ->columns([
                 TextColumn::make('action')
                     ->label(static::text('columns.action'))
-                    ->formatStateUsing(static fn (SupportProposalAction $state): string => $state->label()),
+                    ->formatStateUsing(static fn (SupportProposalAction $state): string => $state->label())
+                    ->wrap(),
                 TextColumn::make('params_summary')
                     ->label(static::text('columns.params'))
                     ->state(static fn (SupportProposal $record): ?string => static::paramsSummary($record))
-                    ->placeholder(static::ABSENT),
+                    ->placeholder(static::ABSENT)
+                    ->visibleFrom('lg'),
                 TextColumn::make('status')
                     ->label(static::text('columns.status'))
                     ->badge()
                     ->formatStateUsing(static fn (SupportProposalStatus $state): string => static::statusLabel($state))
-                    ->color(static fn (SupportProposalStatus $state): string => static::statusColor($state)),
-                TextColumn::make('requester_name')
-                    ->label(static::text('columns.requested_by'))
-                    ->state(static fn (SupportProposal $record): ?string => static::requesterLabel($record))
-                    ->placeholder(static::ABSENT),
-                TextColumn::make('created_at')
-                    ->label(static::text('columns.created_at'))
-                    ->dateTime()
-                    ->sortable(),
-                TextColumn::make('expires_at')
-                    ->label(static::text('columns.expires_at'))
-                    ->dateTime()
+                    ->color(static fn (SupportProposalStatus $state): string => static::statusColor($state))
                     ->description(static fn (SupportProposal $record): ?string => $record->isExpired()
                         ? static::text('labels.expired')
                         : null),
+                TextColumn::make('requester_name')
+                    ->label(static::text('columns.requested_by'))
+                    ->state(static fn (SupportProposal $record): ?string => static::requesterLabel($record))
+                    ->placeholder(static::ABSENT)
+                    ->visibleFrom('lg'),
+                TextColumn::make('created_at')
+                    ->label(static::text('columns.created_at'))
+                    ->dateTime()
+                    ->sortable()
+                    ->visibleFrom('lg'),
+                TextColumn::make('expires_at')
+                    ->label(static::text('columns.expires_at'))
+                    ->dateTime()
+                    ->visibleFrom('lg'),
             ])
             ->defaultSort('created_at', 'desc')
             ->recordActions([
-                $this->viewAction(),
-                $this->approveAction(),
-                $this->rejectAction(),
-                $this->markFailedAction(),
-                $this->markAppliedAction(),
+                ActionGroup::make([
+                    $this->viewAction(),
+                    $this->approveAction(),
+                    $this->rejectAction(),
+                    $this->markFailedAction(),
+                    $this->markAppliedAction(),
+                ])
+                    ->size(Size::ExtraLarge),
             ]);
     }
 

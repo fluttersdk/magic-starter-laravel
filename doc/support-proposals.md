@@ -169,7 +169,7 @@ Two outcomes follow:
 <a name="what-staff-see"></a>
 ## What Staff See
 
-A "Billing requests" tab on the support conversation page, shown only while the feature is on. It lists every proposal that is not a draft: the action, its parameters, the status, the requester, and when it was created and expires.
+A "Billing requests" tab on the support conversation page, shown only while the feature is on. It lists every proposal that is not a draft: the action, its parameters, the status, the requester, and when it was created and expires. Below the `lg` breakpoint only the action and the status stay, and the status notes a request whose deadline passed; the rest is in the request's details.
 
 The details of a request carry what a staff member needs to decide:
 
@@ -180,7 +180,7 @@ The details of a request carry what a staff member needs to decide:
 
 The customer's words and the rationale are untrusted text. They are shown as escaped plain text, never HTML or Markdown, and labelled unverified: the rationale is the model's reading of the customer, not a fact.
 
-The tab offers **Approve** and **Reject** (with a reason) on a pending request before its deadline, and **Mark applied** and **Mark failed** (each with a reason) on an `executing` one. Each decision is audited as `support.proposal_approved`, `support.proposal_rejected`, `support.proposal_marked_applied` or `support.proposal_marked_failed`.
+Each row's actions sit in one menu, so they are reached without scrolling the table sideways. The menu offers **Details** on every row, **Approve** and **Reject** (with a reason) on a pending request before its deadline, and **Mark applied** and **Mark failed** (each with a reason) on an `executing` one. Each decision is audited as `support.proposal_approved`, `support.proposal_rejected`, `support.proposal_marked_applied` or `support.proposal_marked_failed`.
 
 ---
 
