@@ -17,7 +17,8 @@ use FlutterSdk\MagicStarter\Support\SupportAi\Tools\SupportToolContext;
  *   genuine fault, such as a dead database, may propagate.
  * - Never return a URL, a credential or another team's data. The team comes
  *   from {@see SupportToolContext::team()} alone, never from an argument the
- *   model chose.
+ *   model chose. Leave out the url columns you own; `UntrustedText` replaces
+ *   the links a customer wrote, but keeps a bare name without a path.
  * - Pass every tenant-written text (a monitor name, an incident note) through
  *   {@see \FlutterSdk\MagicStarter\Support\SupportAi\Tools\UntrustedText}, so the
  *   model reads it as data and not as instructions.

@@ -168,7 +168,7 @@ Each string is cleaned in a fixed order before the JSON is written:
 1. Invalid UTF-8 is made valid, so the patterns after it cannot blank the value.
 2. Invisible format characters (zero-width spaces and joiners, bidi overrides, the byte order mark, tag characters) are removed, so a marker split by one re-forms.
 3. Control characters and the Unicode line and paragraph separators become spaces, so the data is one line.
-4. A link (`http://`, `https://` or `www.`) becomes `[link]`; an email address is kept.
+4. A link becomes `[link]`: any scheme (`https://`, `ftp://`), a protocol-relative `//host`, a `www.` host and a bare host followed by a path (`evil.example/login`). A bare name with no path (`evil.example`) stays, because it reads the same as `Node.js` or `health.json`, and so does an email address.
 5. Runs of three or more `-` or `=`, and the uppercase words `UNTRUSTED` and `END UNTRUSTED`, become `[fence]`.
 6. The text is cut to the cap, counted in characters, with the trailing `…` inside it.
 7. The result is encoded as JSON, where a string is bounded by its quotes and escapes.

@@ -31,8 +31,9 @@ use UnitEnum;
  *    marker split by one re-forms and step 5 still catches it.
  * 3. Control characters (C0, DEL, C1) and the Unicode line and paragraph
  *    separators become spaces, newline and tab included: the data is one line.
- * 4. A link (`http://`, `https://` or `www.`) becomes `[link]`: a tool never
- *    hands the model a url to relay. An email address is kept.
+ * 4. A link becomes `[link]`: any scheme, a protocol-relative `//host`, a
+ *    `www.` host and a bare host with a path. A tool never hands the model a
+ *    url to relay. A bare name without a path and an email address are kept.
  * 5. Fence-like literals are defanged after the flattening, so one split by a
  *    line break is caught too: a run of three or more `-` or `=`, and the
  *    uppercase words `UNTRUSTED` and `END UNTRUSTED`, become `[fence]`.
@@ -58,6 +59,17 @@ final class UntrustedText
     private const FENCE_MARKER = '[fence]';
 
     private const LINK_MARKER = '[link]';
+
+    /**
+     * Any scheme (`https://`, `ftp://`), a protocol-relative `//host`, a `www.`
+     * host, and a bare host followed by a path (`evil.example/login`). A bare
+     * name with no path stays: `evil.example` reads the same as `Node.js` or
+     * `health.json`. An email address is not a host with a path, so it stays.
+     */
+    private const LINK_PATTERN = '~\b[a-z][a-z0-9+.\-]*://\S+'
+        . '|(?<![\w:/])//(?:[a-z0-9\-]+\.)+[a-z0-9\-]+\S*'
+        . '|\bwww\.\S+'
+        . '|(?<![\w@.\-])(?:[a-z0-9](?:[a-z0-9\-]*[a-z0-9])?\.)+[a-z]{2,63}/\S*~iu';
 
     private const ELLIPSIS = '…';
 
@@ -169,7 +181,7 @@ final class UntrustedText
         $text = (string) preg_replace('/[\p{Cc}\p{Zl}\p{Zp}]/u', ' ', $text);
 
         // 4. No url reaches the model to relay.
-        $text = (string) preg_replace('~(?:https?://|www\.)\S+~iu', self::LINK_MARKER, $text);
+        $text = (string) preg_replace(self::LINK_PATTERN, self::LINK_MARKER, $text);
 
         // 5. Defang after flattening, so a fence split by a line break is closed too.
         $text = (string) preg_replace('/[-=]{3,}|\b(?:END )?UNTRUSTED\b/u', self::FENCE_MARKER, $text);
