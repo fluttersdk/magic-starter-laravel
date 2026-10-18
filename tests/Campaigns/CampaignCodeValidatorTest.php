@@ -4,6 +4,7 @@ namespace FlutterSdk\MagicStarter\Tests\Campaigns;
 
 use FlutterSdk\MagicStarter\Contracts\CreatesCampaigns;
 use FlutterSdk\MagicStarter\Contracts\UpdatesCampaigns;
+use FlutterSdk\MagicStarter\Enums\CampaignDiscountType;
 use FlutterSdk\MagicStarter\Models\Campaign;
 use FlutterSdk\MagicStarter\Support\CampaignCodeValidator;
 use FlutterSdk\MagicStarter\Tests\Fixtures\ConcreteUser;
@@ -106,7 +107,7 @@ class CampaignCodeValidatorTest extends TestCase
 
         $campaign = $this->createEnabled(['products' => ['pro_monthly', 'business_monthly']]);
 
-        $this->assertSame('percent', $campaign->discount_type);
+        $this->assertSame(CampaignDiscountType::PERCENT, $campaign->discount_type);
         $this->assertSame(25.0, $campaign->discount_value);
         $this->assertNull($campaign->discount_currency);
         $this->assertNull($campaign->currency_options);
@@ -134,7 +135,7 @@ class CampaignCodeValidatorTest extends TestCase
 
         $campaign = $this->createEnabled();
 
-        $this->assertSame('amount', $campaign->discount_type);
+        $this->assertSame(CampaignDiscountType::AMOUNT, $campaign->discount_type);
         $this->assertSame(500.0, $campaign->discount_value);
         $this->assertSame('USD', $campaign->discount_currency);
         $this->assertSame(['TRY' => 15000], $campaign->currency_options);
@@ -147,7 +148,7 @@ class CampaignCodeValidatorTest extends TestCase
             ->answer($this->promotionCode(coupon: $this->percentCoupon(appliesTo: ['prod_pro', 'prod_other'])))
             ->answer($this->price('price_pro_monthly', 'prod_pro'));
 
-        $this->assertSame('percent', $this->createEnabled()->discount_type);
+        $this->assertSame(CampaignDiscountType::PERCENT, $this->createEnabled()->discount_type);
     }
 
     public function test_an_inactive_code_is_refused(): void
@@ -198,6 +199,55 @@ class CampaignCodeValidatorTest extends TestCase
     public function test_a_customer_restricted_code_is_refused(): void
     {
         $this->assertCodeRefused('code_customer_restricted', $this->promotionCode(['customer' => 'cus_someone']));
+    }
+
+    public function test_a_coupon_stripe_marks_invalid_is_refused(): void
+    {
+        $coupon = [
+            ...$this->percentCoupon(),
+            'valid' => false,
+        ];
+
+        $this->assertCodeRefused('code_coupon_invalid', $this->promotionCode(coupon: $coupon));
+    }
+
+    /**
+     * Stripe counts a `repeating` coupon's months from the subscription's
+     * start, which is the trial's start (evidence 8-trial-coupon-probe), so a
+     * repeat no longer than the longest trial ends before anything is billed.
+     */
+    public function test_a_repeating_coupon_used_up_within_a_products_trial_is_refused(): void
+    {
+        $this->giveProTrialDays(30);
+        $this->stripe->answer($this->promotionCode(coupon: $this->repeatingCoupon(months: 1)));
+
+        $this->assertRefused(
+            'stripe_promotion_code_id',
+            (string) __('magic-starter::campaigns.refusals.code_repeating_within_trial', [
+                'months' => '1',
+                'days' => '30',
+            ]),
+        );
+        $this->assertCount(1, $this->stripe->requests);
+    }
+
+    public function test_a_repeating_coupon_outlasting_every_trial_passes(): void
+    {
+        $this->giveProTrialDays(30);
+        $this->stripe
+            ->answer($this->promotionCode(coupon: $this->repeatingCoupon(months: 2)))
+            ->answer($this->price('price_pro_monthly', 'prod_pro'));
+
+        $this->assertSame(CampaignDiscountType::PERCENT, $this->createEnabled()->discount_type);
+    }
+
+    public function test_a_repeating_coupon_on_products_without_a_trial_passes(): void
+    {
+        $this->stripe
+            ->answer($this->promotionCode(coupon: $this->repeatingCoupon(months: 1)))
+            ->answer($this->price('price_pro_monthly', 'prod_pro'));
+
+        $this->assertSame(CampaignDiscountType::PERCENT, $this->createEnabled()->discount_type);
     }
 
     public function test_a_code_whose_coupon_skips_a_campaign_product_is_refused(): void
@@ -306,7 +356,7 @@ class CampaignCodeValidatorTest extends TestCase
         $campaign->refresh();
 
         $this->assertSame('Last week of autumn', $campaign->headline['en']);
-        $this->assertSame('percent', $campaign->discount_type);
+        $this->assertSame(CampaignDiscountType::PERCENT, $campaign->discount_type);
         $this->assertSame([], $this->stripe->requests);
     }
 
@@ -339,7 +389,7 @@ class CampaignCodeValidatorTest extends TestCase
         app(UpdatesCampaigns::class)->update(new ConcreteUser, $campaign, $this->input(['enabled' => true]));
 
         $this->assertCount(2, $this->stripe->requests);
-        $this->assertSame('percent', Campaign::query()->findOrFail($campaign->getKey())->discount_type);
+        $this->assertSame(CampaignDiscountType::PERCENT, Campaign::query()->findOrFail($campaign->getKey())->discount_type);
     }
 
     public function test_a_refused_code_leaves_the_stored_campaign_untouched(): void
@@ -481,6 +531,23 @@ class CampaignCodeValidatorTest extends TestCase
             'duration' => 'once',
             'valid' => true,
         ];
+    }
+
+    /**
+     * @return array<string, mixed>
+     */
+    private function repeatingCoupon(int $months): array
+    {
+        return [
+            ...$this->percentCoupon(),
+            'duration' => 'repeating',
+            'duration_in_months' => $months,
+        ];
+    }
+
+    private function giveProTrialDays(int $days): void
+    {
+        config(['magic-starter.billing.products.pro_monthly.trial_days' => $days]);
     }
 
     /**

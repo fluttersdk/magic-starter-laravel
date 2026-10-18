@@ -3,7 +3,10 @@
 namespace FlutterSdk\MagicStarter\Models;
 
 use Carbon\CarbonInterface;
+use FlutterSdk\MagicStarter\Enums\CampaignDiscountType;
+use FlutterSdk\MagicStarter\Enums\ProductType;
 use FlutterSdk\MagicStarter\Observers\CampaignObserver;
+use FlutterSdk\MagicStarter\Support\BillingCatalogue;
 use FlutterSdk\MagicStarter\Support\ConditionallyUsesUuids;
 use Illuminate\Database\Eloquent\Attributes\ObservedBy;
 use Illuminate\Database\Eloquent\Builder;
@@ -26,17 +29,26 @@ use Illuminate\Support\Carbon;
  * @property array<string, string> $headline Locale => text.
  * @property array<string, string> $body Locale => text.
  * @property string $stripe_promotion_code_id
- * @property 'percent'|'amount'|null $discount_type
+ * @property CampaignDiscountType|null $discount_type
  * @property float|null $discount_value A percentage for `percent`, a minor-unit amount for `amount`.
  * @property string|null $discount_currency Uppercase ISO code of an `amount` discount.
  * @property array<string, int>|null $currency_options Uppercase currency => minor-unit amount off.
  * @property Carbon|null $created_at
  * @property Carbon|null $updated_at
+ *
+ * @phpstan-import-type Product from BillingCatalogue
  */
 #[ObservedBy(CampaignObserver::class)]
 class Campaign extends Model
 {
     use ConditionallyUsesUuids;
+
+    /**
+     * What a campaign checkout writes before the key in `client_reference_id`,
+     * so a completed session another integration opened with a bare key is
+     * never mistaken for a campaign's.
+     */
+    public const CLIENT_REFERENCE_PREFIX = 'campaign:';
 
     /** @var list<string> */
     protected $fillable = [
@@ -68,9 +80,35 @@ class Campaign extends Model
             'products' => 'array',
             'headline' => 'array',
             'body' => 'array',
+            'discount_type' => CampaignDiscountType::class,
             'discount_value' => 'float',
             'currency_options' => 'array',
         ];
+    }
+
+    /**
+     * The catalogue products a campaign may discount, keyed by catalogue key:
+     * the ones the card rail's checkout sells, so a campaign never advertises a
+     * product its own checkout would refuse. A subscription, sellable, with a
+     * Stripe price, and on a tier that is ranked and is not the free floor.
+     *
+     * The ranking is read per call, as the checkout reads it.
+     *
+     * @return array<string, Product>
+     */
+    public static function eligibleProducts(): array
+    {
+        $tierOrder = BillingCatalogue::tierOrder();
+
+        return array_filter(
+            BillingCatalogue::products(),
+            static fn (array $product): bool => $product['type'] === ProductType::SUBSCRIPTION
+                && $product['sellable']
+                && $product['refs']['stripe_price'] !== null
+                && $product['tier'] !== null
+                && $product['tier'] !== ($tierOrder[0] ?? null)
+                && in_array($product['tier'], $tierOrder, true),
+        );
     }
 
     /**

@@ -2,6 +2,7 @@
 
 namespace FlutterSdk\MagicStarter\Http\Resources;
 
+use FlutterSdk\MagicStarter\Enums\CampaignDiscountType;
 use FlutterSdk\MagicStarter\Models\Campaign;
 use Illuminate\Http\Request;
 use Illuminate\Http\Resources\Json\JsonResource;
@@ -31,9 +32,10 @@ class CampaignResource extends JsonResource
             'ends_at' => $this->ends_at->toIso8601String(),
             'products' => array_values($this->products),
             'discount' => [
-                'type' => $this->discount_type,
+                'type' => $this->discount_type?->value,
                 'value' => $this->discountValue(),
                 'currency' => $this->discount_currency,
+                'currency_options' => $this->currencyOptions(),
             ],
             'headline' => $this->localisedText($this->headline),
             'body' => $this->localisedText($this->body),
@@ -54,6 +56,22 @@ class CampaignResource extends JsonResource
         }
 
         return (int) $value;
+    }
+
+    /**
+     * An amount discount's figure in each further currency, keyed like `currency`
+     * (uppercase ISO) in the same minor unit as `value`; null for a percent
+     * discount or an amount given in one currency only.
+     *
+     * @return array<string, int>|null
+     */
+    private function currencyOptions(): ?array
+    {
+        if ($this->discount_type !== CampaignDiscountType::AMOUNT || ($this->currency_options ?? []) === []) {
+            return null;
+        }
+
+        return $this->currency_options;
     }
 
     /**

@@ -6,6 +6,7 @@ use FlutterSdk\MagicStarter\Actions\CreateCampaign;
 use FlutterSdk\MagicStarter\Actions\UpdateCampaign;
 use FlutterSdk\MagicStarter\Contracts\CreatesCampaigns;
 use FlutterSdk\MagicStarter\Contracts\UpdatesCampaigns;
+use FlutterSdk\MagicStarter\Enums\CampaignDiscountType;
 use FlutterSdk\MagicStarter\Features;
 use FlutterSdk\MagicStarter\Models\Campaign;
 use FlutterSdk\MagicStarter\Tests\Fixtures\ConcreteUser;
@@ -74,6 +75,32 @@ class CampaignModelTest extends TestCase
                         'stripe_price' => 'price_pro_legacy',
                     ],
                 ],
+                'free_monthly' => [
+                    'type' => 'subscription',
+                    'tier' => 'free',
+                    'cycle' => 'monthly',
+                    'prices' => [
+                        'web' => [
+                            'USD' => 0,
+                        ],
+                    ],
+                    'refs' => [
+                        'stripe_price' => 'price_free_monthly',
+                    ],
+                ],
+                'starter_monthly' => [
+                    'type' => 'subscription',
+                    'tier' => 'starter',
+                    'cycle' => 'monthly',
+                    'prices' => [
+                        'web' => [
+                            'USD' => 900,
+                        ],
+                    ],
+                    'refs' => [
+                        'stripe_price' => 'price_starter_monthly',
+                    ],
+                ],
                 'credits_pack' => [
                     'type' => 'consumable',
                     'credits' => 100,
@@ -132,6 +159,7 @@ class CampaignModelTest extends TestCase
         $this->assertTrue($campaign->enabled);
         $this->assertSame(['pro_monthly'], $campaign->products);
         $this->assertSame('Autumn sale', $campaign->headline['en']);
+        $this->assertSame(CampaignDiscountType::AMOUNT, $campaign->discount_type);
         $this->assertSame(500.0, $campaign->discount_value);
         $this->assertSame(['TRY' => 15000], $campaign->currency_options);
     }
@@ -208,7 +236,7 @@ class CampaignModelTest extends TestCase
 
     public function test_only_sellable_subscription_products_can_be_discounted(): void
     {
-        foreach (['pro_legacy', 'credits_pack', 'unknown'] as $product) {
+        foreach (['pro_legacy', 'credits_pack', 'free_monthly', 'starter_monthly', 'unknown'] as $product) {
             $this->assertRefused(
                 'products.0',
                 $this->input(['products' => [$product]]),
@@ -217,6 +245,15 @@ class CampaignModelTest extends TestCase
         }
 
         $this->assertRefused('products', $this->input(['products' => []]));
+    }
+
+    /**
+     * The checkout's own rule: a floor-tier product or one whose tier is not
+     * ranked is never sold on the card rail, so no campaign may advertise it.
+     */
+    public function test_the_eligible_products_are_the_ones_checkout_sells(): void
+    {
+        $this->assertSame(['pro_monthly'], array_keys(Campaign::eligibleProducts()));
     }
 
     public function test_an_enabled_campaign_overlapping_another_is_refused_before_stripe(): void

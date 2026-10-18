@@ -510,11 +510,12 @@ A campaign is a time-boxed Stripe promotion code that staff offer on some catalo
 
 ### Lifecycle
 
-Staff create campaigns in the [admin panel](admin-panel.md) (resource key `campaigns`). A campaign has a name, a window, the catalogue products it covers (sellable subscriptions with a Stripe price), a headline and a body per supported locale, and the id of a Stripe promotion code (`promo_...`, not the string customers type). The default locale's copy is required; a blank locale is served with the default's text. There is no delete: a campaign that should stop is switched off, which keeps the record of what ran.
+Staff create campaigns in the [admin panel](admin-panel.md) (resource key `campaigns`). A campaign has a name, a window, the catalogue products it covers (the ones checkout sells: sellable subscriptions with a Stripe price on a ranked tier above the free floor), a headline and a body per supported locale, and the id of a Stripe promotion code (`promo_...`, not the string customers type). The default locale's copy is required; a blank locale is served with the default's text. There is no delete: a campaign that should stop is switched off, which keeps the record of what ran.
 
 - **Running** means enabled, with `starts_at <= now < ends_at`. The clock starts and ends a campaign; nothing has to be saved at either moment. Back-to-back windows never both run.
 - **One enabled campaign at a time.** Saving an enabled campaign whose window overlaps another enabled one is refused, naming the other.
-- **The code is checked in Stripe on save**, only when the saved state is enabled and the campaign was not enabled before or its code, end or products changed. Editing copy or the start never calls Stripe, and neither does switching a campaign off. A refusal leaves the stored campaign as it was. Stripe refuses a code that is inactive, has no expiry or expires before the campaign ends, is limited to first-time transactions (a team that trialled or paid already has prior transactions), has a minimum amount (a trial checkout never meets one), is limited to one customer, belongs to the other Stripe mode, or sits on a coupon that does not cover every campaign product or, for an amount off, has no amount in every currency the campaign products sell in.
+- **The code is checked in Stripe on save**, only when the saved state is enabled and the campaign was not enabled before or its code, end or products changed. Editing copy or the start never calls Stripe, and neither does switching a campaign off. A refusal leaves the stored campaign as it was. The save refuses a code that is inactive, has no expiry or expires before the campaign ends, is limited to first-time transactions (a team that trialled or paid already has prior transactions), has a minimum amount (a trial checkout never meets one), is limited to one customer, belongs to the other Stripe mode, or sits on a coupon that Stripe no longer marks valid, that does not cover every campaign product or, for an amount off, that has no amount in every currency the campaign products sell in.
+- **A `repeating` coupon has to outlast the trial.** Stripe counts a repeating coupon's months from the subscription's start, which is the trial's start, so a repeat that ends within the trial ends before the first paid invoice and the buyer is never discounted. The save refuses a `repeating` coupon whose `duration_in_months` times 28 days is not longer than the longest `trial_days` among the campaign's products. A `once` or `forever` coupon survives a trial and lands on the first paid invoice.
 - **The discount is a snapshot.** The coupon's percentage, or its amount per currency, is stored when the code is checked and is what the panel and the client show. It does not follow later edits to the coupon in Stripe: switch the campaign off and on again, or change its code, to read the coupon afresh.
 
 ### Audience and the banner
@@ -528,14 +529,14 @@ Staff create campaigns in the [admin panel](admin-panel.md) (resource key `campa
     "starts_at": "2026-11-01T00:00:00+00:00",
     "ends_at": "2026-11-08T00:00:00+00:00",
     "products": ["pro_monthly", "pro_annual"],
-    "discount": { "type": "percent", "value": 20, "currency": null },
+    "discount": { "type": "percent", "value": 20, "currency": null, "currency_options": null },
     "headline": { "en": "Pro is 20% off this week" },
     "body": { "en": "Upgrade before Sunday to keep the price." }
   }
 }
 ```
 
-`discount.type` is `percent` or `amount`; `currency` is set only for an amount. `headline` and `body` hold one key per supported locale.
+`discount.type` is `percent` or `amount`; `currency` is set only for an amount. `currency_options` is, for an amount, the amount off in each further currency, keyed by uppercase ISO code like `currency` and in the same minor unit as `value` (`{"TRY": 15000}`); it is `null` for a percent or for an amount given in one currency only. `headline` and `body` hold one key per supported locale.
 
 It is offered to a caller only when the billed subject holds the free floor (a trialing or paying subject never sees it) **and** the caller may manage that subject's billing, which is the team owner under team billing. Anyone else gets `{"data": null}`, not a 403. The client additionally shows it only on the web rail. While `Features::campaigns()` is off the route does not exist and answers `404`.
 
@@ -546,16 +547,16 @@ The running campaign is cached (rebuilt after every save, and at most an hour ol
 When a campaign is running, `POST billing/checkout` for a product it covers, from a caller in the audience, applies the code by itself. The campaign is read from the table at that moment, never from the cached feed, so a campaign staff just switched off cannot discount a session. The session carries:
 
 - the campaign's promotion code as the session discount, and **no** `allow_promotion_codes`, even when `promotion_codes` is on: Stripe refuses a discount beside that key, so a campaign session shows no code field;
-- `client_reference_id`, the campaign's id, which is how the completed session is attributed;
-- `expires_at`, the campaign's end held between 30 minutes and 24 hours from now, the window Stripe accepts. A campaign ending in ten minutes still gives the customer 30; one ending next week gives 24 hours. A session opened in the last half hour of a campaign therefore outlives it; whether Stripe still honours the code after its own expiry was not measured.
+- `client_reference_id`, `campaign:` followed by the campaign's id, which is how the completed session is attributed;
+- `expires_at`, the campaign's end held between 31 minutes and 23 hours 55 minutes from now, a margin inside the 30 minutes to 24 hours Stripe accepts so a server clock slightly ahead of Stripe's never crosses either limit. A campaign ending in ten minutes still gives the customer 31; one ending next week gives nearly a day. A session opened in the last half hour of a campaign therefore outlives it; whether Stripe still honours the code after its own expiry was not measured.
 
 The `checkout_started` row then carries `campaign_id`, and `promotion_codes` is `false`.
 
-**A refused campaign code never blocks the purchase.** When Stripe refuses the session because of the code (a refusal on the discount parameter, or a `promotion_code_*` code such as `promotion_code_inactive`, `promotion_code_customer_not_first_time` or `promotion_code_amount_insufficient`), the package logs a warning, records a `campaign_code_refused` row (a refusal, so an alert on refusals sees a failing campaign) and opens the session again without the campaign, at the price the customer would pay anyway; `promotion_codes` then applies as it does without a campaign. Any other Stripe error propagates as it always did.
+**A refused campaign code never blocks the purchase.** Stripe's refusal does not reliably name the code: `promotion_code_inactive` or `promotion_code_customer_not_first_time` do, a coupon missing the session's currency names the discount parameter, and an exhausted or deleted coupon behind an active code does neither. So any invalid-request refusal of a campaign session opens the session once more without the campaign, at the price the customer would pay anyway, with `promotion_codes` applying as it does without a campaign. When that session opens, the package logs a warning and records a `campaign_code_refused` row (a refusal, so an alert on refusals sees a failing campaign) whose `reason` is Stripe's code, or `campaign_code` when Stripe named only a parameter. When the second session is refused too, the error was not the campaign's: it propagates as it always did and no refusal row is written.
 
 ### Attribution
 
-A completed checkout is recorded from Stripe's `checkout.session.completed` webhook. When the session's `client_reference_id` names a campaign (looked up by id; an unknown value, or another integration's reference, is ignored) the delivery leaves one `campaign_redeemed` row for the billable behind `customer`, with the campaign id, the redeemed promotion code and the discount in the currency's minor unit. The code is read from the payload's `discounts`; when the payload carries no discounts the session is retrieved from Stripe with `expand[]=discounts`, inside the delivery, and a failed read answers 500 so Stripe retries it. A session with no promotion code on it records nothing. Like every Stripe delivery it runs once per event id, so a re-delivery adds no second row.
+A completed checkout is recorded from Stripe's `checkout.session.completed` webhook. When the session's `client_reference_id` names a campaign (`campaign:<id>`, as checkout writes it; an unknown id, a bare id without the prefix, or another integration's reference is ignored) the delivery leaves one `campaign_redeemed` row for the billable behind `customer`, with the campaign id, the redeemed promotion code and the discount in the currency's minor unit. The code is read from the payload's `discounts`; when the payload carries no discounts the session is retrieved from Stripe with `expand[]=discounts`, inside the delivery, and a failed read answers 500 so Stripe retries it. A session with no promotion code on it records nothing. Like every Stripe delivery it runs once per event id, so a re-delivery adds no second row.
 
 A $0 trial checkout counts: the admin panel's **Campaign checkouts** column counts these rows per campaign, whatever the first charge was. That is checkouts that redeemed the code, not revenue or conversions to paid. The payload shape of a completed session was exercised against fake Stripe payloads; completing a live Checkout needs a browser and was not measured.
 
@@ -578,7 +579,7 @@ use Laravel\Cashier\Console\WebhookCommand;
 ],
 ```
 
-`php artisan billing:doctor --remote` checks it while campaigns are on: the Stripe endpoint whose url is this application's `route('cashier.webhook')` has to list the event (an endpoint listening to `*` does), and the check `stripe.remote.webhook` is an `error` when no endpoint delivers to that url or the one that does lacks the event.
+`php artisan billing:doctor --remote` checks it while campaigns are on: the Stripe endpoint whose url is this application's `route('cashier.webhook')` has to list the event (an endpoint listening to `*` does), and the check `stripe.remote.webhook` is an `error` when no endpoint delivers to that url or the one that does lacks the event. The urls are compared without a trailing slash and with the scheme and host case-insensitive. An application that called `MagicStarter::ignoreRoutes()` and names no `cashier.webhook` route gets an `agent_check` instead: confirm the event on your own endpoint in the Stripe dashboard.
 
 ---
 
@@ -710,7 +711,7 @@ Every billing outcome leaves one row in `billing_events` and dispatches one Lara
 | `entitlement_applied` | `webhook`, `reconcile`, `trial_check` | none | `before`, `after`, `changed`, `direction`, `cross_rail`. |
 | `entitlement_dropped` | any feeder | `stale`, `same_instant_revocation`, `undecidable_tier_order`, `cross_rail_revocation`, `projected_cross_rail_takeover` | The log context and `incoming_status`. |
 | `checkout_started` | `request` | none | `product`, `price_id`, `trial_days`, `promotion_codes`, and `campaign_id` on a [campaign](#campaigns) session. |
-| `campaign_code_refused` | `request` | none | `campaign_id`, `promotion_code_id`, `stripe_code`. |
+| `campaign_code_refused` | `request` | Stripe's code, or `campaign_code` | `campaign_id`, `promotion_code_id`, `stripe_code`. |
 | `campaign_redeemed` | `webhook` | none | `campaign_id`, `promotion_code`, `amount_discount`. The `external_id` is the `checkout.session.completed` event id. |
 | `subscription_swapped` | `request` | none | `product`, `price_id`. |
 | `subscription_cancelled` | `request` | none | `ends_at`. |
@@ -874,6 +875,8 @@ An application that installed before trials existed and wants to sell one copies
 The audit log needs two migrations. Copy `create_billing_events_table.php` and `add_processed_at_index_to_processed_webhook_events_table.php` from `vendor/fluttersdk/magic-starter-laravel/database/migrations/` into `database/migrations/` under timestamps later than your latest migration (or re-run the install command's billing publish) and run `php artisan migrate`. Until you do, billing keeps working and each worker logs one warning that `billing_events` is missing; `billing:doctor` reports it as `schema.billing_events`.
 
 The admin panel's manual grants need one more migration. Copy `create_billing_grants_table.php` from `vendor/fluttersdk/magic-starter-laravel/database/migrations/` into `database/migrations/` under a timestamp later than your latest migration (or re-run the install command's billing publish) and run `php artisan migrate`. Until you do, a grant cannot be recorded and `magic-starter:billing:expire-grants` skips with a line; `billing:doctor` reports it as `schema.billing_grants`. The command is scheduled hourly by the package, so your scheduler has to be running.
+
+Campaigns need their own migration. Copy `create_campaigns_table.php` from `vendor/fluttersdk/magic-starter-laravel/database/migrations/` into `database/migrations/` under a timestamp later than your latest migration (or run `php artisan magic-starter:install --features=campaigns`) and run `php artisan migrate` before you add `Features::campaigns()`; then add `checkout.session.completed` to your Stripe webhook endpoint (see [Attribution](#campaigns)).
 
 The per-caller currency needs one more migration. Copy `add_billing_currency_to_billable_table.php` from `vendor/fluttersdk/magic-starter-laravel/database/migrations/` into `database/migrations/` under a timestamp later than your latest migration and run `php artisan migrate`, then set `pricing.country_header` (see [Currency](#currency)). Every product row of `billing/plans` now carries `currency` and only that currency's web price, whether or not you set a header.
 

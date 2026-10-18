@@ -14,6 +14,7 @@ use GuzzleHttp\Promise\PromiseInterface;
 use Illuminate\Database\Schema\Blueprint;
 use Illuminate\Http\Client\Factory;
 use Illuminate\Http\Client\Request;
+use Illuminate\Routing\RouteCollection;
 use Illuminate\Support\Facades\Artisan;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Schema;
@@ -1070,6 +1071,44 @@ class BillingDoctorCommandTest extends TestCase
             route('cashier.webhook'),
             $doctor['checks']['stripe.remote.webhook']['message'],
         );
+    }
+
+    public function test_remote_with_campaigns_on_matches_an_endpoint_url_differing_only_in_case_and_trailing_slash(): void
+    {
+        $this->fakeRevenueCat();
+        $this->enableCampaigns();
+        $url = str_replace('https://app.example.test', 'HTTPS://APP.Example.Test', route('cashier.webhook')) . '/';
+        $this->app->instance(StripePriceReader::class, $this->stripe(
+            $this->stripePrices(),
+            [$this->endpoint(['checkout.session.completed'], $url)],
+        ));
+
+        $doctor = $this->doctor(['--remote' => true]);
+
+        $this->assertSame('ok', $doctor['checks']['stripe.remote.webhook']['status']);
+    }
+
+    /**
+     * An adopter who called `MagicStarter::ignoreRoutes()` serves the webhook
+     * under a url of their own, which the doctor cannot name, so the check is
+     * left to a person instead of crashing on `route()`.
+     */
+    public function test_remote_with_campaigns_on_and_the_package_routes_ignored_leaves_the_webhook_to_a_person(): void
+    {
+        $this->fakeRevenueCat();
+        $this->enableCampaigns();
+        $stripe = $this->stripe($this->stripePrices());
+        $this->app->instance(StripePriceReader::class, $stripe);
+        $this->app['router']->setRoutes(new RouteCollection);
+
+        $doctor = $this->doctor(['--remote' => true]);
+
+        $this->assertSame('agent_check', $doctor['checks']['stripe.remote.webhook']['status']);
+        $this->assertStringContainsString(
+            'checkout.session.completed',
+            $doctor['checks']['stripe.remote.webhook']['message'],
+        );
+        $this->assertSame(0, $stripe->endpointReads);
     }
 
     public function test_remote_reports_a_refused_endpoint_read_by_class_and_status_only(): void

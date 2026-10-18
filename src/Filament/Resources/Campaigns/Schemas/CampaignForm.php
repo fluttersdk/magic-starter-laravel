@@ -10,10 +10,8 @@ use Filament\Forms\Components\TextInput;
 use Filament\Forms\Components\Toggle;
 use Filament\Infolists\Components\TextEntry;
 use Filament\Schemas\Schema;
-use FlutterSdk\MagicStarter\Enums\ProductType;
 use FlutterSdk\MagicStarter\Filament\Resources\Campaigns\CampaignResource;
 use FlutterSdk\MagicStarter\Models\Campaign;
-use FlutterSdk\MagicStarter\Support\BillingCatalogue;
 use Illuminate\Database\Eloquent\Model;
 
 /**
@@ -73,8 +71,8 @@ class CampaignForm
     }
 
     /**
-     * The products a campaign may discount, keyed by catalogue key: sellable subscriptions that
-     * have a Stripe price, which is the set the contract accepts.
+     * The products a campaign may discount, keyed by catalogue key: {@see Campaign::eligibleProducts()},
+     * the set the contract accepts.
      *
      * @return array<string, string>
      */
@@ -82,14 +80,7 @@ class CampaignForm
     {
         $options = [];
 
-        foreach (BillingCatalogue::products() as $product) {
-            if ($product['type'] !== ProductType::SUBSCRIPTION
-                || ! $product['sellable']
-                || $product['refs']['stripe_price'] === null
-            ) {
-                continue;
-            }
-
+        foreach (Campaign::eligibleProducts() as $product) {
             $options[$product['key']] = sprintf(
                 '%s (%s, %s)',
                 $product['key'],

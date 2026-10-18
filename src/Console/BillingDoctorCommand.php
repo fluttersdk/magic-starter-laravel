@@ -19,6 +19,7 @@ use Illuminate\Console\Command;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Http\Client\ConnectionException;
 use Illuminate\Http\Client\RequestException;
+use Illuminate\Support\Facades\Route;
 use Laravel\Cashier\Cashier;
 use LogicException;
 use RuntimeException;
@@ -678,6 +679,18 @@ class BillingDoctorCommand extends Command
             return;
         }
 
+        // An adopter who called MagicStarter::ignoreRoutes() serves the webhook
+        // at a url of their own, which nothing here can name.
+        if (! Route::has('cashier.webhook')) {
+            $this->check($id, self::AGENT_CHECK, sprintf(
+                'No route is named cashier.webhook (package routes ignored?), so the endpoint delivering to this '
+                . 'application cannot be found; confirm in the Stripe dashboard that it lists %s.',
+                self::CAMPAIGN_WEBHOOK_EVENT,
+            ));
+
+            return;
+        }
+
         try {
             $endpoints = $stripe->webhookEndpoints();
         } catch (ApiErrorException $failure) {
@@ -691,7 +704,10 @@ class BillingDoctorCommand extends Command
         }
 
         $url = route('cashier.webhook');
-        $delivering = array_filter($endpoints, static fn (array $endpoint): bool => $endpoint['url'] === $url);
+        $delivering = array_filter(
+            $endpoints,
+            fn (array $endpoint): bool => $this->normalisedUrl($endpoint['url']) === $this->normalisedUrl($url),
+        );
 
         if ($delivering === []) {
             $this->check($id, self::ERROR, sprintf(
@@ -722,6 +738,27 @@ class BillingDoctorCommand extends Command
                 $url,
                 self::CAMPAIGN_WEBHOOK_EVENT,
             ));
+    }
+
+    /**
+     * A url as Stripe and the router may each spell it: the scheme and host
+     * lowercased, since both are case-insensitive, and no trailing slash.
+     */
+    private function normalisedUrl(string $url): string
+    {
+        $url = rtrim($url, '/');
+        $scheme = parse_url($url, PHP_URL_SCHEME);
+        $host = parse_url($url, PHP_URL_HOST);
+
+        if (! is_string($scheme) || ! is_string($host)) {
+            return $url;
+        }
+
+        $prefix = $scheme . '://' . $host;
+
+        return str_starts_with($url, $prefix)
+            ? strtolower($prefix) . substr($url, strlen($prefix))
+            : $url;
     }
 
     /**

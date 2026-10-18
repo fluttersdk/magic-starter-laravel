@@ -213,6 +213,33 @@ class CampaignEndpointTest extends TestCase
         $this->campaignFor($user)->assertOk()->assertExactJson(['data' => null]);
     }
 
+    public function test_without_a_running_campaign_the_audience_is_never_asked(): void
+    {
+        $this->bootRoutes('team');
+
+        $owner = $this->ownerOfFreeTeam();
+        $this->createCampaign([
+            'starts_at' => Carbon::parse('2026-12-01 00:00:00'),
+            'ends_at' => Carbon::parse('2026-12-08 00:00:00'),
+        ]);
+
+        $asked = 0;
+        Gate::before(static function ($user, string $ability) use (&$asked): void {
+            if ($ability === 'manageBilling') {
+                $asked++;
+            }
+        });
+
+        $this->campaignFor($owner)->assertOk()->assertExactJson(['data' => null]);
+        $this->assertSame(0, $asked);
+
+        // The control limb: a running campaign does ask.
+        Carbon::setTestNow(Carbon::parse('2026-12-02 00:00:00'));
+
+        $this->campaignFor($owner)->assertOk()->assertJsonPath('data.id', 'camp-1');
+        $this->assertSame(1, $asked);
+    }
+
     public function test_a_disabled_campaign_is_never_served(): void
     {
         $this->bootRoutes('team');
@@ -285,7 +312,7 @@ class CampaignEndpointTest extends TestCase
             ->assertJsonPath('data.body', ['en' => 'Body in English', 'tr' => 'Body in English']);
     }
 
-    public function test_an_amount_discount_names_its_currency(): void
+    public function test_an_amount_discount_names_its_currency_and_its_amount_in_every_other_one(): void
     {
         $this->bootRoutes('team');
 
@@ -294,13 +321,42 @@ class CampaignEndpointTest extends TestCase
             'discount_type' => 'amount',
             'discount_value' => 500,
             'discount_currency' => 'USD',
+            'currency_options' => [
+                'TRY' => 15000,
+                'EUR' => 450,
+            ],
         ]);
 
-        $this->campaignFor($owner)->assertJsonPath('data.discount', [
+        $response = $this->campaignFor($owner)->assertJsonPath('data.discount', [
             'type' => 'amount',
             'value' => 500,
             'currency' => 'USD',
+            'currency_options' => [
+                'TRY' => 15000,
+                'EUR' => 450,
+            ],
         ]);
+
+        // A JSON object on the wire, never a list.
+        $this->assertStringContainsString(
+            '"currency_options":{"TRY":15000,"EUR":450}',
+            (string) $response->getContent(),
+        );
+    }
+
+    public function test_an_amount_discount_without_other_currencies_sends_null_options(): void
+    {
+        $this->bootRoutes('team');
+
+        $owner = $this->ownerOfFreeTeam();
+        $this->createCampaign([
+            'discount_type' => 'amount',
+            'discount_value' => 500,
+            'discount_currency' => 'USD',
+            'currency_options' => [],
+        ]);
+
+        $this->campaignFor($owner)->assertJsonPath('data.discount.currency_options', null);
     }
 
     private function campaignFor(Model $user): TestResponse

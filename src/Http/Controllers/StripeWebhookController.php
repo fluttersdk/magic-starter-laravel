@@ -646,18 +646,27 @@ class StripeWebhookController extends CashierWebhookController
     /**
      * The campaign a `client_reference_id` names, or null for any other value.
      *
-     * The shape is checked before the lookup for the reason
-     * {@see self::existingUser()} gives: another integration's reference is
-     * free text, and on a PostgreSQL `uuid` key it would raise inside the
-     * webhook transaction instead of answering "no campaign".
+     * Only the {@see Campaign::CLIENT_REFERENCE_PREFIX} reference the checkout
+     * writes counts: another integration's session may carry a bare key that
+     * happens to be a campaign's. The key's shape is then checked before the
+     * lookup for the reason {@see self::existingUser()} gives: on a PostgreSQL
+     * `uuid` key free text would raise inside the webhook transaction instead
+     * of answering "no campaign".
      */
     protected function campaignNamedBy(mixed $reference): ?Campaign
     {
-        if (! is_string($reference) || ! TeamKey::looksLikeOne($reference)) {
+        if (! is_string($reference) || ! str_starts_with($reference, Campaign::CLIENT_REFERENCE_PREFIX)) {
             return null;
         }
 
-        return Campaign::query()->find($reference);
+        $key = substr($reference, strlen(Campaign::CLIENT_REFERENCE_PREFIX));
+
+        // TeamKey's shape rule follows `use_uuids`, which keys every package model, not only teams.
+        if (! TeamKey::looksLikeOne($key)) {
+            return null;
+        }
+
+        return Campaign::query()->find($key);
     }
 
     /**

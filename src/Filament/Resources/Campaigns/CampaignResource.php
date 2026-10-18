@@ -13,6 +13,7 @@ use Filament\Tables\Table;
 use FlutterSdk\MagicStarter\Contracts\CreatesCampaigns;
 use FlutterSdk\MagicStarter\Contracts\UpdatesCampaigns;
 use FlutterSdk\MagicStarter\Enums\BillingEventType;
+use FlutterSdk\MagicStarter\Enums\CampaignDiscountType;
 use FlutterSdk\MagicStarter\Events\AdminActionPerformed;
 use FlutterSdk\MagicStarter\Filament\Resources\Campaigns\Pages\CreateCampaign;
 use FlutterSdk\MagicStarter\Filament\Resources\Campaigns\Pages\EditCampaign;
@@ -152,11 +153,11 @@ class CampaignResource extends MagicStarterResource
      */
     public static function discountLabel(Campaign $campaign): ?string
     {
-        if ($campaign->discount_type === 'percent') {
+        if ($campaign->discount_type === CampaignDiscountType::PERCENT) {
             return rtrim(rtrim(number_format((float) $campaign->discount_value, 2), '0'), '.') . '%';
         }
 
-        if ($campaign->discount_type !== 'amount') {
+        if ($campaign->discount_type !== CampaignDiscountType::AMOUNT) {
             return null;
         }
 

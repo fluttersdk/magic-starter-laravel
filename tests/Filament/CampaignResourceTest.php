@@ -4,6 +4,7 @@ namespace FlutterSdk\MagicStarter\Tests\Filament;
 
 use Carbon\CarbonInterface;
 use Filament\Panel;
+use FlutterSdk\MagicStarter\Enums\CampaignDiscountType;
 use FlutterSdk\MagicStarter\Events\AdminActionPerformed;
 use FlutterSdk\MagicStarter\Features;
 use FlutterSdk\MagicStarter\Filament\MagicStarterPlugin;
@@ -68,6 +69,7 @@ class CampaignResourceTest extends FilamentTestCase
                     'sellable' => false,
                 ],
                 'pro_unpriced' => $this->subscription('pro', null),
+                'free_monthly' => $this->subscription('free', 'price_free_monthly'),
             ],
         ]);
 
@@ -89,7 +91,7 @@ class CampaignResourceTest extends FilamentTestCase
                 }
 
                 return [
-                    'discount_type' => 'percent',
+                    'discount_type' => CampaignDiscountType::PERCENT,
                     'discount_value' => 25.0,
                     'discount_currency' => null,
                     'currency_options' => null,
@@ -153,7 +155,8 @@ class CampaignResourceTest extends FilamentTestCase
         $form->assertSee('pro_monthly')
             ->assertSee('business_monthly')
             ->assertDontSee('pro_retired')
-            ->assertDontSee('pro_unpriced');
+            ->assertDontSee('pro_unpriced')
+            ->assertDontSee('free_monthly');
     }
 
     public function test_creating_stores_the_form_and_the_snapshot_through_the_contract(): void
@@ -174,7 +177,7 @@ class CampaignResourceTest extends FilamentTestCase
         $this->assertSame(['pro_monthly', 'business_monthly'], $campaign->products);
         $this->assertSame('Sonbahar indirimi', $campaign->headline['tr']);
         $this->assertSame('promo_autumn', $campaign->stripe_promotion_code_id);
-        $this->assertSame('percent', $campaign->discount_type);
+        $this->assertSame(CampaignDiscountType::PERCENT, $campaign->discount_type);
         $this->assertSame(25.0, $campaign->discount_value);
         $this->assertSame(['promo_autumn'], $this->validator->checked);
 

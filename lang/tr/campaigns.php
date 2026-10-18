@@ -21,6 +21,8 @@ return [
         'code_customer_restricted' => 'Bu promosyon kodu tek bir müşteriyle sınırlı; kampanya kodu her müşteriye açık olmalı.',
         'code_products_not_covered' => 'Bu promosyon kodunun kuponu şu ürünlerin Stripe ürününe uygulanmıyor: :products.',
         'code_currency_missing' => 'Bu promosyon kodunun kuponunda şu para birimleri için tutar yok: :currencies. Her biri için bir para birimi seçeneği ekleyin.',
+        'code_coupon_invalid' => 'Bu promosyon kodunun kuponu Stripe\'ta artık geçerli değil (silinmiş, süresi dolmuş ya da kullanım sınırına ulaşmış); geçerli bir kuponu olan bir kod kullanın.',
+        'code_repeating_within_trial' => 'Bu promosyon kodunun kuponu :months ay boyunca tekrarlanıyor ve Stripe bu süreyi :days günlük denemenin başından sayıyor, yani ilk ücretli faturadan önce bitiyor; tek seferlik ya da süresiz bir kupon veya daha uzun bir tekrar kullanın.',
         'price_not_found' => 'Stripe ":product" ürününün fiyatını bulamadı; faturalandırma kataloğundaki Stripe fiyatını kontrol edin.',
         'price_mode_mismatch' => '":product" ürününün Stripe fiyatı, tanımlı Stripe anahtarından farklı bir Stripe moduna ait.',
         'stripe_error' => 'Stripe denetimi reddetti: :message',

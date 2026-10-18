@@ -142,7 +142,7 @@ class CampaignCheckoutTest extends TestCase
 
         $this->assertSame([['promotion_code' => 'promo_campaign']], $params['discounts']);
         $this->assertArrayNotHasKey('allow_promotion_codes', $params);
-        $this->assertSame((string) $campaign->getKey(), $params['client_reference_id']);
+        $this->assertSame('campaign:' . $campaign->getKey(), $params['client_reference_id']);
         $this->assertSame(Carbon::parse('2026-11-04 00:00:00')->getTimestamp(), $params['expires_at']);
 
         $row = $this->onlyRow(BillingEventType::CHECKOUT_STARTED, $user);
@@ -159,7 +159,11 @@ class CampaignCheckoutTest extends TestCase
         );
     }
 
-    public function test_a_campaign_ending_within_half_an_hour_expires_the_session_half_an_hour_ahead(): void
+    /**
+     * One minute inside Stripe's 30-minute floor and five inside its 24-hour
+     * ceiling, so a server clock slightly ahead of Stripe's never crosses either.
+     */
+    public function test_a_campaign_ending_within_half_an_hour_expires_the_session_just_past_half_an_hour(): void
     {
         $this->createCampaign(['ends_at' => Carbon::parse(self::NOW)->addMinutes(10)]);
         $user = $this->createUser('campaign-floor@example.test');
@@ -167,12 +171,12 @@ class CampaignCheckoutTest extends TestCase
         $this->buy($user, 'pro_monthly')->assertOk();
 
         $this->assertSame(
-            Carbon::parse(self::NOW)->addMinutes(30)->getTimestamp(),
+            Carbon::parse(self::NOW)->addMinutes(31)->getTimestamp(),
             $this->onlySessionParams()['expires_at'],
         );
     }
 
-    public function test_a_campaign_ending_after_a_day_expires_the_session_a_day_ahead(): void
+    public function test_a_campaign_ending_after_a_day_expires_the_session_just_short_of_a_day(): void
     {
         $this->createCampaign(['ends_at' => Carbon::parse(self::NOW)->addDays(5)]);
         $user = $this->createUser('campaign-ceiling@example.test');
@@ -180,7 +184,7 @@ class CampaignCheckoutTest extends TestCase
         $this->buy($user, 'pro_monthly')->assertOk();
 
         $this->assertSame(
-            Carbon::parse(self::NOW)->addHours(24)->getTimestamp(),
+            Carbon::parse(self::NOW)->addHours(24)->subMinutes(5)->getTimestamp(),
             $this->onlySessionParams()['expires_at'],
         );
     }
@@ -275,7 +279,7 @@ class CampaignCheckoutTest extends TestCase
         $this->assertNotNull($refused);
         $this->assertSame(BillingSource::REQUEST, $refused->source);
         $this->assertSame(BillingProvider::STRIPE, $refused->provider);
-        $this->assertNull($refused->reason);
+        $this->assertSame('promotion_code_customer_not_first_time', $refused->reason);
         $this->assertSame((string) $user->getKey(), $refused->billable_id);
         $this->assertSame((string) $user->getKey(), (string) $refused->actor_user_id);
         $this->assertSame(
@@ -318,21 +322,71 @@ class CampaignCheckoutTest extends TestCase
 
         $refused = BillingEvent::query()->where('type', BillingEventType::CAMPAIGN_CODE_REFUSED->value)->sole();
         $this->assertNull($refused->properties['stripe_code']);
+        $this->assertSame('campaign_code', $refused->reason);
     }
 
-    public function test_any_other_stripe_refusal_propagates_and_records_nothing(): void
+    /**
+     * A coupon-level refusal (an exhausted or deleted coupon behind an active
+     * code) names neither a `promotion_code_*` code nor the `discounts` param,
+     * and must not block the purchase either.
+     */
+    public function test_a_refusal_naming_neither_the_code_nor_the_discounts_is_retried_without_the_campaign(): void
+    {
+        $campaign = $this->createCampaign();
+        $user = $this->createUser('campaign-coupon-expired@example.test');
+
+        $this->stripe
+            ->answer($this->customer())
+            ->answer($this->stripeError(code: 'coupon_expired', param: null), 400)
+            ->answer($this->customer())
+            ->answer($this->checkoutSession('cs_test_retry'));
+
+        $this->checkout($user, 'pro_monthly')->assertOk()->assertJsonPath('session_id', 'cs_test_retry');
+
+        $sessions = $this->stripe->requestsTo('post', '/v1/checkout/sessions');
+        $this->assertCount(2, $sessions);
+        $this->assertSame([['promotion_code' => 'promo_campaign']], $sessions[0]['params']['discounts']);
+        $this->assertSessionWithoutCampaign($sessions[1]['params'], promotionCodes: false);
+
+        $refused = BillingEvent::query()->where('type', BillingEventType::CAMPAIGN_CODE_REFUSED->value)->sole();
+        $this->assertSame('coupon_expired', $refused->reason);
+        $this->assertSame((string) $campaign->getKey(), $refused->properties['campaign_id']);
+    }
+
+    /**
+     * A refusal that is not the campaign's comes back on the session opened
+     * without it, and that one propagates: no refusal row blames the code.
+     */
+    public function test_a_refusal_that_repeats_without_the_campaign_propagates_and_records_nothing(): void
     {
         $this->createCampaign();
         $user = $this->createUser('campaign-other-error@example.test');
 
         $this->stripe
             ->answer($this->customer())
+            ->answer($this->stripeError(code: null, param: 'line_items[0][price]'), 400)
+            ->answer($this->customer())
             ->answer($this->stripeError(code: null, param: 'line_items[0][price]'), 400);
 
         $this->checkout($user, 'pro_monthly')->assertStatus(500);
 
-        $this->assertCount(1, $this->stripe->requestsTo('post', '/v1/checkout/sessions'));
+        $sessions = $this->stripe->requestsTo('post', '/v1/checkout/sessions');
+        $this->assertCount(2, $sessions);
+        $this->assertSessionWithoutCampaign($sessions[1]['params'], promotionCodes: false);
         $this->assertSame(0, BillingEvent::query()->count());
+    }
+
+    public function test_overlapping_active_campaigns_resolve_to_the_earliest_start(): void
+    {
+        $this->createCampaign([
+            'starts_at' => Carbon::parse('2026-11-02 00:00:00'),
+            'stripe_promotion_code_id' => 'promo_later',
+        ]);
+        $this->createCampaign(['stripe_promotion_code_id' => 'promo_earlier']);
+
+        $this->buy($this->createUser('campaign-overlap@example.test'), 'pro_monthly')->assertOk();
+
+        $this->assertSame([['promotion_code' => 'promo_earlier']], $this->onlySessionParams()['discounts']);
     }
 
     /**

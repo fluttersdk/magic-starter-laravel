@@ -148,7 +148,7 @@ class CampaignRedemptionWebhookTest extends TestCase
         $billable = $this->createBillable();
         $campaign = $this->createCampaign();
 
-        $this->postSignedWebhook($this->completedSession('evt_redeemed', (string) $campaign->getKey()))->assertOk();
+        $this->postSignedWebhook($this->completedSession('evt_redeemed', $this->referenceTo($campaign)))->assertOk();
 
         $row = $this->onlyRedemption();
         $this->assertSame(BillingSource::WEBHOOK, $row->source);
@@ -182,7 +182,7 @@ class CampaignRedemptionWebhookTest extends TestCase
         $campaign = $this->createCampaign();
 
         $this->postSignedWebhook(
-            $this->completedSession('evt_trial', (string) $campaign->getKey(), amountDiscount: 0),
+            $this->completedSession('evt_trial', $this->referenceTo($campaign), amountDiscount: 0),
         )->assertOk();
 
         $this->assertSame(0, $this->onlyRedemption()->properties['amount_discount']);
@@ -192,7 +192,7 @@ class CampaignRedemptionWebhookTest extends TestCase
     {
         $this->createBillable();
         $campaign = $this->createCampaign();
-        $event = $this->completedSession('evt_twice', (string) $campaign->getKey());
+        $event = $this->completedSession('evt_twice', $this->referenceTo($campaign));
 
         $this->postSignedWebhook($event)->assertOk();
         $this->postSignedWebhook($event)->assertOk();
@@ -221,7 +221,7 @@ class CampaignRedemptionWebhookTest extends TestCase
         ]);
 
         $this->postSignedWebhook(
-            $this->completedSession('evt_readback', (string) $campaign->getKey(), withDiscounts: false),
+            $this->completedSession('evt_readback', $this->referenceTo($campaign), withDiscounts: false),
         )->assertOk();
 
         $reads = $this->stripe->requestsTo('get', '/v1/checkout/sessions/cs_test_completed');
@@ -252,7 +252,7 @@ class CampaignRedemptionWebhookTest extends TestCase
         ]);
 
         $this->postSignedWebhook(
-            $this->completedSession('evt_no_code', (string) $campaign->getKey(), withDiscounts: false),
+            $this->completedSession('evt_no_code', $this->referenceTo($campaign), withDiscounts: false),
         )->assertOk();
 
         $this->assertSame(0, $this->redemptions()->count());
@@ -263,7 +263,7 @@ class CampaignRedemptionWebhookTest extends TestCase
     {
         $this->createBillable();
         $campaign = $this->createCampaign();
-        $event = $this->completedSession('evt_retry', (string) $campaign->getKey(), withDiscounts: false);
+        $event = $this->completedSession('evt_retry', $this->referenceTo($campaign), withDiscounts: false);
 
         $this->stripe->answer([
             'error' => [
@@ -301,7 +301,7 @@ class CampaignRedemptionWebhookTest extends TestCase
         config(['magic-starter.features' => [Features::billing()]]);
         Schema::drop('campaigns');
 
-        $this->postSignedWebhook($this->completedSession('evt_off', (string) $campaign->getKey()))->assertOk();
+        $this->postSignedWebhook($this->completedSession('evt_off', $this->referenceTo($campaign)))->assertOk();
 
         $this->assertSame(0, $this->redemptions()->count());
         $this->assertSame(1, ProcessedWebhookEvent::query()->where('event_id', 'evt_off')->count());
@@ -312,7 +312,7 @@ class CampaignRedemptionWebhookTest extends TestCase
         $this->createBillable();
         $this->createCampaign();
 
-        $this->postSignedWebhook($this->completedSession('evt_unknown', '987654'))->assertOk();
+        $this->postSignedWebhook($this->completedSession('evt_unknown', 'campaign:987654'))->assertOk();
 
         $this->assertSame(0, $this->redemptions()->count());
         $this->assertSame([], $this->stripe->requests);
@@ -324,6 +324,34 @@ class CampaignRedemptionWebhookTest extends TestCase
         $this->createCampaign();
 
         $this->postSignedWebhook($this->completedSession('evt_foreign', 'order-7'))->assertOk();
+
+        $this->assertSame(0, $this->redemptions()->count());
+        $this->assertSame([], $this->stripe->requests);
+    }
+
+    /**
+     * Another integration's session may carry a bare key that happens to be a
+     * campaign's; only the `campaign:` reference the checkout writes counts.
+     */
+    public function test_a_bare_campaign_key_without_the_prefix_records_nothing(): void
+    {
+        $this->createBillable();
+        $campaign = $this->createCampaign();
+
+        $this->postSignedWebhook(
+            $this->completedSession('evt_bare', (string) $campaign->getKey()),
+        )->assertOk();
+
+        $this->assertSame(0, $this->redemptions()->count());
+        $this->assertSame([], $this->stripe->requests);
+    }
+
+    public function test_a_prefixed_reference_that_is_not_a_campaign_key_records_nothing(): void
+    {
+        $this->createBillable();
+        $this->createCampaign();
+
+        $this->postSignedWebhook($this->completedSession('evt_prefixed_foreign', 'campaign:order-7'))->assertOk();
 
         $this->assertSame(0, $this->redemptions()->count());
         $this->assertSame([], $this->stripe->requests);
@@ -345,7 +373,7 @@ class CampaignRedemptionWebhookTest extends TestCase
         $campaign = $this->createCampaign();
 
         $this->postSignedWebhook(
-            $this->completedSession('evt_stranger', (string) $campaign->getKey()),
+            $this->completedSession('evt_stranger', $this->referenceTo($campaign)),
         )->assertOk();
 
         $this->assertSame(0, $this->redemptions()->count());
@@ -357,7 +385,7 @@ class CampaignRedemptionWebhookTest extends TestCase
         $campaign = $this->createCampaign();
 
         $this->postSignedWebhook(
-            $this->completedSession('evt_unsigned', (string) $campaign->getKey()),
+            $this->completedSession('evt_unsigned', $this->referenceTo($campaign)),
             'whsec_somebody_else',
         )->assertForbidden();
 
@@ -401,6 +429,14 @@ class CampaignRedemptionWebhookTest extends TestCase
             'body' => ['en' => 'Half off.'],
             'stripe_promotion_code_id' => self::PROMOTION_CODE,
         ]);
+    }
+
+    /**
+     * The `client_reference_id` the checkout writes for [$campaign].
+     */
+    private function referenceTo(Campaign $campaign): string
+    {
+        return 'campaign:' . $campaign->getKey();
     }
 
     /**

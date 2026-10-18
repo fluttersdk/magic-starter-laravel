@@ -182,6 +182,13 @@ class BillingController
     private const STRIPE_CODE_REQUIRES_ACTION = 'subscription_payment_intent_requires_action';
 
     /**
+     * The `campaign_code_refused` row's reason when Stripe's refusal named only
+     * a parameter: the row is never written without one, since listeners key
+     * on it. Not a client-facing reason; no response carries it.
+     */
+    private const CAMPAIGN_REFUSAL_FALLBACK_REASON = 'campaign_code';
+
+    /**
      * The 422 `code` for a checkout or swap naming a product this rail cannot
      * sell.
      *
@@ -902,12 +909,16 @@ class BillingController
             $sessionOptions['currency'] = strtolower($currency);
         }
 
-        // 8c. A campaign code Stripe refuses when the session opens (a customer
-        //     with prior transactions, a minimum amount a trial cannot meet, a
-        //     coupon not in this currency, an archived code) must never block
-        //     the purchase: it is recorded and the session opens again without
-        //     the campaign, at the price the customer would pay anyway. Any
-        //     other refusal is not the campaign's and propagates as before.
+        // 8c. A campaign code Stripe refuses when the session opens must never
+        //     block the purchase. The refusal does not reliably name the code:
+        //     a customer with prior transactions or an archived code says
+        //     `promotion_code_*`, a coupon not in this currency names the
+        //     `discounts` param, and an exhausted or deleted coupon behind an
+        //     active code says neither. So ANY invalid request on a campaign
+        //     session is answered by one session without the campaign, and the
+        //     retry decides: a refusal that was the campaign's is gone and is
+        //     recorded, one that was not comes back and propagates unchanged,
+        //     leaving no refusal row blaming the code.
         try {
             $checkout = $this->openCheckout(
                 $billable,
@@ -918,13 +929,10 @@ class BillingController
                 $campaign,
             );
         } catch (InvalidRequestException $exception) {
-            if ($campaign === null || ! $this->refusesCampaignCode($exception)) {
+            if ($campaign === null) {
                 throw $exception;
             }
 
-            $this->recordCampaignCodeRefusal($request, $billable, $campaign, $exception);
-
-            $campaign = null;
             $checkout = $this->openCheckout(
                 $billable,
                 $priceId,
@@ -933,6 +941,10 @@ class BillingController
                 $promotionCodes,
                 null,
             );
+
+            $this->recordCampaignCodeRefusal($request, $billable, $campaign, $exception);
+
+            $campaign = null;
         }
 
         // 9. Recorded once the session exists, never before: a Stripe error above
@@ -979,8 +991,12 @@ class BillingController
     {
         $billable = $this->resolveBillable($request);
 
+        // The cached feed first: on most reads nothing runs, and the audience
+        // check (a gate, the billable's plan) is only worth it when something does.
+        $campaign = CampaignFeed::active();
+
         return response()->json([
-            'data' => $this->inCampaignAudience($request, $billable) ? CampaignFeed::active() : null,
+            'data' => $campaign !== null && $this->inCampaignAudience($request, $billable) ? $campaign : null,
         ]);
     }
 
@@ -1014,7 +1030,9 @@ class BillingController
             return null;
         }
 
-        $campaign = Campaign::query()->activeAt(now())->first();
+        // Ordered so the answer is deterministic should two enabled windows
+        // ever overlap despite the write contracts.
+        $campaign = Campaign::query()->activeAt(now())->orderBy('starts_at')->first();
 
         if ($campaign === null
             || ! in_array($product, $campaign->products, true)
@@ -1034,8 +1052,10 @@ class BillingController
      * carries nothing of the first attempt. A campaign session never calls
      * `allowPromotionCodes()`: Stripe refuses `discounts` beside any
      * `allow_promotion_codes`, false included. It names the campaign as
-     * `client_reference_id` and expires by the campaign's end, held between
-     * the 30 minutes and the 24 hours Stripe accepts.
+     * `client_reference_id` (prefixed, see {@see Campaign::CLIENT_REFERENCE_PREFIX})
+     * and expires by the campaign's end, held a margin inside the 30 minutes and
+     * the 24 hours Stripe accepts, so a server clock slightly ahead of Stripe's
+     * never crosses either limit.
      *
      * @param  array<string, string>  $metadata  The subscription metadata (the trial user tag), or none.
      * @param  array<string, mixed>  $sessionOptions  Merged into the session payload by Cashier.
@@ -1058,10 +1078,10 @@ class BillingController
             $subscription->withPromotionCode($campaign->stripe_promotion_code_id);
 
             $now = now();
-            $sessionOptions['client_reference_id'] = (string) $campaign->getKey();
+            $sessionOptions['client_reference_id'] = Campaign::CLIENT_REFERENCE_PREFIX . $campaign->getKey();
             $sessionOptions['expires_at'] = $campaign->ends_at->copy()
-                ->max($now->copy()->addMinutes(30))
-                ->min($now->copy()->addHours(24))
+                ->max($now->copy()->addMinutes(31))
+                ->min($now->copy()->addHours(24)->subMinutes(5))
                 ->getTimestamp();
         } elseif ($promotionCodes) {
             $subscription->allowPromotionCodes();
@@ -1071,23 +1091,12 @@ class BillingController
     }
 
     /**
-     * Whether Stripe refused the session because of the campaign's code: a
-     * refusal on the `discounts` parameter (an unknown code, a coupon not in
-     * the session's currency) or a `promotion_code_*` code (inactive, a
-     * customer with prior transactions, an amount below the code's minimum).
-     */
-    protected function refusesCampaignCode(InvalidRequestException $exception): bool
-    {
-        return str_starts_with((string) $exception->getStripeParam(), 'discounts')
-            || str_starts_with((string) $exception->getStripeCode(), 'promotion_code_');
-    }
-
-    /**
      * Log and record a campaign code Stripe refused at checkout.
      *
      * A refusal row, so an operator alerting on refusals learns a campaign is
-     * failing its audience; the reason is the property `stripe_code`, null
-     * when Stripe named only the parameter, which the log line keeps.
+     * failing its audience. Its `reason` is Stripe's code, or
+     * {@see self::CAMPAIGN_REFUSAL_FALLBACK_REASON} when Stripe named only the parameter,
+     * which the log line keeps.
      */
     protected function recordCampaignCodeRefusal(
         Request $request,
@@ -1108,6 +1117,7 @@ class BillingController
             BillingEventType::CAMPAIGN_CODE_REFUSED,
             $request,
             $billable,
+            reason: $exception->getStripeCode() ?? self::CAMPAIGN_REFUSAL_FALLBACK_REASON,
             properties: [
                 'campaign_id' => (string) $campaign->getKey(),
                 'promotion_code_id' => $campaign->stripe_promotion_code_id,
@@ -2005,12 +2015,14 @@ class BillingController
         Model $billable,
         ?string $externalId = null,
         array $properties = [],
+        ?string $reason = null,
     ): void {
         $this->recorder->record(
             $type,
             BillingSource::REQUEST,
             $billable,
             provider: BillingProvider::STRIPE,
+            reason: $reason,
             externalId: $externalId,
             properties: $properties,
             actor: $request->user(),

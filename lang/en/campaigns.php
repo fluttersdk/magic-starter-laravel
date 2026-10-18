@@ -21,6 +21,8 @@ return [
         'code_customer_restricted' => 'This promotion code is limited to one customer; a campaign code has to be open to every customer.',
         'code_products_not_covered' => 'The coupon behind this promotion code does not apply to the Stripe product of: :products.',
         'code_currency_missing' => 'The coupon behind this promotion code has no amount in: :currencies. Add a currency option for each.',
+        'code_coupon_invalid' => 'The coupon behind this promotion code is no longer valid in Stripe (deleted, expired or fully redeemed); use a code backed by a valid coupon.',
+        'code_repeating_within_trial' => 'The coupon behind this promotion code repeats for :months month(s), which Stripe counts from the start of a :days-day trial, so it ends before the first paid invoice; use a once or forever coupon, or a longer repeat.',
         'price_not_found' => 'Stripe has no price for the product ":product"; check its Stripe price in the billing catalogue.',
         'price_mode_mismatch' => 'The Stripe price of the product ":product" belongs to the other Stripe mode than the configured Stripe key.',
         'stripe_error' => 'Stripe refused the check: :message',

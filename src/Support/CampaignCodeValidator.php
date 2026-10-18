@@ -3,6 +3,7 @@
 namespace FlutterSdk\MagicStarter\Support;
 
 use Carbon\CarbonInterface;
+use FlutterSdk\MagicStarter\Enums\CampaignDiscountType;
 use Illuminate\Validation\ValidationException;
 use Stripe\Coupon;
 use Stripe\Exception\ApiErrorException;
@@ -28,7 +29,7 @@ use Stripe\StripeClient;
  * @phpstan-import-type Product from BillingCatalogue
  *
  * @phpstan-type Snapshot array{
- *     discount_type: 'percent'|'amount',
+ *     discount_type: CampaignDiscountType,
  *     discount_value: float,
  *     discount_currency: ?string,
  *     currency_options: ?array<string, int>,
@@ -64,6 +65,9 @@ class CampaignCodeValidator
 
         // 2. What Stripe checks on the code itself, all knowable without a price.
         $this->refuseUnredeemableCode($code, $endsAt);
+
+        // 2b. What the coupon behind it would do to a buyer, also knowable without a price.
+        $this->refuseUnfitCoupon($coupon, $products);
 
         // 3. An amount off needs a figure in every currency the campaign products sell in.
         if ($coupon->amount_off !== null) {
@@ -119,12 +123,52 @@ class CampaignCodeValidator
         }
 
         // A trial checkout charges nothing up front, so no minimum is ever met (probe G2).
-        if ($restrictions->minimum_amount !== null || $this->hasCurrencyMinimum($restrictions->currency_options ?? null)) {
+        if ($restrictions->minimum_amount !== null
+            || $this->hasCurrencyMinimum($restrictions->currency_options ?? null)
+        ) {
             $this->refuse(self::CODE_FIELD, 'code_minimum_amount');
         }
 
         if ($code->customer !== null || $code->customer_account !== null) {
             $this->refuse(self::CODE_FIELD, 'code_customer_restricted');
+        }
+    }
+
+    /**
+     * Refuse a coupon Stripe no longer redeems, and a `repeating` one whose
+     * months a product's trial would use up.
+     *
+     * Stripe counts a repeating coupon's months from the subscription's start,
+     * which is the trial's start, so a repeat no longer than the trial ends
+     * before the first paid invoice and the buyer is never discounted. Months
+     * are taken at 28 days, the shortest, so a borderline repeat is refused
+     * rather than trusted. `once` and `forever` survive a trial.
+     *
+     * @param  list<Product>  $products
+     *
+     * @throws ValidationException
+     */
+    protected function refuseUnfitCoupon(Coupon $coupon, array $products): void
+    {
+        if ($coupon->valid === false) {
+            $this->refuse(self::CODE_FIELD, 'code_coupon_invalid');
+        }
+
+        if ($coupon->duration !== 'repeating') {
+            return;
+        }
+
+        $months = (int) $coupon->duration_in_months;
+        $trialDays = max([
+            0,
+            ...array_map(static fn (array $product): int => $product['trial_days'], $products),
+        ]);
+
+        if ($months * 28 <= $trialDays) {
+            $this->refuse(self::CODE_FIELD, 'code_repeating_within_trial', [
+                'months' => (string) $months,
+                'days' => (string) $trialDays,
+            ]);
         }
     }
 
@@ -210,7 +254,7 @@ class CampaignCodeValidator
     {
         if ($coupon->amount_off === null) {
             return [
-                'discount_type' => 'percent',
+                'discount_type' => CampaignDiscountType::PERCENT,
                 'discount_value' => (float) $coupon->percent_off,
                 'discount_currency' => null,
                 'currency_options' => null,
@@ -224,7 +268,7 @@ class CampaignCodeValidator
         }
 
         return [
-            'discount_type' => 'amount',
+            'discount_type' => CampaignDiscountType::AMOUNT,
             'discount_value' => (float) $coupon->amount_off,
             'discount_currency' => strtoupper((string) $coupon->currency),
             'currency_options' => $options === [] ? null : $options,

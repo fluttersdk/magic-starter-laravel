@@ -3,7 +3,6 @@
 namespace FlutterSdk\MagicStarter\Actions;
 
 use FlutterSdk\MagicStarter\Contracts\CreatesCampaigns;
-use FlutterSdk\MagicStarter\Enums\ProductType;
 use FlutterSdk\MagicStarter\Models\Campaign;
 use FlutterSdk\MagicStarter\Support\BillingCatalogue;
 use FlutterSdk\MagicStarter\Support\CampaignCodeValidator;
@@ -129,7 +128,7 @@ class CreateCampaign implements CreatesCampaigns
             'ends_at' => ['required', 'date', 'after:starts_at'],
             'enabled' => ['sometimes', 'boolean'],
             'products' => ['required', 'array', 'min:1'],
-            'products.*' => ['required', 'string', 'distinct', Rule::in($this->eligibleProductKeys())],
+            'products.*' => ['required', 'string', 'distinct', Rule::in(array_keys(Campaign::eligibleProducts()))],
             'headline' => ['required', 'array:' . implode(',', $locales)],
             'body' => ['required', 'array:' . implode(',', $locales)],
             ...$copyRules,
@@ -137,27 +136,6 @@ class CreateCampaign implements CreatesCampaigns
         ], [
             'products.*.in' => __('magic-starter::campaigns.refusals.product_not_eligible'),
         ])->validate();
-    }
-
-    /**
-     * The products a campaign may discount: sellable subscriptions Stripe Checkout can sell.
-     *
-     * @return list<string>
-     */
-    protected function eligibleProductKeys(): array
-    {
-        $keys = [];
-
-        foreach (BillingCatalogue::products() as $product) {
-            if ($product['type'] === ProductType::SUBSCRIPTION
-                && $product['sellable']
-                && $product['refs']['stripe_price'] !== null
-            ) {
-                $keys[] = $product['key'];
-            }
-        }
-
-        return $keys;
     }
 
     /**
