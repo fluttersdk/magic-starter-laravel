@@ -181,11 +181,68 @@ return [
     /*
      * The subscription changes proposed inside a conversation.
      */
+    /*
+     * The billing requests the AI desk recorded for the account owner, decided by staff on the thread page.
+     */
     'proposals' => [
+        'title' => 'Fatura talepleri',
         'actions' => [
             'extend_trial' => 'Deneme süresini uzat',
             'cancel_at_period_end' => 'Dönem sonunda iptal et',
             'resume' => 'Aboneliği sürdür',
+        ],
+        'columns' => [
+            'action' => 'Talep',
+            'params' => 'Ayrıntı',
+            'status' => 'Durum',
+            'requested_by' => 'Talep eden',
+            'created_at' => 'Talep zamanı',
+            'expires_at' => 'Geçerlilik sonu',
+        ],
+        'statuses' => [
+            'draft' => 'Taslak',
+            'pending' => 'Bekliyor',
+            'executing' => 'Uygulanıyor',
+            'approved' => 'Onaylandı',
+            'rejected' => 'Reddedildi',
+            'failed' => 'Başarısız',
+            'expired' => 'Süresi doldu',
+        ],
+        'labels' => [
+            'until' => ':date tarihine kadar',
+            'owner' => ':name (hesap sahibi)',
+            'expired' => 'süresi doldu',
+            'customer_words' => 'Müşterinin kendi sözleri (doğrulanmadı)',
+            'rationale' => 'Yapay zekâ gerekçesi (doğrulanmadı)',
+            'trial_ends_at' => 'Mevcut deneme sonu',
+            'prior_extensions' => 'Önceki deneme uzatmaları',
+            'messages_since' => 'Talepten sonraki müşteri mesajları',
+            'reason' => 'Neden',
+        ],
+        'decisions' => [
+            'view' => [
+                'label' => 'Ayrıntılar',
+            ],
+            'approve' => [
+                'label' => 'Onayla',
+                'heading' => 'Onayla: :action',
+                'description' => 'Onay, bu değişikliği müşterinin faturalandırmasına hemen uygular. '
+                    . 'Aşağıdaki müşteri sözleri ve yapay zekâ gerekçesi doğrulanmamıştır.',
+                'success' => 'Talep onaylandı',
+            ],
+            'reject' => [
+                'label' => 'Reddet',
+                'heading' => 'Reddet: :action',
+                'description' => 'Müşteriye talebin reddedildiği bildirilir. Yazdığınız neden ekipte kalır.',
+                'success' => 'Talep reddedildi',
+            ],
+            'mark_failed' => [
+                'label' => 'Başarısız olarak işaretle',
+                'heading' => 'Başarısız olarak işaretle: :action',
+                'description' => 'Yalnızca değişikliğin uygulanmadığını ödeme sağlayıcısında doğruladıktan sonra. '
+                    . 'Müşteriye bildirilmez; görüşmede siz takip edin.',
+                'success' => 'Talep başarısız olarak işaretlendi',
+            ],
         ],
     ],
 

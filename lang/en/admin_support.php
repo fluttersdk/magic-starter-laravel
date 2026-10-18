@@ -181,11 +181,68 @@ return [
     /*
      * The subscription changes proposed inside a conversation.
      */
+    /*
+     * The billing requests the AI desk recorded for the account owner, decided by staff on the thread page.
+     */
     'proposals' => [
+        'title' => 'Billing requests',
         'actions' => [
             'extend_trial' => 'Extend the trial',
             'cancel_at_period_end' => 'Cancel at the end of the period',
             'resume' => 'Resume the subscription',
+        ],
+        'columns' => [
+            'action' => 'Request',
+            'params' => 'Details',
+            'status' => 'Status',
+            'requested_by' => 'Requested by',
+            'created_at' => 'Requested',
+            'expires_at' => 'Expires',
+        ],
+        'statuses' => [
+            'draft' => 'Draft',
+            'pending' => 'Pending',
+            'executing' => 'Running',
+            'approved' => 'Approved',
+            'rejected' => 'Rejected',
+            'failed' => 'Failed',
+            'expired' => 'Expired',
+        ],
+        'labels' => [
+            'until' => 'until :date',
+            'owner' => ':name (owner)',
+            'expired' => 'expired',
+            'customer_words' => 'Customer\'s own words (unverified)',
+            'rationale' => 'AI rationale (unverified)',
+            'trial_ends_at' => 'Current trial end',
+            'prior_extensions' => 'Earlier trial extensions',
+            'messages_since' => 'Customer messages since the request',
+            'reason' => 'Reason',
+        ],
+        'decisions' => [
+            'view' => [
+                'label' => 'Details',
+            ],
+            'approve' => [
+                'label' => 'Approve',
+                'heading' => 'Approve: :action',
+                'description' => 'Approving runs this change on the customer\'s billing now. '
+                    . 'The customer\'s words and the AI rationale below are not verified.',
+                'success' => 'Request approved',
+            ],
+            'reject' => [
+                'label' => 'Reject',
+                'heading' => 'Reject: :action',
+                'description' => 'The customer is told the request was declined. Your reason stays with the staff.',
+                'success' => 'Request rejected',
+            ],
+            'mark_failed' => [
+                'label' => 'Mark failed',
+                'heading' => 'Mark failed: :action',
+                'description' => 'Only after you confirmed on the billing provider that the change did not apply. '
+                    . 'The customer is not told; follow up in the thread.',
+                'success' => 'Request marked failed',
+            ],
         ],
     ],
 
