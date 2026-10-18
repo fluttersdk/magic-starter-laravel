@@ -20,7 +20,6 @@ All notable changes to this project will be documented in this file.
 
 ### Fixed
 
-- **An AI run body keeps the log text after an unquoted `key=value` secret.** A value glued to its `=` (`api_key=abc123 then the rest of the line`) is masked up to the first whitespace, `,`, `;`, `&` or `}`, so only the value becomes `[redacted]`. A `key: value` or `key = value` with whitespace after the separator is still masked to the end of the line, so a passphrase of several words is not half kept. (`src/Support/AiRuns/SecretMasker.php`)
 - **Sorting the AI run log by cost or duration lists the runs that did not report it last, in both directions.** PostgreSQL put them first when sorting descending, SQLite first when sorting ascending. (`src/Filament/Resources/AiRuns/AiRunResource.php`)
 - **Every mail button variant is 44 px tall.** The primary, success and error buttons of the branded mail theme had 8px top and bottom borders (38 px at 390); they are now 11px. (`resources/views/mail/theme.blade.php`)
 - **The plain-text mail part prints a footer link as `label: url`.** A branded footer written as a Markdown link (`[acme.test](https://acme.test)`) reached the text part as raw Markdown syntax; the HTML part still renders it as a link. (`src/Support/MailBrand.php`, `resources/views/mail/text/message.blade.php`)

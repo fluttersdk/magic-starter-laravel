@@ -176,8 +176,9 @@ jobs:
         run: composer install --prefer-dist --no-interaction --no-progress
 
       # SQLite ignores `for update`; only a real PostgreSQL shows a dropped row lock.
+      # AiRunResource rides along: PostgreSQL alone puts nulls first in a descending sort.
       - name: Run support tests
-        run: vendor/bin/phpunit --filter Support
+        run: vendor/bin/phpunit --filter 'Support|AiRunResource'
 
   lint:
     runs-on: ubuntu-latest
