@@ -54,7 +54,10 @@ class PruneBillingRecordsCommand extends Command
     public function handle(): int
     {
         // 1. Never below the resend window, so a misconfigured value cannot
-        //    reopen a delivery that was already handled.
+        //    reopen a delivery that was already handled. The table also holds
+        //    the per-invoice payment-failed mail claims
+        //    (`mail.payment_failed.<invoice id>`); aging them out with the
+        //    event ids is safe, see StripeWebhookController::PAYMENT_FAILED_MAIL_CLAIM.
         $webhookDays = max(
             self::MINIMUM_WEBHOOK_RETENTION_DAYS,
             (int) config('magic-starter.billing.webhook_retention_days', 90),

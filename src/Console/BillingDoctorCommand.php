@@ -14,10 +14,12 @@ use FlutterSdk\MagicStarter\Support\RevenueCatProjectClient;
 use FlutterSdk\MagicStarter\Support\StoreRailConfiguration;
 use FlutterSdk\MagicStarter\Support\StripePriceReader;
 use FlutterSdk\MagicStarter\Support\StripeTestMode;
+use FlutterSdk\MagicStarter\Support\StripeWebhookEndpointReader;
 use Illuminate\Console\Command;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Http\Client\ConnectionException;
 use Illuminate\Http\Client\RequestException;
+use Illuminate\Support\Facades\Route;
 use Laravel\Cashier\Cashier;
 use LogicException;
 use RuntimeException;
@@ -91,8 +93,11 @@ class BillingDoctorCommand extends Command
      */
     private array $checks = [];
 
-    public function handle(RevenueCatProjectClient $revenueCat, StripePriceReader $stripe): int
-    {
+    public function handle(
+        RevenueCatProjectClient $revenueCat,
+        StripePriceReader $stripe,
+        StripeWebhookEndpointReader $webhookEndpoints,
+    ): int {
         // Reset per run: Artisan reuses one command instance within a process.
         $this->checks = [];
 
@@ -119,6 +124,7 @@ class BillingDoctorCommand extends Command
             // 3. What the vendors hold, read and never written.
             if ($this->option('remote')) {
                 $this->checkStripeRemote($stripe, $manifest['stripe']['products']);
+                $this->checkStripeWebhookEvents($webhookEndpoints);
                 $this->checkRevenueCatRemote($revenueCat, $manifest['revenuecat']);
                 $this->addAgentChecks();
             }
@@ -643,6 +649,93 @@ class BillingDoctorCommand extends Command
         foreach ($expected as $price) {
             $this->checkStripePrice($price, $remote[$price['lookup_key']] ?? null);
         }
+    }
+
+    /**
+     * A lifecycle mail rides a Stripe event, and an endpoint that is not
+     * subscribed to it fails silently: the mail is switched on and never goes out.
+     * Reports its own missing secret, because checkStripeRemote returns before
+     * its secret check when the manifest holds no prices.
+     */
+    private function checkStripeWebhookEvents(StripeWebhookEndpointReader $webhookEndpoints): void
+    {
+        $required = [];
+
+        // Read the way the webhook reads them (truthy), so a config without the
+        // (bool) cast cannot send mail while this check stays silent.
+        if ((bool) config('magic-starter.billing.trial_ending_notification', false)) {
+            $required[] = 'customer.subscription.trial_will_end';
+        }
+
+        if ((bool) config('magic-starter.billing.payment_failed_notification', false)) {
+            $required[] = 'invoice.payment_failed';
+        }
+
+        if ($required === []) {
+            return;
+        }
+
+        if (! $this->isSet('cashier.secret')) {
+            $this->check('stripe.webhook_events', self::ERROR, 'Stripe cannot be read: STRIPE_SECRET is not set.');
+
+            return;
+        }
+
+        // An adopter on MagicStarter::ignoreRoutes() registers the webhook
+        // itself and may not keep Cashier's route name; route() would throw.
+        if (! Route::has('cashier.webhook')) {
+            $this->check(
+                'stripe.webhook_events',
+                self::WARNING,
+                'No route is named cashier.webhook, so the Stripe webhook url cannot be checked. '
+                    . 'Name your webhook route cashier.webhook.',
+            );
+
+            return;
+        }
+
+        // The URL Cashier's own webhook:create registers; it follows APP_URL.
+        $url = route('cashier.webhook');
+
+        try {
+            $events = $webhookEndpoints->enabledEventsFor($url);
+        } catch (ApiErrorException $failure) {
+            $this->check('stripe.webhook_events', self::ERROR, sprintf(
+                'Stripe refused the webhook endpoint read (%s, HTTP %s).',
+                class_basename($failure),
+                $failure->getHttpStatus() ?? 'none',
+            ));
+
+            return;
+        }
+
+        if ($events === null) {
+            $this->check(
+                'stripe.webhook_events',
+                self::WARNING,
+                "No enabled Stripe webhook endpoint posts to {$url}.",
+            );
+
+            return;
+        }
+
+        $missing = in_array('*', $events, true) ? [] : array_values(array_diff($required, $events));
+
+        if ($missing !== []) {
+            $this->check('stripe.webhook_events', self::WARNING, sprintf(
+                'The Stripe webhook endpoint at %s is not subscribed to %s; the matching mail never goes out.',
+                $url,
+                implode(', ', $missing),
+            ));
+
+            return;
+        }
+
+        $this->check(
+            'stripe.webhook_events',
+            self::OK,
+            'The Stripe webhook endpoint is subscribed to ' . implode(', ', $required) . '.',
+        );
     }
 
     /**
