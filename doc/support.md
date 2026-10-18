@@ -158,7 +158,7 @@ With `support-attachments` on, `SupportTurn::images` lists the images the custom
 
 A long thread outgrows `support.ai.history_messages`. The conversation can carry a stored summary of its older messages, written by the host's responder and never by the package.
 
-- `ai_summary` holds the text and `ai_summary_through_id` the id of the last message it covers. A turn reads messages strictly after that boundary, in `(created_at, id)` order, or the whole thread when there is no summary, capped at `support.ai.history_messages`. A boundary message that no longer exists counts as no boundary.
+- `ai_summary` holds the text and `ai_summary_through_id` the id of the last message it covers. A turn reads messages strictly after that boundary, in `(created_at, id)` order, or the whole thread when there is no summary, capped at `support.ai.history_messages`. A boundary message that no longer exists counts as no boundary, and the turn then carries no `summary`, since the whole thread it covered is history again.
 - The job fetches one message beyond the cap to set `SupportTurn::historyTruncated`: true when messages between the boundary and the shown history were left out, so the responder knows its context is partial and can compact.
 - A responder compacts by returning `SupportAnswer(..., compaction: new SupportHistorySummary($text, $throughMessageId))`. A blank `$text` throws. The pointer carries no foreign key, like the other pointers.
 - The job stores a compaction inside the transaction that posts the answer, so a compaction never outlives its answer, and only while `ai_summary_through_id` still equals the value this turn read. When another turn compacted first, the later one is dropped. A failed, unavailable or superseded turn stores none.

@@ -220,7 +220,11 @@ class RespondToSupportConversation implements ShouldQueue
         // 3. The deterministic classifier reads every message the desk still owes an answer to, before any
         //    model is called: a breach reported one message before a "hello?" is still a breach.
         //    A trigger that is only files has no question for the model, so it goes to staff here too.
-        ['messages' => $history, 'truncated' => $historyTruncated] = $this->history($conversation, $trigger);
+        [
+            'messages' => $history,
+            'truncated' => $historyTruncated,
+            'summary' => $summary,
+        ] = $this->history($conversation, $trigger);
         $uploads = $this->uploads($trigger);
 
         // The boundary exactly as read, so the compare-and-set at persist time matches this row's value.
@@ -272,7 +276,7 @@ class RespondToSupportConversation implements ShouldQueue
                 deadlineSeconds: max(1, (int) config('magic-starter.support.ai.deadline_seconds', 75) - $waitedSeconds),
                 images: $uploads['images'],
                 pdfCount: $uploads['pdfs'],
-                summary: $conversation->ai_summary,
+                summary: $summary,
                 summaryThroughId: $summaryThroughId,
                 historyTruncated: $historyTruncated,
             ));
@@ -351,9 +355,10 @@ class RespondToSupportConversation implements ShouldQueue
      * The customer-visible thread after the summary's boundary and before the trigger, oldest first.
      *
      * Capped to `support.ai.history_messages`; `truncated` says the cap dropped older messages of that window.
-     * A boundary whose message is gone bounds nothing, so the whole thread is read again.
+     * A boundary whose message is gone bounds nothing, so the whole thread is read again and the stored
+     * summary is left out: it covers messages the history now carries in full.
      *
-     * @return array{messages: list<SupportMessage>, truncated: bool}
+     * @return array{messages: list<SupportMessage>, truncated: bool, summary: ?string}
      */
     private function history(SupportConversation $conversation, SupportMessage $trigger): array
     {
@@ -391,6 +396,7 @@ class RespondToSupportConversation implements ShouldQueue
         return [
             'messages' => $messages->take($cap)->reverse()->values()->all(),
             'truncated' => $messages->count() > $cap,
+            'summary' => $boundary === null ? null : $conversation->ai_summary,
         ];
     }
 

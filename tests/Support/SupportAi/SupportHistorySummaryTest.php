@@ -36,7 +36,10 @@ class SupportHistorySummaryTest extends TestCase
     public function test_a_summary_keeps_its_text_and_boundary_of_either_key_type(): void
     {
         $byInt = new SupportHistorySummary('The customer asked about invoices.', 7);
-        $byUuid = new SupportHistorySummary('The customer asked about invoices.', '0199f0c2-0000-7000-8000-000000000001');
+        $byUuid = new SupportHistorySummary(
+            'The customer asked about invoices.',
+            '0199f0c2-0000-7000-8000-000000000001',
+        );
 
         $this->assertSame('The customer asked about invoices.', $byInt->text);
         $this->assertSame(7, $byInt->throughMessageId);

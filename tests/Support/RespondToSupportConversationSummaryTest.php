@@ -218,8 +218,9 @@ class RespondToSupportConversationSummaryTest extends TestCase
         $this->assertFalse($turn->historyTruncated);
     }
 
-    public function test_a_boundary_whose_message_is_gone_reads_the_whole_thread_but_still_compacts(): void
+    public function test_a_boundary_whose_message_is_gone_reads_the_whole_thread_without_its_summary(): void
     {
+        // The whole thread is read again, so the stale summary would hand the responder those messages twice.
         $responder = $this->bindResponder(fn (SupportTurn $turn): SupportAnswer => $this->compacting(
             'A fresh summary.',
             $turn->history[0]->getKey(),
@@ -232,6 +233,7 @@ class RespondToSupportConversationSummaryTest extends TestCase
 
         $turn = $responder->turns[0];
         $this->assertCount(3, $turn->history);
+        $this->assertNull($turn->summary);
         $this->assertSame($this->key(404), (string) $turn->summaryThroughId);
         $conversation->refresh();
         $this->assertSame('A fresh summary.', $conversation->ai_summary);
