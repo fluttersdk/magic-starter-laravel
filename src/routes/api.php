@@ -308,9 +308,12 @@ Route::prefix((string) config('magic-starter.route_prefix', ''))
         });
 
         if (Features::hasEmailVerificationFeatures()) {
-            // Public route — signed URL acts as authentication.
+            // Public route — signed URL acts as authentication. The signature
+            // covers the path, not the host: the mail goes out from whichever
+            // host the request came in on (the staff panel resends from its own),
+            // and the link is replayed against the API host.
             Route::get('email/verify/{id}/{hash}', [EmailVerificationController::class, 'verify'])
-                ->middleware('signed')
+                ->middleware('signed:relative')
                 ->name('verification.verify');
 
             // Protected route — requires Sanctum authentication and is rate-limited.

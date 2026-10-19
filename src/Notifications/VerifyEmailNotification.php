@@ -34,28 +34,45 @@ class VerifyEmailNotification extends Notification
     }
 
     /**
-     * Build the signed verification URL, replacing the backend base with the configured frontend URL.
+     * Build the verification link: the client's verify page when a frontend URL
+     * is configured, the signed API route otherwise.
+     *
+     * The client page replays `id`, `hash`, `expires` and `signature` against the
+     * API route. The signature is RELATIVE (path and expiry, not host), matching
+     * the route's `signed:relative`: the mail goes out from whichever host the
+     * request came in on, and the staff panel resends from its own, so an
+     * absolute signature bound the link to a host the client never calls. The
+     * link used to keep the API path and swap only the host, which sent the
+     * customer to `<client>/api/v1/email/verify/...`, a path no client serves.
      */
     protected function resolveVerificationUrl(object $notifiable): string
     {
-        $signedUrl = URL::temporarySignedRoute(
+        // 1. Sign the API route's path and expiry.
+        $parameters = [
+            'id' => $notifiable->getKey(),
+            'hash' => sha1($notifiable->getEmailForVerification()),
+        ];
+        $signedPath = URL::temporarySignedRoute(
             'verification.verify',
             Carbon::now()->addMinutes(60),
-            [
-                'id' => $notifiable->getKey(),
-                'hash' => sha1($notifiable->getEmailForVerification()),
-            ],
+            $parameters,
+            absolute: false,
         );
 
-        // Only the PREDICATE is shared with the other two link builders. The swap
-        // itself stays here, because a signed route must keep its signature and only
-        // its host may change.
+        // 2. Without a client, the API answers the link itself.
         $frontendUrl = FrontendUrl::baseOrNull();
 
         if ($frontendUrl === null) {
-            return $signedUrl;
+            return url($signedPath);
         }
 
-        return str_replace(url('/'), $frontendUrl, $signedUrl);
+        // 3. Hand the client what it needs to replay the signed request.
+        parse_str((string) parse_url($signedPath, PHP_URL_QUERY), $signature);
+
+        return $frontendUrl . '/auth/verify-email?' . http_build_query([
+            ...$parameters,
+            'expires' => $signature['expires'],
+            'signature' => $signature['signature'],
+        ]);
     }
 }
