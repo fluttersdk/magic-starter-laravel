@@ -137,6 +137,10 @@ return [
     | `articles` is the knowledge base the AI agent, the public FAQ page and
     | in-app suggestions read. It is off until `enabled` is true. `disk` is where
     | an article image is stored, `image_max_kb` the largest one accepted.
+    | `public_url` is the public FAQ page: a suggestion's `url` is it plus
+    | `#slug`, and null while it is unset. The suggestions route
+    | (`support/articles`) is only registered while `enabled` is true, so it
+    | answers 404 otherwise.
     |
     */
 
@@ -202,6 +206,7 @@ return [
             'enabled' => false,
             'disk' => 'public',
             'image_max_kb' => 2048,
+            'public_url' => null,
         ],
 
         'ai' => [

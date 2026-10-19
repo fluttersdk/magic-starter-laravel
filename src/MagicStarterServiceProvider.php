@@ -12,6 +12,7 @@ use FlutterSdk\MagicStarter\Console\InstallCommand;
 use FlutterSdk\MagicStarter\Console\PruneAiRunsCommand;
 use FlutterSdk\MagicStarter\Console\PruneAuditsCommand;
 use FlutterSdk\MagicStarter\Console\PruneBillingRecordsCommand;
+use FlutterSdk\MagicStarter\Console\PruneSupportArticleImagesCommand;
 use FlutterSdk\MagicStarter\Console\PurgeDeletedUsersCommand;
 use FlutterSdk\MagicStarter\Console\ReconcileBillingEntitlements;
 use FlutterSdk\MagicStarter\Console\SupportDoctorCommand;
@@ -445,6 +446,17 @@ class MagicStarterServiceProvider extends ServiceProvider
 
             // No pending conversation waits forever; see scheduleSupportSweep().
             $this->scheduleSupportSweep();
+
+            // An article's images leave the public disk with it, after the commit. An upload no
+            // article ever saved is the daily prune's (see schedulePruneSupportArticleImages()).
+            Event::listen(
+                'eloquent.deleted: ' . Models\SupportArticle::class,
+                [Listeners\RemoveSupportArticleImages::class, 'deleted'],
+            );
+            Event::listen(
+                'eloquent.updated: ' . Models\SupportArticle::class,
+                [Listeners\RemoveSupportArticleImages::class, 'updated'],
+            );
         }
 
         // 3.665. Keep each newsletter row's address in step with its owner's. A wildcard
@@ -553,7 +565,10 @@ class MagicStarterServiceProvider extends ServiceProvider
                 $this->commands([
                     SweepSupportConversationsCommand::class,
                     SupportDoctorCommand::class,
+                    PruneSupportArticleImagesCommand::class,
                 ]);
+
+                $this->schedulePruneSupportArticleImages();
             }
 
             // Filament is an optional dependency: its commands exist only where it
@@ -933,6 +948,28 @@ class MagicStarterServiceProvider extends ServiceProvider
             $schedule->command(SweepSupportConversationsCommand::NAME)
                 ->name(SweepSupportConversationsCommand::NAME)
                 ->everyMinute()
+                ->withoutOverlapping()
+                ->onOneServer();
+        });
+    }
+
+    /**
+     * Put `magic-starter:support-articles:prune-images` on the schedule, daily.
+     *
+     * Attached through `callAfterResolving()` for the reason
+     * {@see self::scheduleEntitlementReconciler()} gives, and mirroring
+     * {@see self::schedulePruneAudits()}: `withoutOverlapping()` keeps a run
+     * that outlasts its tick from racing its successor over the same files. It
+     * also takes `onOneServer()`, since the disk is shared: a fleet that cannot
+     * share a lock only repeats a delete that finds nothing. The cadence is not
+     * configurable because the grace is counted in hours.
+     */
+    private function schedulePruneSupportArticleImages(): void
+    {
+        $this->callAfterResolving(Schedule::class, function (Schedule $schedule): void {
+            $schedule->command(PruneSupportArticleImagesCommand::NAME)
+                ->name(PruneSupportArticleImagesCommand::NAME)
+                ->daily()
                 ->withoutOverlapping()
                 ->onOneServer();
         });
