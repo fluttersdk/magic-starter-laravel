@@ -33,6 +33,6 @@ final class TeamKey
     {
         return config('magic-starter.use_uuids')
             ? Str::isUuid($id)
-            : ctype_digit($id);
+            : ctype_digit($id) && filter_var($id, FILTER_VALIDATE_INT) !== false;
     }
 }

@@ -8,10 +8,13 @@ use FlutterSdk\MagicStarter\Enums\SupportConversationSource;
 use FlutterSdk\MagicStarter\Enums\SupportConversationStatus;
 use FlutterSdk\MagicStarter\Models\SupportArticle;
 use FlutterSdk\MagicStarter\Models\SupportConversation;
+use FlutterSdk\MagicStarter\Support\MigrationHelper;
 use FlutterSdk\MagicStarter\Support\SupportAi\Tools\GetFaqArticleTool;
 use FlutterSdk\MagicStarter\Support\SupportAi\Tools\SearchFaqTool;
 use FlutterSdk\MagicStarter\Support\SupportAi\Tools\SupportToolContext;
 use FlutterSdk\MagicStarter\Tests\TestCase;
+use Illuminate\Database\Schema\Blueprint;
+use Illuminate\Support\Facades\Schema;
 
 /**
  * The two knowledge-base tools the support AI reads with: the audience comes
@@ -27,6 +30,13 @@ class FaqToolsTest extends TestCase
         config([
             'app.name' => 'Acme',
         ]);
+
+        // The conversations table references users; PostgreSQL enforces that foreign key, SQLite does not.
+        Schema::create('users', function (Blueprint $table): void {
+            MigrationHelper::primaryKey($table);
+            $table->string('email')->nullable();
+            $table->timestamps();
+        });
 
         foreach ([
             'create_support_conversations_table.php',

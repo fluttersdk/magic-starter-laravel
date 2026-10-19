@@ -33,6 +33,7 @@ final class PruneSupportArticleImagesCommandTest extends TestCase
             'magic-starter.features' => [Features::support()],
             'magic-starter.use_uuids' => false,
             'magic-starter.support.articles.disk' => self::DISK,
+            'magic-starter.support.articles.enabled' => true,
         ]);
     }
 

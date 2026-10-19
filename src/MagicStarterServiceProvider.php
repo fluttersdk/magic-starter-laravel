@@ -565,10 +565,14 @@ class MagicStarterServiceProvider extends ServiceProvider
                 $this->commands([
                     SweepSupportConversationsCommand::class,
                     SupportDoctorCommand::class,
-                    PruneSupportArticleImagesCommand::class,
                 ]);
 
-                $this->schedulePruneSupportArticleImages();
+                // The knowledge base's own switch as well: its migration is published, not loaded, so a host
+                // that upgrades with the articles off has no table for a daily prune to read.
+                if (config('magic-starter.support.articles.enabled')) {
+                    $this->commands([PruneSupportArticleImagesCommand::class]);
+                    $this->schedulePruneSupportArticleImages();
+                }
             }
 
             // Filament is an optional dependency: its commands exist only where it
