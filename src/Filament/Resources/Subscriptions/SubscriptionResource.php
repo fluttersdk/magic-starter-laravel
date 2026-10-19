@@ -16,9 +16,11 @@ use UnitEnum;
 /**
  * A read-only list of Cashier's subscription rows.
  *
- * Nothing here writes: the subscription row is a projection of the billing
+ * Nothing here edits a row: the subscription row is a projection of the billing
  * rails, and the entitlement columns move only through the entitlement
- * contract. The one action is the reconcile sweep, on the list page.
+ * contract. The list page carries two actions: "Grant a plan" (a manual plan
+ * through the billing contract, listed under Manual plans) and the reconcile
+ * sweep.
  */
 class SubscriptionResource extends MagicStarterResource
 {

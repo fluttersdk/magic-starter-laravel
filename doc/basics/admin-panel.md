@@ -135,7 +135,7 @@ Each package resource names its own group and place, from `AdminNavigationGroup`
 |-------|-------------------|
 | Customers | Users, Teams |
 | Support | Support inbox, Feedback |
-| Billing | Subscriptions, Campaigns, Billing events, Webhook deliveries |
+| Billing | Subscriptions, Manual plans, Campaigns, Billing events, Webhook deliveries |
 | AI | AI runs, AI prompts |
 | Communication | Releases, Newsletter subscribers |
 | Operations | Audit trail, then the Horizon, Pulse, Telescope and Sentry links |
@@ -165,7 +165,8 @@ Every resource sits behind the feature that owns its data.
 |----------|-------------------|-------|
 | Users | Edit profile fields; reset two-factor, revoke API tokens, resend the verification mail, schedule account deletion (optionally `immediately`) or cancel it. Tabs for tokens, social accounts, push devices, teams and audits | each tab needs its own feature: `sessions`, `social-login`, `onesignal`, `teams`, `audit` |
 | Teams | Rename; delete; add, re-role and remove members; make a member the owner; invite, resend and cancel invitations | `teams` |
-| Subscriptions | Read the list; run "Reconcile now" | `billing` |
+| Subscriptions | Read the list; run "Reconcile now"; "Grant a plan" to a customer picked by name or email | `billing` |
+| Manual plans | Read every [manual grant](billing.md#manual-grants), open or ended; "Grant a plan" to a customer picked by name or email (revoke stays on the customer's Billing tab) | `billing` |
 | Newsletter subscribers | Read the list and each row's consent record; deactivate an active subscriber; export CSV | `newsletter-subscription` |
 | Audits | List and view | `audit` |
 | Campaigns | Create and edit a time-boxed [campaign](billing.md#campaigns): window, products, copy per locale and the Stripe promotion code, which is checked in Stripe on save. Switch one off to stop it; there is no delete. The list shows the stored discount and a "Campaign checkouts" count of completed checkouts that redeemed the code (a $0 trial checkout counts) | `campaigns` and `billing` |

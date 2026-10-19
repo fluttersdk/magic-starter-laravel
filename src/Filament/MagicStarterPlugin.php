@@ -493,6 +493,7 @@ class MagicStarterPlugin implements Plugin
             'users' => 'FlutterSdk\\MagicStarter\\Filament\\Resources\\Users\\UserResource',
             'teams' => 'FlutterSdk\\MagicStarter\\Filament\\Resources\\Teams\\TeamResource',
             'subscriptions' => 'FlutterSdk\\MagicStarter\\Filament\\Resources\\Subscriptions\\SubscriptionResource',
+            'billing_grants' => 'FlutterSdk\\MagicStarter\\Filament\\Resources\\BillingGrants\\BillingGrantResource',
             'billing_events' => 'FlutterSdk\\MagicStarter\\Filament\\Resources\\BillingEvents\\BillingEventResource',
             'webhook_deliveries' => 'FlutterSdk\\MagicStarter\\Filament\\Resources\\WebhookDeliveries\\'
                 . 'WebhookDeliveryResource',
@@ -537,7 +538,7 @@ class MagicStarterPlugin implements Plugin
     {
         return match ($key) {
             'teams' => Features::hasTeamFeatures(),
-            'subscriptions', 'billing_events', 'webhook_deliveries' => Features::hasBillingFeatures(),
+            'subscriptions', 'billing_grants', 'billing_events', 'webhook_deliveries' => Features::hasBillingFeatures(),
             'newsletter_subscribers' => Features::hasNewsletterSubscriptionFeatures(),
             'audits' => Features::hasAuditFeatures(),
             'support' => Features::hasSupportFeatures(),

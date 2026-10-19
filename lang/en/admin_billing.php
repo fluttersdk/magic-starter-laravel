@@ -18,6 +18,7 @@ return [
     ],
 
     'fields' => [
+        'billable' => 'Customer',
         'plan' => 'Plan',
         'reason' => 'Reason',
         'expires_at' => 'Expires after',
