@@ -15,7 +15,10 @@ use Illuminate\Support\Str;
  *
  * Carries who wrote it by role, and for staff and the AI desk a display name
  * a customer may see: a staff member's first name and photo, never their id,
- * surname or email. The AI desk record in `meta` never leaves the server.
+ * surname or email. The AI desk record in `meta` never leaves the server, but
+ * the knowledge-base cards the job validated and stored under `meta.articles`:
+ * an AI message carries them as `articles`, each a slug, a question and a `url`
+ * to the public FAQ page, and no other message carries the key.
  *
  * `attachments` is present only once the signed-in customer's controller
  * calls {@see self::withAttachments()}: the public thread link is a bearer
@@ -63,7 +66,32 @@ class SupportMessageResource extends JsonResource
                     ->values()
                     ->all(),
             ),
+            'articles' => $this->when(
+                $this->sender_type === SupportSenderType::AI,
+                fn (): array => $this->articleCards(),
+            ),
         ];
+    }
+
+    /**
+     * The validated cards stored with an AI answer; `url` is the public FAQ page anchored on the slug, or null
+     * while `support.articles.public_url` is unset.
+     *
+     * @return list<array{slug: string, question: string, url: string|null}>
+     */
+    private function articleCards(): array
+    {
+        $page = config('magic-starter.support.articles.public_url');
+        $hasPage = is_string($page) && $page !== '';
+
+        return array_map(
+            static fn (array $card): array => [
+                'slug' => $card['slug'],
+                'question' => $card['question'],
+                'url' => $hasPage ? "{$page}#{$card['slug']}" : null,
+            ],
+            $this->meta['articles'] ?? [],
+        );
     }
 
     /**

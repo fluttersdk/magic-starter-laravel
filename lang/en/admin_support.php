@@ -230,6 +230,18 @@ return [
     ],
 
     /*
+     * The dashboard widget on how many conversations the AI desk settled without a person.
+     */
+    'resolution' => [
+        'routed' => 'AI conversations (last :days days)',
+        'resolved' => 'Resolved without a human (last :days days)',
+        'handed_off' => 'Handed off to staff (last :days days)',
+        'csat' => 'Rating (last :days days)',
+        'csat_value' => ':up% up, :down% down',
+        'previous' => 'Previous :days days: :value',
+    ],
+
+    /*
      * The billing requests the AI desk recorded for the account owner, decided by staff on the thread page.
      */
     'proposals' => [

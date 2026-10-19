@@ -140,7 +140,8 @@ return [
     | `public_url` is the public FAQ page: a suggestion's `url` is it plus
     | `#slug`, and null while it is unset. The suggestions route
     | (`support/articles`) is only registered while `enabled` is true, so it
-    | answers 404 otherwise.
+    | answers 404 otherwise. The same `public_url` anchors the article cards on
+    | an AI answer, which are stored only while `enabled` is true.
     |
     */
 
