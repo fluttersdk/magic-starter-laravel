@@ -15,7 +15,7 @@ use Illuminate\Http\Resources\Json\JsonResource;
  * excerpt with images reduced to their alt text and links to their label, and
  * a `url` to the public page of the requested locale to read the whole article on.
  *
- * @property array{id: string|int, slug: string, section: string, question: string, body: string} $resource
+ * @property array{id: string|int, slug: string, section: string, question: string, body: string, locale: string} $resource
  */
 class SupportArticleSuggestionResource extends JsonResource
 {
@@ -27,7 +27,7 @@ class SupportArticleSuggestionResource extends JsonResource
     public function toArray(Request $request): array
     {
         $text = app(SupportArticleText::class);
-        $locale = (string) ($request->input('locale') ?? config('magic-starter.defaults.locale'));
+        $locale = $this->resource['locale'];
 
         return [
             'id' => $this->resource['id'],

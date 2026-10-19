@@ -22,13 +22,18 @@ class SupportArticleController
      */
     public function index(SearchSupportArticlesRequest $request): AnonymousResourceCollection
     {
+        $locale = (string) ($request->validated('locale') ?? config('magic-starter.defaults.locale'));
         $articles = app(SearchesSupportArticles::class)->search(
             (string) $request->validated('search'),
             SupportAudience::PAGE,
-            (string) ($request->validated('locale') ?? config('magic-starter.defaults.locale')),
+            $locale,
             SupportArticleSearch::MAX_RESULTS,
         );
 
-        return SupportArticleSuggestionResource::collection($articles);
+        // Each entry carries the locale it was searched in, so its text and link are read in the same one.
+        return SupportArticleSuggestionResource::collection(array_map(
+            static fn (array $article): array => [...$article, 'locale' => $locale],
+            $articles,
+        ));
     }
 }
