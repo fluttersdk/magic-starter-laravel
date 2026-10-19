@@ -134,6 +134,10 @@ return [
     | `billing`): an open proposal can be approved for `expires_hours` hours,
     | and a trial can be extended by at most `max_trial_extension_days` days.
     |
+    | `articles` is the knowledge base the AI agent, the public FAQ page and
+    | in-app suggestions read. It is off until `enabled` is true. `disk` is where
+    | an article image is stored, `image_max_kb` the largest one accepted.
+    |
     */
 
     'support' => [
@@ -192,6 +196,12 @@ return [
         'proposals' => [
             'expires_hours' => (int) env('MAGIC_STARTER_SUPPORT_PROPOSALS_EXPIRES_HOURS', 72),
             'max_trial_extension_days' => (int) env('MAGIC_STARTER_SUPPORT_PROPOSALS_MAX_TRIAL_DAYS', 14),
+        ],
+
+        'articles' => [
+            'enabled' => false,
+            'disk' => 'public',
+            'image_max_kb' => 2048,
         ],
 
         'ai' => [
