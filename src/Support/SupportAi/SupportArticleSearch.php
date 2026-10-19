@@ -5,17 +5,16 @@ namespace FlutterSdk\MagicStarter\Support\SupportAi;
 use FlutterSdk\MagicStarter\Contracts\SearchesSupportArticles;
 use FlutterSdk\MagicStarter\Enums\SupportAudience;
 use FlutterSdk\MagicStarter\Support\SupportArticleFeed;
-use Illuminate\Contracts\Config\Repository;
 use Illuminate\Support\Str;
 
 /**
  * The package's knowledge-base search: token overlap over the cached corpus,
  * in PHP, with no database full-text index.
  *
- * Every read goes through {@see SupportArticleFeed::corpus()} for the caller's
- * audience, so an article the audience may not read is never even scored, and
- * {@see self::article()} looks an id up inside that same list rather than
- * loading the row and checking it afterwards.
+ * Every read goes through {@see SupportArticleFeed::readable()} for the
+ * caller's audience, so an article the audience may not read is never even
+ * scored, and {@see self::article()} looks an id up inside that same list
+ * rather than loading the row and checking it afterwards.
  *
  * Both the question and the article are folded the same way: ASCII before
  * lower case, because `mb_strtolower('İ')` is a dotted `i` of two code points
@@ -34,6 +33,14 @@ final class SupportArticleSearch implements SearchesSupportArticles
     private const BODY_WEIGHT = 1;
 
     /**
+     * The least score an answer needs: one query word in the article's question,
+     * or two distinct query words in its body. A single shared body word ("team")
+     * is what every article of a product says somewhere, so it answers nothing.
+     * The suggestions and the AI's `search_faq` share this floor.
+     */
+    private const MIN_SCORE = 2;
+
+    /**
      * Words that carry no topic in English or Turkish, already folded.
      */
     private const STOPWORDS = [
@@ -44,10 +51,6 @@ final class SupportArticleSearch implements SearchesSupportArticles
         'nedir', 'nasil', 'niye', 'o', 'su', 've', 'veya', 'ya',
     ];
 
-    public function __construct(
-        private readonly Repository $config,
-    ) {}
-
     public function search(string $query, SupportAudience $audience, string $locale, int $limit): array
     {
         // 1. A question with no topic word would score every article zero.
@@ -57,13 +60,13 @@ final class SupportArticleSearch implements SearchesSupportArticles
             return [];
         }
 
-        // 2. Score each readable article; one that shares no word is no answer.
+        // 2. Score each readable article; one below the floor is no answer.
         $scored = [];
 
-        foreach ($this->corpus($audience, $locale) as $entry) {
+        foreach (SupportArticleFeed::readable($audience, $locale) as $entry) {
             $score = $this->score($words, $entry['question'], $entry['body']);
 
-            if ($score > 0) {
+            if ($score >= self::MIN_SCORE) {
                 $scored[] = [
                     'score' => $score,
                     'entry' => $entry,
@@ -91,39 +94,13 @@ final class SupportArticleSearch implements SearchesSupportArticles
      */
     public function article(int|string $id, SupportAudience $audience, string $locale): ?array
     {
-        foreach ($this->corpus($audience, $locale) as $entry) {
+        foreach (SupportArticleFeed::readable($audience, $locale) as $entry) {
             if ((string) $entry['id'] === (string) $id) {
                 return $entry;
             }
         }
 
         return null;
-    }
-
-    /**
-     * The audience's articles in the locale, each one without approved text
-     * there read in the default locale instead.
-     *
-     * @return list<array{id: string|int, slug: string, section: string, question: string, body: string}>
-     */
-    private function corpus(SupportAudience $audience, string $locale): array
-    {
-        $entries = SupportArticleFeed::corpus($audience, $locale);
-        $defaultLocale = (string) $this->config->get('magic-starter.defaults.locale');
-
-        if ($locale === $defaultLocale) {
-            return $entries;
-        }
-
-        $present = array_flip(array_map(static fn (array $entry): string => (string) $entry['id'], $entries));
-
-        foreach (SupportArticleFeed::corpus($audience, $defaultLocale) as $entry) {
-            if (! isset($present[(string) $entry['id']])) {
-                $entries[] = $entry;
-            }
-        }
-
-        return $entries;
     }
 
     /**

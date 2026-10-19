@@ -159,6 +159,39 @@ class SupportArticleFeedTest extends TestCase
         $this->assertSame(['keep'], $this->slugs(SupportAudience::PAGE));
     }
 
+    public function test_readable_fills_a_locale_from_the_default_one_in_the_default_order(): void
+    {
+        config()->set('magic-starter.defaults.locale', 'en');
+        $this->makeArticle('a-english-only', SupportArticleVisibility::PUBLIC, [
+            'section' => 'a',
+            'question' => ['en' => 'English only?'],
+            'body' => ['en' => 'English body.'],
+            'locale_state' => ['en' => 'approved'],
+        ]);
+        $this->makeArticle('b-both', SupportArticleVisibility::PUBLIC, [
+            'section' => 'b',
+            'question' => ['en' => 'Both?', 'tr' => 'Ikisi de?'],
+            'body' => ['en' => 'Both body.', 'tr' => 'Ikisi govde.'],
+            'locale_state' => ['en' => 'approved', 'tr' => 'approved'],
+        ]);
+        $this->makeArticle('0-turkish-only', SupportArticleVisibility::PUBLIC, [
+            'section' => '0',
+            'question' => ['en' => 'Turkish only draft?', 'tr' => 'Yalniz Turkce?'],
+            'body' => ['en' => 'Draft.', 'tr' => 'Turkce govde.'],
+            'locale_state' => ['en' => 'draft', 'tr' => 'approved'],
+        ]);
+        $this->makeArticle('c-hidden', SupportArticleVisibility::STAFF_ONLY, ['section' => 'c']);
+
+        $readable = SupportArticleFeed::readable(SupportAudience::PAGE, 'tr');
+
+        $this->assertSame(['a-english-only', 'b-both', '0-turkish-only'], array_column($readable, 'slug'));
+        $this->assertSame(['English only?', 'Ikisi de?', 'Yalniz Turkce?'], array_column($readable, 'question'));
+        $this->assertSame(
+            SupportArticleFeed::corpus(SupportAudience::PAGE, 'en'),
+            SupportArticleFeed::readable(SupportAudience::PAGE, 'en'),
+        );
+    }
+
     /**
      * @return list<string>
      */

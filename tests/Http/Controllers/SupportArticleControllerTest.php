@@ -12,6 +12,8 @@ use FlutterSdk\MagicStarter\Tests\Fixtures\ConcreteUser;
 use FlutterSdk\MagicStarter\Tests\TestCase;
 use Illuminate\Database\Schema\Blueprint;
 use Illuminate\Foundation\Application;
+use Illuminate\Http\Request;
+use Illuminate\Support\Facades\RateLimiter;
 use Illuminate\Support\Facades\Schema;
 use Laravel\Sanctum\SanctumServiceProvider;
 use Orchestra\Testbench\Attributes\DefineEnvironment;
@@ -164,7 +166,7 @@ class SupportArticleControllerTest extends TestCase
 
         $this->signIn();
 
-        $this->getJson('/support/articles?search=regions&locale=en')
+        $this->getJson('/support/articles?search=monitors+regions&locale=en')
             ->assertOk()
             ->assertJsonPath('data.0.excerpt', 'From five (en) regions.');
     }
@@ -181,6 +183,49 @@ class SupportArticleControllerTest extends TestCase
         $this->getJson('/support/articles?search=alerts')
             ->assertOk()
             ->assertJsonPath('data.0.url', 'https://example.com/help#alerts');
+    }
+
+    public function test_the_url_is_the_public_page_of_the_requested_locale(): void
+    {
+        $this->article('alerts', 'How do alerts work?', texts: [
+            'tr' => ['Uyarilar nasil calisir?', 'Her sey.'],
+        ]);
+        config()->set('magic-starter.support.articles.public_url', [
+            'en' => 'https://example.com/faq',
+            'tr' => 'https://example.com/tr/faq',
+        ]);
+        $this->signIn();
+
+        $this->getJson('/support/articles?search=uyarilar&locale=tr')
+            ->assertOk()
+            ->assertJsonPath('data.0.url', 'https://example.com/tr/faq#alerts');
+        $this->getJson('/support/articles?search=alerts&locale=en')
+            ->assertOk()
+            ->assertJsonPath('data.0.url', 'https://example.com/faq#alerts');
+        $this->getJson('/support/articles?search=alerts')
+            ->assertOk()
+            ->assertJsonPath('data.0.url', 'https://example.com/faq#alerts');
+    }
+
+    public function test_suggestions_ride_their_own_limiter_bucket_apart_from_thread_reads(): void
+    {
+        $user = ConcreteUser::create([
+            'name' => 'Ada',
+            'email' => 'ada@example.com',
+            'password' => 'secret',
+        ]);
+        $limiter = RateLimiter::limiter('magic-starter-support');
+        $keyFor = static function (string $method, string $path) use ($limiter, $user): string {
+            $request = Request::create($path, $method);
+            $request->setUserResolver(static fn (): ConcreteUser => $user);
+
+            return $limiter($request)->key;
+        };
+
+        $articles = $keyFor('GET', '/support/articles?search=alerts');
+
+        $this->assertSame('articles|' . $user->getAuthIdentifier(), $articles);
+        $this->assertNotSame($keyFor('GET', '/support/conversations'), $articles);
     }
 
     public function test_at_most_five_suggestions_come_back(): void

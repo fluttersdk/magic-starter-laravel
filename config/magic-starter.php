@@ -138,7 +138,11 @@ return [
     | in-app suggestions read. It is off until `enabled` is true. `disk` is where
     | an article image is stored, `image_max_kb` the largest one accepted.
     | `public_url` is the public FAQ page: a suggestion's `url` is it plus
-    | `#slug`, and null while it is unset. The suggestions route
+    | `#slug`, and null while it is unset. It is one url for every locale or
+    | an array of urls keyed by locale (`['en' => '.../faq', 'tr' => '.../tr/faq']`);
+    | a suggestion links the page of its requested locale, an AI card the page
+    | of the locale it was read in, and a locale with no entry the default
+    | locale's page. The suggestions route
     | (`support/articles`) is only registered while `enabled` is true, so it
     | answers 404 otherwise. The same `public_url` anchors the article cards on
     | an AI answer, which are stored only while `enabled` is true.

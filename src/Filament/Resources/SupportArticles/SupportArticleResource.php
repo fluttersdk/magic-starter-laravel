@@ -25,6 +25,7 @@ use FlutterSdk\MagicStarter\Filament\Resources\SupportArticles\Pages\CreateSuppo
 use FlutterSdk\MagicStarter\Filament\Resources\SupportArticles\Pages\EditSupportArticle;
 use FlutterSdk\MagicStarter\Filament\Resources\SupportArticles\Pages\ListSupportArticles;
 use FlutterSdk\MagicStarter\Filament\Support\ContractAction;
+use FlutterSdk\MagicStarter\Listeners\RemoveSupportArticleImages;
 use FlutterSdk\MagicStarter\Models\SupportArticle;
 use Illuminate\Contracts\Auth\Authenticatable;
 use Illuminate\Database\Eloquent\Builder;
@@ -246,9 +247,14 @@ class SupportArticleResource extends MagicStarterResource
      */
     protected static function persist(SupportArticle $article, array $data): SupportArticle
     {
-        // 1. A locale staff left blank is not stored as an empty string a reader could mistake for text.
+        // 1. A locale staff left blank is not stored as an empty string a reader could mistake for text, and
+        //    an uploaded image is stored by its disk path, not by the host the panel ran on.
         $question = array_filter((array) ($data['question'] ?? []), filled(...));
-        $body = array_filter((array) ($data['body'] ?? []), filled(...));
+        $images = app(RemoveSupportArticleImages::class);
+        $body = array_map(
+            static fn (mixed $markdown): string => $images->relativeImages((string) $markdown),
+            array_filter((array) ($data['body'] ?? []), filled(...)),
+        );
 
         // 2. Decide each locale's state against what was stored, so an edit keeps a draft a draft.
         $previous = (array) $article->locale_state;
@@ -320,7 +326,7 @@ class SupportArticleResource extends MagicStarterResource
                     ->helperText(static::text('fields.body_hint'))
                     ->required($isDefault)
                     ->fileAttachmentsDisk(static fn (): string => static::articlesConfig('disk'))
-                    ->fileAttachmentsDirectory('support-articles')
+                    ->fileAttachmentsDirectory(RemoveSupportArticleImages::DIRECTORY)
                     ->fileAttachmentsAcceptedFileTypes([
                         'image/png',
                         'image/jpeg',

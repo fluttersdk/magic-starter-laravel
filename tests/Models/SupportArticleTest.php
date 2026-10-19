@@ -135,6 +135,41 @@ class SupportArticleTest extends TestCase
         );
     }
 
+    public function test_a_single_public_url_serves_every_locale(): void
+    {
+        config()->set('magic-starter.support.articles.public_url', 'https://example.com/faq');
+
+        $this->assertSame('https://example.com/faq#alerts', SupportArticle::publicUrl('alerts', 'en'));
+        $this->assertSame('https://example.com/faq#alerts', SupportArticle::publicUrl('alerts', 'tr'));
+    }
+
+    public function test_a_public_url_per_locale_picks_the_locale_then_the_default_locale(): void
+    {
+        config()->set('magic-starter.defaults.locale', 'en');
+        config()->set('magic-starter.support.articles.public_url', [
+            'en' => 'https://example.com/faq',
+            'tr' => 'https://example.com/tr/faq',
+        ]);
+
+        $this->assertSame('https://example.com/tr/faq#alerts', SupportArticle::publicUrl('alerts', 'tr'));
+        $this->assertSame('https://example.com/faq#alerts', SupportArticle::publicUrl('alerts', 'en'));
+        $this->assertSame('https://example.com/faq#alerts', SupportArticle::publicUrl('alerts', 'de'));
+    }
+
+    public function test_there_is_no_public_url_while_none_is_configured_for_the_locale_or_the_default(): void
+    {
+        config()->set('magic-starter.defaults.locale', 'en');
+
+        config()->set('magic-starter.support.articles.public_url', null);
+        $this->assertNull(SupportArticle::publicUrl('alerts', 'en'));
+
+        config()->set('magic-starter.support.articles.public_url', '');
+        $this->assertNull(SupportArticle::publicUrl('alerts', 'en'));
+
+        config()->set('magic-starter.support.articles.public_url', ['tr' => 'https://example.com/tr/faq']);
+        $this->assertNull(SupportArticle::publicUrl('alerts', 'en'));
+    }
+
     /**
      * @param  array<string, mixed>  $overrides
      */

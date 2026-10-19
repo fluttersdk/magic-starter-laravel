@@ -89,6 +89,24 @@ class SupportArticleSearchTest extends TestCase
         $this->assertSame([], $this->search('status page', SupportAudience::CUSTOMER, 'en'));
     }
 
+    public function test_one_shared_body_word_is_no_answer_while_a_question_word_or_two_body_words_are(): void
+    {
+        $this->article('data-deletion', [
+            'en' => ['How do I get my data deleted?', 'Ask the owner of your team to remove the account.'],
+        ]);
+        $this->article('invitations', [
+            'en' => ['How do I invite a teammate?', 'Open the members page.'],
+        ]);
+        $this->article('roles', [
+            'en' => ['What can an admin change?', 'Admins can invite members and manage the team.'],
+        ]);
+
+        $this->assertSame(
+            ['invitations', 'roles'],
+            $this->slugs('how do I invite a teammate to my team', SupportAudience::CUSTOMER, 'en'),
+        );
+    }
+
     public function test_the_limit_is_capped_at_five(): void
     {
         foreach (range(1, 7) as $index) {

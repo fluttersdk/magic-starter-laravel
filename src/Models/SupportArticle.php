@@ -117,6 +117,27 @@ class SupportArticle extends Model
     }
 
     /**
+     * The public FAQ page of the locale anchored on the article, or null while no page is configured.
+     *
+     * `magic-starter.support.articles.public_url` is one url for every locale or urls keyed by
+     * locale; a locale with no entry of its own links the default locale's page.
+     */
+    public static function publicUrl(string $slug, string $locale): ?string
+    {
+        $page = config('magic-starter.support.articles.public_url');
+
+        if (is_array($page)) {
+            $page = $page[$locale] ?? $page[(string) config('magic-starter.defaults.locale')] ?? null;
+        }
+
+        if (! is_string($page) || $page === '') {
+            return null;
+        }
+
+        return "{$page}#{$slug}";
+    }
+
+    /**
      * Create a new factory instance for the model.
      */
     protected static function newFactory(): SupportArticleFactory

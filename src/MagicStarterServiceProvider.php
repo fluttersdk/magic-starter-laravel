@@ -1140,6 +1140,12 @@ class MagicStarterServiceProvider extends ServiceProvider
                 return Limit::perMinute(120)->by('file|' . $caller);
             }
 
+            // Article suggestions refresh as the customer types a subject, so
+            // they ride their own bucket and cannot starve the thread's polling.
+            if (str_ends_with($path, 'support/articles')) {
+                return Limit::perMinute(60)->by('articles|' . $caller);
+            }
+
             $writes = $request->isMethod('POST') && ! str_ends_with($path, '/seen');
 
             return $writes

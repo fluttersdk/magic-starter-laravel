@@ -60,6 +60,37 @@ final class SupportArticleFeed
     }
 
     /**
+     * The audience's articles in the locale, each one without approved text there read in the default locale.
+     *
+     * A translation that lags never removes an article from a reader. The default locale's corpus
+     * fixes the order, so a fallback keeps its place; an article only the requested locale has
+     * follows, in that corpus's order. In the default locale this is {@see self::corpus()}.
+     *
+     * @return list<array{id: string|int, slug: string, section: string, question: string, body: string}>
+     */
+    public static function readable(SupportAudience $audience, string $locale): array
+    {
+        $default = (string) config('magic-starter.defaults.locale');
+
+        if ($locale === $default) {
+            return self::corpus($audience, $locale);
+        }
+
+        $requested = array_column(self::corpus($audience, $locale), null, 'slug');
+        $entries = [];
+
+        foreach (self::corpus($audience, $default) as $entry) {
+            $entries[] = $requested[$entry['slug']] ?? $entry;
+            unset($requested[$entry['slug']]);
+        }
+
+        return [
+            ...$entries,
+            ...array_values($requested),
+        ];
+    }
+
+    /**
      * Retire every cached corpus: the next read builds a new one from the table.
      *
      * Replaces the version token instead of deleting the bodies, see the class

@@ -3,7 +3,6 @@
 namespace FlutterSdk\MagicStarter\Console;
 
 use FlutterSdk\MagicStarter\Listeners\RemoveSupportArticleImages;
-use FlutterSdk\MagicStarter\Models\SupportArticle;
 use Illuminate\Console\Command;
 use Illuminate\Support\Str;
 
@@ -41,13 +40,7 @@ class PruneSupportArticleImagesCommand extends Command
     public function handle(RemoveSupportArticleImages $images): int
     {
         // 1. Every reference of every article, so a file any locale still shows is kept.
-        $referenced = [];
-
-        foreach (SupportArticle::query()->cursor() as $article) {
-            foreach ($images->pathsIn((array) $article->body) as $path) {
-                $referenced[$path] = true;
-            }
-        }
+        $referenced = $images->referencedPaths();
 
         // 2. Only the directory the editor writes to is listed, and only files past the grace are candidates.
         $disk = $images->disk();

@@ -3,6 +3,7 @@
 namespace FlutterSdk\MagicStarter\Http\Resources;
 
 use FlutterSdk\MagicStarter\Enums\SupportSenderType;
+use FlutterSdk\MagicStarter\Models\SupportArticle;
 use FlutterSdk\MagicStarter\Models\SupportMessage;
 use FlutterSdk\MagicStarter\Models\SupportMessageAttachment;
 use Illuminate\Http\Request;
@@ -74,21 +75,21 @@ class SupportMessageResource extends JsonResource
     }
 
     /**
-     * The validated cards stored with an AI answer; `url` is the public FAQ page anchored on the slug, or null
-     * while `support.articles.public_url` is unset.
+     * The validated cards stored with an AI answer; `url` is the public FAQ page of the language the card was
+     * read in, anchored on the slug, or null while no page is configured. A card stored before cards carried
+     * their `locale` links the default locale's page.
      *
      * @return list<array{slug: string, question: string, url: string|null}>
      */
     private function articleCards(): array
     {
-        $page = config('magic-starter.support.articles.public_url');
-        $hasPage = is_string($page) && $page !== '';
+        $default = (string) config('magic-starter.defaults.locale');
 
         return array_map(
             static fn (array $card): array => [
                 'slug' => $card['slug'],
                 'question' => $card['question'],
-                'url' => $hasPage ? "{$page}#{$card['slug']}" : null,
+                'url' => SupportArticle::publicUrl($card['slug'], (string) ($card['locale'] ?? $default)),
             ],
             $this->meta['articles'] ?? [],
         );

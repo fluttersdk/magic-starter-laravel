@@ -15,7 +15,8 @@ use Illuminate\Support\Facades\DB;
  * file outlives the article unless this removes it. Paths are read from the article
  * while the event fires, because the previous body of a visibility change is gone once
  * the save finishes, and deleted after the surrounding transaction commits, so a
- * rollback never costs an article its images.
+ * rollback never costs an article its images. A file another article still references,
+ * in any locale, is kept: an image can be pasted into a second article.
  *
  * A reference reaches the disk only as a normalised path under {@see self::DIRECTORY};
  * anything else a body names (a foreign url, `..`, a leading slash) is skipped, so the
@@ -43,11 +44,11 @@ class RemoveSupportArticleImages
     public function __construct(private readonly Factory $storage) {}
 
     /**
-     * An article was removed: its images have no reader left.
+     * An article was removed: its images lose this reader.
      */
     public function deleted(SupportArticle $article): void
     {
-        $this->removeAfterCommit(array_values((array) $article->body));
+        $this->removeAfterCommit($article, array_values((array) $article->body));
     }
 
     /**
@@ -66,7 +67,7 @@ class RemoveSupportArticleImages
             return;
         }
 
-        $this->removeAfterCommit([
+        $this->removeAfterCommit($article, [
             ...array_values((array) $article->getOriginal('body')),
             ...array_values((array) $article->body),
         ]);
@@ -114,9 +115,65 @@ class RemoveSupportArticleImages
     }
 
     /**
+     * The Markdown with every image url the disk serves for a file under {@see self::DIRECTORY}
+     * rewritten to its disk-relative path.
+     *
+     * The editor inserts an upload as an absolute url of the disk, which names the host the
+     * panel ran on when it was uploaded; stored that way, a change of `APP_URL` or of the
+     * disk's url would leave every reader unable to map the image back to its file. Any other
+     * destination, a relative path included, is kept exactly as written.
+     */
+    public function relativeImages(string $markdown): string
+    {
+        $prefix = $this->disk()->url('');
+        $relativise = function (array $match) use ($prefix): string {
+            $destination = $match[1];
+            $path = str_starts_with($destination, $prefix) ? $this->diskPath($destination, $prefix) : null;
+
+            return $path === null
+                ? $match[0]
+                : substr($match[0], 0, -strlen($destination)) . $path;
+        };
+
+        return (string) preg_replace_callback(
+            self::REFERENCE,
+            $relativise,
+            (string) preg_replace_callback(self::IMAGE, $relativise, $markdown),
+        );
+    }
+
+    /**
+     * Every path under {@see self::DIRECTORY} some article references, in any locale and of any visibility.
+     *
+     * @return array<string, true>
+     */
+    public function referencedPaths(?SupportArticle $except = null): array
+    {
+        $query = SupportArticle::query();
+
+        if ($except !== null) {
+            $query->whereKeyNot($except->getKey());
+        }
+
+        $referenced = [];
+
+        foreach ($query->cursor() as $article) {
+            foreach ($this->pathsIn((array) $article->body) as $path) {
+                $referenced[$path] = true;
+            }
+        }
+
+        return $referenced;
+    }
+
+    /**
+     * Delete the article's files once the write commits, except the ones another article still shows.
+     *
+     * The other articles are read after the commit, so a body saved in the same transaction counts.
+     *
      * @param  list<string>  $markdowns
      */
-    private function removeAfterCommit(array $markdowns): void
+    private function removeAfterCommit(SupportArticle $article, array $markdowns): void
     {
         $paths = $this->pathsIn($markdowns);
 
@@ -124,7 +181,16 @@ class RemoveSupportArticleImages
             return;
         }
 
-        DB::afterCommit(fn () => $this->disk()->delete($paths));
+        DB::afterCommit(function () use ($article, $paths): void {
+            $orphans = array_keys(array_diff_key(
+                array_flip($paths),
+                $this->referencedPaths(except: $article),
+            ));
+
+            if ($orphans !== []) {
+                $this->disk()->delete(array_map('strval', $orphans));
+            }
+        });
     }
 
     /**

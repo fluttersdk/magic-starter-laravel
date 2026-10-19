@@ -120,6 +120,42 @@ final class PruneSupportArticleImagesCommandTest extends TestCase
         Storage::disk(self::DISK)->assertExists('support-articles/other.webp');
     }
 
+    public function test_deleting_an_article_keeps_a_file_another_article_still_references(): void
+    {
+        $this->putImage('support-articles/shared.webp', ageHours: 0);
+        $this->putImage('support-articles/own.webp', ageHours: 0);
+        $first = $this->makeArticle([
+            'en' => '![a](support-articles/shared.webp) ![b](support-articles/own.webp)',
+        ]);
+        $second = $this->makeArticle([
+            'en' => 'Nothing here.',
+            'fr' => '![c](' . Storage::disk(self::DISK)->url('support-articles/shared.webp') . ')',
+        ]);
+
+        $first->delete();
+
+        Storage::disk(self::DISK)->assertExists('support-articles/shared.webp');
+        Storage::disk(self::DISK)->assertMissing('support-articles/own.webp');
+
+        $second->delete();
+
+        Storage::disk(self::DISK)->assertMissing('support-articles/shared.webp');
+    }
+
+    public function test_leaving_public_keeps_a_file_another_article_still_references(): void
+    {
+        $this->putImage('support-articles/shared.webp', ageHours: 0);
+        $leaving = $this->makeArticle(['en' => '![a](support-articles/shared.webp)']);
+        $this->makeArticle(['en' => '![b](support-articles/shared.webp)']);
+
+        $leaving->update([
+            'visibility' => SupportArticleVisibility::AI_ONLY,
+            'body' => ['en' => 'Plain text.'],
+        ]);
+
+        Storage::disk(self::DISK)->assertExists('support-articles/shared.webp');
+    }
+
     public function test_deleting_an_article_never_removes_a_path_outside_the_support_articles_directory(): void
     {
         $this->putImage('.env', ageHours: 0);

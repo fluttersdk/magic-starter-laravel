@@ -45,6 +45,8 @@ class RespondToSupportConversationArticlesTest extends TestCase
 {
     private const FAQ_URL = 'https://example.test/faq';
 
+    private const FAQ_URL_TR = 'https://example.test/tr/faq';
+
     private const DRAFT = 'draft';
 
     /**
@@ -130,6 +132,7 @@ class RespondToSupportConversationArticlesTest extends TestCase
                 'id' => $public->getKey(),
                 'slug' => 'how-to-pay',
                 'question' => 'How do I pay?',
+                'locale' => 'en',
             ],
         ], $message->meta['articles']);
     }
@@ -266,6 +269,52 @@ class RespondToSupportConversationArticlesTest extends TestCase
         $payload = SupportMessageResource::make($message)->resolve();
 
         $this->assertNull($payload['articles'][0]['url']);
+    }
+
+    public function test_a_card_links_the_public_page_of_the_language_it_was_read_in(): void
+    {
+        config()->set('magic-starter.support.articles.public_url', [
+            'en' => self::FAQ_URL,
+            'tr' => self::FAQ_URL_TR,
+        ]);
+        $translated = $this->localised('translated', 'Translated', 'Cevrilmis', 'tr', SupportArticle::LOCALE_APPROVED);
+        $fallback = $this->localised('english-only', 'English only', 'Taslak', 'tr', self::DRAFT);
+
+        $message = $this->turnWithRefs([$translated->getKey(), $fallback->getKey()], locale: 'tr');
+
+        $this->assertSame(['tr', 'en'], array_column($message->meta['articles'], 'locale'));
+        $this->assertSame(
+            [
+                self::FAQ_URL_TR . '#translated',
+                self::FAQ_URL . '#english-only',
+            ],
+            array_column(SupportMessageResource::make($message)->resolve()['articles'], 'url'),
+        );
+    }
+
+    public function test_a_card_stored_before_cards_carried_a_locale_links_the_default_page(): void
+    {
+        config()->set('magic-starter.support.articles.public_url', [
+            'en' => self::FAQ_URL,
+            'tr' => self::FAQ_URL_TR,
+        ]);
+        $message = $this->turnWithRefs([]);
+        $message->forceFill([
+            'meta' => [
+                'articles' => [
+                    [
+                        'id' => 'x',
+                        'slug' => 'old-card',
+                        'question' => 'Old card',
+                    ],
+                ],
+            ],
+        ]);
+
+        $this->assertSame(
+            self::FAQ_URL . '#old-card',
+            SupportMessageResource::make($message)->resolve()['articles'][0]['url'],
+        );
     }
 
     public function test_only_an_ai_message_carries_the_articles_key(): void

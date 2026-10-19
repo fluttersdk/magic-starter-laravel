@@ -267,6 +267,48 @@ class SupportArticleResourceTest extends FilamentTestCase
         $this->assertSame(1, SupportArticle::query()->count());
     }
 
+    public function test_an_image_the_disk_serves_is_stored_by_its_disk_relative_path_in_every_locale(): void
+    {
+        $url = Storage::disk(self::DISK)->url('support-articles/shot.png');
+        $reference = Storage::disk(self::DISK)->url('support-articles/ref.png');
+
+        Livewire::actingAs($this->staff())->test(CreateSupportArticle::class)
+            ->fillForm($this->payload([
+                'slug' => 'uploaded',
+                'question' => ['en' => 'Where is it?', 'tr' => 'Nerede?'],
+                'body' => [
+                    'en' => "See ![shot]({$url} \"Title\") and ![ref][fig].\n\n[fig]: {$reference}",
+                    'tr' => "Bakin ![goruntu](<{$url}>).",
+                ],
+            ]))
+            ->call('create')
+            ->assertHasNoFormErrors();
+
+        $this->assertSame([
+            'en' => "See ![shot](support-articles/shot.png \"Title\") and ![ref][fig].\n\n[fig]: support-articles/ref.png",
+            'tr' => 'Bakin ![goruntu](<support-articles/shot.png>).',
+        ], SupportArticle::query()->sole()->body);
+    }
+
+    public function test_an_image_url_the_disk_does_not_serve_is_stored_as_written(): void
+    {
+        $body = implode("\n", [
+            '![foreign](https://example.com/support-articles/shot.png)',
+            '![elsewhere](' . Storage::disk(self::DISK)->url('avatars/me.png') . ')',
+            '![relative](support-articles/kept.png)',
+        ]);
+
+        Livewire::actingAs($this->staff())->test(CreateSupportArticle::class)
+            ->fillForm($this->payload([
+                'slug' => 'foreign',
+                'body' => ['en' => $body],
+            ]))
+            ->call('create')
+            ->assertHasNoFormErrors();
+
+        $this->assertSame($body, SupportArticle::query()->sole()->body['en']);
+    }
+
     public function test_the_attachment_toolbar_follows_the_visibility(): void
     {
         $offersAttachments = static fn (MarkdownEditor $field): bool => $field->hasFileAttachments()
