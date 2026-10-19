@@ -3,6 +3,7 @@
 namespace FlutterSdk\MagicStarter\Tests\Jobs;
 
 use Closure;
+use FlutterSdk\MagicStarter\Contracts\ResolvesSupportArticlePlaceholders;
 use FlutterSdk\MagicStarter\Contracts\RespondsToSupport;
 use FlutterSdk\MagicStarter\Enums\SupportAiPool;
 use FlutterSdk\MagicStarter\Enums\SupportArticleVisibility;
@@ -209,6 +210,22 @@ class RespondToSupportConversationArticlesTest extends TestCase
             ['article-4', 'article-1', 'article-3'],
             array_column($message->meta['articles'], 'slug'),
         );
+    }
+
+    public function test_a_cards_question_carries_the_hosts_placeholder_values(): void
+    {
+        $this->app->instance(ResolvesSupportArticlePlaceholders::class, new class implements ResolvesSupportArticlePlaceholders
+        {
+            public function resolve(string $markdown, string $locale): string
+            {
+                return str_replace('[[faq.region_count]]', 'five', $markdown);
+            }
+        });
+        $public = $this->article('regions', 'Why [[faq.region_count]] regions?');
+
+        $message = $this->turnWithRefs([$public->getKey()]);
+
+        $this->assertSame('Why five regions?', $message->meta['articles'][0]['question']);
     }
 
     public function test_refs_are_ignored_while_the_knowledge_base_is_off(): void

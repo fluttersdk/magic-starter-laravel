@@ -28,6 +28,7 @@ use FlutterSdk\MagicStarter\Support\SupportAi\SupportAnswer;
 use FlutterSdk\MagicStarter\Support\SupportAi\SupportHandoff;
 use FlutterSdk\MagicStarter\Support\SupportAi\SupportTurn;
 use FlutterSdk\MagicStarter\Support\SupportAi\SupportUsage;
+use FlutterSdk\MagicStarter\Support\SupportAi\Tools\SupportArticleText;
 use FlutterSdk\MagicStarter\Support\SupportAttachmentResponse;
 use FlutterSdk\MagicStarter\Support\TeamKey;
 use Illuminate\Contracts\Cache\LockTimeoutException;
@@ -570,8 +571,9 @@ class RespondToSupportConversation implements ShouldQueue
      * the model picked from applies, so a card is never refused that the model was legitimately offered. An id
      * that is hidden, unpublished, a draft in both languages, unknown or not shaped like a key of this deployment
      * is dropped without failing the turn. The responder's order is kept, repeats count once, and at most
-     * {@see self::MAX_ARTICLES} remain. Nothing is read while the knowledge base is off, since a host that never
-     * published its migration has no table to read.
+     * {@see self::MAX_ARTICLES} remain. The question goes through {@see SupportArticleText}, as on every other
+     * customer surface, so the host's placeholder values fill it. Nothing is read while the knowledge base is off,
+     * since a host that never published its migration has no table to read.
      *
      * @param  list<int|string>  $refs
      * @return list<array{id: int|string, slug: string, question: string}>
@@ -594,6 +596,7 @@ class RespondToSupportConversation implements ShouldQueue
             ->get()
             ->keyBy(static fn (SupportArticle $article): string => (string) $article->getKey());
         $locales = array_values(array_unique([$locale, (string) config('magic-starter.defaults.locale')]));
+        $text = app(SupportArticleText::class);
         $cards = [];
 
         foreach ($ids as $id) {
@@ -612,7 +615,7 @@ class RespondToSupportConversation implements ShouldQueue
             $cards[] = [
                 'id' => $article->getKey(),
                 'slug' => $article->slug,
-                'question' => $article->question[$readIn],
+                'question' => $text->line($article->question[$readIn], $readIn),
             ];
 
             if (count($cards) === self::MAX_ARTICLES) {

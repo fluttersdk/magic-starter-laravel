@@ -10,7 +10,7 @@ namespace FlutterSdk\MagicStarter\Enums;
  */
 enum SupportAudience: string
 {
-    /** A signed-in customer, in the AI agent or in-app suggestions. */
+    /** A signed-in customer's turn with the AI agent; in-app suggestions link to the page, so they read as PAGE. */
     case CUSTOMER = 'customer';
 
     /** A staff member in the admin panel. */

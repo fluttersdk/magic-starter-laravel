@@ -12,7 +12,7 @@ enum SupportArticleVisibility: string
     /** Shown on the public FAQ page, and readable by everyone else too. */
     case PUBLIC = 'public';
 
-    /** Read by the AI agent and in-app suggestions, never shown on the public page. */
+    /** Read by the AI agent, never shown on the public page or offered as an in-app suggestion. */
     case AI_ONLY = 'ai_only';
 
     /** Internal notes for staff: no customer-facing reader ever sees it. */
