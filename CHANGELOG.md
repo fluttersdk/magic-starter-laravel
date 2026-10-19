@@ -4,6 +4,8 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [0.0.41] - 2026-10-19
+
 ### Changed
 
 - **The admin sidebar is grouped and ordered.** Every package resource sat in one "Accounts" group in registration order, so billing, support, AI and the audit trail all read as account pages. Each resource now names its group and place from the new `AdminNavigationGroup` enum, whose case order is the sidebar order: Customers (Users, Teams), Support (Support inbox, Feedback), Billing (Subscriptions, Campaigns, Billing events, Webhook deliveries), AI (AI runs, AI prompts), Communication (Releases, Newsletter subscribers), Operations (Audit trail, then the Horizon, Pulse, Telescope and Sentry links). Sorts step by 10, so an application resource joins a group between them. `navigationGroup($name)` still puts every package resource under one name; `getNavigationGroup()` now answers null when it was not called. The lang keys `admin.navigation_group` and `admin_ops.navigation_group` are gone; `admin.navigation_groups.*` replace them. (`src/Filament/AdminNavigationGroup.php`, `src/Filament/MagicStarterPlugin.php`, `src/Filament/Resources/*`, `lang/*/admin.php`, `doc/basics/admin-panel.md`)
