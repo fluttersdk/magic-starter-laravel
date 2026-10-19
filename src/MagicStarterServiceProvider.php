@@ -183,6 +183,11 @@ class MagicStarterServiceProvider extends ServiceProvider
         // registration. It holds class-strings and builds tools per turn.
         $this->app->singleton(Support\SupportAi\Tools\SupportToolRegistry::class);
 
+        // How the support AI's knowledge-base tools rank articles. Unconditional
+        // like the registry: a host with an embedding index binds its own, and
+        // the tools are only offered once the host registers them.
+        $this->app->bind(Contracts\SearchesSupportArticles::class, Support\SupportAi\SupportArticleSearch::class);
+
         // How staff tune a registered prompt. Unconditional like the AppRelease
         // binds: a consumer swaps the action before it switches ai-prompts on.
         $this->app->bind(Contracts\SavesAiPromptOverrides::class, Actions\SaveAiPromptOverride::class);

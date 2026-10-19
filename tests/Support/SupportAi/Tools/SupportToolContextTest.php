@@ -3,6 +3,7 @@
 namespace FlutterSdk\MagicStarter\Tests\Support\SupportAi\Tools;
 
 use FlutterSdk\MagicStarter\Contracts\SupportTool;
+use FlutterSdk\MagicStarter\Enums\SupportAudience;
 use FlutterSdk\MagicStarter\Enums\SupportConversationSource;
 use FlutterSdk\MagicStarter\Enums\SupportConversationStatus;
 use FlutterSdk\MagicStarter\Models\SupportConversation;
@@ -147,6 +148,83 @@ class SupportToolContextTest extends TestCase
         $this->assertNull($context->team());
         $this->assertNull($context->teamKey());
         $this->assertNull($context->conversation());
+        $this->assertNull($context->opener());
+    }
+
+    public function test_a_conversation_context_reads_for_the_customer_unless_told_otherwise(): void
+    {
+        $owner = $this->user('owner@example.com');
+        $conversation = $this->conversation($owner, $this->team($owner, 'Acme'));
+
+        $this->assertSame(SupportAudience::CUSTOMER, SupportToolContext::forConversation($conversation)->audience());
+        $this->assertSame(
+            SupportAudience::STAFF,
+            SupportToolContext::forConversation($conversation, SupportAudience::STAFF)->audience(),
+        );
+    }
+
+    public function test_a_staff_context_reads_for_staff(): void
+    {
+        $owner = $this->user('owner@example.com');
+        $conversation = $this->conversation($owner, $this->team($owner, 'Acme'));
+
+        $context = SupportToolContext::forStaff($conversation);
+
+        $this->assertSame(SupportAudience::STAFF, $context->audience());
+        $this->assertSame($conversation, $context->conversation());
+    }
+
+    public function test_none_reads_for_the_public_page_only(): void
+    {
+        $this->assertSame(SupportAudience::PAGE, SupportToolContext::none()->audience());
+    }
+
+    public function test_a_member_is_the_opener(): void
+    {
+        $owner = $this->user('owner@example.com');
+        $member = $this->user('member@example.com');
+        $team = $this->team($owner, 'Acme');
+        $member->teams()->attach($team->getKey());
+
+        $context = SupportToolContext::forConversation($this->conversation($member, $team));
+
+        $this->assertTrue($member->is($context->opener()));
+    }
+
+    public function test_a_removed_member_is_no_opener(): void
+    {
+        $owner = $this->user('owner@example.com');
+        $member = $this->user('member@example.com');
+        $team = $this->team($owner, 'Acme');
+        $member->teams()->attach($team->getKey());
+        $member->teams()->detach($team->getKey());
+
+        $context = SupportToolContext::forConversation($this->conversation($member, $team));
+
+        $this->assertNull($context->opener());
+    }
+
+    public function test_a_member_removed_after_the_context_was_built_is_no_opener_on_the_next_call(): void
+    {
+        $owner = $this->user('owner@example.com');
+        $member = $this->user('member@example.com');
+        $team = $this->team($owner, 'Acme');
+        $member->teams()->attach($team->getKey());
+        $context = SupportToolContext::forConversation($this->conversation($member, $team));
+        $this->assertTrue($member->is($context->opener()));
+
+        $member->teams()->detach($team->getKey());
+
+        $this->assertNull($context->opener());
+    }
+
+    public function test_a_conversation_without_a_team_has_no_opener(): void
+    {
+        $owner = $this->user('owner@example.com');
+
+        $context = SupportToolContext::forConversation($this->conversation($owner, null));
+
+        $this->assertNull($context->opener());
     }
 
     public function test_two_contexts_through_one_registry_never_cross(): void

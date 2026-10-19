@@ -181,6 +181,55 @@ return [
     ],
 
     /*
+     * The knowledge base: the articles the AI agent, the public FAQ page and in-app suggestions read.
+     */
+    'articles' => [
+        'navigation_label' => 'Knowledge base',
+        'model_label' => 'article',
+        'plural_model_label' => 'articles',
+        'columns' => [
+            'question' => 'Question',
+            'section' => 'Section',
+            'visibility' => 'Visibility',
+            'locale_state' => 'Text (:locale)',
+            'published_at' => 'Published at',
+        ],
+        'fields' => [
+            'slug' => 'Slug',
+            'section' => 'Section',
+            'sort' => 'Order',
+            'visibility' => 'Visibility',
+            'published_at' => 'Published at',
+            'published_at_hint' => 'Leave empty to keep the article unpublished. A future date publishes it then.',
+            'question' => 'Question',
+            'body' => 'Answer',
+            'body_hint' => 'Images are only allowed in public articles.',
+            'locale_hint' => 'Leave empty to queue a translated draft of the :locale text.',
+        ],
+        'visibility' => [
+            'public' => 'Public',
+            'ai_only' => 'AI only',
+            'staff_only' => 'Staff only',
+        ],
+        'states' => [
+            'approved' => 'Approved',
+            'draft' => 'Draft',
+        ],
+        'actions' => [
+            'create' => 'New article',
+            'approve' => [
+                'label' => 'Approve :locale',
+                'heading' => 'Approve the :locale text?',
+                'description' => 'Readers see this text as soon as you approve it. Read it through first.',
+                'success' => 'The :locale text is approved',
+            ],
+        ],
+        'refusals' => [
+            'image_in_non_public' => 'Only a public article may carry an image.',
+        ],
+    ],
+
+    /*
      * The billing requests the AI desk recorded for the account owner, decided by staff on the thread page.
      */
     'proposals' => [
