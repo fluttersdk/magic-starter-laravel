@@ -4,6 +4,11 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Fixed
+
+- **The verification mail opens a page the client serves.** With `magic-starter.frontend_url` set, the link kept the API path and swapped only the host, so it pointed at `<client>/api/v1/email/verify/...`, which no client route serves: a static client answered its sign-in page and the address was never verified. The link is now `{frontend}/auth/verify-email?id=&hash=&expires=&signature=`; the client page replays the four values against `GET email/verify/{id}/{hash}`. The signature is now relative (the route takes `signed:relative`): an absolute one bound the link to the host the mail was sent from, so a staff resend from the panel host was refused by the API. A link mailed before this release no longer verifies; the user resends it. Without a frontend URL the mail keeps the signed API route, made absolute. Pair with `magic_starter` 0.0.53, which adds that page. (`src/Notifications/VerifyEmailNotification.php`, `doc/basics/profile.md`)
+- **A malformed bearer answers 401, not 500.** Under uuid keys Sanctum looked a token's `<id>|` prefix up as it arrived, so `Bearer 999|x` reached PostgreSQL as an invalid uuid literal and threw SQLSTATE 22P02, with the SQL in the error body. `PersonalAccessToken::findToken()` now answers null, without a query, for a prefix the key column cannot hold: no uuid under uuid keys, digits past bigint (SQLSTATE 22003) under integer keys. (`src/Models/PersonalAccessToken.php`)
+
 ## [0.0.40] - 2026-10-18
 
 ### Fixed

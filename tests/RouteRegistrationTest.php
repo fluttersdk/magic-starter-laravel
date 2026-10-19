@@ -226,6 +226,22 @@ final class RouteRegistrationTest extends TestCase
         $this->assertRouteExists('POST', '/email/verification-notification');
     }
 
+    /**
+     * The mail is sent from whichever host the request came in on (the staff
+     * panel resends from the admin host), so an absolute signature bound the
+     * link to that host and the API refused it; the signature covers the path.
+     */
+    public function test_the_verify_route_checks_a_relative_signature(): void
+    {
+        $this->bootRoutesWithConfig([
+            'email-verification',
+        ]);
+
+        $route = $this->matchRoute('GET', '/email/verify/some-id/some-hash');
+
+        $this->assertContains('signed:relative', $route->gatherMiddleware());
+    }
+
     public function test_email_verification_routes_not_registered_when_feature_disabled(): void
     {
         $this->bootRoutesWithConfig([]);

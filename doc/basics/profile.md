@@ -269,11 +269,13 @@ Available when the `email-verification` feature is enabled.
 |----------|-------|
 | **Method** | `GET` |
 | **URI** | `email/verify/{id}/{hash}` |
-| **Middleware** | `signed` (no auth required) |
+| **Middleware** | `signed:relative` (no auth required) |
 | **Route Name** | `verification.verify` |
 | **Controller** | `EmailVerificationController@verify` |
 
 This is a public endpoint protected by a signed URL (not `auth:sanctum`). The `{hash}` parameter is a SHA-1 of the user's email address. The link is validated to ensure it matches the user's current email, preventing reuse after an email change.
+
+The mailed link depends on `magic-starter.frontend_url`. Without it, the mail carries this signed route and the API answers it with the JSON below. With it, the mail opens the client's verify page, `{frontend}/auth/verify-email?id=&hash=&expires=&signature=`, and that page replays the four values as `GET email/verify/{id}/{hash}?expires=&signature=` against the API. The signature is relative: it covers the path and expiry, not the host, because the mail goes out from whichever host the request came in on (a staff resend comes from the panel host) and the client calls the API host. `magic_starter` 0.0.53 and later ships that page.
 
 | Status | Response |
 |--------|----------|
