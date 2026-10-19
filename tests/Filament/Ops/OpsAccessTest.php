@@ -7,6 +7,7 @@ use Filament\Http\Middleware\Authenticate;
 use Filament\Navigation\NavigationItem;
 use Filament\Panel;
 use Filament\PanelProvider;
+use FlutterSdk\MagicStarter\Filament\AdminNavigationGroup;
 use FlutterSdk\MagicStarter\Filament\MagicStarterPlugin;
 use FlutterSdk\MagicStarter\Filament\Widgets\HorizonStatusWidget;
 use FlutterSdk\MagicStarter\Filament\Widgets\PulseSummaryWidget;
@@ -123,15 +124,16 @@ class OpsAccessTest extends FilamentTestCase
     {
         $items = collect(Filament::getPanel('admin')->getNavigationItems())
             ->mapWithKeys(static fn (NavigationItem $item): array => [
-                $item->getUrl() => $item->getGroup(),
+                $item->getUrl() => [$item->getGroup(), $item->getSort()],
             ]);
 
+        // After the audit trail (10), in the order an incident walks them.
         $this->assertSame(
             [
-                route('horizon.index') => 'Operations',
-                route('pulse') => 'Operations',
-                route('telescope') => 'Operations',
-                'https://sentry.example.com/issues' => 'Operations',
+                route('horizon.index') => [AdminNavigationGroup::Operations, 20],
+                route('pulse') => [AdminNavigationGroup::Operations, 30],
+                route('telescope') => [AdminNavigationGroup::Operations, 40],
+                'https://sentry.example.com/issues' => [AdminNavigationGroup::Operations, 50],
             ],
             $items->all(),
         );

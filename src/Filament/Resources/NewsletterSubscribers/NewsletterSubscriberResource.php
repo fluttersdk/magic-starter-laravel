@@ -8,10 +8,12 @@ use Filament\Support\Icons\Heroicon;
 use Filament\Tables\Columns\IconColumn;
 use Filament\Tables\Columns\TextColumn;
 use Filament\Tables\Table;
+use FlutterSdk\MagicStarter\Filament\AdminNavigationGroup;
 use FlutterSdk\MagicStarter\Filament\Resources\MagicStarterResource;
 use FlutterSdk\MagicStarter\Filament\Resources\NewsletterSubscribers\Pages\ListNewsletterSubscribers;
 use FlutterSdk\MagicStarter\Filament\Support\ContractAction;
 use FlutterSdk\MagicStarter\Models\NewsletterSubscriber;
+use UnitEnum;
 
 /**
  * Newsletter subscribers and the consent each one rests on, with one write:
@@ -24,6 +26,10 @@ use FlutterSdk\MagicStarter\Models\NewsletterSubscriber;
 class NewsletterSubscriberResource extends MagicStarterResource
 {
     protected static string|BackedEnum|null $navigationIcon = Heroicon::OutlinedEnvelope;
+
+    protected static string|UnitEnum|null $navigationGroup = AdminNavigationGroup::Communication;
+
+    protected static ?int $navigationSort = 20;
 
     protected static function resolveModel(): string
     {

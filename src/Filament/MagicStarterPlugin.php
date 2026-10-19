@@ -139,6 +139,11 @@ class MagicStarterPlugin implements Plugin
         return $this;
     }
 
+    /**
+     * Put every package resource under one group named [$group], instead of the
+     * group each resource names for itself ({@see AdminNavigationGroup}). Null
+     * returns them to their own groups. The Operations links keep theirs.
+     */
     public function navigationGroup(?string $group): static
     {
         $this->navigationGroup = $group;
@@ -147,11 +152,12 @@ class MagicStarterPlugin implements Plugin
     }
 
     /**
-     * The navigation group the package's resources sit under.
+     * The one group the application put every package resource under, or null
+     * when each resource keeps its own.
      */
-    public function getNavigationGroup(): string
+    public function getNavigationGroup(): ?string
     {
-        return $this->navigationGroup ?? (string) __('magic-starter::admin.navigation_group');
+        return $this->navigationGroup;
     }
 
     /**
@@ -396,25 +402,27 @@ class MagicStarterPlugin implements Plugin
      */
     protected function operationsNavigationItems(): array
     {
+        // After the audit trail (10), in the order an incident walks them: the
+        // queues, the request load, the request detail, then the error tracker.
         $tools = [
-            'horizon' => [$this->horizon, 'horizon.index', Heroicon::OutlinedQueueList],
-            'pulse' => [$this->pulse, 'pulse', Heroicon::OutlinedChartBar],
-            'telescope' => [$this->telescope, 'telescope', Heroicon::OutlinedMagnifyingGlass],
+            'horizon' => [$this->horizon, 'horizon.index', Heroicon::OutlinedQueueList, 20],
+            'pulse' => [$this->pulse, 'pulse', Heroicon::OutlinedChartBar, 30],
+            'telescope' => [$this->telescope, 'telescope', Heroicon::OutlinedMagnifyingGlass, 40],
         ];
 
         $items = [];
 
-        foreach ($tools as $key => [$enabled, $route, $icon]) {
+        foreach ($tools as $key => [$enabled, $route, $icon, $sort]) {
             if (! $enabled) {
                 continue;
             }
 
-            $items[] = $this->operationsItem($key, $icon)
+            $items[] = $this->operationsItem($key, $icon, $sort)
                 ->url(static fn (): string => route($route));
         }
 
         if ($this->sentryUrl !== null) {
-            $items[] = $this->operationsItem('sentry', Heroicon::OutlinedBugAnt)
+            $items[] = $this->operationsItem('sentry', Heroicon::OutlinedBugAnt, 50)
                 ->url($this->sentryUrl, shouldOpenInNewTab: true);
         }
 
@@ -425,10 +433,11 @@ class MagicStarterPlugin implements Plugin
      * Labels are closures so they translate in the request's locale, not the
      * one the panel happened to be built in.
      */
-    protected function operationsItem(string $key, Heroicon $icon): NavigationItem
+    protected function operationsItem(string $key, Heroicon $icon, int $sort): NavigationItem
     {
         return NavigationItem::make(static fn (): string => (string) __("magic-starter::admin_ops.navigation.{$key}"))
-            ->group(static fn (): string => (string) __('magic-starter::admin_ops.navigation_group'))
+            ->group(AdminNavigationGroup::Operations)
+            ->sort($sort)
             ->icon($icon);
     }
 

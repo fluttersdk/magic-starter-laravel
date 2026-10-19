@@ -9,6 +9,7 @@ use Filament\Tables\Columns\TextColumn;
 use Filament\Tables\Table;
 use FlutterSdk\MagicStarter\Contracts\SavesAiPromptOverrides;
 use FlutterSdk\MagicStarter\Enums\AiPromptOverrideStatus;
+use FlutterSdk\MagicStarter\Filament\AdminNavigationGroup;
 use FlutterSdk\MagicStarter\Filament\Resources\AiPrompts\Pages\CreateAiPromptOverride;
 use FlutterSdk\MagicStarter\Filament\Resources\AiPrompts\Pages\EditAiPromptOverride;
 use FlutterSdk\MagicStarter\Filament\Resources\AiPrompts\Pages\ListAiPromptOverrides;
@@ -21,6 +22,7 @@ use FlutterSdk\MagicStarter\Support\AiPrompts\PromptRegistry;
 use FlutterSdk\MagicStarter\Support\AiPrompts\RequiredPhrases;
 use Illuminate\Contracts\Auth\Authenticatable;
 use Illuminate\Database\Eloquent\Model;
+use UnitEnum;
 
 /**
  * The prompt workbench: staff replace the body of a prompt the host registered in code.
@@ -43,6 +45,12 @@ class AiPromptOverrideResource extends MagicStarterResource
     public const ABSENT = '-';
 
     protected static string|BackedEnum|null $navigationIcon = Heroicon::OutlinedPencilSquare;
+
+    protected static string|UnitEnum|null $navigationGroup = AdminNavigationGroup::Ai;
+
+    protected static ?int $navigationSort = 20;
+
+    protected static ?string $slug = 'ai-prompts';
 
     protected static ?string $recordTitleAttribute = 'key';
 

@@ -9,9 +9,23 @@ use Filament\Resources\Pages\CreateRecord;
 use Filament\Resources\Pages\EditRecord;
 use Filament\Support\Exceptions\Halt;
 use FlutterSdk\MagicStarter\Events\AdminActionPerformed;
+use FlutterSdk\MagicStarter\Filament\AdminNavigationGroup;
 use FlutterSdk\MagicStarter\Filament\Concerns\WritesThroughContracts;
 use FlutterSdk\MagicStarter\Filament\MagicStarterPlugin;
+use FlutterSdk\MagicStarter\Filament\Resources\AiPrompts\AiPromptOverrideResource;
+use FlutterSdk\MagicStarter\Filament\Resources\AiRuns\AiRunResource;
+use FlutterSdk\MagicStarter\Filament\Resources\AppReleases\AppReleaseResource;
+use FlutterSdk\MagicStarter\Filament\Resources\Audits\AuditResource;
+use FlutterSdk\MagicStarter\Filament\Resources\BillingEvents\BillingEventResource;
+use FlutterSdk\MagicStarter\Filament\Resources\Campaigns\CampaignResource;
 use FlutterSdk\MagicStarter\Filament\Resources\MagicStarterResource;
+use FlutterSdk\MagicStarter\Filament\Resources\NewsletterSubscribers\NewsletterSubscriberResource;
+use FlutterSdk\MagicStarter\Filament\Resources\Subscriptions\SubscriptionResource;
+use FlutterSdk\MagicStarter\Filament\Resources\SupportConversations\SupportConversationResource;
+use FlutterSdk\MagicStarter\Filament\Resources\SupportFeedback\SupportFeedbackResource;
+use FlutterSdk\MagicStarter\Filament\Resources\Teams\TeamResource;
+use FlutterSdk\MagicStarter\Filament\Resources\Users\UserResource;
+use FlutterSdk\MagicStarter\Filament\Resources\WebhookDeliveries\WebhookDeliveryResource;
 use FlutterSdk\MagicStarter\Filament\Support\ContractAction;
 use FlutterSdk\MagicStarter\MagicStarter;
 use FlutterSdk\MagicStarter\Social\SocialSignInRefused;
@@ -22,6 +36,7 @@ use Illuminate\Database\Eloquent\Model;
 use Illuminate\Support\Facades\Event;
 use Illuminate\Validation\ValidationException;
 use LogicException;
+use PHPUnit\Framework\Attributes\DataProvider;
 
 /**
  * The plugin core: registration, the resource base, the page write seam and the
@@ -114,17 +129,70 @@ class PluginTest extends FilamentTestCase
         $this->assertNull($plugin->authorizeBillingUsing(null)->getAuthorizeBillingUsing());
     }
 
-    public function test_the_navigation_group_reaches_the_resources(): void
+    public function test_a_resource_without_its_own_group_sits_under_none_until_the_app_names_one(): void
     {
         $resource = $this->plainResource();
 
-        $this->assertSame(__('magic-starter::admin.navigation_group'), $resource::getNavigationGroup());
+        $this->assertNull($resource::getNavigationGroup());
 
         Filament::setCurrentPanel(
             Panel::make()->id('grouped')->plugin(MagicStarterPlugin::make()->navigationGroup('Ops')),
         );
 
         $this->assertSame('Ops', $resource::getNavigationGroup());
+        // The application's one name wins over a resource's own group.
+        $this->assertSame('Ops', UserResource::getNavigationGroup());
+    }
+
+    /**
+     * Groups by their backing value: a provider runs before the Filament skip,
+     * so an enum case here would load Filament's HasLabel in the job without it.
+     *
+     * @return array<string, array{class-string, string, int}>
+     */
+    public static function navigationPlacements(): array
+    {
+        return [
+            'users' => [UserResource::class, 'customers', 10],
+            'teams' => [TeamResource::class, 'customers', 20],
+            'support inbox' => [SupportConversationResource::class, 'support', 10],
+            'feedback' => [SupportFeedbackResource::class, 'support', 20],
+            'subscriptions' => [SubscriptionResource::class, 'billing', 10],
+            'campaigns' => [CampaignResource::class, 'billing', 20],
+            'billing events' => [BillingEventResource::class, 'billing', 30],
+            'webhook deliveries' => [WebhookDeliveryResource::class, 'billing', 40],
+            'ai runs' => [AiRunResource::class, 'ai', 10],
+            'ai prompts' => [AiPromptOverrideResource::class, 'ai', 20],
+            'releases' => [AppReleaseResource::class, 'communication', 10],
+            'newsletter' => [NewsletterSubscriberResource::class, 'communication', 20],
+            'audit trail' => [AuditResource::class, 'operations', 10],
+        ];
+    }
+
+    /**
+     * @param  class-string<MagicStarterResource>  $resource
+     */
+    #[DataProvider('navigationPlacements')]
+    public function test_each_resource_sits_in_its_own_group_at_its_own_place(
+        string $resource,
+        string $group,
+        int $sort,
+    ): void {
+        // Every resource used to fall into one "Accounts" group in registration
+        // order, so billing, support, AI and audit all read as account pages.
+        $this->assertSame(AdminNavigationGroup::from($group), $resource::getNavigationGroup());
+        $this->assertSame($sort, $resource::getNavigationSort());
+    }
+
+    public function test_the_groups_read_in_the_order_staff_work_through_them(): void
+    {
+        $this->assertSame(
+            ['Customers', 'Support', 'Billing', 'AI', 'Communication', 'Operations'],
+            array_map(
+                static fn (AdminNavigationGroup $group): string => $group->getLabel(),
+                AdminNavigationGroup::cases(),
+            ),
+        );
     }
 
     public function test_the_resource_base_skips_policies_and_discovery(): void

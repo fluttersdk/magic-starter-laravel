@@ -8,11 +8,13 @@ use Filament\Support\Icons\Heroicon;
 use Filament\Tables\Columns\TextColumn;
 use Filament\Tables\Filters\SelectFilter;
 use Filament\Tables\Table;
+use FlutterSdk\MagicStarter\Filament\AdminNavigationGroup;
 use FlutterSdk\MagicStarter\Filament\Resources\MagicStarterResource;
 use FlutterSdk\MagicStarter\Filament\Resources\SupportConversations\SupportConversationResource;
 use FlutterSdk\MagicStarter\Filament\Resources\SupportFeedback\Pages\ListSupportFeedback;
 use FlutterSdk\MagicStarter\Models\SupportFeedback;
 use Illuminate\Database\Eloquent\Builder;
+use UnitEnum;
 
 /**
  * The in-app 0-10 feedback answers, read-only: an answer is the customer's and
@@ -49,6 +51,10 @@ class SupportFeedbackResource extends MagicStarterResource
     protected const ABSENT = '-';
 
     protected static string|BackedEnum|null $navigationIcon = Heroicon::OutlinedFaceSmile;
+
+    protected static string|UnitEnum|null $navigationGroup = AdminNavigationGroup::Support;
+
+    protected static ?int $navigationSort = 20;
 
     protected static ?string $slug = 'support-feedback';
 

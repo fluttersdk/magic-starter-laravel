@@ -17,12 +17,15 @@ use Filament\Tables\Table;
 use FlutterSdk\MagicStarter\Enums\BillingEventType;
 use FlutterSdk\MagicStarter\Enums\BillingProvider;
 use FlutterSdk\MagicStarter\Enums\BillingSource;
+use FlutterSdk\MagicStarter\Filament\AdminNavigationGroup;
+use FlutterSdk\MagicStarter\Filament\Infolists\CodeBlockEntry;
 use FlutterSdk\MagicStarter\Filament\Resources\BillingEvents\Pages\ListBillingEvents;
 use FlutterSdk\MagicStarter\Filament\Resources\BillingEvents\Pages\ViewBillingEvent;
 use FlutterSdk\MagicStarter\Filament\Resources\MagicStarterResource;
 use FlutterSdk\MagicStarter\Models\BillingEvent;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Support\Carbon;
+use UnitEnum;
 
 /**
  * The billing history, read-only: a row is a reading and is never edited or
@@ -37,12 +40,15 @@ class BillingEventResource extends MagicStarterResource
     protected const ABSENT = '-';
 
     /**
-     * Ids and the JSON of the properties break anywhere rather than stretching
-     * their cell or the page, and keep the pretty-printed line breaks.
+     * Ids break anywhere rather than stretching their cell or the page.
      */
-    protected const WRAP_ANYWHERE = ['style' => 'overflow-wrap: anywhere; white-space: pre-wrap;'];
+    protected const WRAP_ANYWHERE = ['style' => 'overflow-wrap: anywhere;'];
 
     protected static string|BackedEnum|null $navigationIcon = Heroicon::OutlinedBanknotes;
+
+    protected static string|UnitEnum|null $navigationGroup = AdminNavigationGroup::Billing;
+
+    protected static ?int $navigationSort = 30;
 
     protected static function resolveModel(): string
     {
@@ -183,14 +189,8 @@ class BillingEventResource extends MagicStarterResource
                 ->collapsible()
                 ->visible(static fn (BillingEvent $record): bool => filled($record->properties))
                 ->schema([
-                    TextEntry::make('properties')
-                        ->hiddenLabel()
-                        ->state(static fn (BillingEvent $record): string => (string) json_encode(
-                            $record->properties,
-                            JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE,
-                        ))
-                        ->fontFamily(FontFamily::Mono)
-                        ->extraAttributes(static::WRAP_ANYWHERE),
+                    CodeBlockEntry::make('properties')
+                        ->hiddenLabel(),
                 ]),
         ]);
     }

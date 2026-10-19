@@ -4,10 +4,14 @@ namespace FlutterSdk\MagicStarter\Tests\Audit;
 
 use FlutterSdk\MagicStarter\Audit\Audit;
 use FlutterSdk\MagicStarter\Audit\Auditor;
+use FlutterSdk\MagicStarter\Enums\AiRunStatus;
 use FlutterSdk\MagicStarter\Enums\BillingEventType;
 use FlutterSdk\MagicStarter\Enums\BillingSource;
 use FlutterSdk\MagicStarter\Features;
+use FlutterSdk\MagicStarter\Models\AiRun;
+use FlutterSdk\MagicStarter\Models\AiRunAttempt;
 use FlutterSdk\MagicStarter\Models\BillingEvent;
+use FlutterSdk\MagicStarter\Models\PushDevice;
 use FlutterSdk\MagicStarter\Tests\Fixtures\ConcreteTeam;
 use FlutterSdk\MagicStarter\Tests\Fixtures\ConcreteTeamUser;
 use FlutterSdk\MagicStarter\Tests\Fixtures\ConcreteUser;
@@ -290,6 +294,58 @@ final class ModelAuditListenerTest extends TestCase
             0,
             Audit::query()->where('auditable_type', (new BillingEvent)->getMorphClass())->count(),
         );
+    }
+
+    public function test_an_ai_run_is_a_log_of_its_own_and_is_never_audited(): void
+    {
+        // Every model call wrote a created and an updated row for the run and
+        // one for each attempt, burying the staff and customer changes the trail
+        // is for, and copying prompt bodies the run log prunes on its own.
+        $this->migrate(true);
+        (require __DIR__ . '/../../database/migrations/create_ai_runs_table.php')->up();
+        (require __DIR__ . '/../../database/migrations/create_ai_run_attempts_table.php')->up();
+
+        $run = AiRun::query()->create([
+            'feature' => 'incident.analysis',
+            'status' => AiRunStatus::RUNNING,
+            'attempts_count' => 0,
+            'started_at' => now(),
+        ]);
+        AiRunAttempt::query()->create([
+            'ai_run_id' => $run->getKey(),
+            'attempt' => 1,
+            'provider' => 'anthropic',
+            'status' => 'succeeded',
+        ]);
+        $run->update(['status' => AiRunStatus::SUCCEEDED, 'attempts_count' => 1]);
+
+        $this->assertSame(0, Audit::query()->count());
+    }
+
+    public function test_a_push_device_heartbeat_writes_no_row_and_a_reachability_change_does(): void
+    {
+        // The app reports push state every few seconds, so each report wrote an
+        // updated row of two timestamps.
+        $this->migrate(true);
+        (require __DIR__ . '/../../database/migrations/create_push_devices_table.php')->up();
+        $user = $this->createUser('ada@example.com');
+        $device = PushDevice::query()->create([
+            'user_id' => $user->getKey(),
+            'subscription_id' => 'sub-1',
+            'reachability' => PushDevice::REACHABLE,
+            'captured_at' => now()->subMinute(),
+            'reported_at' => now()->subMinute(),
+        ]);
+        $updates = static fn (): int => Audit::query()
+            ->where('auditable_type', $device->getMorphClass())
+            ->where('event', 'updated')
+            ->count();
+
+        $device->update(['captured_at' => now(), 'reported_at' => now()]);
+        $this->assertSame(0, $updates());
+
+        $device->update(['reachability' => 'blocked', 'reported_at' => now()->addSecond()]);
+        $this->assertSame(1, $updates());
     }
 
     public function test_a_class_in_the_exclude_list_is_not_audited(): void

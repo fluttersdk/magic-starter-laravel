@@ -6,10 +6,12 @@ use BackedEnum;
 use Filament\Support\Icons\Heroicon;
 use Filament\Tables\Columns\TextColumn;
 use Filament\Tables\Table;
+use FlutterSdk\MagicStarter\Filament\AdminNavigationGroup;
 use FlutterSdk\MagicStarter\Filament\Resources\MagicStarterResource;
 use FlutterSdk\MagicStarter\Filament\Resources\Subscriptions\Pages\ListSubscriptions;
 use FlutterSdk\MagicStarter\MagicStarter;
 use Laravel\Cashier\Cashier;
+use UnitEnum;
 
 /**
  * A read-only list of Cashier's subscription rows.
@@ -21,6 +23,10 @@ use Laravel\Cashier\Cashier;
 class SubscriptionResource extends MagicStarterResource
 {
     protected static string|BackedEnum|null $navigationIcon = Heroicon::OutlinedCreditCard;
+
+    protected static string|UnitEnum|null $navigationGroup = AdminNavigationGroup::Billing;
+
+    protected static ?int $navigationSort = 10;
 
     protected static function resolveModel(): string
     {

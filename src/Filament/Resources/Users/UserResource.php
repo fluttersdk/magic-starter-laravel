@@ -9,6 +9,7 @@ use Filament\Tables\Table;
 use FlutterSdk\MagicStarter\Contracts\CreatesUsers;
 use FlutterSdk\MagicStarter\Contracts\UpdatesUserProfiles;
 use FlutterSdk\MagicStarter\Features;
+use FlutterSdk\MagicStarter\Filament\AdminNavigationGroup;
 use FlutterSdk\MagicStarter\Filament\Resources\Audits\RelationManagers\AuditsRelationManager;
 use FlutterSdk\MagicStarter\Filament\Resources\Billing\RelationManagers\BillingRelationManager;
 use FlutterSdk\MagicStarter\Filament\Resources\MagicStarterResource;
@@ -26,6 +27,7 @@ use FlutterSdk\MagicStarter\MagicStarter;
 use Illuminate\Contracts\Auth\Authenticatable;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Support\Str;
+use UnitEnum;
 
 /**
  * The user directory: profile fields only, every write through the contracts.
@@ -41,6 +43,10 @@ use Illuminate\Support\Str;
 class UserResource extends MagicStarterResource
 {
     protected static string|BackedEnum|null $navigationIcon = Heroicon::OutlinedUsers;
+
+    protected static string|UnitEnum|null $navigationGroup = AdminNavigationGroup::Customers;
+
+    protected static ?int $navigationSort = 10;
 
     protected static ?string $recordTitleAttribute = 'name';
 

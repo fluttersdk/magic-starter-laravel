@@ -2,12 +2,6 @@
 
 return [
 
-    /*
-     * The operations tools: Horizon, Pulse and Telescope keep their own
-     * dashboards; the panel links to them and summarises them.
-     */
-    'navigation_group' => 'Operations',
-
     'navigation' => [
         'horizon' => 'Horizon',
         'pulse' => 'Pulse',

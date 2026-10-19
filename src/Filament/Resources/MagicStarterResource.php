@@ -71,9 +71,13 @@ abstract class MagicStarterResource extends Resource
         return parent::resolveRecordRouteBinding($key, $modifyQuery);
     }
 
+    /**
+     * The one group the application named for every package resource, else the
+     * resource's own ({@see \FlutterSdk\MagicStarter\Filament\AdminNavigationGroup}).
+     */
     public static function getNavigationGroup(): string|UnitEnum|null
     {
-        return static::$navigationGroup ?? MagicStarterPlugin::get()->getNavigationGroup();
+        return MagicStarterPlugin::get()->getNavigationGroup() ?? static::$navigationGroup;
     }
 
     /**

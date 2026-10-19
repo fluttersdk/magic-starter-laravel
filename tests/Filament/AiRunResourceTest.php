@@ -290,10 +290,10 @@ class AiRunResourceTest extends FilamentTestCase
             ->assertSee('incident.analysis')
             ->assertSee('Be terse.')
             ->assertSee('Why is checkout slow?')
-            ->assertSee('"locale": "tr"')
+            ->assertSeeHtml('<span class="msl-code-key">&quot;locale&quot;</span>')
             ->assertSee('lookup_monitor')
             ->assertSee('Partial answer')
-            ->assertSee('"cause": "database"')
+            ->assertSeeHtml('<span class="msl-code-key">&quot;cause&quot;</span>')
             ->assertSee('Both providers refused')
             ->assertSee('anthropic')
             ->assertSee('529')
@@ -329,13 +329,53 @@ class AiRunResourceTest extends FilamentTestCase
         $this->assertStringNotContainsString('white-space: pre-wrap', implode("\n", $entries[0]));
         $this->assertStringContainsString('overflow-wrap: anywhere', implode("\n", $entries[0]));
 
-        // A body keeps its own line breaks, and only its own.
-        $this->assertStringContainsString(
-            '<span style="white-space: pre-wrap;">First line' . "\n" . 'Second line</span>',
+        // A body keeps its own line breaks, and only its own, in a code block.
+        $this->assertMatchesRegularExpression(
+            '#<pre class="msl-code-body"[^>]*>First line' . "\n" . 'Second line</pre>#',
             $html,
         );
-        $this->assertStringContainsString('&quot;locale&quot;: &quot;tr&quot;', $html);
+        $this->assertStringContainsString(
+            '<span class="msl-code-key">&quot;locale&quot;</span>: <span class="msl-code-str">&quot;tr&quot;</span>',
+            $html,
+        );
         $this->assertStringContainsString('overloaded' . "\n" . 'retry later', $html);
+    }
+
+    public function test_the_bodies_sit_in_tabs_with_the_answer_first(): void
+    {
+        // Stacked one under another, the instructions alone pushed the answer
+        // several screens down the page.
+        $run = $this->aiRun([
+            'instructions' => 'Be terse.',
+            'input' => 'Why is checkout slow?',
+            'output' => 'The database.',
+            'structured' => ['cause' => 'database'],
+        ]);
+
+        $html = Livewire::actingAs($this->staff())
+            ->test(ViewAiRun::class, ['record' => $run->getKey()])
+            ->html();
+
+        preg_match_all('#<span class="fi-tabs-item-label">\s*([^<]+?)\s*</span>#', $html, $tabs);
+
+        // One tab per body that holds something, in order; none for the empty ones.
+        $this->assertSame(
+            array_map(
+                static fn (string $field): string => (string) __("magic-starter::admin_ai.view.{$field}"),
+                ['output', 'structured', 'input', 'instructions'],
+            ),
+            array_values(array_unique($tabs[1])),
+        );
+    }
+
+    public function test_an_output_that_is_json_text_is_shown_as_json(): void
+    {
+        $run = $this->aiRun(['output' => '{"summary":"slow queries","confidence":"high"}']);
+
+        Livewire::actingAs($this->staff())
+            ->test(ViewAiRun::class, ['record' => $run->getKey()])
+            ->assertSeeHtml('<span class="msl-code-key">&quot;summary&quot;</span>')
+            ->assertSeeHtml('<span class="msl-code-str">&quot;slow queries&quot;</span>');
     }
 
     public function test_a_body_is_escaped_before_it_keeps_its_line_breaks(): void
@@ -361,7 +401,9 @@ class AiRunResourceTest extends FilamentTestCase
             ->assertSuccessful()
             ->assertSee('Bodies pruned on')
             ->assertSee('Oct 1, 2026')
-            ->assertSee('anthropic');
+            ->assertSee('anthropic')
+            // With every body gone there is no tab to list, not an empty strip.
+            ->assertDontSeeHtml('fi-sc-tabs');
     }
 
     public function test_the_status_badge_and_the_status_filter_show_translated_labels(): void

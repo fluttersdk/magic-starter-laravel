@@ -15,6 +15,7 @@ use FlutterSdk\MagicStarter\Contracts\UpdatesCampaigns;
 use FlutterSdk\MagicStarter\Enums\BillingEventType;
 use FlutterSdk\MagicStarter\Enums\CampaignDiscountType;
 use FlutterSdk\MagicStarter\Events\AdminActionPerformed;
+use FlutterSdk\MagicStarter\Filament\AdminNavigationGroup;
 use FlutterSdk\MagicStarter\Filament\Resources\Campaigns\Pages\CreateCampaign;
 use FlutterSdk\MagicStarter\Filament\Resources\Campaigns\Pages\EditCampaign;
 use FlutterSdk\MagicStarter\Filament\Resources\Campaigns\Pages\ListCampaigns;
@@ -28,6 +29,7 @@ use Illuminate\Database\Eloquent\Model;
 use Illuminate\Support\Facades\Event;
 use Illuminate\Validation\ValidationException;
 use Laravel\Cashier\Cashier;
+use UnitEnum;
 
 /**
  * The time-boxed Stripe promotion-code campaigns staff run.
@@ -44,6 +46,10 @@ class CampaignResource extends MagicStarterResource
     protected const FORM_STATE_PATH = 'data';
 
     protected static string|BackedEnum|null $navigationIcon = Heroicon::OutlinedTag;
+
+    protected static string|UnitEnum|null $navigationGroup = AdminNavigationGroup::Billing;
+
+    protected static ?int $navigationSort = 20;
 
     protected static ?string $recordTitleAttribute = 'name';
 

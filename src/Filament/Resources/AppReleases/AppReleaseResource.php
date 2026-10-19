@@ -10,6 +10,7 @@ use Filament\Tables\Table;
 use FlutterSdk\MagicStarter\Contracts\CreatesAppReleases;
 use FlutterSdk\MagicStarter\Contracts\UpdatesAppReleases;
 use FlutterSdk\MagicStarter\Enums\ReleaseStatus;
+use FlutterSdk\MagicStarter\Filament\AdminNavigationGroup;
 use FlutterSdk\MagicStarter\Filament\Resources\AppReleases\Pages\CreateAppRelease;
 use FlutterSdk\MagicStarter\Filament\Resources\AppReleases\Pages\EditAppRelease;
 use FlutterSdk\MagicStarter\Filament\Resources\AppReleases\Pages\ListAppReleases;
@@ -19,6 +20,7 @@ use FlutterSdk\MagicStarter\Filament\Support\ContractAction;
 use FlutterSdk\MagicStarter\Models\AppRelease;
 use Illuminate\Contracts\Auth\Authenticatable;
 use Illuminate\Database\Eloquent\Model;
+use UnitEnum;
 
 /**
  * The release notes clients read from the public releases feed.
@@ -30,6 +32,10 @@ use Illuminate\Database\Eloquent\Model;
 class AppReleaseResource extends MagicStarterResource
 {
     protected static string|BackedEnum|null $navigationIcon = Heroicon::OutlinedMegaphone;
+
+    protected static string|UnitEnum|null $navigationGroup = AdminNavigationGroup::Communication;
+
+    protected static ?int $navigationSort = 10;
 
     protected static ?string $recordTitleAttribute = 'version';
 
