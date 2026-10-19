@@ -4,6 +4,10 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Added
+
+- **Grant a plan from the billing lists.** An operator set up an enterprise contract, a partner or a comp only from the customer's own Billing tab, which nothing on the Subscriptions list pointed to. A new **Manual plans** list (Billing group, plugin key `billing_grants`) shows every grant, open or ended, with its customer, plan, reason, status, expiry and who made it, and it and Subscriptions carry **Grant a plan**, which asks for the customer (searched by name or email, a team also through any member, and labelled with an email so two customers sharing a name stay apart) as well as the plan, reason and expiry. It is the Billing tab's grant through the same `AdministersBilling::grant()`, shown only to an admin the billing list allows. The tab's plan, reason and expiry fields moved to `BillingFormFields` so the two forms stay one. (`src/Filament/Actions/GrantPlanAction.php`, `src/Filament/Resources/BillingGrants/*`, `src/Filament/Support/BillingFormFields.php`, `src/Filament/Resources/Subscriptions/Pages/ListSubscriptions.php`, `src/Filament/MagicStarterPlugin.php`, `lang/*/admin_billing.php`, `lang/*/admin_misc.php`, `doc/basics/billing.md`)
+
 ## [0.0.42] - 2026-10-19
 
 ### Added

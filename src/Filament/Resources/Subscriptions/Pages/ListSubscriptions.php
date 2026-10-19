@@ -7,6 +7,7 @@ use Filament\Notifications\Notification;
 use Filament\Resources\Pages\ListRecords;
 use Filament\Support\Icons\Heroicon;
 use FlutterSdk\MagicStarter\Console\ReconcileBillingEntitlements;
+use FlutterSdk\MagicStarter\Filament\Actions\GrantPlanAction;
 use FlutterSdk\MagicStarter\Filament\Resources\Subscriptions\SubscriptionResource;
 use FlutterSdk\MagicStarter\Filament\Support\ContractAction;
 use Illuminate\Support\Facades\Artisan;
@@ -21,6 +22,7 @@ class ListSubscriptions extends ListRecords
     protected function getHeaderActions(): array
     {
         return [
+            GrantPlanAction::make(),
             Action::make('reconcile')
                 ->label(__('magic-starter::admin_misc.subscriptions.reconcile.label'))
                 ->icon(Heroicon::OutlinedArrowPath)

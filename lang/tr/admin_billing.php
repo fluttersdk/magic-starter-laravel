@@ -18,6 +18,7 @@ return [
     ],
 
     'fields' => [
+        'billable' => 'Müşteri',
         'plan' => 'Plan',
         'reason' => 'Neden',
         'expires_at' => 'Son geçerli gün',

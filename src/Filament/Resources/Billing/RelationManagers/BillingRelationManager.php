@@ -10,8 +10,6 @@ use Filament\Actions\ViewAction;
 use Filament\Facades\Filament;
 use Filament\Forms\Components\DatePicker;
 use Filament\Forms\Components\Select;
-use Filament\Forms\Components\Textarea;
-use Filament\Forms\Components\TextInput;
 use Filament\Infolists\Components\TextEntry;
 use Filament\Resources\RelationManagers\RelationManager;
 use Filament\Schemas\Components\EmbeddedTable;
@@ -26,10 +24,10 @@ use FlutterSdk\MagicStarter\Enums\BillingProvider;
 use FlutterSdk\MagicStarter\Enums\PlanStatus;
 use FlutterSdk\MagicStarter\Filament\Resources\BillingEvents\BillingEventResource;
 use FlutterSdk\MagicStarter\Filament\Support\BillingAuthorization;
+use FlutterSdk\MagicStarter\Filament\Support\BillingFormFields;
 use FlutterSdk\MagicStarter\Filament\Support\ContractAction;
 use FlutterSdk\MagicStarter\Models\BillingEvent;
 use FlutterSdk\MagicStarter\Models\BillingGrant;
-use FlutterSdk\MagicStarter\Support\BillingCatalogue;
 use FlutterSdk\MagicStarter\Support\BillingLog;
 use FlutterSdk\MagicStarter\Support\ReadsBillableAttributes;
 use FlutterSdk\MagicStarter\Support\StoreRailConfiguration;
@@ -169,17 +167,14 @@ class BillingRelationManager extends RelationManager
     {
         return $this->billingAction('grant', Heroicon::OutlinedGift, $this->offersGrant(...))
             ->schema([
-                $this->planField(),
-                $this->reasonField(),
-                DatePicker::make('expires_at')
-                    ->label(__('magic-starter::admin_billing.fields.expires_at'))
-                    ->helperText(__('magic-starter::admin_billing.fields.expires_at_help'))
-                    ->after('today'),
+                BillingFormFields::plan(),
+                BillingFormFields::reason(),
+                BillingFormFields::expiresAt(),
             ])
             ->action(function (Action $action, array $data): void {
                 $plan = (string) $data['plan'];
                 $reason = (string) $data['reason'];
-                $expiresAt = $this->endOfDay($data['expires_at'] ?? null);
+                $expiresAt = BillingFormFields::endOfDay($data['expires_at'] ?? null);
 
                 $this->administer(
                     $action,
@@ -199,7 +194,7 @@ class BillingRelationManager extends RelationManager
         return $this->billingAction('revoke', Heroicon::OutlinedNoSymbol, $this->offersRevoke(...))
             ->color('danger')
             ->schema([
-                $this->reasonField(),
+                BillingFormFields::reason(),
             ])
             ->action(function (Action $action, array $data): void {
                 $reason = (string) $data['reason'];
@@ -604,50 +599,6 @@ class BillingRelationManager extends RelationManager
             ),
             'invoice' => (string) $this->refundablePayment['invoice_id'],
         ]);
-    }
-
-    /**
-     * The plan picker: the catalogue's tiers when it publishes a ranking, a free
-     * text id otherwise, which is what the contract accepts in each case.
-     */
-    protected function planField(): Select|TextInput
-    {
-        $label = __('magic-starter::admin_billing.fields.plan');
-        $tiers = BillingCatalogue::tiers();
-
-        if ($tiers === []) {
-            return TextInput::make('plan')
-                ->label($label)
-                ->required()
-                ->maxLength(255);
-        }
-
-        return Select::make('plan')
-            ->label($label)
-            ->options(array_map(
-                static fn (array $tier): string => is_string($tier['name'] ?? null)
-                    ? $tier['name']
-                    : (string) $tier['id'],
-                $tiers,
-            ))
-            ->required();
-    }
-
-    protected function reasonField(): Textarea
-    {
-        return Textarea::make('reason')
-            ->label(__('magic-starter::admin_billing.fields.reason'))
-            ->required()
-            ->maxLength(500);
-    }
-
-    /**
-     * A date picked in the form as the end of that day, or null when empty: a
-     * grant that "expires after" a day lasts through it.
-     */
-    protected function endOfDay(mixed $date): ?CarbonImmutable
-    {
-        return is_string($date) && $date !== '' ? CarbonImmutable::parse($date)->endOfDay() : null;
     }
 
     /**

@@ -24,6 +24,31 @@ return [
         ],
     ],
 
+    'billing_grants' => [
+        'navigation_label' => 'Elle verilen planlar',
+        'model_label' => 'elle verilen plan',
+        'plural_model_label' => 'elle verilen planlar',
+        'columns' => [
+            'created_at' => 'Verildi',
+            'billable' => 'Müşteri',
+            'plan' => 'Plan',
+            'reason' => 'Gerekçe',
+            'status' => 'Durum',
+            'expires_at' => 'Bitiş',
+            'granted_by' => 'Veren',
+        ],
+        'status' => [
+            'open' => 'Açık',
+            'expired' => 'Süresi doldu',
+            'revoked' => 'Geri alındı',
+            'superseded' => 'Yerine yenisi geldi',
+        ],
+        'no_expiry' => 'Süresiz',
+        'filters' => [
+            'open' => 'Yalnızca açık olanlar',
+        ],
+    ],
+
     'newsletter' => [
         'navigation_label' => 'Bülten aboneleri',
         'model_label' => 'bülten abonesi',

@@ -24,6 +24,31 @@ return [
         ],
     ],
 
+    'billing_grants' => [
+        'navigation_label' => 'Manual plans',
+        'model_label' => 'manual plan',
+        'plural_model_label' => 'manual plans',
+        'columns' => [
+            'created_at' => 'Granted',
+            'billable' => 'Customer',
+            'plan' => 'Plan',
+            'reason' => 'Reason',
+            'status' => 'Status',
+            'expires_at' => 'Expires',
+            'granted_by' => 'Granted by',
+        ],
+        'status' => [
+            'open' => 'Open',
+            'expired' => 'Expired',
+            'revoked' => 'Revoked',
+            'superseded' => 'Superseded',
+        ],
+        'no_expiry' => 'Never',
+        'filters' => [
+            'open' => 'Open only',
+        ],
+    ],
+
     'newsletter' => [
         'navigation_label' => 'Newsletter subscribers',
         'model_label' => 'newsletter subscriber',

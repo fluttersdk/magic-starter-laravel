@@ -114,7 +114,7 @@ class MagicStarterPlugin implements Plugin
     /**
      * Register a resource class under a key.
      *
-     * A default key (`users`, `teams`, `subscriptions`, `billing_events`,
+     * A default key (`users`, `teams`, `subscriptions`, `billing_grants`, `billing_events`,
      * `webhook_deliveries`, `newsletter_subscribers`, `audits`, `support`, `support_articles`, `releases`,
      * `campaigns`, `ai_runs`, `ai_prompts`) keeps its feature gate; any other key is registered unconditionally.
      */
@@ -493,6 +493,7 @@ class MagicStarterPlugin implements Plugin
             'users' => 'FlutterSdk\\MagicStarter\\Filament\\Resources\\Users\\UserResource',
             'teams' => 'FlutterSdk\\MagicStarter\\Filament\\Resources\\Teams\\TeamResource',
             'subscriptions' => 'FlutterSdk\\MagicStarter\\Filament\\Resources\\Subscriptions\\SubscriptionResource',
+            'billing_grants' => 'FlutterSdk\\MagicStarter\\Filament\\Resources\\BillingGrants\\BillingGrantResource',
             'billing_events' => 'FlutterSdk\\MagicStarter\\Filament\\Resources\\BillingEvents\\BillingEventResource',
             'webhook_deliveries' => 'FlutterSdk\\MagicStarter\\Filament\\Resources\\WebhookDeliveries\\'
                 . 'WebhookDeliveryResource',
@@ -537,7 +538,7 @@ class MagicStarterPlugin implements Plugin
     {
         return match ($key) {
             'teams' => Features::hasTeamFeatures(),
-            'subscriptions', 'billing_events', 'webhook_deliveries' => Features::hasBillingFeatures(),
+            'subscriptions', 'billing_grants', 'billing_events', 'webhook_deliveries' => Features::hasBillingFeatures(),
             'newsletter_subscribers' => Features::hasNewsletterSubscriptionFeatures(),
             'audits' => Features::hasAuditFeatures(),
             'support' => Features::hasSupportFeatures(),

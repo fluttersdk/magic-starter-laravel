@@ -841,7 +841,9 @@ The sentences are `magic-starter::admin_billing.refusals.*` in `en` and `tr`. A 
 
 ### Manual grants
 
-A grant gives the billable a plan with no payment behind it, until an optional expiry or a revoke. The plan is a tier of `tier_order`, the expiry must be in the future, and the reason is kept on the grant.
+A grant gives the billable a plan with no payment behind it, until an optional expiry or a revoke. The plan is a tier of `tier_order`, the expiry must be in the future, and the reason is kept on the grant. It is how a plan no rail sells (an enterprise contract invoiced outside the panel, a partner, a comp) is set up.
+
+A grant is made from the billable's **Billing** tab, or from **Grant a plan** on the **Manual plans** and **Subscriptions** lists, which asks for the customer as well (searched by name or email, a team by its own name or the name or email of its owner or any member, and labelled with the owner's email). Both go through the same `AdministersBilling::grant()`, are shown only to an admin the billing list allows, and refuse with the same sentences. **Manual plans** (`billing_grants` key, Billing group) lists every grant, open or ended, with its customer, plan, reason, status, expiry and who made it; a grant is revoked from the customer's Billing tab.
 
 - A grant is refused while a paid rail grants: the record names Stripe or a store on a granting status, or the local Cashier `default` subscription grants and has not ended. The check runs again under a row lock inside the write, because a checkout can land in between, and the grant is written as a projection that yields to anybody paying.
 - There is **one open grant per billable**. A new grant closes the previous one as `superseded`. The grant's row id travels in `plan_product_id` as `grant:{id}`, which is how a revoke or an expiry knows the billable is still on it.
