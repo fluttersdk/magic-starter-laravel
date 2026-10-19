@@ -2,6 +2,7 @@
 
 namespace FlutterSdk\MagicStarter\Tests\Http\Controllers;
 
+use FlutterSdk\MagicStarter\Contracts\ResolvesSupportArticlePlaceholders;
 use FlutterSdk\MagicStarter\Enums\SupportArticleVisibility;
 use FlutterSdk\MagicStarter\Features;
 use FlutterSdk\MagicStarter\MagicStarter;
@@ -148,6 +149,24 @@ class SupportArticleControllerTest extends TestCase
         $this->assertStringNotContainsString('![', (string) $response->getContent());
         $this->assertStringNotContainsString('cdn.example.com', (string) $response->getContent());
         $this->assertStringNotContainsString('example.com/guide', (string) $response->getContent());
+    }
+
+    public function test_the_excerpt_carries_the_hosts_placeholder_values_when_a_resolver_is_bound(): void
+    {
+        $this->article('regions', 'Where are monitors checked from?', body: 'From [[faq.region_count]] regions.');
+        $this->app->instance(ResolvesSupportArticlePlaceholders::class, new class implements ResolvesSupportArticlePlaceholders
+        {
+            public function resolve(string $markdown, string $locale): string
+            {
+                return str_replace('[[faq.region_count]]', "five ({$locale})", $markdown);
+            }
+        });
+
+        $this->signIn();
+
+        $this->getJson('/support/articles?search=regions&locale=en')
+            ->assertOk()
+            ->assertJsonPath('data.0.excerpt', 'From five (en) regions.');
     }
 
     public function test_the_url_is_the_public_page_with_the_slug_as_anchor_or_null_when_unset(): void

@@ -26,12 +26,13 @@ class SupportArticleSuggestionResource extends JsonResource
     public function toArray(Request $request): array
     {
         $text = app(SupportArticleText::class);
+        $locale = (string) ($request->input('locale') ?? config('magic-starter.defaults.locale'));
 
         return [
             'id' => $this->resource['id'],
             'slug' => $this->resource['slug'],
-            'question' => $text->line($this->resource['question']),
-            'excerpt' => $text->line($this->resource['body']),
+            'question' => $text->line($this->resource['question'], $locale),
+            'excerpt' => $text->line($this->resource['body'], $locale),
             'url' => $this->url(),
         ];
     }

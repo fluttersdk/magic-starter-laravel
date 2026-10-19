@@ -2,6 +2,7 @@
 
 namespace FlutterSdk\MagicStarter\Support\SupportAi\Tools;
 
+use FlutterSdk\MagicStarter\Contracts\ResolvesSupportArticlePlaceholders;
 use Illuminate\Contracts\Config\Repository;
 
 /**
@@ -15,6 +16,8 @@ use Illuminate\Contracts\Config\Repository;
  *
  * The Markdown is reduced to text in a fixed order:
  *
+ * 0. The host's placeholder values filled in, when it binds
+ *    {@see ResolvesSupportArticlePlaceholders}, so a value is reduced too.
  * 1. `mb_scrub`, so no `/u` pattern below returns null on invalid bytes, and
  *    invisible format characters removed.
  * 2. An image becomes its alt text and a link its label: the model reads what
@@ -44,24 +47,29 @@ final class SupportArticleText
 
     public function __construct(
         private readonly Repository $config,
+        private readonly ?ResolvesSupportArticlePlaceholders $placeholders = null,
     ) {}
 
     /**
      * Markdown as one line of plain text: a question, or a body's excerpt for a search result.
+     *
+     * @param  string|null  $locale  The language the article is read in; the app's when null.
      */
-    public function line(string $markdown): string
+    public function line(string $markdown, ?string $locale = null): string
     {
-        $text = trim((string) preg_replace('/\s+/u', ' ', $this->plain($markdown)));
+        $text = trim((string) preg_replace('/\s+/u', ' ', $this->plain($markdown, $locale)));
 
         return $this->cap($text, self::LINE_MAX_LENGTH);
     }
 
     /**
      * The article's body as plain text that keeps its paragraphs.
+     *
+     * @param  string|null  $locale  The language the article is read in; the app's when null.
      */
-    public function body(string $markdown): string
+    public function body(string $markdown, ?string $locale = null): string
     {
-        return $this->cap($this->plain($markdown), self::BODY_MAX_LENGTH);
+        return $this->cap($this->plain($markdown, $locale), self::BODY_MAX_LENGTH);
     }
 
     /**
@@ -81,8 +89,13 @@ final class SupportArticleText
             . json_encode($payload, self::JSON_FLAGS);
     }
 
-    private function plain(string $markdown): string
+    private function plain(string $markdown, ?string $locale): string
     {
+        // 0. The host's values first, so they are reduced like the rest.
+        if ($this->placeholders !== null) {
+            $markdown = $this->placeholders->resolve($markdown, $locale ?? app()->getLocale());
+        }
+
         // 1. Valid bytes before any /u pattern, and no invisible characters.
         $text = (string) preg_replace('/\p{Cf}/u', '', mb_scrub($markdown, 'UTF-8'));
 

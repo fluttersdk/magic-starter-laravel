@@ -2,6 +2,7 @@
 
 namespace FlutterSdk\MagicStarter\Tests\Support\SupportAi\Tools;
 
+use FlutterSdk\MagicStarter\Contracts\ResolvesSupportArticlePlaceholders;
 use FlutterSdk\MagicStarter\Enums\SupportArticleVisibility;
 use FlutterSdk\MagicStarter\Enums\SupportConversationSource;
 use FlutterSdk\MagicStarter\Enums\SupportConversationStatus;
@@ -126,6 +127,25 @@ class FaqToolsTest extends TestCase
         $this->assertStringNotContainsString('](', $result);
         $this->assertStringNotContainsString('**', $result);
         $this->assertStringNotContainsString('<img', $result);
+    }
+
+    public function test_a_bound_resolver_fills_the_hosts_placeholders_in_the_app_locale_before_the_text_is_reduced(): void
+    {
+        $article = $this->article('regions', 'How many regions?', 'Checked from [[faq.region_count]] regions.');
+        $this->app->instance(ResolvesSupportArticlePlaceholders::class, new class implements ResolvesSupportArticlePlaceholders
+        {
+            public function resolve(string $markdown, string $locale): string
+            {
+                return str_replace('[[faq.region_count]]', "**five** ({$locale})", $markdown);
+            }
+        });
+        $this->app->setLocale('tr');
+
+        $result = $this->app->make(GetFaqArticleTool::class)
+            ->handle(SupportToolContext::forConversation($this->conversation()), ['id' => $article->id]);
+
+        $this->assertStringContainsString('Checked from five (tr) regions.', $result);
+        $this->assertStringNotContainsString('[[faq.', $result);
     }
 
     public function test_the_article_body_is_capped(): void
