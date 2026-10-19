@@ -17,6 +17,7 @@ use FlutterSdk\MagicStarter\Console\PurgeDeletedUsersCommand;
 use FlutterSdk\MagicStarter\Console\ReconcileBillingEntitlements;
 use FlutterSdk\MagicStarter\Console\SupportDoctorCommand;
 use FlutterSdk\MagicStarter\Console\SweepSupportConversationsCommand;
+use FlutterSdk\MagicStarter\Mail\OneSignalTransport;
 use FlutterSdk\MagicStarter\Support\FrontendUrl;
 use FlutterSdk\MagicStarter\Support\MailBrand;
 use Illuminate\Auth\Events\Registered;
@@ -32,6 +33,7 @@ use Illuminate\Notifications\Events\NotificationSending;
 use Illuminate\Support\Facades\Event;
 use Illuminate\Support\Facades\Gate;
 use Illuminate\Support\Facades\Log;
+use Illuminate\Support\Facades\Mail;
 use Illuminate\Support\Facades\RateLimiter;
 use Illuminate\Support\ServiceProvider;
 use Laravel\Cashier\Cashier;
@@ -274,6 +276,10 @@ class MagicStarterServiceProvider extends ServiceProvider
 
         // 1. Register named rate limiters for package endpoints.
         $this->configureRateLimiting();
+
+        // 1b. The `onesignal` mail transport, chosen per mailer by `mail.mailers.*.transport`. Nothing selects
+        //     it until a mailer asks for it, so registering it changes no existing mail.
+        Mail::extend('onesignal', fn () => new OneSignalTransport($this->app));
 
         // 2. Sanctum personal access token model binding.
         if (class_exists(Sanctum::class)) {
