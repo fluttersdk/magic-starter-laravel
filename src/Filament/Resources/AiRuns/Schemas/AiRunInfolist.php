@@ -62,7 +62,8 @@ final class AiRunInfolist
         'provider' => '7rem',
         'model' => '12rem',
         'status' => '7.5rem',
-        'cost_usd' => '6.5rem',
+        'cost_usd' => '7.5rem',
+        'tool_calls' => '11rem',
     ];
 
     /**
@@ -74,7 +75,47 @@ final class AiRunInfolist
             self::metadata(),
             self::bodies(),
             self::attempts(),
+            self::toolCalls(),
         ]);
+    }
+
+    /**
+     * Each attempt's tool calls in full, below the attempts table: a JSON block in a table cell is unreadable at
+     * a column's width, so the table names the tools and this section shows their arguments and results.
+     */
+    private static function toolCalls(): Section
+    {
+        return Section::make(self::attemptLabel('tool_calls'))
+            ->columnSpanFull()
+            ->collapsible()
+            ->visible(static fn (AiRun $record): bool => $record->attempts
+                ->contains(static fn (AiRunAttempt $attempt): bool => filled($attempt->tool_calls)))
+            ->schema([
+                RepeatableEntry::make('attempts')
+                    ->hiddenLabel()
+                    ->contained(false)
+                    ->schema([
+                        CodeBlockEntry::make('tool_calls')
+                            ->label(static fn (AiRunAttempt $record): string => "#{$record->attempt} {$record->provider}")
+                            ->state(static fn (AiRunAttempt $record): mixed => $record->tool_calls)
+                            ->visible(static fn (AiRunAttempt $record): bool => filled($record->tool_calls)),
+                    ]),
+            ]);
+    }
+
+    /**
+     * The tools an attempt called, in call order and each once, or null when it called none.
+     */
+    private static function toolNames(AiRunAttempt $attempt): ?string
+    {
+        $names = array_values(array_unique(array_filter(array_map(
+            static fn (mixed $call): ?string => is_array($call) && is_string($call['name'] ?? null)
+                ? $call['name']
+                : null,
+            (array) $attempt->tool_calls,
+        ))));
+
+        return $names === [] ? null : implode(', ', $names);
     }
 
     private static function metadata(): Section
@@ -243,10 +284,10 @@ final class AiRunInfolist
                             ->label(self::attemptLabel('duration_ms'))
                             ->numeric()
                             ->placeholder(AiRunResource::ABSENT),
-                        CodeBlockEntry::make('tool_calls')
+                        TextEntry::make('tool_calls')
                             ->label(self::attemptLabel('tool_calls'))
-                            ->state(static fn (AiRunAttempt $record): mixed => $record->tool_calls)
-                            ->maxHeight(12),
+                            ->state(static fn (AiRunAttempt $record): ?string => self::toolNames($record))
+                            ->placeholder(AiRunResource::ABSENT),
                         TextEntry::make('error')
                             ->label(self::attemptLabel('error'))
                             ->state(static fn (AiRunAttempt $record): ?string => $record->error_message
