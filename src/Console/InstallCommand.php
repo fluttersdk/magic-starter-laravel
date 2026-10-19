@@ -176,6 +176,8 @@ class InstallCommand extends Command
             'create_support_feedback_table.php',
             // Proposals point at conversations and messages, and at `users`.
             'create_support_proposals_table.php',
+            // The knowledge base stands alone: no foreign key to the tables above.
+            'create_support_articles_table.php',
         ],
         'releases' => [
             'create_app_releases_table.php',

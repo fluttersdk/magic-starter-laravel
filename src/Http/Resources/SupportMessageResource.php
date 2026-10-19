@@ -3,6 +3,7 @@
 namespace FlutterSdk\MagicStarter\Http\Resources;
 
 use FlutterSdk\MagicStarter\Enums\SupportSenderType;
+use FlutterSdk\MagicStarter\Models\SupportArticle;
 use FlutterSdk\MagicStarter\Models\SupportMessage;
 use FlutterSdk\MagicStarter\Models\SupportMessageAttachment;
 use Illuminate\Http\Request;
@@ -15,7 +16,10 @@ use Illuminate\Support\Str;
  *
  * Carries who wrote it by role, and for staff and the AI desk a display name
  * a customer may see: a staff member's first name and photo, never their id,
- * surname or email. The AI desk record in `meta` never leaves the server.
+ * surname or email. The AI desk record in `meta` never leaves the server, but
+ * the knowledge-base cards the job validated and stored under `meta.articles`:
+ * an AI message carries them as `articles`, each a slug, a question and a `url`
+ * to the public FAQ page, and no other message carries the key.
  *
  * `attachments` is present only once the signed-in customer's controller
  * calls {@see self::withAttachments()}: the public thread link is a bearer
@@ -63,7 +67,32 @@ class SupportMessageResource extends JsonResource
                     ->values()
                     ->all(),
             ),
+            'articles' => $this->when(
+                $this->sender_type === SupportSenderType::AI,
+                fn (): array => $this->articleCards(),
+            ),
         ];
+    }
+
+    /**
+     * The validated cards stored with an AI answer; `url` is the public FAQ page of the language the card was
+     * read in, anchored on the slug, or null while no page is configured. A card stored before cards carried
+     * their `locale` links the default locale's page.
+     *
+     * @return list<array{slug: string, question: string, url: string|null}>
+     */
+    private function articleCards(): array
+    {
+        $default = (string) config('magic-starter.defaults.locale');
+
+        return array_map(
+            static fn (array $card): array => [
+                'slug' => $card['slug'],
+                'question' => $card['question'],
+                'url' => SupportArticle::publicUrl($card['slug'], (string) ($card['locale'] ?? $default)),
+            ],
+            $this->meta['articles'] ?? [],
+        );
     }
 
     /**

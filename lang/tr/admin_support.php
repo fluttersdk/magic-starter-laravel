@@ -181,6 +181,67 @@ return [
     ],
 
     /*
+     * The knowledge base: the articles the AI agent, the public FAQ page and in-app suggestions read.
+     */
+    'articles' => [
+        'navigation_label' => 'Bilgi bankası',
+        'model_label' => 'makale',
+        'plural_model_label' => 'makaleler',
+        'columns' => [
+            'question' => 'Soru',
+            'section' => 'Bölüm',
+            'visibility' => 'Görünürlük',
+            'locale_state' => 'Metin (:locale)',
+            'published_at' => 'Yayın zamanı',
+        ],
+        'fields' => [
+            'slug' => 'Kısa ad',
+            'section' => 'Bölüm',
+            'sort' => 'Sıra',
+            'visibility' => 'Görünürlük',
+            'published_at' => 'Yayın zamanı',
+            'published_at_hint' => 'Boş bırakırsanız makale yayımlanmaz. İleri bir tarih, makaleyi o zaman yayımlar.',
+            'question' => 'Soru',
+            'body' => 'Yanıt',
+            'body_hint' => 'Görsel yalnızca herkese açık makalelerde kullanılabilir.',
+            'locale_hint' => 'Boş bırakırsanız :locale metninin çevrilmiş bir taslağı sıraya alınır.',
+        ],
+        'visibility' => [
+            'public' => 'Herkese açık',
+            'ai_only' => 'Yalnızca yapay zekâ',
+            'staff_only' => 'Yalnızca ekip',
+        ],
+        'states' => [
+            'approved' => 'Onaylı',
+            'draft' => 'Taslak',
+        ],
+        'actions' => [
+            'create' => 'Yeni makale',
+            'approve' => [
+                'label' => ':locale metnini onayla',
+                'heading' => ':locale metni onaylansın mı?',
+                'description' => 'Onayladığınız anda okuyucular bu metni görür. Önce baştan sona okuyun.',
+                'success' => ':locale metni onaylandı',
+            ],
+        ],
+        'refusals' => [
+            'image_in_non_public' => 'Yalnızca herkese açık bir makale görsel taşıyabilir.',
+        ],
+    ],
+
+    /*
+     * The dashboard widget on how many conversations the AI desk settled without a person.
+     */
+    'resolution' => [
+        'routed' => 'Yapay zekâ görüşmeleri (son :days gün)',
+        'resolved' => 'Kimse müdahale etmeden çözülen (son :days gün)',
+        'handed_off' => 'Ekibe devredilen (son :days gün)',
+        'csat' => 'Değerlendirme (son :days gün)',
+        'csat_value' => '%:up beğendi, %:down beğenmedi',
+        'previous' => 'Önceki :days gün: :value',
+    ],
+
+    /*
      * The billing requests the AI desk recorded for the account owner, decided by staff on the thread page.
      */
     'proposals' => [

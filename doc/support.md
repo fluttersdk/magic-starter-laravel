@@ -5,6 +5,7 @@
 - [Endpoints](#endpoints)
 - [Configuration](#configuration)
 - [The AI Desk](#the-ai-desk)
+- [Knowledge Base](#knowledge-base)
 - [Satisfaction Rating](#satisfaction-rating)
 - [In-app Feedback](#in-app-feedback)
 - [Attachments](#attachments)
@@ -95,7 +96,7 @@ What a customer reads back:
 
 - A conversation carries `topic`, `has_unread` (a staff or AI message newer than `opener_seen_at`), `awaiting_ai` (pending, newest customer message not yet answered) and `waiting_on_team` (open and waiting on a person). The handoff reason never leaves the server.
 - A list row carries `last_message`: the newest customer-visible message of kind `message` as `sender_type`, `sender_name`, `body_preview` (140 characters at most) and `created_at`. A staff note or an activity line is never the preview.
-- A message carries `kind` (`message` or `activity`) and `sender`: for staff the first name and profile photo, for the AI desk `support.ai.name`, otherwise null. A staff id, surname or email, and the `meta` the desk recorded, are never sent.
+- A message carries `kind` (`message` or `activity`) and `sender`: for staff the first name and profile photo, for the AI desk `support.ai.name`, otherwise null. A staff id, surname or email, and the `meta` the desk recorded, are never sent; the one exception is `articles` on an AI message (see Knowledge Base).
 - The reply notification carries `action_url`: `support.client_thread_path` with `{id}` replaced by the conversation key.
 
 Tapping Contact sales again continues the conversation instead of filing another: while the opener's `contact_sales` conversation in their current team is not `resolved`, the body is added to it as a customer message and the same conversation is returned with 201, so the client navigates to its id. A resolved conversation, one filed under another team (the host builds the AI's account context from the conversation's team) and every `in_app` or public conversation are never reused. The open locks the opener's own user row first, so two taps at once cannot both create.
@@ -147,7 +148,7 @@ $this->app->bind(AssistsSupportStaff::class, MyStaffAssist::class);
 A host implementation:
 
 - reads only what the turn carries. `SupportTurn` holds the conversation, the trigger message, the earlier customer-visible history (at most `support.ai.history_messages`, oldest first), the stored `summary` with its `summaryThroughId` and `historyTruncated` (see History Summary below), the reply `locale` and `deadlineSeconds`, the wall-clock budget for all of its model calls together. The constructor refuses a staff note or a message from another conversation. Every body in it is untrusted customer text, never instructions;
-- answers with a `SupportAnswer`: `reply`, `confidence` (0 to 1), `usage` (a `SupportUsage` summed over every model call it made), optionally a `compaction` (see History Summary below) and, when a person is needed, both a `handoffReason` and a `handoffPriority`. A reply is posted even for a handoff, as what the customer reads before a person takes over;
+- answers with a `SupportAnswer`: `reply`, `confidence` (0 to 1), `usage` (a `SupportUsage` summed over every model call it made), optionally a `compaction` (see History Summary below), optionally `articleRefs` (see Knowledge Base) and, when a person is needed, both a `handoffReason` and a `handoffPriority`. A reply is posted even for a handoff, as what the customer reads before a person takes over;
 - posts nothing, changes no conversation and sends no notification; the package persists the reply and records the usage;
 - may throw. A throw is a failed turn, never an error shown to the customer.
 
@@ -237,6 +238,44 @@ With the defaults: `retry_after` above 120, `lock_seconds` 120, supervisor `time
 ### Switching It Off
 
 Remove the `RespondsToSupport` binding: every conversation then starts `open` and waits for staff, as before. A pending conversation left behind is handed off by the next sweep. Setting the quotas to `0` hands every turn to staff as `quota` while the binding stays.
+
+---
+
+<a name="knowledge-base"></a>
+## Knowledge Base
+
+Staff write articles in the panel; the AI desk, the public FAQ page and in-app suggestions read them. It is off until `support.articles.enabled` is true, and needs the `create_support_articles_table` migration.
+
+- **Articles.** `SupportArticle` is global to the app: a `slug`, a `section`, a `sort`, a `visibility` (`public`, `ai_only` or `staff_only`), a `published_at` (unpublished while null; a future date goes live on time with no write), and `question` (plain text), `body` (Markdown, never HTML) and `locale_state` (`approved` or `draft`) keyed by locale. A locale is readable only while approved. The **Knowledge base** resource (`support_articles`, `src/Filament/Resources/SupportArticles`) edits them. `SupportArticleFeed` is the cached corpus every reader goes through, per audience and locale.
+- **Audience.** `SupportAudience` decides what a reader may see: `page` (the public FAQ) only `public`, `customer` (the AI agent) `public` and `ai_only`, `staff` everything. `SupportToolContext::forConversation()` reads as the customer, `forStaff()` as staff and `none()` as the page; `audience()` and `opener()` expose what a tool may read, and a tool argument never chooses either.
+- **Search.** `SearchesSupportArticles` ranks articles for one audience and locale; the bound `SupportArticleSearch` scores token overlap in PHP, and a host with an embedding index binds its own. A locale without approved text falls back to `magic-starter.defaults.locale` (`SupportArticleFeed::readable()`, the corpus every locale-aware reader uses: the default locale's order, with articles only the requested locale has after). An article answers only with a score of at least 2: one query word in its question, or two distinct query words in its body; one shared body word is no match. The AI tools `search_faq` and `get_faq_article` read through it. The package registers none: a host adds them with `SupportToolRegistry::register()`, see [Support Tools](support-tools.md).
+- **Suggestions.** `GET {prefix}/support/articles?search=&locale=` (signed in) returns up to five public matches as `id`, `slug`, `question`, an `excerpt` and a `url`, which is the requested locale's `support.articles.public_url` plus `#slug`, or null while that is unset. `public_url` is one url or an array keyed by locale; a locale with no entry links the default locale's page. The route answers 404 while the knowledge base is off, and has its own rate-limit bucket (60 a minute per caller) apart from thread reads.
+- **Images.** An editor upload is stored on `support.articles.disk` under `support-articles/`, and a save stores the disk's absolute url of one as its disk-relative path, so a change of `APP_URL` keeps every image. `RemoveSupportArticleImages` deletes an article's images when it is deleted or leaves `public`, keeping a file another article still references, and `php artisan magic-starter:support-articles:prune-images` (scheduled daily) removes uploads no article references.
+
+### Articles on an answer
+
+A responder points the customer at articles by returning ids: `new SupportAnswer(..., articleRefs: [$id, ...])`. The model's pick is untrusted, so `RespondToSupportConversation` re-checks every id where it stores the answer: the article must be public, published and approved in the turn's locale, falling back to the default locale as the search does. Anything else (staff only, AI only, a draft, unpublished, unknown, or not shaped like a key of this deployment) is dropped without failing the turn. At most three remain, in the responder's order, and they are stored in the AI message's `meta.articles` as `id`, `slug`, `question` and the `locale` it was read in. Nothing is read while `support.articles.enabled` is off.
+
+The customer API shows them as `articles` on an AI message only, each `slug`, `question` and `url` (the public page of the card's `locale` plus `#slug`, the default locale's for a card stored without one, null while `support.articles.public_url` is unset); no other `meta` key is sent.
+
+### Host contracts
+
+Each is optional; the package works with none bound.
+
+- `TranslatesSupportArticles`: the Knowledge base resource calls `queueDraft($article, $locale)` after the save commits, for each locale that has just become a draft (left empty by staff). Unbound, an empty locale stays empty and nothing is queued.
+- `ValidatesSupportArticleMarkdown`: the resource calls `validate($markdown, $visibility, $locale)` for each locale body on save, after its own image rule; every string returned is a form error. Unbound, only the package's image rule applies.
+- `ResolvesSupportArticlePlaceholders`: `SupportArticleText` calls `resolve($markdown, $locale)` before reducing an article to text, for the FAQ tools, the suggestions and the answer cards. Unbound, placeholder tokens stay as written.
+- `CapsSupportSpend`: `RespondToSupportConversation` reads `exceeded()` once per turn before the quota reserves, see below. Unbound, there is no cap.
+
+### Daily spend cap
+
+The quota counts tokens, but only the host knows what they cost. A host that wants a ceiling for the whole desk binds `CapsSupportSpend`:
+
+```php
+$this->app->bind(CapsSupportSpend::class, MyDailyCap::class);
+```
+
+`exceeded(): bool` is read once per turn, right before the quota reserves anything. When it answers true the conversation is handed to staff as `quota` and no model is called, so nothing is left unsettled. With nothing bound there is no cap. A throw is a failed turn, not a handoff.
 
 ---
 

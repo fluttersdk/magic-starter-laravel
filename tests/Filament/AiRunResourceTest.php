@@ -303,6 +303,34 @@ class AiRunResourceTest extends FilamentTestCase
             ->assertDontSee('Bodies pruned on');
     }
 
+    /**
+     * A JSON block in a table cell is unreadable at a column's width: the attempts table names the tools and the
+     * calls themselves sit in their own full-width section below it.
+     */
+    public function test_the_attempts_table_names_the_tools_and_the_calls_get_their_own_section(): void
+    {
+        $run = $this->aiRun();
+        $this->attempt($run, 1, [
+            'provider' => 'anthropic_support_1',
+            'status' => 'succeeded',
+            'tool_calls' => [
+                ['name' => 'search_faq', 'arguments' => ['query' => 'regions'], 'result' => 'two matches'],
+                ['name' => 'get_faq_article', 'arguments' => ['id' => 4], 'result' => 'the article'],
+            ],
+        ]);
+
+        $html = Livewire::actingAs($this->staff())
+            ->test(ViewAiRun::class, ['record' => $run->getKey()])
+            ->assertSee('search_faq, get_faq_article')
+            ->html();
+
+        $table = (string) strstr((string) strstr($html, '<table'), '</table>', true);
+        $section = (string) strstr($html, 'Tool calls');
+
+        $this->assertStringNotContainsString('msl-code-key', $table);
+        $this->assertStringContainsString('<span class="msl-code-key">&quot;arguments&quot;</span>', $section);
+    }
+
     public function test_the_view_wraps_long_values_without_pre_wrapping_the_template_whitespace(): void
     {
         $run = $this->aiRun([

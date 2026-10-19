@@ -327,6 +327,11 @@ class SharedBillingRulesTest extends TestCase
         config()->set('magic-starter.use_uuids', false);
         $this->assertTrue(TeamKey::looksLikeOne('42'));
         $this->assertFalse(TeamKey::looksLikeOne('a26c03f7-e668-4d5f-bb45-f573e1d87088'));
+
+        // A key past bigint's range is no row of ours, and handed to a PostgreSQL query it raises
+        // "out of range for type bigint" instead of finding nothing.
+        $this->assertTrue(TeamKey::looksLikeOne((string) PHP_INT_MAX));
+        $this->assertFalse(TeamKey::looksLikeOne('99999999999999999999'));
     }
 
     /**

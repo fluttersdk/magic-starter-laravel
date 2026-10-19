@@ -14,6 +14,7 @@
 
 use FlutterSdk\MagicStarter\Features;
 use FlutterSdk\MagicStarter\Http\Controllers\PublicSupportThreadController;
+use FlutterSdk\MagicStarter\Http\Controllers\SupportArticleController;
 use FlutterSdk\MagicStarter\Http\Controllers\SupportAttachmentController;
 use FlutterSdk\MagicStarter\Http\Controllers\SupportAttachmentDownloadController;
 use FlutterSdk\MagicStarter\Http\Controllers\SupportConversationController;
@@ -35,6 +36,10 @@ Route::prefix((string) config('magic-starter.route_prefix', ''))
                     'storeMessage',
                 ]);
                 Route::post('conversations/{conversation}/seen', [SupportConversationController::class, 'seen']);
+
+                if (config('magic-starter.support.articles.enabled')) {
+                    Route::get('articles', [SupportArticleController::class, 'index']);
+                }
 
                 if (Features::hasSupportCsatFeatures()) {
                     Route::post('conversations/{conversation}/rating', [SupportRatingController::class, 'store']);

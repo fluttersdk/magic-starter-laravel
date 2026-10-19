@@ -12,6 +12,7 @@ use FlutterSdk\MagicStarter\Console\InstallCommand;
 use FlutterSdk\MagicStarter\Console\PruneAiRunsCommand;
 use FlutterSdk\MagicStarter\Console\PruneAuditsCommand;
 use FlutterSdk\MagicStarter\Console\PruneBillingRecordsCommand;
+use FlutterSdk\MagicStarter\Console\PruneSupportArticleImagesCommand;
 use FlutterSdk\MagicStarter\Console\PurgeDeletedUsersCommand;
 use FlutterSdk\MagicStarter\Console\ReconcileBillingEntitlements;
 use FlutterSdk\MagicStarter\Console\SupportDoctorCommand;
@@ -182,6 +183,11 @@ class MagicStarterServiceProvider extends ServiceProvider
         // prompt registry, and a singleton for the same reason: it IS the
         // registration. It holds class-strings and builds tools per turn.
         $this->app->singleton(Support\SupportAi\Tools\SupportToolRegistry::class);
+
+        // How the support AI's knowledge-base tools rank articles. Unconditional
+        // like the registry: a host with an embedding index binds its own, and
+        // the tools are only offered once the host registers them.
+        $this->app->bind(Contracts\SearchesSupportArticles::class, Support\SupportAi\SupportArticleSearch::class);
 
         // How staff tune a registered prompt. Unconditional like the AppRelease
         // binds: a consumer swaps the action before it switches ai-prompts on.
@@ -440,6 +446,17 @@ class MagicStarterServiceProvider extends ServiceProvider
 
             // No pending conversation waits forever; see scheduleSupportSweep().
             $this->scheduleSupportSweep();
+
+            // An article's images leave the public disk with it, after the commit. An upload no
+            // article ever saved is the daily prune's (see schedulePruneSupportArticleImages()).
+            Event::listen(
+                'eloquent.deleted: ' . Models\SupportArticle::class,
+                [Listeners\RemoveSupportArticleImages::class, 'deleted'],
+            );
+            Event::listen(
+                'eloquent.updated: ' . Models\SupportArticle::class,
+                [Listeners\RemoveSupportArticleImages::class, 'updated'],
+            );
         }
 
         // 3.665. Keep each newsletter row's address in step with its owner's. A wildcard
@@ -549,6 +566,13 @@ class MagicStarterServiceProvider extends ServiceProvider
                     SweepSupportConversationsCommand::class,
                     SupportDoctorCommand::class,
                 ]);
+
+                // The knowledge base's own switch as well: its migration is published, not loaded, so a host
+                // that upgrades with the articles off has no table for a daily prune to read.
+                if (config('magic-starter.support.articles.enabled')) {
+                    $this->commands([PruneSupportArticleImagesCommand::class]);
+                    $this->schedulePruneSupportArticleImages();
+                }
             }
 
             // Filament is an optional dependency: its commands exist only where it
@@ -934,6 +958,28 @@ class MagicStarterServiceProvider extends ServiceProvider
     }
 
     /**
+     * Put `magic-starter:support-articles:prune-images` on the schedule, daily.
+     *
+     * Attached through `callAfterResolving()` for the reason
+     * {@see self::scheduleEntitlementReconciler()} gives, and mirroring
+     * {@see self::schedulePruneAudits()}: `withoutOverlapping()` keeps a run
+     * that outlasts its tick from racing its successor over the same files. It
+     * also takes `onOneServer()`, since the disk is shared: a fleet that cannot
+     * share a lock only repeats a delete that finds nothing. The cadence is not
+     * configurable because the grace is counted in hours.
+     */
+    private function schedulePruneSupportArticleImages(): void
+    {
+        $this->callAfterResolving(Schedule::class, function (Schedule $schedule): void {
+            $schedule->command(PruneSupportArticleImagesCommand::NAME)
+                ->name(PruneSupportArticleImagesCommand::NAME)
+                ->daily()
+                ->withoutOverlapping()
+                ->onOneServer();
+        });
+    }
+
+    /**
      * Point Laravel's markdown mail at the package components and theme.
      *
      * The package directory is appended, never prepended, so a component an app
@@ -1096,6 +1142,12 @@ class MagicStarterServiceProvider extends ServiceProvider
             // their own bucket and cannot starve the thread's own polling.
             if (str_contains($path, '/attachments/')) {
                 return Limit::perMinute(120)->by('file|' . $caller);
+            }
+
+            // Article suggestions refresh as the customer types a subject, so
+            // they ride their own bucket and cannot starve the thread's polling.
+            if (str_ends_with($path, 'support/articles')) {
+                return Limit::perMinute(60)->by('articles|' . $caller);
             }
 
             $writes = $request->isMethod('POST') && ! str_ends_with($path, '/seen');

@@ -18,6 +18,7 @@ use FlutterSdk\MagicStarter\Filament\Widgets\AiRunStatsWidget;
 use FlutterSdk\MagicStarter\Filament\Widgets\HorizonStatusWidget;
 use FlutterSdk\MagicStarter\Filament\Widgets\PulseSummaryWidget;
 use FlutterSdk\MagicStarter\Filament\Widgets\StarterStatsWidget;
+use FlutterSdk\MagicStarter\Filament\Widgets\SupportResolutionWidget;
 use FlutterSdk\MagicStarter\Http\Controllers\Admin\SupportAttachmentPanelController;
 use FlutterSdk\MagicStarter\MagicStarter;
 use Illuminate\Contracts\Auth\Access\Gate;
@@ -114,8 +115,8 @@ class MagicStarterPlugin implements Plugin
      * Register a resource class under a key.
      *
      * A default key (`users`, `teams`, `subscriptions`, `billing_events`,
-     * `webhook_deliveries`, `newsletter_subscribers`, `audits`, `support`, `releases`, `campaigns`, `ai_runs`,
-     * `ai_prompts`) keeps its feature gate; any other key is registered unconditionally.
+     * `webhook_deliveries`, `newsletter_subscribers`, `audits`, `support`, `support_articles`, `releases`,
+     * `campaigns`, `ai_runs`, `ai_prompts`) keeps its feature gate; any other key is registered unconditionally.
      */
     public function resource(string $key, string $class): static
     {
@@ -286,6 +287,7 @@ class MagicStarterPlugin implements Plugin
         $panel->widgets([
             StarterStatsWidget::class,
             ...(Features::hasAiRunFeatures() ? [AiRunStatsWidget::class] : []),
+            ...(Features::hasSupportFeatures() ? [SupportResolutionWidget::class] : []),
         ]);
 
         // 3. The starter's own second factor at login, unless the app already
@@ -501,6 +503,8 @@ class MagicStarterPlugin implements Plugin
                 . 'SupportConversationResource',
             'support_feedback' => 'FlutterSdk\\MagicStarter\\Filament\\Resources\\SupportFeedback\\'
                 . 'SupportFeedbackResource',
+            'support_articles' => 'FlutterSdk\\MagicStarter\\Filament\\Resources\\SupportArticles\\'
+                . 'SupportArticleResource',
             'releases' => 'FlutterSdk\\MagicStarter\\Filament\\Resources\\AppReleases\\AppReleaseResource',
             'campaigns' => 'FlutterSdk\\MagicStarter\\Filament\\Resources\\Campaigns\\CampaignResource',
             'ai_runs' => 'FlutterSdk\\MagicStarter\\Filament\\Resources\\AiRuns\\AiRunResource',
@@ -538,6 +542,8 @@ class MagicStarterPlugin implements Plugin
             'audits' => Features::hasAuditFeatures(),
             'support' => Features::hasSupportFeatures(),
             'support_feedback' => Features::hasSupportFeatures() && Features::hasSupportFeedbackFeatures(),
+            'support_articles' => Features::hasSupportFeatures()
+                && (bool) config('magic-starter.support.articles.enabled'),
             'releases' => Features::hasReleaseFeatures(),
             'campaigns' => Features::hasCampaignFeatures(),
             'ai_runs' => Features::hasAiRunFeatures(),

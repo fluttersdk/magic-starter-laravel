@@ -3,8 +3,10 @@
 namespace FlutterSdk\MagicStarter\Jobs;
 
 use DateTimeInterface;
+use FlutterSdk\MagicStarter\Contracts\CapsSupportSpend;
 use FlutterSdk\MagicStarter\Contracts\RespondsToSupport;
 use FlutterSdk\MagicStarter\Enums\SupportAttachmentOrigin;
+use FlutterSdk\MagicStarter\Enums\SupportAudience;
 use FlutterSdk\MagicStarter\Enums\SupportConversationStatus;
 use FlutterSdk\MagicStarter\Enums\SupportHandoffReason;
 use FlutterSdk\MagicStarter\Enums\SupportMessageKind;
@@ -12,6 +14,7 @@ use FlutterSdk\MagicStarter\Enums\SupportSenderType;
 use FlutterSdk\MagicStarter\Events\SupportConversationNeedsStaff;
 use FlutterSdk\MagicStarter\Events\SupportConversationUpdated;
 use FlutterSdk\MagicStarter\Features;
+use FlutterSdk\MagicStarter\Models\SupportArticle;
 use FlutterSdk\MagicStarter\Models\SupportConversation;
 use FlutterSdk\MagicStarter\Models\SupportMessage;
 use FlutterSdk\MagicStarter\Models\SupportMessageAttachment;
@@ -25,6 +28,7 @@ use FlutterSdk\MagicStarter\Support\SupportAi\SupportAnswer;
 use FlutterSdk\MagicStarter\Support\SupportAi\SupportHandoff;
 use FlutterSdk\MagicStarter\Support\SupportAi\SupportTurn;
 use FlutterSdk\MagicStarter\Support\SupportAi\SupportUsage;
+use FlutterSdk\MagicStarter\Support\SupportAi\Tools\SupportArticleText;
 use FlutterSdk\MagicStarter\Support\SupportAttachmentResponse;
 use FlutterSdk\MagicStarter\Support\TeamKey;
 use Illuminate\Contracts\Cache\LockTimeoutException;
@@ -94,6 +98,11 @@ class RespondToSupportConversation implements ShouldQueue
      * Minutes after dispatch past which the queue stops retrying and {@see self::failed()} hands off.
      */
     public const RETRY_WINDOW_MINUTES = 10;
+
+    /**
+     * Most knowledge-base cards one answer carries, so a long list of refs never becomes a wall of links.
+     */
+    public const MAX_ARTICLES = 3;
 
     /**
      * Two attempts at a turn. `retryUntil()` takes precedence in the worker, so a release for a busy
@@ -245,7 +254,8 @@ class RespondToSupportConversation implements ShouldQueue
             return;
         }
 
-        // 4. Charge the turn before the call; a pool the host cannot name or a refused quota goes to staff.
+        // 4. Charge the turn before the call; a pool the host cannot name, a spent host cap or a refused quota
+        //    goes to staff. The cap is read before the reserve, so a refusal leaves nothing to settle.
         $responder = $container->make(RespondsToSupport::class);
 
         try {
@@ -253,6 +263,12 @@ class RespondToSupportConversation implements ShouldQueue
         } catch (Throwable $exception) {
             report($exception);
             $desk->handoff($conversation, SupportHandoffReason::UNAVAILABLE, turn: $this->triggerId);
+
+            return;
+        }
+
+        if ($container->bound(CapsSupportSpend::class) && $container->make(CapsSupportSpend::class)->exceeded()) {
+            $desk->handoff($conversation, SupportHandoffReason::QUOTA, turn: $this->triggerId);
 
             return;
         }
@@ -271,12 +287,14 @@ class RespondToSupportConversation implements ShouldQueue
         }
 
         // 5. Ask; a responder that throws is a failed turn.
+        $turnLocale = $desk->locale($conversation);
+
         try {
             $answer = $responder->respond(new SupportTurn(
                 conversation: $conversation,
                 trigger: $trigger,
                 history: $history,
-                locale: $desk->locale($conversation),
+                locale: $turnLocale,
                 deadlineSeconds: max(1, (int) config('magic-starter.support.ai.deadline_seconds', 75) - $waitedSeconds),
                 images: $uploads['images'],
                 pdfCount: $uploads['pdfs'],
@@ -320,7 +338,7 @@ class RespondToSupportConversation implements ShouldQueue
         //    happened before. Proposals the turn drafted go to staff only once that answer is stored.
         try {
             $promoted = 0;
-            $message = $this->persist($desk, $answer, $summaryThroughId, $promoted);
+            $message = $this->persist($desk, $answer, $summaryThroughId, $promoted, $turnLocale);
 
             if ($message === null) {
                 return;
@@ -492,6 +510,7 @@ class RespondToSupportConversation implements ShouldQueue
      *
      * @param  int|string|null  $readBoundary  The `ai_summary_through_id` this turn read, null for none.
      * @param  int  $promoted  Set to how many drafts became pending; stays 0 when nothing was written.
+     * @param  string  $locale  The language the turn answered in, which its article cards are read in.
      * @return SupportMessage|null the stored answer, or null when the turn moved on while the model was
      *                             answering; nothing is written then
      */
@@ -500,8 +519,9 @@ class RespondToSupportConversation implements ShouldQueue
         SupportAnswer $answer,
         int|string|null $readBoundary,
         int &$promoted,
+        string $locale,
     ): ?SupportMessage {
-        return DB::transaction(function () use ($desk, $answer, $readBoundary, &$promoted): ?SupportMessage {
+        return DB::transaction(function () use ($desk, $answer, $readBoundary, &$promoted, $locale): ?SupportMessage {
             $conversation = SupportConversation::query()->lockForUpdate()->find($this->conversationId);
 
             if (! $conversation instanceof SupportConversation || ! $this->owns($conversation)) {
@@ -519,6 +539,7 @@ class RespondToSupportConversation implements ShouldQueue
                     'handoff_reason' => $answer->handoffReason?->value,
                     'prompt_tokens' => $answer->usage->promptTokens,
                     'completion_tokens' => $answer->usage->completionTokens,
+                    'articles' => $this->articleCards($answer->articleRefs, $locale),
                 ],
             ]);
 
@@ -540,6 +561,88 @@ class RespondToSupportConversation implements ShouldQueue
 
             return $message;
         });
+    }
+
+    /**
+     * The responder's article ids that a customer may be shown, as the cards stored with the answer.
+     *
+     * The ids are the model's pick and untrusted, so each is read again as the public page would read it: public,
+     * published and approved. The turn's language is tried first and then the default one, the fallback the search
+     * the model picked from applies, so a card is never refused that the model was legitimately offered. An id
+     * that is hidden, unpublished, a draft in both languages, unknown or not shaped like a key of this deployment
+     * is dropped without failing the turn. The responder's order is kept, repeats count once, and at most
+     * {@see self::MAX_ARTICLES} remain. The question goes through {@see SupportArticleText}, as on every other
+     * customer surface, so the host's placeholder values fill it, and `locale` records the language it was read
+     * in, which picks the public page the card links. Nothing is read while the knowledge base is off, since a host
+     * that never published its migration has no table to read.
+     *
+     * @param  list<int|string>  $refs
+     * @return list<array{id: int|string, slug: string, question: string, locale: string}>
+     */
+    private function articleCards(array $refs, string $locale): array
+    {
+        $ids = array_values(array_unique(array_filter(
+            array_map('strval', $refs),
+            static fn (string $id): bool => TeamKey::looksLikeOne($id),
+        )));
+
+        if ($ids === [] || ! config('magic-starter.support.articles.enabled')) {
+            return [];
+        }
+
+        $articles = SupportArticle::query()
+            ->whereKey($ids)
+            ->visibleTo(SupportAudience::PAGE)
+            ->live()
+            ->get()
+            ->keyBy(static fn (SupportArticle $article): string => (string) $article->getKey());
+        $locales = array_values(array_unique([$locale, (string) config('magic-starter.defaults.locale')]));
+        $text = app(SupportArticleText::class);
+        $cards = [];
+
+        foreach ($ids as $id) {
+            $article = $articles->get($id);
+
+            if (! $article instanceof SupportArticle) {
+                continue;
+            }
+
+            $readIn = $this->approvedLocale($article, $locales);
+
+            if ($readIn === null) {
+                continue;
+            }
+
+            $cards[] = [
+                'id' => $article->getKey(),
+                'slug' => $article->slug,
+                'question' => $text->line($article->question[$readIn], $readIn),
+                'locale' => $readIn,
+            ];
+
+            if (count($cards) === self::MAX_ARTICLES) {
+                break;
+            }
+        }
+
+        return $cards;
+    }
+
+    /**
+     * The first of `$locales` the article has approved text in, or null when it has none.
+     *
+     * @param  list<string>  $locales
+     */
+    private function approvedLocale(SupportArticle $article, array $locales): ?string
+    {
+        foreach ($locales as $locale) {
+            if (($article->locale_state[$locale] ?? null) === SupportArticle::LOCALE_APPROVED
+                && isset($article->question[$locale])) {
+                return $locale;
+            }
+        }
+
+        return null;
     }
 
     /**
