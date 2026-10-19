@@ -14,6 +14,7 @@ use Filament\Tables\Filters\SelectFilter;
 use Filament\Tables\Table;
 use FlutterSdk\MagicStarter\Enums\AiRunStatus;
 use FlutterSdk\MagicStarter\Features;
+use FlutterSdk\MagicStarter\Filament\AdminNavigationGroup;
 use FlutterSdk\MagicStarter\Filament\Resources\AiRuns\Pages\ListAiRuns;
 use FlutterSdk\MagicStarter\Filament\Resources\AiRuns\Pages\ViewAiRun;
 use FlutterSdk\MagicStarter\Filament\Resources\AiRuns\Schemas\AiRunInfolist;
@@ -24,6 +25,7 @@ use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\HtmlString;
+use UnitEnum;
 
 /**
  * The AI run log, read-only: a run is a reading of what a model call did and is
@@ -56,6 +58,10 @@ class AiRunResource extends MagicStarterResource
     protected const TEAM_SEARCH_LIMIT = 50;
 
     protected static string|BackedEnum|null $navigationIcon = Heroicon::OutlinedSparkles;
+
+    protected static string|UnitEnum|null $navigationGroup = AdminNavigationGroup::Ai;
+
+    protected static ?int $navigationSort = 10;
 
     protected static ?string $recordTitleAttribute = 'feature';
 

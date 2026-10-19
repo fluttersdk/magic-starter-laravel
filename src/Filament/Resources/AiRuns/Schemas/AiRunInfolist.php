@@ -6,12 +6,15 @@ use Filament\Infolists\Components\RepeatableEntry;
 use Filament\Infolists\Components\RepeatableEntry\TableColumn;
 use Filament\Infolists\Components\TextEntry;
 use Filament\Schemas\Components\Section;
+use Filament\Schemas\Components\Tabs;
+use Filament\Schemas\Components\Tabs\Tab;
 use Filament\Schemas\Schema;
 use Filament\Support\Enums\FontFamily;
 use Filament\Support\Facades\FilamentTimezone;
 use FlutterSdk\MagicStarter\Enums\AiCostSource;
 use FlutterSdk\MagicStarter\Enums\AiPromptSource;
 use FlutterSdk\MagicStarter\Enums\AiRunStatus;
+use FlutterSdk\MagicStarter\Filament\Infolists\CodeBlockEntry;
 use FlutterSdk\MagicStarter\Filament\Resources\AiRuns\AiRunResource;
 use FlutterSdk\MagicStarter\Models\AiRun;
 use FlutterSdk\MagicStarter\Models\AiRunAttempt;
@@ -27,11 +30,10 @@ use FlutterSdk\MagicStarter\Models\AiRunAttempt;
 final class AiRunInfolist
 {
     /**
-     * The text bodies, then the JSON ones, in the order the section lists them.
+     * The bodies, one tab each, in the order the tabs list them: what came
+     * back first, then what was sent, then what it was sent with.
      */
-    private const TEXT_BODIES = ['instructions', 'input', 'output', 'error_message'];
-
-    private const JSON_BODIES = ['context', 'tools', 'structured'];
+    private const BODIES = ['output', 'structured', 'error_message', 'input', 'instructions', 'context', 'tools'];
 
     /**
      * The attempt table's columns, each with the translation key of its header and cell label.
@@ -48,6 +50,19 @@ final class AiRunInfolist
         'duration_ms' => 'columns.duration_ms',
         'tool_calls' => 'attempts.tool_calls',
         'error' => 'attempts.error',
+    ];
+
+    /**
+     * Columns whose value must not wrap or clip: eleven columns share the row,
+     * and the status badge was cut to "Succeede" and the provider and model
+     * names split mid-word. Every header wraps, so the figures' headers give
+     * these the room.
+     */
+    private const ATTEMPT_WIDTHS = [
+        'provider' => '7rem',
+        'model' => '12rem',
+        'status' => '7.5rem',
+        'cost_usd' => '6.5rem',
     ];
 
     /**
@@ -172,16 +187,11 @@ final class AiRunInfolist
             ->visible(static fn (AiRun $record): bool => $record->bodies_pruned_at !== null
                 || self::hasBodies($record))
             ->schema([
-                ...array_map(
-                    static fn (string $field): TextEntry => self::bodyEntry($field)
-                        ->state(static fn (AiRun $record): mixed => $record->getAttribute($field)),
-                    self::TEXT_BODIES,
-                ),
-                ...array_map(
-                    static fn (string $field): TextEntry => self::bodyEntry($field)
-                        ->state(static fn (AiRun $record): ?string => self::json($record->getAttribute($field))),
-                    self::JSON_BODIES,
-                ),
+                Tabs::make('bodies')
+                    ->hiddenLabel()
+                    ->contained(false)
+                    ->visible(static fn (AiRun $record): bool => self::hasBodies($record))
+                    ->tabs(array_map(self::bodyTab(...), self::BODIES)),
             ]);
     }
 
@@ -194,7 +204,9 @@ final class AiRunInfolist
                 RepeatableEntry::make('attempts')
                     ->hiddenLabel()
                     ->table(array_map(
-                        static fn (string $column): TableColumn => TableColumn::make(self::attemptLabel($column)),
+                        static fn (string $column): TableColumn => TableColumn::make(self::attemptLabel($column))
+                            ->wrapHeader()
+                            ->width(self::ATTEMPT_WIDTHS[$column] ?? null),
                         array_keys(self::ATTEMPT_LABELS),
                     ))
                     ->schema([
@@ -231,13 +243,10 @@ final class AiRunInfolist
                             ->label(self::attemptLabel('duration_ms'))
                             ->numeric()
                             ->placeholder(AiRunResource::ABSENT),
-                        TextEntry::make('tool_calls')
+                        CodeBlockEntry::make('tool_calls')
                             ->label(self::attemptLabel('tool_calls'))
-                            ->state(static fn (AiRunAttempt $record): ?string => self::json($record->tool_calls))
-                            ->formatStateUsing(AiRunResource::keepingLineBreaks(...))
-                            ->fontFamily(FontFamily::Mono)
-                            ->extraAttributes(AiRunResource::WRAP_ANYWHERE)
-                            ->placeholder(AiRunResource::ABSENT),
+                            ->state(static fn (AiRunAttempt $record): mixed => $record->tool_calls)
+                            ->maxHeight(12),
                         TextEntry::make('error')
                             ->label(self::attemptLabel('error'))
                             ->state(static fn (AiRunAttempt $record): ?string => $record->error_message
@@ -250,18 +259,20 @@ final class AiRunInfolist
     }
 
     /**
-     * The entry shared by every body: labelled, monospaced, wrapped, keeping its line breaks,
-     * and shown only while the prune has not blanked it. The caller sets the state.
+     * One body's tab: its code view, and the tab only while the prune has not
+     * blanked the body.
      */
-    private static function bodyEntry(string $field): TextEntry
+    private static function bodyTab(string $field): Tab
     {
-        return TextEntry::make($field)
-            ->label(__("magic-starter::admin_ai.view.{$field}"))
-            ->formatStateUsing(AiRunResource::keepingLineBreaks(...))
-            ->fontFamily(FontFamily::Mono)
-            ->extraAttributes(AiRunResource::WRAP_ANYWHERE)
-            ->columnSpanFull()
-            ->visible(static fn (AiRun $record): bool => filled($record->getAttribute($field)));
+        return Tab::make(__("magic-starter::admin_ai.view.{$field}"))
+            ->visible(static fn (AiRun $record): bool => filled($record->getAttribute($field)))
+            ->schema([
+                CodeBlockEntry::make($field)
+                    ->hiddenLabel()
+                    ->state(static fn (AiRun $record): mixed => $record->getAttribute($field))
+                    ->maxHeight(36)
+                    ->columnSpanFull(),
+            ]);
     }
 
     private static function attemptLabel(string $column): string
@@ -271,7 +282,7 @@ final class AiRunInfolist
 
     private static function hasBodies(AiRun $run): bool
     {
-        foreach ([...self::TEXT_BODIES, ...self::JSON_BODIES] as $field) {
+        foreach (self::BODIES as $field) {
             if (filled($run->getAttribute($field))) {
                 return true;
             }
@@ -302,14 +313,5 @@ final class AiRunInfolist
         }
 
         return trim(class_basename($run->subject_type) . ' ' . $run->subject_id);
-    }
-
-    private static function json(mixed $value): ?string
-    {
-        if (blank($value)) {
-            return null;
-        }
-
-        return (string) json_encode($value, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
     }
 }

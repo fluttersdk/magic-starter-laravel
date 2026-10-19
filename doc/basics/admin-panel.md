@@ -120,12 +120,35 @@ Set every option before `->plugin()`. Filament registers the plugin the moment i
 | `userResource($class)`, `teamResource($class)` | Replace the Users or Teams resource |
 | `resource($key, $class)` | Register or replace a resource. The keys `users`, `teams`, `subscriptions`, `newsletter_subscribers` and `audits` keep their feature gate; any other key is always registered |
 | `withoutResources($keys)` | Leave the listed keys out |
-| `navigationGroup($group)` | Name the group the package's resources sit under |
+| `navigationGroup($group)` | Put every package resource under one group instead of its own (see Navigation below) |
 | `authorizeUsing($callback)` | Replace the email allowlist |
 | `horizon()`, `pulse()`, `telescope()` | Put the tool behind the panel gate and link it |
 | `sentryUrl($url)` | Link an external Sentry project; `null` removes the link |
 
 `horizon()`, `pulse()` and `telescope()` throw a `LogicException` when their package is not installed.
+
+### Navigation
+
+Each package resource names its own group and place, from `AdminNavigationGroup` (case order is the sidebar order):
+
+| Group | Entries, in order |
+|-------|-------------------|
+| Customers | Users, Teams |
+| Support | Support inbox, Feedback |
+| Billing | Subscriptions, Campaigns, Billing events, Webhook deliveries |
+| AI | AI runs, AI prompts |
+| Communication | Releases, Newsletter subscribers |
+| Operations | Audit trail, then the Horizon, Pulse, Telescope and Sentry links |
+
+Sorts step by 10, so an application resource joins a group between them:
+
+```php
+protected static string|UnitEnum|null $navigationGroup = AdminNavigationGroup::Customers;
+
+protected static ?int $navigationSort = 30;
+```
+
+`navigationGroup('Back office')` puts every package resource under that one name instead; the Operations links keep their group.
 
 ### Time zone
 

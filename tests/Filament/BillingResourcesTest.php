@@ -223,7 +223,8 @@ class BillingResourcesTest extends FilamentTestCase
             ->assertSee('evt_view')
             ->assertSee(self::ADMIN_EMAIL)
             ->assertSee('$RCAnonymousID:abc')
-            ->assertSee('"plan": "pro"');
+            // In the panel's code view, highlighted.
+            ->assertSeeHtml('<span class="msl-code-key">&quot;plan&quot;</span>: <span class="msl-code-str">&quot;pro&quot;</span>');
     }
 
     public function test_the_delivery_list_derives_the_provider_and_strips_the_revenuecat_prefix(): void

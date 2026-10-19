@@ -3,6 +3,8 @@
 namespace FlutterSdk\MagicStarter\Audit;
 
 use FlutterSdk\MagicStarter\MagicStarter;
+use FlutterSdk\MagicStarter\Models\AiRun;
+use FlutterSdk\MagicStarter\Models\AiRunAttempt;
 use FlutterSdk\MagicStarter\Models\BillingEvent;
 use FlutterSdk\MagicStarter\Models\SupportFeedback;
 use FlutterSdk\MagicStarter\Models\SupportMessageAttachment;
@@ -122,8 +124,10 @@ class ModelAuditListener
     /**
      * Models the trail never records.
      *
-     * The audit model and the billing history are histories already: auditing
-     * either would copy every row into the trail. The support attachment rows
+     * The audit model, the billing history and the AI run log are histories
+     * already: auditing any of them would copy every row into the trail (two
+     * per model call, plus one per attempt, with the prompt bodies the run log
+     * prunes on its own schedule). The support attachment rows
      * carry no `user_id`, so an erasure could not find their audit copies, and
      * the feedback comments are customer text the trail does not need.
      *
@@ -139,6 +143,8 @@ class ModelAuditListener
         }
 
         if ($model instanceof Audit
+            || $model instanceof AiRun
+            || $model instanceof AiRunAttempt
             || $model instanceof BillingEvent
             || $model instanceof SupportMessageAttachment
             || $model instanceof SupportFeedback

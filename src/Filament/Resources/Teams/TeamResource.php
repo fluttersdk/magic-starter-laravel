@@ -10,6 +10,7 @@ use Filament\Tables\Table;
 use FlutterSdk\MagicStarter\Contracts\UpdatesTeams;
 use FlutterSdk\MagicStarter\Enums\Role;
 use FlutterSdk\MagicStarter\Features;
+use FlutterSdk\MagicStarter\Filament\AdminNavigationGroup;
 use FlutterSdk\MagicStarter\Filament\Resources\Audits\RelationManagers\AuditsRelationManager;
 use FlutterSdk\MagicStarter\Filament\Resources\Billing\RelationManagers\BillingRelationManager;
 use FlutterSdk\MagicStarter\Filament\Resources\MagicStarterResource;
@@ -24,6 +25,7 @@ use FlutterSdk\MagicStarter\MagicStarter;
 use Illuminate\Auth\AuthenticationException;
 use Illuminate\Contracts\Auth\Authenticatable;
 use Illuminate\Database\Eloquent\Model;
+use UnitEnum;
 
 /**
  * The cross-team staff resource for the configured team model.
@@ -36,6 +38,10 @@ use Illuminate\Database\Eloquent\Model;
 class TeamResource extends MagicStarterResource
 {
     protected static string|BackedEnum|null $navigationIcon = Heroicon::OutlinedUserGroup;
+
+    protected static string|UnitEnum|null $navigationGroup = AdminNavigationGroup::Customers;
+
+    protected static ?int $navigationSort = 20;
 
     protected static ?string $recordTitleAttribute = 'name';
 

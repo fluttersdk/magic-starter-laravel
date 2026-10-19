@@ -19,6 +19,7 @@ use Filament\Tables\Filters\Filter;
 use Filament\Tables\Filters\SelectFilter;
 use Filament\Tables\Table;
 use FlutterSdk\MagicStarter\Audit\Audit;
+use FlutterSdk\MagicStarter\Filament\AdminNavigationGroup;
 use FlutterSdk\MagicStarter\Filament\Resources\Audits\Pages\ListAudits;
 use FlutterSdk\MagicStarter\Filament\Resources\Audits\Pages\ViewAudit;
 use FlutterSdk\MagicStarter\Filament\Resources\MagicStarterResource;
@@ -27,6 +28,7 @@ use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\Collection;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Support\Carbon;
+use UnitEnum;
 
 /**
  * The audit trail, read-only: a row is history and is never edited or deleted
@@ -52,6 +54,10 @@ class AuditResource extends MagicStarterResource
     protected const ACTOR_SEARCH_LIMIT = 100;
 
     protected static string|BackedEnum|null $navigationIcon = Heroicon::OutlinedClipboardDocumentList;
+
+    protected static string|UnitEnum|null $navigationGroup = AdminNavigationGroup::Operations;
+
+    protected static ?int $navigationSort = 10;
 
     protected static ?string $recordTitleAttribute = 'event';
 

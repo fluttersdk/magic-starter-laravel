@@ -14,6 +14,7 @@ use Filament\Support\Icons\Heroicon;
 use Filament\Tables\Columns\TextColumn;
 use Filament\Tables\Filters\SelectFilter;
 use Filament\Tables\Table;
+use FlutterSdk\MagicStarter\Filament\AdminNavigationGroup;
 use FlutterSdk\MagicStarter\Filament\Resources\MagicStarterResource;
 use FlutterSdk\MagicStarter\Filament\Resources\WebhookDeliveries\Pages\ListWebhookDeliveries;
 use FlutterSdk\MagicStarter\Filament\Resources\WebhookDeliveries\Pages\ViewWebhookDelivery;
@@ -21,6 +22,7 @@ use FlutterSdk\MagicStarter\Jobs\SyncRevenueCatEntitlement;
 use FlutterSdk\MagicStarter\Models\BillingEvent;
 use FlutterSdk\MagicStarter\Models\ProcessedWebhookEvent;
 use Illuminate\Database\Eloquent\Builder;
+use UnitEnum;
 
 /**
  * The webhook events the billing rails claimed as processed, read-only.
@@ -41,6 +43,10 @@ class WebhookDeliveryResource extends MagicStarterResource
     protected const ABSENT = '-';
 
     protected static string|BackedEnum|null $navigationIcon = Heroicon::OutlinedInboxArrowDown;
+
+    protected static string|UnitEnum|null $navigationGroup = AdminNavigationGroup::Billing;
+
+    protected static ?int $navigationSort = 40;
 
     protected static function resolveModel(): string
     {

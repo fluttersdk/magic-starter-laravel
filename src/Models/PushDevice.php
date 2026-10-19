@@ -73,6 +73,15 @@ class PushDevice extends Model
     public const FRESH_FOR_HOURS = 24;
 
     /**
+     * The report timestamps: the app restamps them on every launch, sign-in and
+     * permission check, so a report that changed nothing else writes no audit
+     * row. A reachability change still does.
+     *
+     * @var list<string>
+     */
+    protected array $auditIgnore = ['captured_at', 'reported_at'];
+
+    /**
      * @var list<string>
      */
     protected $fillable = [

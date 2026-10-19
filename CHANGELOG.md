@@ -4,6 +4,18 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Changed
+
+- **The admin sidebar is grouped and ordered.** Every package resource sat in one "Accounts" group in registration order, so billing, support, AI and the audit trail all read as account pages. Each resource now names its group and place from the new `AdminNavigationGroup` enum, whose case order is the sidebar order: Customers (Users, Teams), Support (Support inbox, Feedback), Billing (Subscriptions, Campaigns, Billing events, Webhook deliveries), AI (AI runs, AI prompts), Communication (Releases, Newsletter subscribers), Operations (Audit trail, then the Horizon, Pulse, Telescope and Sentry links). Sorts step by 10, so an application resource joins a group between them. `navigationGroup($name)` still puts every package resource under one name; `getNavigationGroup()` now answers null when it was not called. The lang keys `admin.navigation_group` and `admin_ops.navigation_group` are gone; `admin.navigation_groups.*` replace them. (`src/Filament/AdminNavigationGroup.php`, `src/Filament/MagicStarterPlugin.php`, `src/Filament/Resources/*`, `lang/*/admin.php`, `doc/basics/admin-panel.md`)
+- **AI runs and payloads read as code.** A new `CodeBlockEntry` shows structured state (an array, or text holding a JSON object or list) as highlighted, pretty-printed JSON and anything else as text, in a bordered block with a language tag, a line count and a copy button, scrolling past its maximum height, in light and dark mode. Every token is escaped. The AI run page puts its bodies in tabs (output, structured output, error, input, instructions, context, tools) instead of stacking them, so the answer is no longer screens below the prompt; attempt tool calls and billing event properties use the same block. (`src/Filament/Infolists/CodeBlockEntry.php`, `src/Filament/Support/CodeBlock.php`, `resources/views/filament/code-block.blade.php`, `src/Filament/Resources/AiRuns/Schemas/AiRunInfolist.php`, `src/Filament/Resources/BillingEvents/BillingEventResource.php`)
+
+### Fixed
+
+- **The audit trail records what people changed.** Every model call wrote a created and an updated row for its AI run and one per attempt, and every push-state report an updated row of two timestamps. `AiRun` and `AiRunAttempt` are now never audited (they are a log of their own), and `PushDevice` ignores `captured_at` and `reported_at`, so only a reachability change writes a row. (`src/Audit/ModelAuditListener.php`, `src/Models/PushDevice.php`)
+- **The AI prompts resource answers at `/ai-prompts`**, not the namespace-derived `/ai-prompts/ai-prompt-overrides`. (`src/Filament/Resources/AiPrompts/AiPromptOverrideResource.php`)
+- **The AI run attempts table no longer clips its status or splits names mid-word.** The provider, model, status and cost columns keep a width and the headers wrap instead. (`src/Filament/Resources/AiRuns/Schemas/AiRunInfolist.php`)
+
+
 ## [0.0.40] - 2026-10-18
 
 ### Fixed

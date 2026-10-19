@@ -60,6 +60,12 @@ class AiPromptOverrideResourceTest extends FilamentTestCase
         );
     }
 
+    public function test_the_resource_answers_at_a_short_address(): void
+    {
+        // Derived from its namespace it answered at /ai-prompts/ai-prompt-overrides.
+        $this->assertSame('ai-prompts', AiPromptOverrideResource::getSlug());
+    }
+
     public function test_the_resource_is_mounted_only_with_the_ai_prompts_feature(): void
     {
         config()->set('magic-starter.features', []);
