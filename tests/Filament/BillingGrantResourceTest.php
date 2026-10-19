@@ -4,6 +4,8 @@ namespace FlutterSdk\MagicStarter\Tests\Filament;
 
 use Carbon\CarbonImmutable;
 use Carbon\CarbonInterface;
+use Filament\Forms\Components\Select;
+use Filament\Forms\Components\TextInput;
 use Filament\Notifications\Notification as FilamentNotification;
 use Filament\Panel;
 use FlutterSdk\MagicStarter\Actions\AdministerBilling;
@@ -18,6 +20,7 @@ use FlutterSdk\MagicStarter\Filament\MagicStarterPlugin;
 use FlutterSdk\MagicStarter\Filament\Resources\BillingGrants\BillingGrantResource;
 use FlutterSdk\MagicStarter\Filament\Resources\BillingGrants\Pages\ListBillingGrants;
 use FlutterSdk\MagicStarter\Filament\Resources\Subscriptions\Pages\ListSubscriptions;
+use FlutterSdk\MagicStarter\Filament\Support\BillingFormFields;
 use FlutterSdk\MagicStarter\MagicStarter;
 use FlutterSdk\MagicStarter\Models\BillingGrant;
 use FlutterSdk\MagicStarter\Models\Subscription;
@@ -291,6 +294,46 @@ class BillingGrantResourceTest extends FilamentTestCase
 
         $this->assertSame($label, GrantPlanAction::searchBillables('ayse@'));
         $this->assertSame($label, GrantPlanAction::searchBillables('Kaya'));
+    }
+
+    /**
+     * A submitted key is Livewire state, so it is checked before it reaches a query: anything but an int or a
+     * string, or a non-uuid on a uuid-keyed model, which PostgreSQL would refuse with SQLSTATE 22P02, resolves
+     * to nothing.
+     */
+    public function test_a_key_that_cannot_be_a_billable_key_resolves_to_nothing(): void
+    {
+        $acme = $this->team('Acme');
+
+        $this->assertNull(GrantPlanAction::billableLabel(null));
+        $this->assertNull(GrantPlanAction::billableLabel([$acme->getKey()]));
+
+        config()->set('magic-starter.use_uuids', true);
+
+        $this->assertNull(GrantPlanAction::billableLabel('not-a-uuid'));
+    }
+
+    public function test_a_team_whose_owner_has_no_email_is_labelled_by_its_name_alone(): void
+    {
+        $owner = $this->admin('nobody@example.com');
+        $owner->forceFill(['email' => ''])->save();
+        $acme = $this->team('Acme', $owner);
+
+        $this->assertSame('Acme', GrantPlanAction::billableLabel($acme->getKey()));
+    }
+
+    public function test_without_a_ranked_catalogue_the_plan_is_a_free_text_id(): void
+    {
+        $this->assertInstanceOf(Select::class, BillingFormFields::plan());
+
+        config()->set('magic-starter.billing.tier_order', []);
+
+        $this->assertInstanceOf(TextInput::class, BillingFormFields::plan());
+    }
+
+    public function test_the_list_names_its_rows_manual_plans(): void
+    {
+        $this->assertSame('manual plan', BillingGrantResource::getModelLabel());
     }
 
     public function test_a_user_billable_is_searched_and_labelled_by_its_own_email(): void

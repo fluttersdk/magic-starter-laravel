@@ -114,7 +114,7 @@ class MagicStarterPlugin implements Plugin
     /**
      * Register a resource class under a key.
      *
-     * A default key (`users`, `teams`, `subscriptions`, `billing_events`,
+     * A default key (`users`, `teams`, `subscriptions`, `billing_grants`, `billing_events`,
      * `webhook_deliveries`, `newsletter_subscribers`, `audits`, `support`, `support_articles`, `releases`,
      * `campaigns`, `ai_runs`, `ai_prompts`) keeps its feature gate; any other key is registered unconditionally.
      */
