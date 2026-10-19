@@ -4,6 +4,7 @@ namespace FlutterSdk\MagicStarter\Tests\Notifications;
 
 use FlutterSdk\MagicStarter\Notifications\VerifyEmailNotification;
 use FlutterSdk\MagicStarter\Tests\TestCase;
+use Illuminate\Http\Request;
 use Illuminate\Notifications\Messages\MailMessage;
 use Illuminate\Routing\Router;
 use Illuminate\Support\Facades\URL;
@@ -97,18 +98,47 @@ final class VerifyEmailNotificationTest extends TestCase
         $this->assertSame('E-postanızı doğrulayın', $mail->actionText);
     }
 
-    public function test_verification_url_uses_frontend_url(): void
+    /**
+     * The link used to swap the API host for the client's and keep the API path,
+     * so a customer landed on `<client>/api/v1/email/verify/...`, a path no client
+     * route serves, and was never verified. The client page owns `/auth/verify-email`.
+     */
+    public function test_verification_url_opens_the_client_verify_page(): void
     {
-        $notification = new VerifyEmailNotification;
-
-        $notifiable = new VerifyEmailNotificationTestUser(
-            id: 'user-1',
-            email: 'test@example.com',
+        $mail = (new VerifyEmailNotification)->toMail(
+            new VerifyEmailNotificationTestUser(id: 'user-1', email: 'test@example.com'),
         );
 
-        $mailMessage = $notification->toMail($notifiable);
+        $this->assertStringStartsWith('myapp://verify/auth/verify-email?', $mail->actionUrl);
 
-        $this->assertStringStartsWith('myapp://verify/', $mailMessage->actionUrl);
+        parse_str((string) parse_url($mail->actionUrl, PHP_URL_QUERY), $query);
+
+        $this->assertSame('user-1', $query['id']);
+        $this->assertSame(sha1('test@example.com'), $query['hash']);
+    }
+
+    /**
+     * The client replays the link's parameters against the API route, so they
+     * have to rebuild a request the `signed` middleware accepts.
+     */
+    public function test_the_client_link_carries_a_signature_the_api_accepts(): void
+    {
+        $mail = (new VerifyEmailNotification)->toMail(
+            new VerifyEmailNotificationTestUser(id: 'user-1', email: 'test@example.com'),
+        );
+
+        parse_str((string) parse_url($mail->actionUrl, PHP_URL_QUERY), $query);
+
+        // Replayed on the API host, whatever host sent the mail.
+        $replayed = Request::create(
+            "https://api.other-host.test/email/verify/{$query['id']}/{$query['hash']}?"
+            . http_build_query([
+                'expires' => $query['expires'],
+                'signature' => $query['signature'],
+            ]),
+        );
+
+        $this->assertTrue(URL::hasValidSignature($replayed, absolute: false));
     }
 }
 
