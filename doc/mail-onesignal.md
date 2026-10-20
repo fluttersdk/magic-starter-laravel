@@ -90,6 +90,8 @@ Every OneSignal failure throws a `TransportException`, which is the one exceptio
 - refuses the request or cannot be reached;
 - answers without a message id, which is how OneSignal says it sent nothing.
 
+A request to OneSignal gives up after 10 seconds (5 seconds to connect), so a hanging OneSignal fails over instead of holding the send. The limit is on the package's shared OneSignal client, so push and SMS calls through it are bounded the same way.
+
 A failed member is skipped for `retry_after` seconds in that worker process, so a burst after one OneSignal error goes to SMTP for that window.
 
 No recipient, subject or body appears in an exception or a log line. The failover logs each failure at ERROR, so the messages carry error keys and counts only.
@@ -110,7 +112,7 @@ php artisan magic-starter:mail:doctor
 php artisan magic-starter:mail:doctor --deliveries=20
 ```
 
-It prints whether the credentials are set, whether OneSignal reports the email channel enabled, the router config and the default mailer. With `--deliveries` it reads OneSignal's counters (successful, failed, errored, received) for the last sends, by class and message id. It exits 1 when the router is on while the email channel is off, since every routed mail would then land on the failover.
+It prints whether the credentials are set, whether OneSignal reports the email channel enabled, the router config and the default mailer. With `--deliveries` it reads OneSignal's counters (successful, failed, errored, received) for the last sends, by class and message id. It exits 1 when mail is routed (the router is on and the default mailer uses the router transport) and either the email channel is off or the routed mailer is not defined, since every routed mail would then land on the failover or on the default mailer.
 
 ---
 

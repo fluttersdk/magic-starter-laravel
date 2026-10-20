@@ -84,12 +84,8 @@ class OneSignalSubscriptions
      */
     public static function provisioned(): bool
     {
-        $restApiKey = config('magic-starter.onesignal.rest_api_key')
-            ?? config('services.onesignal.rest_api_key');
-
         return MagicStarter::onesignalAppId() !== null
-            && is_string($restApiKey)
-            && $restApiKey !== '';
+            && MagicStarter::onesignalRestApiKey() !== null;
     }
 
     /**

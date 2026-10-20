@@ -27,6 +27,11 @@ final class MailRoute
     public const CLASS_HEADER = 'X-Magic-Starter-Mail-Class';
 
     /**
+     * The class a message gets when nothing names its notification or mailable (a raw `html()` or `raw()` send).
+     */
+    public const UNKNOWN_CLASS = 'unknown';
+
+    /**
      * The class of the mail being delivered, set only while `sending()` runs.
      */
     private ?string $currentClass = null;

@@ -254,19 +254,23 @@ class MagicStarterServiceProvider extends ServiceProvider
 
         // OneSignal SDK client singleton (resolved lazily, only when injected).
         $this->app->singleton(\onesignal\client\api\DefaultApi::class, function (): \onesignal\client\api\DefaultApi {
-            $restApiKey = config('magic-starter.onesignal.rest_api_key')
-                ?? config('services.onesignal.rest_api_key');
+            $restApiKey = MagicStarter::onesignalRestApiKey();
 
-            if ($restApiKey === null || $restApiKey === '') {
+            if ($restApiKey === null) {
                 throw new \RuntimeException(
                     'OneSignal REST API key missing. Set ONESIGNAL_REST_API_KEY, magic-starter.onesignal.rest_api_key, or services.onesignal.rest_api_key.',
                 );
             }
 
             $config = \onesignal\client\Configuration::getDefaultConfiguration()
-                ->setRestApiKeyToken((string) $restApiKey);
+                ->setRestApiKeyToken($restApiKey);
 
-            return new \onesignal\client\api\DefaultApi(new \GuzzleHttp\Client, $config);
+            // Bounded on purpose: a send that hangs never fails, so a failover mailer would never move on, and a
+            // status-page subscribe confirmation is sent inside a web request. The bound is on the shared client,
+            // so push and SMS calls through it are limited too.
+            $client = new \GuzzleHttp\Client(['timeout' => 10, 'connect_timeout' => 5]);
+
+            return new \onesignal\client\api\DefaultApi($client, $config);
         });
     }
 
@@ -286,12 +290,12 @@ class MagicStarterServiceProvider extends ServiceProvider
 
         // 1b. The `onesignal` mail transport, chosen per mailer by `mail.mailers.*.transport`. Nothing selects
         //     it until a mailer asks for it, so registering it changes no existing mail.
-        Mail::extend('onesignal', fn () => new OneSignalTransport($this->app));
+        Mail::extend(OneSignalTransport::TRANSPORT, fn () => new OneSignalTransport($this->app));
 
         // 1c. The class-based mail router: a mailer with `transport` `magic-starter-router` sends each mail class
         //     through the mailer `magic-starter.mail.onesignal` names, or through its own `default`. The stamp
         //     only touches mail on such a mailer, so a mail on any other mailer keeps its headers.
-        Mail::extend('magic-starter-router', fn (array $config) => new RoutingTransport(
+        Mail::extend(RoutingTransport::TRANSPORT, fn (array $config) => new RoutingTransport(
             $this->app->make('mail.manager'),
             $config['default'] ?? 'smtp',
             $this->app->make(MailRoute::class),

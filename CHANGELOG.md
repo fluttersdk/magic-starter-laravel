@@ -4,6 +4,17 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Fixed
+
+- **A hanging OneSignal can no longer block a send.** The shared OneSignal client had no HTTP timeout, so a request that never answered held a mail forever and the failover never fired (a status-page subscribe confirmation is sent inside a web request). It now gives up after 10 seconds, 5 to connect. The client is shared, so push and SMS calls through it are bounded the same way. (`src/MagicStarterServiceProvider.php`, `doc/mail-onesignal.md`)
+- **A failed OneSignal send no longer logs an address.** The transport chained the SDK's exception, whose message embeds a slice of the response body, and the failover logs every member failure with its whole exception chain; OneSignal error bodies can hold addresses. The `TransportException` now carries only the HTTP status and the exception class name, with nothing chained. (`src/Mail/OneSignalTransport.php`)
+- **The router's `SentMessage` reflects the real delivery.** `RoutingTransport` dropped what the delegate returned, so Laravel's `MessageSent` carried a Message-ID and debug log that nothing had used. It now takes both from the delegate's `SentMessage`. (`src/Mail/RoutingTransport.php`)
+- **The mail doctor fails only for a live misconfiguration.** It exited 1 for a disabled email channel whenever the router switch was on, even when the default mailer did not use the router and nothing was routed. It now needs the router switch on and the default mailer on the router transport, and it also exits 1, printing `Routed mailer: <name> (not defined)`, when the routed mailer does not exist. (`src/Console/MailDoctorCommand.php`, `doc/mail-onesignal.md`)
+
+### Changed
+
+- **Public constants and a REST key helper.** `RoutingTransport::TRANSPORT` (`magic-starter-router`), `OneSignalTransport::TRANSPORT` (`onesignal`) and `MailRoute::UNKNOWN_CLASS` replace the bare strings, and `MagicStarter::onesignalRestApiKey()` answers the trimmed REST key or null, read the way `onesignalAppId()` is; the client singleton, `OneSignalSubscriptions::provisioned()` and the doctor use it, so a whitespace-only key now counts as not set everywhere. (`src/Mail/RoutingTransport.php`, `src/Mail/OneSignalTransport.php`, `src/Mail/MailRoute.php`, `src/Listeners/StampMailClass.php`, `src/MagicStarter.php`, `src/Support/OneSignalSubscriptions.php`, `src/MagicStarterServiceProvider.php`)
+
 ## [0.0.44] - 2026-10-20
 
 ### Added

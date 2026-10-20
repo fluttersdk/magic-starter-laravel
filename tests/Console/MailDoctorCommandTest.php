@@ -38,6 +38,8 @@ final class MailDoctorCommandTest extends TestCase
             'magic-starter.mail.onesignal.classes' => ['ResetPassword'],
             'magic-starter.mail.onesignal.mailer' => 'onesignal-failover',
             'mail.default' => 'magic-router',
+            'mail.mailers.magic-router' => ['transport' => 'magic-starter-router', 'default' => 'smtp'],
+            'mail.mailers.onesignal-failover' => ['transport' => 'failover', 'mailers' => ['smtp']],
         ]);
     }
 
@@ -65,6 +67,60 @@ final class MailDoctorCommandTest extends TestCase
 
         // Assert
         $this->assertSame(0, $exit);
+    }
+
+    public function test_it_passes_when_the_channel_is_disabled_but_the_default_mailer_is_not_the_router(): void
+    {
+        // Arrange: nothing is routed, so a disabled channel costs no mail.
+        config(['mail.default' => 'smtp', 'mail.mailers.smtp' => ['transport' => 'smtp']]);
+        $this->fakeApp(['channels' => ['email' => ['enabled' => false]]]);
+
+        // Act
+        $exit = Artisan::call(MailDoctorCommand::NAME);
+
+        // Assert
+        $this->assertSame(0, $exit);
+        $this->assertStringContainsString('Email channel: disabled', Artisan::output());
+    }
+
+    public function test_it_fails_when_the_routed_mailer_is_not_defined_while_routing_is_live(): void
+    {
+        // Arrange
+        config(['magic-starter.mail.onesignal.mailer' => 'missing-mailer']);
+        $this->fakeApp(['channels' => ['email' => ['enabled' => true]]]);
+
+        // Act
+        $exit = Artisan::call(MailDoctorCommand::NAME);
+
+        // Assert
+        $this->assertSame(1, $exit);
+        $this->assertStringContainsString('Routed mailer: missing-mailer (not defined)', Artisan::output());
+    }
+
+    public function test_an_undefined_routed_mailer_is_printed_but_passes_when_nothing_is_routed(): void
+    {
+        // Arrange
+        config(['magic-starter.mail.onesignal.mailer' => 'missing-mailer', 'magic-starter.mail.onesignal.enabled' => false]);
+        $this->fakeApp(['channels' => ['email' => ['enabled' => true]]]);
+
+        // Act
+        $exit = Artisan::call(MailDoctorCommand::NAME);
+
+        // Assert
+        $this->assertSame(0, $exit);
+        $this->assertStringContainsString('Routed mailer: missing-mailer (not defined)', Artisan::output());
+    }
+
+    public function test_a_defined_routed_mailer_prints_no_routed_mailer_line(): void
+    {
+        // Arrange
+        $this->fakeApp(['channels' => ['email' => ['enabled' => true]]]);
+
+        // Act
+        Artisan::call(MailDoctorCommand::NAME);
+
+        // Assert
+        $this->assertStringNotContainsString('Routed mailer:', Artisan::output());
     }
 
     public function test_it_passes_when_the_channel_is_enabled(): void
