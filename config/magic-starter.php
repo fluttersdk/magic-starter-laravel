@@ -1392,6 +1392,19 @@ return [
     */
 
     'mail' => [
+        // Class-based routing of outgoing mail through OneSignal email. Off by default. It acts only on a
+        // mailer whose `transport` is `magic-starter-router`; the app points `MAIL_MAILER` there when it
+        // wants it. `classes` are class basenames (`ResetPassword`), `*` means every class; `mailer` is the
+        // mailer a listed class leaves through, normally a failover that ends in the app's SMTP mailer.
+        'onesignal' => [
+            'enabled' => (bool) env('MAGIC_STARTER_MAIL_ONESIGNAL_ENABLED', false),
+            'classes' => array_values(array_filter(array_map(
+                'trim',
+                explode(',', (string) env('MAGIC_STARTER_MAIL_ONESIGNAL_CLASSES', '')),
+            ))),
+            'mailer' => env('MAGIC_STARTER_MAIL_ONESIGNAL_MAILER', 'onesignal-failover'),
+        ],
+
         'brand' => [
             'enabled' => (bool) env('MAGIC_STARTER_MAIL_BRAND_ENABLED', false),
             'name' => env('APP_NAME', 'Laravel'),

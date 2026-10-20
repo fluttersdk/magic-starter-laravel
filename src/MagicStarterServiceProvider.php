@@ -17,7 +17,9 @@ use FlutterSdk\MagicStarter\Console\PurgeDeletedUsersCommand;
 use FlutterSdk\MagicStarter\Console\ReconcileBillingEntitlements;
 use FlutterSdk\MagicStarter\Console\SupportDoctorCommand;
 use FlutterSdk\MagicStarter\Console\SweepSupportConversationsCommand;
+use FlutterSdk\MagicStarter\Mail\MailRoute;
 use FlutterSdk\MagicStarter\Mail\OneSignalTransport;
+use FlutterSdk\MagicStarter\Mail\RoutingTransport;
 use FlutterSdk\MagicStarter\Support\FrontendUrl;
 use FlutterSdk\MagicStarter\Support\MailBrand;
 use Illuminate\Auth\Events\Registered;
@@ -29,6 +31,7 @@ use Illuminate\Cache\RateLimiting\Limit;
 // other is a single entry on the schedule.
 use Illuminate\Console\Scheduling\Event as ScheduledEvent;
 use Illuminate\Console\Scheduling\Schedule;
+use Illuminate\Mail\Events\MessageSending;
 use Illuminate\Notifications\Events\NotificationSending;
 use Illuminate\Support\Facades\Event;
 use Illuminate\Support\Facades\Gate;
@@ -99,6 +102,8 @@ class MagicStarterServiceProvider extends ServiceProvider
         $this->app->bind(Contracts\SendsOtpCodes::class, Actions\LogOtpProvider::class);
         $this->app->bind(Contracts\VerifiesOtpCodes::class, Actions\CacheOtpVerifier::class);
         $this->app->singleton(Support\TwoFactorAuthenticationProvider::class);
+        // One instance, so the mail router and a transport further down its chain read the same class.
+        $this->app->singleton(MailRoute::class);
         // A singleton (not the `#[Singleton]` attribute, which needs Laravel 12.21
         // while the package floors at 12.0) so tests hand every Apple provider one client.
         $this->app->singleton(Social\AppleProviderFactory::class);
@@ -280,6 +285,16 @@ class MagicStarterServiceProvider extends ServiceProvider
         // 1b. The `onesignal` mail transport, chosen per mailer by `mail.mailers.*.transport`. Nothing selects
         //     it until a mailer asks for it, so registering it changes no existing mail.
         Mail::extend('onesignal', fn () => new OneSignalTransport($this->app));
+
+        // 1c. The class-based mail router: a mailer with `transport` `magic-starter-router` sends each mail class
+        //     through the mailer `magic-starter.mail.onesignal` names, or through its own `default`. The stamp
+        //     only touches mail on such a mailer, so a mail on any other mailer keeps its headers.
+        Mail::extend('magic-starter-router', fn (array $config) => new RoutingTransport(
+            $this->app->make('mail.manager'),
+            $config['default'] ?? 'smtp',
+            $this->app->make(MailRoute::class),
+        ));
+        Event::listen(MessageSending::class, Listeners\StampMailClass::class);
 
         // 2. Sanctum personal access token model binding.
         if (class_exists(Sanctum::class)) {
