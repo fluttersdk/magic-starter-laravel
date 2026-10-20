@@ -4,6 +4,8 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [0.0.45] - 2026-10-20
+
 ### Fixed
 
 - **A hanging OneSignal can no longer block a send.** The shared OneSignal client had no HTTP timeout, so a request that never answered held a mail forever and the failover never fired (a status-page subscribe confirmation is sent inside a web request). It now gives up after 10 seconds, 5 to connect. The client is shared, so push and SMS calls through it are bounded the same way. (`src/MagicStarterServiceProvider.php`, `doc/mail-onesignal.md`)
