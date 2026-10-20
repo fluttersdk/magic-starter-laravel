@@ -257,6 +257,7 @@ Request → Route (feature-gated, rate-limited)
 | [AI Run Log](doc/ai-runs.md) | Recording model calls and cache hits, tokens and cost, secret masking, pruning, the admin view |
 | [AI Prompt Overrides](doc/ai-prompts.md) | Registering and resolving prompts, the admin workbench, staleness, the boundary, failure mode |
 | [Support AI Tools](doc/support-tools.md) | Writing and registering a `SupportToolRegistry` tool, wiring it into your SDK, customer text, security notes |
+| [Mail on OneSignal](doc/mail-onesignal.md) | The `onesignal` and router transports, routing a mail class, the failover, send records and the doctor, limits |
 | [Support Proposals](doc/support-proposals.md) | Registering `ProposeBillingChangeTool`, the three actions, the lifecycle, the owner and billing gates, the ordering guarantee, what staff and the customer see |
 | [Service Provider](https://magic.fluttersdk.com/packages/starter-laravel/architecture/service-provider) | Contract bindings, route registration, rate limiters |
 | [Action Contracts](https://magic.fluttersdk.com/packages/starter-laravel/architecture/action-contracts) | Overriding business logic via singleton binding |

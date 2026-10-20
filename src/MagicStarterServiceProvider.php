@@ -9,14 +9,19 @@ use FlutterSdk\MagicStarter\Console\ExpireBillingGrantsCommand;
 use FlutterSdk\MagicStarter\Console\FilamentEjectCommand;
 use FlutterSdk\MagicStarter\Console\FilamentInstallCommand;
 use FlutterSdk\MagicStarter\Console\InstallCommand;
+use FlutterSdk\MagicStarter\Console\MailDoctorCommand;
 use FlutterSdk\MagicStarter\Console\PruneAiRunsCommand;
 use FlutterSdk\MagicStarter\Console\PruneAuditsCommand;
 use FlutterSdk\MagicStarter\Console\PruneBillingRecordsCommand;
+use FlutterSdk\MagicStarter\Console\PruneMailSendsCommand;
 use FlutterSdk\MagicStarter\Console\PruneSupportArticleImagesCommand;
 use FlutterSdk\MagicStarter\Console\PurgeDeletedUsersCommand;
 use FlutterSdk\MagicStarter\Console\ReconcileBillingEntitlements;
 use FlutterSdk\MagicStarter\Console\SupportDoctorCommand;
 use FlutterSdk\MagicStarter\Console\SweepSupportConversationsCommand;
+use FlutterSdk\MagicStarter\Mail\MailRoute;
+use FlutterSdk\MagicStarter\Mail\OneSignalTransport;
+use FlutterSdk\MagicStarter\Mail\RoutingTransport;
 use FlutterSdk\MagicStarter\Support\FrontendUrl;
 use FlutterSdk\MagicStarter\Support\MailBrand;
 use Illuminate\Auth\Events\Registered;
@@ -28,10 +33,12 @@ use Illuminate\Cache\RateLimiting\Limit;
 // other is a single entry on the schedule.
 use Illuminate\Console\Scheduling\Event as ScheduledEvent;
 use Illuminate\Console\Scheduling\Schedule;
+use Illuminate\Mail\Events\MessageSending;
 use Illuminate\Notifications\Events\NotificationSending;
 use Illuminate\Support\Facades\Event;
 use Illuminate\Support\Facades\Gate;
 use Illuminate\Support\Facades\Log;
+use Illuminate\Support\Facades\Mail;
 use Illuminate\Support\Facades\RateLimiter;
 use Illuminate\Support\ServiceProvider;
 use Laravel\Cashier\Cashier;
@@ -97,6 +104,8 @@ class MagicStarterServiceProvider extends ServiceProvider
         $this->app->bind(Contracts\SendsOtpCodes::class, Actions\LogOtpProvider::class);
         $this->app->bind(Contracts\VerifiesOtpCodes::class, Actions\CacheOtpVerifier::class);
         $this->app->singleton(Support\TwoFactorAuthenticationProvider::class);
+        // One instance, so the mail router and a transport further down its chain read the same class.
+        $this->app->singleton(MailRoute::class);
         // A singleton (not the `#[Singleton]` attribute, which needs Laravel 12.21
         // while the package floors at 12.0) so tests hand every Apple provider one client.
         $this->app->singleton(Social\AppleProviderFactory::class);
@@ -274,6 +283,20 @@ class MagicStarterServiceProvider extends ServiceProvider
 
         // 1. Register named rate limiters for package endpoints.
         $this->configureRateLimiting();
+
+        // 1b. The `onesignal` mail transport, chosen per mailer by `mail.mailers.*.transport`. Nothing selects
+        //     it until a mailer asks for it, so registering it changes no existing mail.
+        Mail::extend('onesignal', fn () => new OneSignalTransport($this->app));
+
+        // 1c. The class-based mail router: a mailer with `transport` `magic-starter-router` sends each mail class
+        //     through the mailer `magic-starter.mail.onesignal` names, or through its own `default`. The stamp
+        //     only touches mail on such a mailer, so a mail on any other mailer keeps its headers.
+        Mail::extend('magic-starter-router', fn (array $config) => new RoutingTransport(
+            $this->app->make('mail.manager'),
+            $config['default'] ?? 'smtp',
+            $this->app->make(MailRoute::class),
+        ));
+        Event::listen(MessageSending::class, Listeners\StampMailClass::class);
 
         // 2. Sanctum personal access token model binding.
         if (class_exists(Sanctum::class)) {
@@ -528,7 +551,13 @@ class MagicStarterServiceProvider extends ServiceProvider
             $this->commands([
                 InstallCommand::class,
                 PurgeDeletedUsersCommand::class,
+                MailDoctorCommand::class,
+                PruneMailSendsCommand::class,
             ]);
+
+            // Not gated: the mail router is a config switch, not a feature, and the prune skips a
+            // host whose `magic_starter_mail_sends` table was never published.
+            $this->schedulePruneMailSends();
 
             // Registered with the feature, like the reconciler (3.4d): the table
             // the command prunes exists only once the audit migration does.
@@ -907,6 +936,25 @@ class MagicStarterServiceProvider extends ServiceProvider
             $schedule->command(PruneAiRunsCommand::NAME)
                 ->name(PruneAiRunsCommand::NAME)
                 ->hourly()
+                ->withoutOverlapping();
+        });
+    }
+
+    /**
+     * Put `magic-starter:mail:prune-sends` on the schedule, daily.
+     *
+     * Attached through `callAfterResolving()` for the reason
+     * {@see self::scheduleEntitlementReconciler()} gives, and mirroring
+     * {@see self::schedulePruneAudits()}: `withoutOverlapping()` keeps a run
+     * that outlasts its tick from racing its successor over the same rows. The
+     * cadence is not configurable because retention is counted in days.
+     */
+    private function schedulePruneMailSends(): void
+    {
+        $this->callAfterResolving(Schedule::class, function (Schedule $schedule): void {
+            $schedule->command(PruneMailSendsCommand::NAME)
+                ->name(PruneMailSendsCommand::NAME)
+                ->daily()
                 ->withoutOverlapping();
         });
     }

@@ -4,6 +4,10 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Added
+
+- **Mail on OneSignal, one mail class at a time.** Laravel still renders every mail; the new `onesignal` transport hands the finished subject and HTML to OneSignal email, addressed to explicit addresses with `include_unsubscribed` (the host's database stays the opt-out of record) and link tracking off. Every failure, including an unprovisioned app, a mail with cc, bcc, attachments or no HTML body, a refused request and an answer with no message id, throws `TransportException`, so a `failover` mailer hands the mail to its next member; no address, subject or body reaches an exception or a log line. The `magic-starter-router` transport sends each mail class through the mailer `magic-starter.mail.onesignal` names, or through its own `default`: `enabled` (off by default), `classes` (basenames or `*`) and `mailer`. A `MessageSending` listener stamps the class only on mail sent through a router mailer, and the router strips it before delegating. Each accepted send writes a `magic_starter_mail_sends` row (message id, class, a sha256 of the first recipient, counts); `magic-starter:mail:prune-sends` keeps `retention_days` (30) and runs daily, and `magic-starter:mail:doctor` prints the credentials, the OneSignal email channel state, the router config and, with `--deliveries=N`, OneSignal's counters for the last sends. (`src/Mail/OneSignalTransport.php`, `src/Mail/RoutingTransport.php`, `src/Mail/MailRoute.php`, `src/Listeners/StampMailClass.php`, `src/Models/MailSend.php`, `src/Console/MailDoctorCommand.php`, `src/Console/PruneMailSendsCommand.php`, `database/migrations/create_magic_starter_mail_sends_table.php`, `config/magic-starter.php`, `doc/mail-onesignal.md`)
+
 ## [0.0.43] - 2026-10-20
 
 ### Added
