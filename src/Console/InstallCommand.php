@@ -98,6 +98,7 @@ class InstallCommand extends Command
         'add_two_factor_columns_to_users_table.php',
         'add_deletion_columns_to_users_table.php',
         'lowercase_user_emails.php',
+        'create_magic_starter_mail_sends_table.php',
     ];
 
     /** @var array<string, list<string>> Feature key → associated migration files. */

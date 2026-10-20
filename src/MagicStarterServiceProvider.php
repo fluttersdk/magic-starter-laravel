@@ -9,9 +9,11 @@ use FlutterSdk\MagicStarter\Console\ExpireBillingGrantsCommand;
 use FlutterSdk\MagicStarter\Console\FilamentEjectCommand;
 use FlutterSdk\MagicStarter\Console\FilamentInstallCommand;
 use FlutterSdk\MagicStarter\Console\InstallCommand;
+use FlutterSdk\MagicStarter\Console\MailDoctorCommand;
 use FlutterSdk\MagicStarter\Console\PruneAiRunsCommand;
 use FlutterSdk\MagicStarter\Console\PruneAuditsCommand;
 use FlutterSdk\MagicStarter\Console\PruneBillingRecordsCommand;
+use FlutterSdk\MagicStarter\Console\PruneMailSendsCommand;
 use FlutterSdk\MagicStarter\Console\PruneSupportArticleImagesCommand;
 use FlutterSdk\MagicStarter\Console\PurgeDeletedUsersCommand;
 use FlutterSdk\MagicStarter\Console\ReconcileBillingEntitlements;
@@ -549,7 +551,13 @@ class MagicStarterServiceProvider extends ServiceProvider
             $this->commands([
                 InstallCommand::class,
                 PurgeDeletedUsersCommand::class,
+                MailDoctorCommand::class,
+                PruneMailSendsCommand::class,
             ]);
+
+            // Not gated: the mail router is a config switch, not a feature, and the prune skips a
+            // host whose `magic_starter_mail_sends` table was never published.
+            $this->schedulePruneMailSends();
 
             // Registered with the feature, like the reconciler (3.4d): the table
             // the command prunes exists only once the audit migration does.
@@ -928,6 +936,25 @@ class MagicStarterServiceProvider extends ServiceProvider
             $schedule->command(PruneAiRunsCommand::NAME)
                 ->name(PruneAiRunsCommand::NAME)
                 ->hourly()
+                ->withoutOverlapping();
+        });
+    }
+
+    /**
+     * Put `magic-starter:mail:prune-sends` on the schedule, daily.
+     *
+     * Attached through `callAfterResolving()` for the reason
+     * {@see self::scheduleEntitlementReconciler()} gives, and mirroring
+     * {@see self::schedulePruneAudits()}: `withoutOverlapping()` keeps a run
+     * that outlasts its tick from racing its successor over the same rows. The
+     * cadence is not configurable because retention is counted in days.
+     */
+    private function schedulePruneMailSends(): void
+    {
+        $this->callAfterResolving(Schedule::class, function (Schedule $schedule): void {
+            $schedule->command(PruneMailSendsCommand::NAME)
+                ->name(PruneMailSendsCommand::NAME)
+                ->daily()
                 ->withoutOverlapping();
         });
     }

@@ -3,9 +3,11 @@
 namespace FlutterSdk\MagicStarter\Mail;
 
 use FlutterSdk\MagicStarter\MagicStarter;
+use FlutterSdk\MagicStarter\Models\MailSend;
 use FlutterSdk\MagicStarter\Support\OneSignalSubscriptions;
 use GuzzleHttp\Exception\GuzzleException;
 use Illuminate\Contracts\Container\Container;
+use Illuminate\Support\Str;
 use onesignal\client\api\DefaultApi;
 use onesignal\client\ApiException;
 use onesignal\client\model\CreateNotificationSuccessResponse;
@@ -19,6 +21,7 @@ use Symfony\Component\Mailer\Transport\AbstractTransport;
 use Symfony\Component\Mime\Email;
 use Symfony\Component\Mime\Message;
 use Symfony\Component\Mime\MessageConverter;
+use Throwable;
 
 /**
  * Sends a Laravel-rendered mail through OneSignal's email channel.
@@ -97,12 +100,42 @@ class OneSignalTransport extends AbstractTransport
         // 5. An accepted id can still carry addresses OneSignal skipped; surface the count only.
         $notificationId = $response->getId();
         $invalidTokens = $this->errorMap($response->getErrors())['invalid_email_tokens'] ?? null;
+        $invalidCount = is_array($invalidTokens) ? count($invalidTokens) : 0;
 
-        if (is_array($invalidTokens) && $invalidTokens !== []) {
+        if ($invalidCount > 0) {
             $this->container->make(LoggerInterface::class)->warning(
                 'OneSignal skipped invalid email addresses.',
-                ['count' => count($invalidTokens)],
+                ['count' => $invalidCount],
             );
+        }
+
+        // 6. Keep the proof of delivery last: the mail is already accepted.
+        $this->recordSend($notificationId, $email, $invalidCount);
+    }
+
+    /**
+     * Writes the delivery record of a mail OneSignal accepted.
+     *
+     * A failure here is reported and swallowed on purpose: the mail has left, and a
+     * throw would hand it to the next failover member, which would send it twice.
+     * Any throwable, not only a query error, because a bookkeeping fault of any kind
+     * must stay off the mail's path. The record holds a hash of the first address,
+     * never the address, subject or body.
+     */
+    private function recordSend(string $notificationId, Email $email, int $invalidCount): void
+    {
+        try {
+            $to = $email->getTo();
+
+            MailSend::query()->create([
+                'onesignal_id' => $notificationId,
+                'mail_class' => $this->container->make(MailRoute::class)->currentClass(),
+                'recipient_hash' => hash('sha256', Str::lower(($to[0] ?? null)?->getAddress() ?? '')),
+                'recipients' => count($to),
+                'invalid_recipients' => $invalidCount,
+            ]);
+        } catch (Throwable $exception) {
+            report($exception);
         }
     }
 
