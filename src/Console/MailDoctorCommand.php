@@ -35,6 +35,12 @@ use onesignal\client\model\NotificationWithMeta;
  * and the default mailer on the router transport (otherwise nothing is routed): the email
  * channel is disabled, so every routed mail would fall to the failover, or the routed
  * mailer is not defined. An `unknown` channel is not one. It never sends mail.
+ *
+ * Limit: "the default mailer on the router transport" is read literally. A host that
+ * reaches the router some other way (a `failover` default listing it as a member, or an
+ * explicit `Mail::mailer('<router>')`) is not seen as routing, so the doctor exits 0
+ * there; it still prints the channel state and the router config for the operator to read.
+ * The supported setup is `MAIL_MAILER` pointing at the router, as the package docs describe.
  */
 class MailDoctorCommand extends Command
 {
