@@ -5,11 +5,15 @@ namespace FlutterSdk\MagicStarter\Tests\Console;
 use FlutterSdk\MagicStarter\Console\MailDoctorCommand;
 use FlutterSdk\MagicStarter\Models\MailSend;
 use FlutterSdk\MagicStarter\Tests\TestCase;
+use GuzzleHttp\Exception\ConnectException;
+use GuzzleHttp\Psr7\Request as GuzzleRequest;
+use Illuminate\Http\Client\ConnectionException;
 use Illuminate\Http\Client\Request;
 use Illuminate\Support\Facades\Artisan;
 use Illuminate\Support\Facades\Http;
 use onesignal\client\api\DefaultApi;
 use onesignal\client\ApiException;
+use onesignal\client\model\GenericError;
 use onesignal\client\model\NotificationWithMeta;
 
 /**
@@ -216,6 +220,110 @@ final class MailDoctorCommandTest extends TestCase
         // Assert
         $this->assertSame(0, $exit);
         $this->assertStringContainsString('magic_starter_mail_sends', Artisan::output());
+    }
+
+    public function test_deliveries_without_credentials_say_so_and_ask_nobody(): void
+    {
+        // Arrange
+        config(['magic-starter.onesignal.rest_api_key' => null, 'services.onesignal.rest_api_key' => null]);
+        Http::fake();
+        $this->migrateSends();
+        $this->seedSend('notif-1', 'SomeMailable', 1);
+        $client = $this->createMock(DefaultApi::class);
+        $client->expects($this->never())->method('getNotification');
+        $this->app->instance(DefaultApi::class, $client);
+
+        // Act
+        $exit = Artisan::call(MailDoctorCommand::NAME, ['--deliveries' => 5]);
+        $output = Artisan::output();
+
+        // Assert
+        $this->assertSame(0, $exit);
+        Http::assertNothingSent();
+        $this->assertStringContainsString('OneSignal is not provisioned', $output);
+        $this->assertStringNotContainsString('notif-1', $output);
+    }
+
+    public function test_an_answer_that_is_not_a_notification_prints_its_type_and_never_its_errors(): void
+    {
+        // Arrange
+        $this->fakeApp(['channels' => ['email' => ['enabled' => true]]]);
+        $this->migrateSends();
+        $this->seedSend('notif-limited', 'LimitedMailable', 1);
+
+        $client = $this->createMock(DefaultApi::class);
+        $client->method('getNotification')->willReturn(new GenericError(['errors' => ['bad secret@example.org']]));
+        $this->app->instance(DefaultApi::class, $client);
+
+        // Act
+        $exit = Artisan::call(MailDoctorCommand::NAME, ['--deliveries' => 5]);
+        $output = Artisan::output();
+
+        // Assert
+        $this->assertSame(0, $exit);
+        $this->assertStringContainsString('notif-limited', $output);
+        $this->assertStringContainsString('unavailable (' . GenericError::class . ')', $output);
+        $this->assertStringNotContainsString('secret@example.org', $output);
+    }
+
+    public function test_a_guzzle_failure_on_a_delivery_prints_its_status_and_never_its_text(): void
+    {
+        // Arrange
+        $this->fakeApp(['channels' => ['email' => ['enabled' => true]]]);
+        $this->migrateSends();
+        $this->seedSend('notif-down', 'DownMailable', 1);
+
+        $client = $this->createMock(DefaultApi::class);
+        $client->method('getNotification')->willThrowException(
+            new ConnectException('cURL error 6 for secret@example.org', new GuzzleRequest('GET', '/')),
+        );
+        $this->app->instance(DefaultApi::class, $client);
+
+        // Act
+        $exit = Artisan::call(MailDoctorCommand::NAME, ['--deliveries' => 5]);
+        $output = Artisan::output();
+
+        // Assert
+        $this->assertSame(0, $exit);
+        $this->assertStringContainsString('unavailable (status 0)', $output);
+        $this->assertStringNotContainsString('secret@example.org', $output);
+    }
+
+    public function test_a_connection_failure_prints_unknown_and_does_not_fail_the_check(): void
+    {
+        // Arrange
+        Http::fake([self::APPS_URL => fn () => throw new ConnectionException('cURL error 6 for secret@example.org')]);
+
+        // Act
+        $exit = Artisan::call(MailDoctorCommand::NAME);
+        $output = Artisan::output();
+
+        // Assert: an unreachable OneSignal says nothing about the channel, so the check does not fail.
+        $this->assertSame(0, $exit);
+        $this->assertStringContainsString('Email channel: unknown', $output);
+        $this->assertStringNotContainsString('secret@example.org', $output);
+        $this->assertStringNotContainsString('rest-key-secret', $output);
+    }
+
+    public function test_a_deliveries_limit_below_one_reads_one_send(): void
+    {
+        // Arrange
+        $this->fakeApp(['channels' => ['email' => ['enabled' => true]]]);
+        $this->migrateSends();
+        $this->seedSend('notif-only', null, 1);
+        $client = $this->createMock(DefaultApi::class);
+        $client->expects($this->once())
+            ->method('getNotification')
+            ->willReturn(new NotificationWithMeta(['id' => 'notif-only', 'successful' => 1]));
+        $this->app->instance(DefaultApi::class, $client);
+
+        // Act
+        Artisan::call(MailDoctorCommand::NAME, ['--deliveries' => 0]);
+        $output = Artisan::output();
+
+        // Assert: zero would otherwise read nothing, so the limit is clamped to one.
+        $this->assertStringContainsString('Last 1 recorded send:', $output);
+        $this->assertStringContainsString('(direct)', $output);
     }
 
     public function test_the_doctor_never_sends_mail_or_creates_a_notification(): void

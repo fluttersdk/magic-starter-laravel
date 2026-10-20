@@ -24,8 +24,16 @@ use onesignal\client\model\RateLimitError;
 use PHPUnit\Framework\Attributes\DataProvider;
 use Psr\Log\LoggerInterface;
 use Ramsey\Uuid\Uuid;
+use RuntimeException;
+use Symfony\Component\Mailer\Envelope;
 use Symfony\Component\Mailer\Exception\TransportException;
+use Symfony\Component\Mailer\SentMessage;
+use Symfony\Component\Mime\Address;
 use Symfony\Component\Mime\Email;
+use Symfony\Component\Mime\Header\Headers;
+use Symfony\Component\Mime\Message;
+use Symfony\Component\Mime\Part\Multipart\FormDataPart;
+use Symfony\Component\Mime\RawMessage;
 
 final class OneSignalTransportTest extends TestCase
 {
@@ -97,7 +105,7 @@ final class OneSignalTransportTest extends TestCase
         $this->assertNull($payload->getEmailReplyToAddress());
     }
 
-    public function test_send_derives_a_stable_idempotency_key_from_the_message_id(): void
+    public function test_the_idempotency_key_is_the_uuid_v5_of_the_sent_messages_id(): void
     {
         // Arrange
         $keys = [];
@@ -109,23 +117,150 @@ final class OneSignalTransportTest extends TestCase
                 return $this->accepted('notif-1');
             });
         $this->app->instance(DefaultApi::class, $client);
+        config(['mail.mailers.onesignal' => ['transport' => 'onesignal']]);
 
-        $withId = fn (): Email => tap(
-            $this->email(),
-            fn (Email $email) => $email->getHeaders()->addIdHeader('Message-ID', 'fixed-id@uptizm.test'),
-        );
+        $messageIds = [];
+        Event::listen(MessageSent::class, function (MessageSent $event) use (&$messageIds): void {
+            $messageIds[] = $event->sent->getSymfonySentMessage()->getMessageId();
+        });
+
+        // Act: two real sends, so each builds its own SentMessage the way Laravel does.
+        $this->sendThroughMailer();
+        $this->sendThroughMailer();
+
+        // Assert
+        $this->assertCount(2, $keys);
+        $this->assertNotSame('', $messageIds[0]);
+        $this->assertSame(Uuid::uuid5(Uuid::NAMESPACE_URL, $messageIds[0])->toString(), $keys[0]);
+        $this->assertSame(Uuid::uuid5(Uuid::NAMESPACE_URL, $messageIds[1])->toString(), $keys[1]);
+        $this->assertSame(5, Uuid::fromString($keys[0])->getFields()->getVersion());
+        $this->assertNotSame($keys[0], $keys[1]);
+    }
+
+    public function test_a_replay_of_the_same_sent_message_carries_the_same_key(): void
+    {
+        // Arrange
+        $keys = [];
+        $client = $this->createMock(DefaultApi::class);
+        $client->method('createNotification')
+            ->willReturnCallback(function (OneSignalNotification $notification) use (&$keys) {
+                $keys[] = $notification->getIdempotencyKey();
+
+                return $this->accepted('notif-1');
+            });
+        $this->app->instance(DefaultApi::class, $client);
+        $sent = new SentMessage($this->email(), Envelope::create($this->email()));
 
         // Act
-        $this->transport()->send($withId());
-        $this->transport()->send($withId());
-        $this->transport()->send($this->email());
-        $this->transport()->send($this->email());
+        $this->deliver($sent);
+        $this->deliver($sent);
 
-        // Assert: same Message-ID, same v5 key; no Message-ID, a fresh v4 key per send.
+        // Assert
         $this->assertSame($keys[0], $keys[1]);
-        $this->assertSame(5, Uuid::fromString($keys[0])->getFields()->getVersion());
-        $this->assertNotSame($keys[2], $keys[3]);
-        $this->assertSame(4, Uuid::fromString($keys[2])->getFields()->getVersion());
+        $this->assertSame(Uuid::uuid5(Uuid::NAMESPACE_URL, $sent->getMessageId())->toString(), $keys[0]);
+    }
+
+    public function test_an_empty_message_id_falls_back_to_a_fresh_uuid_v4_per_send(): void
+    {
+        // Arrange
+        $keys = [];
+        $client = $this->createMock(DefaultApi::class);
+        $client->method('createNotification')
+            ->willReturnCallback(function (OneSignalNotification $notification) use (&$keys) {
+                $keys[] = $notification->getIdempotencyKey();
+
+                return $this->accepted('notif-1');
+            });
+        $this->app->instance(DefaultApi::class, $client);
+        $sent = new SentMessage($this->email(), Envelope::create($this->email()));
+        $sent->setMessageId('');
+
+        // Act
+        $this->deliver($sent);
+        $this->deliver($sent);
+
+        // Assert
+        $this->assertSame(4, Uuid::fromString($keys[0])->getFields()->getVersion());
+        $this->assertNotSame($keys[0], $keys[1]);
+    }
+
+    public function test_a_raw_message_is_refused_before_the_client_is_called(): void
+    {
+        // Arrange
+        $client = $this->createMock(DefaultApi::class);
+        $client->expects($this->never())->method('createNotification');
+        $this->app->instance(DefaultApi::class, $client);
+        $sent = new SentMessage(
+            new RawMessage("Subject: Raw\r\n\r\nBody"),
+            new Envelope(new Address('from@example.test'), [new Address('to@example.test')]),
+        );
+
+        // Act + Assert
+        $this->expectException(TransportException::class);
+        $this->expectExceptionMessage('raw message');
+        $this->deliver($sent);
+    }
+
+    public function test_a_message_that_cannot_become_an_email_is_refused_with_the_converter_failure_kept(): void
+    {
+        // Arrange: a form-data body is none of the shapes the converter can read as an email.
+        $client = $this->createMock(DefaultApi::class);
+        $client->expects($this->never())->method('createNotification');
+        $this->app->instance(DefaultApi::class, $client);
+        $message = new Message(
+            (new Headers)
+                ->addMailboxListHeader('From', ['hello@example.test'])
+                ->addMailboxListHeader('To', ['a@example.test']),
+            new FormDataPart(['field' => 'value']),
+        );
+        $sent = new SentMessage($message, Envelope::create($message));
+
+        // Act
+        try {
+            $this->deliver($sent);
+            $this->fail('A TransportException was expected.');
+        } catch (TransportException $exception) {
+            // Assert
+            $this->assertSame('The message cannot be converted to an email.', $exception->getMessage());
+            $this->assertInstanceOf(RuntimeException::class, $exception->getPrevious());
+        }
+    }
+
+    public function test_an_unprovisioned_app_is_refused_before_the_client_is_resolved(): void
+    {
+        // Arrange
+        config(['magic-starter.onesignal.app_id' => null, 'services.onesignal.app_id' => null]);
+
+        // Act + Assert
+        $this->expectException(TransportException::class);
+        $this->expectExceptionMessage('not provisioned');
+        $this->transport()->send($this->email());
+    }
+
+    public function test_an_answer_without_an_error_map_names_no_error_detail(): void
+    {
+        // Arrange
+        $client = $this->createMock(DefaultApi::class);
+        $client->method('createNotification')->willReturn(new CreateNotificationSuccessResponse(['id' => '']));
+        $this->app->instance(DefaultApi::class, $client);
+
+        // Act + Assert
+        $this->expectException(TransportException::class);
+        $this->expectExceptionMessage('no error detail');
+        $this->transport()->send($this->email());
+    }
+
+    public function test_an_answer_with_list_errors_names_the_error_count(): void
+    {
+        // Arrange
+        $client = $this->createMock(DefaultApi::class);
+        $client->method('createNotification')->willReturn(new GenericError(['errors' => ['one', 'two']]));
+        $this->app->instance(DefaultApi::class, $client);
+
+        // Act + Assert
+        $this->expectException(TransportException::class);
+        $this->expectExceptionMessage('2 error(s)');
+        $this->transport()->send($this->email());
     }
 
     public function test_api_exception_becomes_a_transport_exception_without_the_response_text(): void
@@ -407,6 +542,35 @@ final class OneSignalTransportTest extends TestCase
         $this->assertArrayNotHasKey('filters', $body);
     }
 
+    public function test_a_wire_answer_with_an_error_object_logs_the_invalid_count_only(): void
+    {
+        // Arrange: the SDK maps a keyed `errors` object onto a model, not an array.
+        $history = [];
+        $this->app->instance(DefaultApi::class, $this->realClient([
+            new Response(
+                200,
+                ['Content-Type' => 'application/json'],
+                '{"id":"notif-1","errors":{"invalid_email_tokens":["' . self::SECRET_ADDRESS . '"]}}',
+            ),
+        ], $history));
+
+        $lines = [];
+        $logger = $this->createMock(LoggerInterface::class);
+        $logger->expects($this->once())
+            ->method('warning')
+            ->willReturnCallback(function (string $message, array $context = []) use (&$lines): void {
+                $lines[] = $message . ' ' . json_encode($context);
+            });
+        $this->app->instance(LoggerInterface::class, $logger);
+
+        // Act
+        $this->transport()->send($this->email());
+
+        // Assert
+        $this->assertStringContainsString('"count":1', $lines[0]);
+        $this->assertStringNotContainsString('@', $lines[0]);
+    }
+
     public function test_a_wire_response_with_an_empty_id_raises_a_transport_exception(): void
     {
         // Arrange
@@ -456,6 +620,25 @@ final class OneSignalTransportTest extends TestCase
     private function transport(): OneSignalTransport
     {
         return new OneSignalTransport($this->app);
+    }
+
+    private function sendThroughMailer(): void
+    {
+        Mail::mailer('onesignal')->html('<p>Hello</p>', fn ($message) => $message->to('a@example.test')->subject('Hi'));
+    }
+
+    /**
+     * Hands an already built SentMessage to `doSend`, which only `send()` reaches in production.
+     */
+    private function deliver(SentMessage $sent): void
+    {
+        (new class($this->app) extends OneSignalTransport
+        {
+            public function deliver(SentMessage $sent): void
+            {
+                $this->doSend($sent);
+            }
+        })->deliver($sent);
     }
 
     private function email(): Email

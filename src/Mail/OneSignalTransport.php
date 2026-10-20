@@ -72,7 +72,7 @@ class OneSignalTransport extends AbstractTransport
         $this->assertDeliverable($email);
 
         // 3. Send. The SDK and Guzzle failures are wrapped with `previous` kept and the text dropped.
-        $notification = $this->buildNotification($email);
+        $notification = $this->buildNotification($email, $message);
 
         try {
             $response = $this->container->make(DefaultApi::class)->createNotification($notification);
@@ -180,7 +180,7 @@ class OneSignalTransport extends AbstractTransport
     /**
      * @return OneSignalNotification<int|null, mixed>
      */
-    private function buildNotification(Email $email): OneSignalNotification
+    private function buildNotification(Email $email, SentMessage $message): OneSignalNotification
     {
         $notification = (new OneSignalNotification)
             ->setAppId((string) MagicStarter::onesignalAppId())
@@ -191,7 +191,7 @@ class OneSignalTransport extends AbstractTransport
             ->setIncludeUnsubscribed(true)
             // A rewritten link would break reset tokens and one-time URLs.
             ->setDisableEmailClickTracking(true)
-            ->setIdempotencyKey($this->idempotencyKey($email));
+            ->setIdempotencyKey($this->idempotencyKey($message));
 
         $from = $email->getFrom()[0] ?? null;
 
@@ -213,17 +213,22 @@ class OneSignalTransport extends AbstractTransport
     }
 
     /**
-     * Stable across a resend of the same Symfony message, so OneSignal deduplicates it.
+     * Ties the OneSignal request to the Message-ID of this send attempt.
+     *
+     * Symfony adds the Message-ID to the clone its `SentMessage` keeps, never to the message
+     * Laravel built, so the id is read from the `SentMessage`. A replay of the same
+     * `SentMessage` is deduplicated by OneSignal; a queue retry builds a new message and
+     * is a new send with a new key.
      */
-    private function idempotencyKey(Email $email): string
+    private function idempotencyKey(SentMessage $message): string
     {
-        $headers = $email->getHeaders();
+        $messageId = $message->getMessageId();
 
-        if (! $headers->has('Message-ID')) {
+        if ($messageId === '') {
             return Uuid::uuid4()->toString();
         }
 
-        return Uuid::uuid5(Uuid::NAMESPACE_URL, $headers->get('Message-ID')->getBodyAsString())->toString();
+        return Uuid::uuid5(Uuid::NAMESPACE_URL, $messageId)->toString();
     }
 
     /**

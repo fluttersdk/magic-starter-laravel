@@ -20,8 +20,12 @@ use onesignal\client\model\NotificationWithMeta;
  * Prints whether the app id and the REST key are set (never the key), the state of
  * the app's email channel, the router config and the default mailer. The channel is
  * read with a raw call under the REST key: the SDK's `getApp` authenticates with the
- * Organization key and its `App` model has no `channels` field. Anything but a 200
- * with `channels.email.enabled` prints `unknown`.
+ * Organization key and its `App` model has no `channels` field. OneSignal's reference
+ * documents `GET /apps/{id}` as an Organization key call, yet on 2026-10-20 the REST
+ * key answered 200 with a `channels` object from production, so the REST key is what
+ * the call sends. Should OneSignal ever enforce the documented key, the answer is a
+ * 401 or 403, which prints `unknown` rather than failing. Anything but a 200 with
+ * `channels.email.enabled` prints `unknown`.
  *
  * With `--deliveries=N` it also reads the counters OneSignal holds for the last N
  * recorded sends, by mail class and OneSignal id, never by address.

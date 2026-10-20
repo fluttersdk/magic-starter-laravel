@@ -180,6 +180,38 @@ final class MailSendRecordTest extends TestCase
         $this->assertSame(['recent'], MailSend::query()->pluck('onesignal_id')->all());
     }
 
+    public function test_prune_never_wipes_everything_when_the_retention_is_zero(): void
+    {
+        // Arrange
+        $this->migrateSends();
+        config(['magic-starter.mail.onesignal.retention_days' => 0]);
+        $this->seedSend('two-days', 2);
+        $this->seedSend('today', 0);
+
+        // Act
+        $this->artisan(PruneMailSendsCommand::NAME)
+            ->expectsOutputToContain('Pruned 1 mail send row older than 1 days')
+            ->assertSuccessful();
+
+        // Assert: a retention below one day counts as one day.
+        $this->assertSame(['today'], MailSend::query()->pluck('onesignal_id')->all());
+    }
+
+    public function test_prune_with_nothing_old_deletes_nothing_and_says_so(): void
+    {
+        // Arrange
+        $this->migrateSends();
+        $this->seedSend('recent', 1);
+
+        // Act
+        $this->artisan(PruneMailSendsCommand::NAME)
+            ->expectsOutputToContain('Pruned 0 mail send rows')
+            ->assertSuccessful();
+
+        // Assert
+        $this->assertSame(1, MailSend::query()->count());
+    }
+
     public function test_prune_skips_when_the_table_was_never_published(): void
     {
         $this->artisan(PruneMailSendsCommand::NAME)

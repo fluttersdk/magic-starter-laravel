@@ -6,6 +6,7 @@ use FlutterSdk\MagicStarter\Listeners\StampMailClass;
 use FlutterSdk\MagicStarter\Mail\MailRoute;
 use FlutterSdk\MagicStarter\Mail\RoutingTransport;
 use FlutterSdk\MagicStarter\Tests\TestCase;
+use Illuminate\Contracts\Debug\ExceptionHandler;
 use Illuminate\Mail\Events\MessageSending;
 use Illuminate\Mail\Mailable;
 use Illuminate\Mail\Mailables\Content;
@@ -17,10 +18,14 @@ use Illuminate\Support\Facades\Mail;
 use Illuminate\Support\Facades\Notification as NotificationFacade;
 use onesignal\client\api\DefaultApi;
 use onesignal\client\model\CreateNotificationSuccessResponse;
+use Symfony\Component\Mailer\Envelope as MailerEnvelope;
 use Symfony\Component\Mailer\Exception\TransportException;
 use Symfony\Component\Mailer\SentMessage;
 use Symfony\Component\Mailer\Transport\AbstractTransport;
+use Symfony\Component\Mime\Address;
 use Symfony\Component\Mime\Email;
+use Symfony\Component\Mime\RawMessage;
+use Throwable;
 
 final class RoutingTransportTest extends TestCase
 {
@@ -322,6 +327,85 @@ final class RoutingTransportTest extends TestCase
         // Act + Assert
         $this->expectException(TransportException::class);
         $this->sendMailable();
+    }
+
+    public function test_an_undefined_routed_mailer_falls_back_to_the_default_and_reports_its_name_only(): void
+    {
+        // Arrange
+        config(['magic-starter.mail.onesignal.mailer' => 'missing-mailer']);
+        $this->routeClasses(['*']);
+        $reported = [];
+        $handler = $this->createMock(ExceptionHandler::class);
+        $handler->method('report')->willReturnCallback(function (Throwable $exception) use (&$reported): void {
+            $reported[] = $exception;
+        });
+        $this->app->instance(ExceptionHandler::class, $handler);
+
+        // Act
+        $this->sendMailable();
+
+        // Assert: the mail still left through the default mailer, and the misconfiguration surfaced.
+        $this->assertCount(1, $this->delivered('default-sink'));
+        $this->assertCount(1, $reported);
+        $this->assertInstanceOf(TransportException::class, $reported[0]);
+        $this->assertStringContainsString('missing-mailer', $reported[0]->getMessage());
+        $this->assertStringNotContainsString('example.test', $reported[0]->getMessage());
+        $this->assertStringNotContainsString('Routed mailable', $reported[0]->getMessage());
+    }
+
+    public function test_an_undefined_default_mailer_throws_a_transport_exception(): void
+    {
+        // Arrange: nothing routed, so the mail is bound for the default mailer, which does not exist.
+        config(['mail.mailers.routed' => ['transport' => 'magic-starter-router', 'default' => 'missing-default']]);
+
+        // Act + Assert
+        $this->expectException(TransportException::class);
+        $this->expectExceptionMessage('missing-default');
+        $this->sendMailable();
+    }
+
+    public function test_an_undefined_routed_and_default_mailer_throws_a_transport_exception(): void
+    {
+        // Arrange
+        config([
+            'mail.mailers.routed' => ['transport' => 'magic-starter-router', 'default' => 'missing-default'],
+            'magic-starter.mail.onesignal.mailer' => 'missing-mailer',
+        ]);
+        $this->routeClasses(['*']);
+
+        // Act + Assert
+        $this->expectException(TransportException::class);
+        $this->expectExceptionMessage('missing-default');
+        $this->sendMailable();
+    }
+
+    public function test_a_defined_routed_mailer_is_not_reported(): void
+    {
+        // Arrange
+        $this->routeClasses(['*']);
+        $handler = $this->createMock(ExceptionHandler::class);
+        $handler->expects($this->never())->method('report');
+        $this->app->instance(ExceptionHandler::class, $handler);
+
+        // Act
+        $this->sendMailable();
+
+        // Assert
+        $this->assertCount(1, $this->delivered('routed-sink'));
+    }
+
+    public function test_a_raw_message_cannot_be_routed(): void
+    {
+        // Arrange
+        $transport = $this->app->make('mail.manager')->mailer('routed')->getSymfonyTransport();
+
+        // Act + Assert
+        $this->expectException(TransportException::class);
+        $this->expectExceptionMessage('raw message');
+        $transport->send(new RawMessage('Subject: Raw' . "\r\n\r\nBody"), new MailerEnvelope(
+            new Address('from@example.test'),
+            [new Address('to@example.test')],
+        ));
     }
 
     public function test_the_router_names_itself_by_its_default_mailer(): void

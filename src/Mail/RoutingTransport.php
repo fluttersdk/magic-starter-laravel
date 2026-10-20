@@ -18,7 +18,13 @@ use Symfony\Component\Mime\Message;
  * exposes the class to any transport further down the chain.
  *
  * Contract: every refusal is a `TransportException`. A mailer whose own transport
- * is this router is refused, since routing a mail to a router would never end.
+ * is this router is refused, since routing a mail to a router would never end, and
+ * so is a default mailer that is not defined, since nothing is left to fall back to.
+ *
+ * A routed mailer that is not defined is a misconfiguration, not a reason to lose
+ * the mail: the mail leaves through the default mailer and a `TransportException`
+ * naming only the missing mailer is reported, so the error tracker shows it. The
+ * name is config, never an address, subject or body.
  */
 class RoutingTransport extends AbstractTransport
 {
@@ -36,7 +42,7 @@ class RoutingTransport extends AbstractTransport
     }
 
     /**
-     * @throws TransportException When the message is raw or the chosen mailer is a router.
+     * @throws TransportException When the message is raw, or the chosen mailer is a router or not defined.
      */
     protected function doSend(SentMessage $message): void
     {
@@ -52,8 +58,21 @@ class RoutingTransport extends AbstractTransport
         $class = $headers->get(MailRoute::CLASS_HEADER)?->getBodyAsString() ?? 'unknown';
         $headers->remove(MailRoute::CLASS_HEADER);
 
-        // 3. A routed class goes to its mailer, everything else to the default.
-        $name = $this->route->mailerFor($class) ?? $this->default;
+        // 3. A routed class goes to its mailer, everything else to the default. A routed mailer that does not
+        //    exist would make the manager throw a non-transport exception and fail every routed mail, so the
+        //    mail takes the default and the misconfiguration is reported instead.
+        $routed = $this->route->mailerFor($class);
+        $name = $routed ?? $this->default;
+
+        if ($routed !== null && ! $this->isDefined($routed)) {
+            report(new TransportException("The routed mailer [{$routed}] is not defined: using [{$this->default}]."));
+
+            $name = $this->default;
+        }
+
+        if (! $this->isDefined($name)) {
+            throw new TransportException("The mailer [{$name}] is not defined.");
+        }
 
         if (config("mail.mailers.{$name}.transport") === 'magic-starter-router') {
             throw new TransportException("The mailer [{$name}] is a router and cannot be a route target.");
@@ -64,5 +83,10 @@ class RoutingTransport extends AbstractTransport
             $class,
             fn () => $this->manager->mailer($name)->getSymfonyTransport()->send($original, $message->getEnvelope()),
         );
+    }
+
+    private function isDefined(string $name): bool
+    {
+        return config("mail.mailers.{$name}") !== null;
     }
 }
