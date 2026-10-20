@@ -136,4 +136,42 @@ class MagicStarterTest extends TestCase
         // it's already user-provided.
         $this->assertSame('App\\Models\\MyCustomTeam', MagicStarter::teamModel());
     }
+
+    public function test_onesignal_rest_api_key_is_trimmed(): void
+    {
+        config(['magic-starter.onesignal.rest_api_key' => '  rest-key  ']);
+
+        $this->assertSame('rest-key', MagicStarter::onesignalRestApiKey());
+    }
+
+    public function test_onesignal_rest_api_key_falls_back_to_the_services_config(): void
+    {
+        config([
+            'magic-starter.onesignal.rest_api_key' => null,
+            'services.onesignal.rest_api_key' => 'services-key',
+        ]);
+
+        $this->assertSame('services-key', MagicStarter::onesignalRestApiKey());
+    }
+
+    public function test_onesignal_rest_api_key_prefers_the_package_config(): void
+    {
+        config([
+            'magic-starter.onesignal.rest_api_key' => 'package-key',
+            'services.onesignal.rest_api_key' => 'services-key',
+        ]);
+
+        $this->assertSame('package-key', MagicStarter::onesignalRestApiKey());
+    }
+
+    public function test_onesignal_rest_api_key_is_null_when_blank_or_not_a_string(): void
+    {
+        config(['services.onesignal.rest_api_key' => null]);
+
+        foreach ([null, '', '   ', 123, ['key']] as $value) {
+            config(['magic-starter.onesignal.rest_api_key' => $value]);
+
+            $this->assertNull(MagicStarter::onesignalRestApiKey());
+        }
+    }
 }

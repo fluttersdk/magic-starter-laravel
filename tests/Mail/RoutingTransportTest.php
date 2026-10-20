@@ -8,6 +8,7 @@ use FlutterSdk\MagicStarter\Mail\RoutingTransport;
 use FlutterSdk\MagicStarter\Tests\TestCase;
 use Illuminate\Contracts\Debug\ExceptionHandler;
 use Illuminate\Mail\Events\MessageSending;
+use Illuminate\Mail\Events\MessageSent;
 use Illuminate\Mail\Mailable;
 use Illuminate\Mail\Mailables\Content;
 use Illuminate\Mail\Mailables\Envelope;
@@ -307,6 +308,63 @@ final class RoutingTransportTest extends TestCase
         }
     }
 
+    public function test_the_routers_sent_message_carries_the_delegates_id_and_debug(): void
+    {
+        // Arrange
+        Mail::extend('probe', fn () => new class extends AbstractTransport
+        {
+            public function __toString(): string
+            {
+                return 'probe://sink';
+            }
+
+            protected function doSend(SentMessage $message): void
+            {
+                $message->setMessageId('delegate-id');
+                $message->appendDebug('delegate-debug');
+            }
+        });
+        config(['mail.mailers.routed-sink' => ['transport' => 'probe']]);
+        $this->routeClasses(['*']);
+        $sent = $this->captureSentMessage();
+
+        // Act
+        $this->sendMailable();
+
+        // Assert: Laravel's SentMessage reflects the delivery that really happened.
+        $this->assertSame('delegate-id', $sent->message?->getMessageId());
+        $this->assertStringContainsString('delegate-debug', (string) $sent->message?->getDebug());
+    }
+
+    public function test_a_delegate_that_answers_no_sent_message_leaves_the_routers_own_untouched(): void
+    {
+        // Arrange
+        Mail::extend('probe', fn () => new class extends AbstractTransport
+        {
+            public function __toString(): string
+            {
+                return 'probe://rejecting';
+            }
+
+            public function send(RawMessage $message, ?MailerEnvelope $envelope = null): ?SentMessage
+            {
+                return null;
+            }
+
+            protected function doSend(SentMessage $message): void {}
+        });
+        config(['mail.mailers.routed-sink' => ['transport' => 'probe']]);
+        $this->routeClasses(['*']);
+        $sent = $this->captureSentMessage();
+
+        // Act
+        $this->sendMailable();
+
+        // Assert
+        $this->assertNotNull($sent->message);
+        $this->assertNotSame('', $sent->message->getMessageId());
+    }
+
     public function test_a_route_whose_mailer_is_itself_a_router_throws(): void
     {
         // Arrange
@@ -477,6 +535,23 @@ final class RoutingTransportTest extends TestCase
     private function sendNotification(string $mailer = 'routed'): void
     {
         NotificationFacade::route('mail', 'a@example.test')->notify(new RoutedTestNotification($mailer));
+    }
+
+    /**
+     * Holds the SentMessage Laravel reports for the last mail.
+     */
+    private function captureSentMessage(): object
+    {
+        $holder = new class
+        {
+            public ?SentMessage $message = null;
+        };
+
+        Event::listen(MessageSent::class, function (MessageSent $event) use ($holder): void {
+            $holder->message = $event->sent->getSymfonySentMessage();
+        });
+
+        return $holder;
     }
 
     /**

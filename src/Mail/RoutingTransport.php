@@ -28,6 +28,11 @@ use Symfony\Component\Mime\Message;
  */
 class RoutingTransport extends AbstractTransport
 {
+    /**
+     * The `mail.mailers.*.transport` value that selects this router.
+     */
+    public const TRANSPORT = 'magic-starter-router';
+
     public function __construct(
         private MailManager $manager,
         private string $default,
@@ -38,7 +43,7 @@ class RoutingTransport extends AbstractTransport
 
     public function __toString(): string
     {
-        return "magic-starter-router://{$this->default}";
+        return self::TRANSPORT . "://{$this->default}";
     }
 
     /**
@@ -55,7 +60,7 @@ class RoutingTransport extends AbstractTransport
 
         // 2. Read the class, then strip it: the header is an internal hand-off, not part of the mail.
         $headers = $original->getHeaders();
-        $class = $headers->get(MailRoute::CLASS_HEADER)?->getBodyAsString() ?? 'unknown';
+        $class = $headers->get(MailRoute::CLASS_HEADER)?->getBodyAsString() ?? MailRoute::UNKNOWN_CLASS;
         $headers->remove(MailRoute::CLASS_HEADER);
 
         // 3. A routed class goes to its mailer, everything else to the default. A routed mailer that does not
@@ -74,15 +79,21 @@ class RoutingTransport extends AbstractTransport
             throw new TransportException("The mailer [{$name}] is not defined.");
         }
 
-        if (config("mail.mailers.{$name}.transport") === 'magic-starter-router') {
+        if (config("mail.mailers.{$name}.transport") === self::TRANSPORT) {
             throw new TransportException("The mailer [{$name}] is a router and cannot be a route target.");
         }
 
         // 4. Deliver through that mailer's transport, with the class known to it for the call.
-        $this->route->sending(
+        $sent = $this->route->sending(
             $class,
             fn () => $this->manager->mailer($name)->getSymfonyTransport()->send($original, $message->getEnvelope()),
         );
+
+        // 5. Laravel reads the id and the debug log off this message, so they must describe the real delivery.
+        if ($sent !== null) {
+            $message->setMessageId($sent->getMessageId());
+            $message->appendDebug($sent->getDebug());
+        }
     }
 
     private function isDefined(string $name): bool

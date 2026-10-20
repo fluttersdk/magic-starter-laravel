@@ -14,6 +14,9 @@ use GuzzleHttp\Psr7\Response;
 use Illuminate\Mail\Events\MessageSent;
 use Illuminate\Support\Facades\Event;
 use Illuminate\Support\Facades\Mail;
+use Monolog\Formatter\LineFormatter;
+use Monolog\Handler\TestHandler;
+use Monolog\Logger;
 use onesignal\client\api\DefaultApi;
 use onesignal\client\ApiException;
 use onesignal\client\Configuration;
@@ -24,6 +27,7 @@ use onesignal\client\model\RateLimitError;
 use PHPUnit\Framework\Attributes\DataProvider;
 use Psr\Log\LoggerInterface;
 use Ramsey\Uuid\Uuid;
+use ReflectionProperty;
 use RuntimeException;
 use Symfony\Component\Mailer\Envelope;
 use Symfony\Component\Mailer\Exception\TransportException;
@@ -34,6 +38,7 @@ use Symfony\Component\Mime\Header\Headers;
 use Symfony\Component\Mime\Message;
 use Symfony\Component\Mime\Part\Multipart\FormDataPart;
 use Symfony\Component\Mime\RawMessage;
+use Throwable;
 
 final class OneSignalTransportTest extends TestCase
 {
@@ -282,9 +287,71 @@ final class OneSignalTransportTest extends TestCase
             $this->fail('A TransportException was expected.');
         } catch (TransportException $exception) {
             // Assert
-            $this->assertSame($previous, $exception->getPrevious());
+            $this->assertNull($exception->getPrevious());
             $this->assertStringContainsString('400', $exception->getMessage());
             $this->assertStringNotContainsString('@', $exception->getMessage());
+        }
+    }
+
+    /**
+     * @return array<string, array{0: callable(): Throwable}>
+     */
+    public static function vendorFailures(): array
+    {
+        return [
+            'sdk' => [fn () => new ApiException('[400] Client error: ' . self::SECRET_ADDRESS, 400)],
+            'guzzle' => [fn () => new ConnectException('cURL error 6 for ' . self::SECRET_ADDRESS, new Request('POST', '/'))],
+        ];
+    }
+
+    /**
+     * @param  callable(): Throwable  $failure
+     */
+    #[DataProvider('vendorFailures')]
+    public function test_the_vendor_exception_is_not_chained_so_no_address_survives_in_the_chain(callable $failure): void
+    {
+        // Arrange
+        $client = $this->createMock(DefaultApi::class);
+        $client->method('createNotification')->willThrowException($failure());
+        $this->app->instance(DefaultApi::class, $client);
+
+        // Act
+        try {
+            $this->transport()->send($this->email());
+            $this->fail('A TransportException was expected.');
+        } catch (TransportException $exception) {
+            // Assert
+            $this->assertNull($exception->getPrevious());
+            $this->assertStringNotContainsString('@', $exception->getMessage());
+        }
+    }
+
+    #[DataProvider('vendorFailures')]
+    public function test_a_failover_past_onesignal_logs_no_address(callable $failure): void
+    {
+        // Arrange: the failover logs each member failure with its exception chain, through a real formatter.
+        $handler = new TestHandler;
+        $handler->setFormatter(new LineFormatter(null, null, true, true));
+        $this->app->instance(LoggerInterface::class, new Logger('mail', [$handler]));
+
+        $client = $this->createMock(DefaultApi::class);
+        $client->method('createNotification')->willThrowException($failure());
+        $this->app->instance(DefaultApi::class, $client);
+        config([
+            'mail.mailers.onesignal' => ['transport' => 'onesignal'],
+            'mail.mailers.of' => ['transport' => 'failover', 'mailers' => ['onesignal', 'array']],
+        ]);
+        $sent = $this->countSentMessages();
+
+        // Act
+        Mail::mailer('of')->html('<p>Hello</p>', fn ($message) => $message->to('a@example.test')->subject('Hi'));
+
+        // Assert
+        $this->assertSame(1, $sent->count);
+        $this->assertTrue($handler->hasErrorRecords());
+
+        foreach ($handler->getRecords() as $record) {
+            $this->assertStringNotContainsString('@', (string) $record->formatted);
         }
     }
 
@@ -302,7 +369,7 @@ final class OneSignalTransportTest extends TestCase
             $this->fail('A TransportException was expected.');
         } catch (TransportException $exception) {
             // Assert
-            $this->assertSame($previous, $exception->getPrevious());
+            $this->assertNull($exception->getPrevious());
             $this->assertStringNotContainsString('@', $exception->getMessage());
         }
     }
@@ -608,8 +675,18 @@ final class OneSignalTransportTest extends TestCase
         } catch (TransportException $exception) {
             // Assert
             $this->assertStringNotContainsString('@', $exception->getMessage());
-            $this->assertInstanceOf(ApiException::class, $exception->getPrevious());
+            $this->assertNull($exception->getPrevious());
         }
+    }
+
+    public function test_the_shared_client_is_built_with_bounded_timeouts(): void
+    {
+        // Act
+        $client = (new ReflectionProperty(DefaultApi::class, 'client'))->getValue($this->app->make(DefaultApi::class));
+
+        // Assert: a hanging OneSignal must give up in time for the failover to fire.
+        $this->assertSame(10, $client->getConfig('timeout'));
+        $this->assertSame(5, $client->getConfig('connect_timeout'));
     }
 
     public function test_it_names_itself_without_leaking_configuration(): void

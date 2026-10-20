@@ -3,6 +3,7 @@
 namespace FlutterSdk\MagicStarter\Console;
 
 use FlutterSdk\MagicStarter\MagicStarter;
+use FlutterSdk\MagicStarter\Mail\RoutingTransport;
 use FlutterSdk\MagicStarter\Models\MailSend;
 use FlutterSdk\MagicStarter\Support\OneSignalSubscriptions;
 use GuzzleHttp\Exception\GuzzleException;
@@ -30,9 +31,10 @@ use onesignal\client\model\NotificationWithMeta;
  * With `--deliveries=N` it also reads the counters OneSignal holds for the last N
  * recorded sends, by mail class and OneSignal id, never by address.
  *
- * The command exits 1 only for a live misconfiguration: the email channel is
- * disabled while the router is enabled, so every routed mail would fall to the
- * failover. An `unknown` channel with the router off is not one. It never sends mail.
+ * The command exits 1 only for a live misconfiguration, which needs the router switch on
+ * and the default mailer on the router transport (otherwise nothing is routed): the email
+ * channel is disabled, so every routed mail would fall to the failover, or the routed
+ * mailer is not defined. An `unknown` channel is not one. It never sends mail.
  */
 class MailDoctorCommand extends Command
 {
@@ -51,7 +53,7 @@ class MailDoctorCommand extends Command
     protected $description = 'Check the OneSignal email channel and the mail router';
 
     /**
-     * @return int non-zero when the router is enabled and the email channel is disabled
+     * @return int non-zero when mail is routed and the email channel is disabled or the routed mailer is undefined
      */
     public function handle(Container $container): int
     {
@@ -60,7 +62,7 @@ class MailDoctorCommand extends Command
 
         // 1. Credentials first: without both, nothing below can ask OneSignal anything.
         $this->line('OneSignal app id: ' . ($appId !== null ? 'set' : 'not set'));
-        $this->line('OneSignal REST key: ' . ($this->restKey() !== null ? 'set' : 'not set'));
+        $this->line('OneSignal REST key: ' . (MagicStarter::onesignalRestApiKey() !== null ? 'set' : 'not set'));
 
         // 2. The channel state, read only when both credentials are there.
         $channel = $provisioned ? $this->emailChannelEnabled((string) $appId) : null;
@@ -80,16 +82,41 @@ class MailDoctorCommand extends Command
         ));
         $this->line('Default mailer: ' . (string) config('mail.default'));
 
-        // 4. Delivery counters on request.
-        if ($this->option('deliveries') !== null) {
-            $this->printDeliveries($container, max(1, (int) $this->option('deliveries')), $provisioned);
+        $routedMailer = (string) config('magic-starter.mail.onesignal.mailer');
+        $routedDefined = config("mail.mailers.{$routedMailer}") !== null;
+
+        if (! $routedDefined) {
+            $this->line("Routed mailer: {$routedMailer} (not defined)");
         }
 
-        // 5. A routed mail into a switched-off channel always lands on the failover: fail loudly.
-        if ($channel === false && $routerEnabled) {
+        // 4. Delivery counters on request.
+        if ($this->option('deliveries') !== null) {
+            $this->printDeliveries($container, max(1, (int) $this->option('deliveries')), $provisioned, $appId);
+        }
+
+        // 5. Only a router mailer in front routes anything, so only then is a misconfiguration live.
+        $routing = $routerEnabled
+            && config('mail.mailers.' . config('mail.default') . '.transport') === RoutingTransport::TRANSPORT;
+
+        if (! $routing) {
+            return self::SUCCESS;
+        }
+
+        // 6. A routed mail into a switched-off channel always lands on the failover: fail loudly.
+        if ($channel === false) {
             $this->components->error(
                 'The OneSignal email channel is disabled while the router is enabled: every routed mail '
                 . 'falls to the failover. Enable email in the OneSignal dashboard or switch the router off.',
+            );
+
+            return self::FAILURE;
+        }
+
+        // 7. A routed mailer that does not exist sends every routed mail through the default mailer instead.
+        if (! $routedDefined) {
+            $this->components->error(
+                "The routed mailer [{$routedMailer}] is not defined: every routed mail leaves through the default "
+                . 'mailer. Define it in config/mail.php or change magic-starter.mail.onesignal.mailer.',
             );
 
             return self::FAILURE;
@@ -99,22 +126,12 @@ class MailDoctorCommand extends Command
     }
 
     /**
-     * The REST key, read as the service provider reads it when it builds the client.
-     */
-    private function restKey(): ?string
-    {
-        $key = config('magic-starter.onesignal.rest_api_key') ?? config('services.onesignal.rest_api_key');
-
-        return is_string($key) && $key !== '' ? $key : null;
-    }
-
-    /**
      * `channels.email.enabled` of the app, or null when OneSignal does not say.
      */
     private function emailChannelEnabled(string $appId): ?bool
     {
         try {
-            $response = Http::withHeaders(['Authorization' => 'Key ' . $this->restKey()])
+            $response = Http::withHeaders(['Authorization' => 'Key ' . MagicStarter::onesignalRestApiKey()])
                 ->acceptJson()
                 ->timeout(15)
                 ->get(self::APPS_URL . $appId);
@@ -134,7 +151,7 @@ class MailDoctorCommand extends Command
     /**
      * Print the counters of the last `$limit` recorded sends, by class and id.
      */
-    private function printDeliveries(Container $container, int $limit, bool $provisioned): void
+    private function printDeliveries(Container $container, int $limit, bool $provisioned, ?string $appId): void
     {
         $model = new MailSend;
 
@@ -160,7 +177,7 @@ class MailDoctorCommand extends Command
                 '  %s  %s  %s',
                 $send->onesignal_id,
                 $send->mail_class ?? '(direct)',
-                $this->counters($client, (string) MagicStarter::onesignalAppId(), $send->onesignal_id),
+                $this->counters($client, (string) $appId, $send->onesignal_id),
             ));
         }
     }

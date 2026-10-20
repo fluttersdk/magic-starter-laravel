@@ -37,7 +37,10 @@ use Throwable;
  * request, and an answer that sent nothing. No recipient, subject or body is
  * ever logged or placed in an exception message: Symfony's failover logs every
  * member failure at ERROR together with the exception, and OneSignal error
- * values can hold addresses, so a message names error keys and counts only.
+ * values can hold addresses, so a message names error keys and counts only. For
+ * the same reason a vendor exception is never chained as `previous`: the SDK builds
+ * its message from Guzzle's, which embeds a slice of the response body, and the log
+ * formatter writes every previous exception's message.
  *
  * The transport is built with the container, not the client. Laravel builds
  * every member of a failover mailer eagerly, and the `DefaultApi` singleton
@@ -46,6 +49,11 @@ use Throwable;
  */
 class OneSignalTransport extends AbstractTransport
 {
+    /**
+     * The `mail.mailers.*.transport` value that selects this transport.
+     */
+    public const TRANSPORT = 'onesignal';
+
     public function __construct(private Container $container)
     {
         parent::__construct();
@@ -71,17 +79,18 @@ class OneSignalTransport extends AbstractTransport
         $email = $this->toEmail($message);
         $this->assertDeliverable($email);
 
-        // 3. Send. The SDK and Guzzle failures are wrapped with `previous` kept and the text dropped.
+        // 3. Send. The SDK and Guzzle failures keep their status and class name; their text and the exception
+        //    itself are dropped, since the log formatter would write a chained message.
         $notification = $this->buildNotification($email, $message);
 
         try {
             $response = $this->container->make(DefaultApi::class)->createNotification($notification);
         } catch (ApiException|GuzzleException $exception) {
-            throw new TransportException(
-                sprintf('OneSignal email request failed with status %d.', $exception->getCode()),
-                0,
-                $exception,
-            );
+            throw new TransportException(sprintf(
+                'OneSignal email request failed with status %d (%s).',
+                $exception->getCode(),
+                class_basename($exception),
+            ));
         }
 
         // 4. A union answer (GenericError, RateLimitError) or an empty id means nothing was sent.
@@ -215,10 +224,13 @@ class OneSignalTransport extends AbstractTransport
     /**
      * Ties the OneSignal request to the Message-ID of this send attempt.
      *
+     * The key is per attempt, not per mail: every `SentMessage` gets a fresh Message-ID, and a
+     * router hop and each failover member clone the message again, so each one sends under a
+     * new key. It therefore deduplicates only a replay of the exact same `SentMessage`; a queue
+     * retry builds a new message and is a new send with a new key.
+     *
      * Symfony adds the Message-ID to the clone its `SentMessage` keeps, never to the message
-     * Laravel built, so the id is read from the `SentMessage`. A replay of the same
-     * `SentMessage` is deduplicated by OneSignal; a queue retry builds a new message and
-     * is a new send with a new key.
+     * Laravel built, so the id is read from the `SentMessage`.
      */
     private function idempotencyKey(SentMessage $message): string
     {

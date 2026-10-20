@@ -263,6 +263,25 @@ class MagicStarter
     }
 
     /**
+     * Resolve the configured OneSignal REST API key, or `null` when unusable.
+     *
+     * Read the way the app id is: a non-empty trimmed string, with the
+     * `services.onesignal` entry as the fallback a host may already carry. The
+     * client singleton, the provisioning check and the mail doctor all ask
+     * this one question, so they cannot disagree about whether the key is set.
+     */
+    public static function onesignalRestApiKey(): ?string
+    {
+        $key = config('magic-starter.onesignal.rest_api_key') ?? config('services.onesignal.rest_api_key');
+
+        if (! is_string($key) || trim($key) === '') {
+            return null;
+        }
+
+        return trim($key);
+    }
+
+    /**
      * What a device's OneSignal external id carries before the user's key.
      *
      * One accessor because two places compose the same string and they cannot

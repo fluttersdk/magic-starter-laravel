@@ -3,6 +3,7 @@
 namespace FlutterSdk\MagicStarter\Listeners;
 
 use FlutterSdk\MagicStarter\Mail\MailRoute;
+use FlutterSdk\MagicStarter\Mail\RoutingTransport;
 use Illuminate\Mail\Events\MessageSending;
 
 /**
@@ -24,12 +25,12 @@ class StampMailClass
         $mailer = $event->data['mailer'] ?? null;
 
         if (! is_string($mailer)
-            || config("mail.mailers.{$mailer}.transport") !== 'magic-starter-router') {
+            || config("mail.mailers.{$mailer}.transport") !== RoutingTransport::TRANSPORT) {
             return;
         }
 
         // 2. Replace rather than add, so a spoofed or repeated stamp never leaves two values.
-        $class = $event->data['__laravel_notification'] ?? $event->data['__laravel_mailable'] ?? 'unknown';
+        $class = $event->data['__laravel_notification'] ?? $event->data['__laravel_mailable'] ?? MailRoute::UNKNOWN_CLASS;
         $headers = $event->message->getHeaders();
 
         $headers->remove(MailRoute::CLASS_HEADER);
