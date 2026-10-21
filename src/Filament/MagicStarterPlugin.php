@@ -58,6 +58,13 @@ class MagicStarterPlugin implements Plugin
      */
     protected array $withoutResources = [];
 
+    /**
+     * Relation managers the host app adds to the user page, after the starter's own.
+     *
+     * @var list<class-string<\Filament\Resources\RelationManagers\RelationManager>>
+     */
+    protected array $userRelations = [];
+
     protected ?string $navigationGroup = null;
 
     protected ?Closure $authorizeUsing = null;
@@ -138,6 +145,31 @@ class MagicStarterPlugin implements Plugin
         ];
 
         return $this;
+    }
+
+    /**
+     * Add tabs to the user page, after the starter's own, without replacing the
+     * user resource: a subclass would also have to replace its three pages, whose
+     * `$resource` binds the starter class. Each call appends.
+     *
+     * @param  list<class-string<\Filament\Resources\RelationManagers\RelationManager>>  $managers
+     */
+    public function userRelations(array $managers): static
+    {
+        $this->userRelations = [
+            ...$this->userRelations,
+            ...$managers,
+        ];
+
+        return $this;
+    }
+
+    /**
+     * @return list<class-string<\Filament\Resources\RelationManagers\RelationManager>>
+     */
+    public function getUserRelations(): array
+    {
+        return $this->userRelations;
     }
 
     /**

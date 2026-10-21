@@ -3,9 +3,11 @@
 namespace FlutterSdk\MagicStarter\Tests\Filament\Users;
 
 use Filament\Actions\Action;
+use Filament\Resources\RelationManagers\RelationManager;
 use FlutterSdk\MagicStarter\Contracts\CreatesUsers;
 use FlutterSdk\MagicStarter\Contracts\UpdatesUserProfiles;
 use FlutterSdk\MagicStarter\Features;
+use FlutterSdk\MagicStarter\Filament\MagicStarterPlugin;
 use FlutterSdk\MagicStarter\Filament\Resources\Billing\RelationManagers\BillingRelationManager;
 use FlutterSdk\MagicStarter\Filament\Resources\Users\Pages\CreateUser;
 use FlutterSdk\MagicStarter\Filament\Resources\Users\Pages\EditUser;
@@ -297,6 +299,20 @@ class UserResourceTest extends FilamentTestCase
             PushDevicesRelationManager::class,
             TeamsRelationManager::class,
         ], UserResource::getRelations());
+    }
+
+    public function test_the_relation_managers_a_host_adds_follow_the_starter_ones(): void
+    {
+        $this->enableAllFeatures();
+        $managers = [
+            (new class extends RelationManager {})::class,
+            (new class extends RelationManager {})::class,
+        ];
+        $starter = UserResource::getRelations();
+
+        MagicStarterPlugin::get()->userRelations($managers);
+
+        $this->assertSame([...$starter, ...$managers], UserResource::getRelations());
     }
 
     /**

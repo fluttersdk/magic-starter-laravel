@@ -10,6 +10,7 @@ use FlutterSdk\MagicStarter\Contracts\CreatesUsers;
 use FlutterSdk\MagicStarter\Contracts\UpdatesUserProfiles;
 use FlutterSdk\MagicStarter\Features;
 use FlutterSdk\MagicStarter\Filament\AdminNavigationGroup;
+use FlutterSdk\MagicStarter\Filament\MagicStarterPlugin;
 use FlutterSdk\MagicStarter\Filament\Resources\Audits\RelationManagers\AuditsRelationManager;
 use FlutterSdk\MagicStarter\Filament\Resources\Billing\RelationManagers\BillingRelationManager;
 use FlutterSdk\MagicStarter\Filament\Resources\MagicStarterResource;
@@ -76,22 +77,26 @@ class UserResource extends MagicStarterResource
     }
 
     /**
-     * The tabs under the edit form, each behind the feature that fills it.
+     * The tabs under the edit form, each behind the feature that fills it, then
+     * the ones the host added through {@see MagicStarterPlugin::userRelations()}.
      *
      * @return list<class-string>
      */
     public static function getRelations(): array
     {
-        return array_values(array_filter([
-            Features::hasSessionFeatures() ? TokensRelationManager::class : null,
-            Features::hasSocialLoginFeatures() ? SocialAccountsRelationManager::class : null,
-            Features::hasOnesignalFeatures() ? PushDevicesRelationManager::class : null,
-            Features::hasTeamFeatures() ? TeamsRelationManager::class : null,
-            Features::hasBillingFeatures() && config('magic-starter.billing.billable', 'user') === 'user'
-                ? BillingRelationManager::class
-                : null,
-            Features::hasAuditFeatures() ? AuditsRelationManager::class : null,
-        ]));
+        return [
+            ...array_filter([
+                Features::hasSessionFeatures() ? TokensRelationManager::class : null,
+                Features::hasSocialLoginFeatures() ? SocialAccountsRelationManager::class : null,
+                Features::hasOnesignalFeatures() ? PushDevicesRelationManager::class : null,
+                Features::hasTeamFeatures() ? TeamsRelationManager::class : null,
+                Features::hasBillingFeatures() && config('magic-starter.billing.billable', 'user') === 'user'
+                    ? BillingRelationManager::class
+                    : null,
+                Features::hasAuditFeatures() ? AuditsRelationManager::class : null,
+            ]),
+            ...MagicStarterPlugin::get()->getUserRelations(),
+        ];
     }
 
     public static function getPages(): array
