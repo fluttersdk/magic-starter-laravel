@@ -4,6 +4,8 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [0.0.46] - 2026-10-22
+
 ### Fixed
 
 - **A malformed id in a route answers 404, not 500.** `ConditionallyUsesUuids` set uuid keys without the route-binding guard `HasUuids` carries, so `/teams/not-a-uuid` reached the query and PostgreSQL rejected the value against the uuid column with a 500 that also exposed the SQL. A route key that cannot be a uuid is now a missing model before any query, on every model that uses the trait; a route bound by another column is not checked. (`src/Support/ConditionallyUsesUuids.php`)
