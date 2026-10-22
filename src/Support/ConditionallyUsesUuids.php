@@ -3,6 +3,8 @@
 namespace FlutterSdk\MagicStarter\Support;
 
 use Illuminate\Database\Eloquent\Concerns\HasUuids;
+use Illuminate\Database\Eloquent\ModelNotFoundException;
+use Illuminate\Support\Str;
 
 /**
  * Conditionally applies UUID primary keys based on package configuration.
@@ -42,6 +44,31 @@ trait ConditionallyUsesUuids
             $this->incrementing = false;
             $this->keyType = 'string';
         }
+    }
+
+    /**
+     * Treat a route key that cannot be a uuid as a missing model.
+     *
+     * `HasUuids` refuses such a key before it queries, and this trait has to do the same: PostgreSQL rejects a
+     * malformed value against a uuid column, so the binding would end in a 500 where a missing model answers 404.
+     * Only the primary key is checked; a route bound by another column (a slug) passes through untouched.
+     *
+     * @param  \Illuminate\Database\Eloquent\Builder<static>|\Illuminate\Database\Eloquent\Relations\Relation<static, *, *>  $query
+     * @param  mixed  $value
+     * @param  string|null  $field
+     * @return \Illuminate\Database\Eloquent\Builder<static>|\Illuminate\Database\Eloquent\Relations\Relation<static, *, *>
+     *
+     * @throws ModelNotFoundException<static>
+     */
+    public function resolveRouteBindingQuery($query, $value, $field = null)
+    {
+        $bindsKey = ($field ?? $this->getRouteKeyName()) === $this->getKeyName();
+
+        if (MigrationHelper::usesUuids() && $bindsKey && ! Str::isUuid($value)) {
+            throw (new ModelNotFoundException)->setModel(static::class, $value);
+        }
+
+        return parent::resolveRouteBindingQuery($query, $value, $field);
     }
 
     /**
