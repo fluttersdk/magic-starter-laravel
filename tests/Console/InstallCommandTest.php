@@ -151,6 +151,33 @@ final class InstallCommandTest extends TestCase
         );
     }
 
+    /**
+     * The conversion repairs the payload column the create and the rekey build,
+     * so it has to sort after both, including on a rerun beside an older install.
+     */
+    public function test_a_rerun_publishes_the_payload_conversion_after_the_rekey(): void
+    {
+        $this->artisan('magic-starter:install', [
+            '--features' => ['notifications'],
+        ])->assertExitCode(0);
+
+        // An install published before the conversion existed.
+        File::delete(glob(database_path('migrations/*_convert_notifications_data_to_json.php')) ?: []);
+
+        $this->artisan('magic-starter:install', [
+            '--features' => ['notifications'],
+        ])->assertExitCode(0);
+
+        $rekey = glob(database_path('migrations/*_rekey_notifications_table_by_uuid.php')) ?: [];
+        $convert = glob(database_path('migrations/*_convert_notifications_data_to_json.php')) ?: [];
+        $this->assertCount(1, $rekey);
+        $this->assertCount(1, $convert);
+        $this->assertTrue(
+            basename($convert[0]) > basename($rekey[0]),
+            'The conversion must sort after the rekey and the create it repairs.',
+        );
+    }
+
     public function test_teams_alone_does_not_publish_the_guest_and_phone_migration(): void
     {
         $this->artisan('magic-starter:install', [

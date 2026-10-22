@@ -93,7 +93,7 @@ return new class extends Migration
             MigrationHelper::usesUuids()
                 ? $table->uuid('notifiable_id')
                 : $table->unsignedBigInteger('notifiable_id');
-            $table->text('data');
+            $table->json('data');
             $table->timestamp('read_at')->nullable();
             $table->timestamps();
         });

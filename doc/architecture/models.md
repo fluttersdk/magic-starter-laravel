@@ -142,7 +142,7 @@ MigrationHelper::primaryKey(Blueprint $table): ColumnDefinition
 Never use raw `$table->id()` or `$table->uuid('id')` directly in package migrations.
 
 > [!NOTE]
-> `notifications` is the one table keyed by a UUID in both modes. Laravel's `database` channel sets `id` to the notification's own UUID in both modes, so the table always uses `$table->uuid('id')->primary()`; with an integer key every delivery fails at insert. Its `notifiable` morph columns still follow `use_uuids`. `rekey_notifications_table_by_uuid` rebuilds a table an earlier install created with an auto-incrementing id.
+> `notifications` is the one table keyed by a UUID in both modes. Laravel's `database` channel sets `id` to the notification's own UUID in both modes, so the table always uses `$table->uuid('id')->primary()`; with an integer key every delivery fails at insert. Its `notifiable` morph columns still follow `use_uuids`. `rekey_notifications_table_by_uuid` rebuilds a table an earlier install created with an auto-incrementing id. Its `data` payload is `json()` rather than text, because Filament's database notifications filter on `data->>'format'` and PostgreSQL has no `->>` for text; `convert_notifications_data_to_json` casts the column on an earlier PostgreSQL install.
 
 ### <a name="foreignkey"></a>foreignKey
 

@@ -19,7 +19,9 @@ return new class extends Migration
                 $table->uuid('id')->primary();
                 $table->string('type');
                 MigrationHelper::morphColumns($table, 'notifiable');
-                $table->text('data');
+                // JSON, not text: Filament's database notifications filter on
+                // `data->>'format'`, which PostgreSQL refuses on a text column.
+                $table->json('data');
                 $table->timestamp('read_at')->nullable();
                 $table->timestamps();
 
