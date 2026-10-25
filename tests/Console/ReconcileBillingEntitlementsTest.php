@@ -740,9 +740,13 @@ class ReconcileBillingEntitlementsTest extends TestCase
         $perArm = 60;
 
         // Lower half of the key range: no provenance at all, with the local
-        // Stripe signal that makes such a row worth reading.
+        // Cashier row that makes such a subject worth reading. The price is
+        // mapped to nothing, so every one of them skips rather than converges.
         for ($index = 0; $index < $perArm; $index++) {
-            $this->makeBillable(['stripe_id' => 'cus_unprovenanced_' . $index]);
+            $this->makeSubscription(
+                $this->makeBillable(['stripe_id' => 'cus_unprovenanced_' . $index]),
+                'price_nobody_mapped',
+            );
         }
 
         // Upper half: provenance on record, no local signal.
@@ -776,6 +780,70 @@ class ReconcileBillingEntitlementsTest extends TestCase
             ->expectsOutputToContain('Reconciled 0 billable(s): 0 corrected, 0 unreadable.')
             ->assertExitCode(0)
             ->run();
+    }
+
+    /**
+     * A Stripe customer with no provenance and no Cashier row is an abandoned
+     * checkout, and is left out of the walk.
+     *
+     * Cashier creates the customer when a checkout starts, so `stripe_id`
+     * alone is what a subject who opened a checkout and never paid looks like.
+     * The Stripe rail reads only the local row, so walking that subject could
+     * never decide anything: it logged a `no_local_subscription` warning on
+     * every run, forever.
+     */
+    public function test_an_abandoned_checkout_is_not_walked(): void
+    {
+        Log::spy();
+
+        $this->makeBillable(['stripe_id' => 'cus_abandoned_checkout']);
+
+        $this->artisan(ReconcileBillingEntitlements::NAME)
+            ->expectsOutputToContain('Reconciled 0 billable(s): 0 corrected, 0 unreadable.')
+            ->assertExitCode(0)
+            ->run();
+
+        Log::shouldNotHaveReceived('warning');
+    }
+
+    /**
+     * A Cashier row of another type is not the signal either: the Stripe rail
+     * reads only the `default` subscription, so such a subject could never be
+     * decided and would log the same skip on every run.
+     */
+    public function test_an_unprovenanced_subject_with_only_another_type_of_row_is_not_walked(): void
+    {
+        Log::spy();
+
+        $billable = $this->makeBillable(['stripe_id' => 'cus_other_type']);
+        $this->makeSubscription($billable, 'price_business')->forceFill(['type' => 'addon'])->save();
+
+        $this->artisan(ReconcileBillingEntitlements::NAME)
+            ->expectsOutputToContain('Reconciled 0 billable(s): 0 corrected, 0 unreadable.')
+            ->assertExitCode(0)
+            ->run();
+
+        Log::shouldNotHaveReceived('warning');
+    }
+
+    /**
+     * A subject with no provenance and a Cashier row is still walked, and
+     * converges to what its row says: the dropped delivery this arm is for.
+     */
+    public function test_an_unprovenanced_subject_with_a_local_row_converges(): void
+    {
+        $billable = $this->makeBillable(['stripe_id' => 'cus_dropped_delivery']);
+
+        $this->makeSubscription($billable, 'price_business');
+
+        $this->artisan(ReconcileBillingEntitlements::NAME)
+            ->expectsOutputToContain('Reconciled 1 billable(s): 1 corrected, 0 unreadable.')
+            ->assertExitCode(0)
+            ->run();
+
+        $billable->refresh();
+        $this->assertSame('business', $billable->getAttribute('plan'));
+        $this->assertSame(BillingProvider::STRIPE->value, $billable->getAttribute('plan_provider'));
     }
 
     // -------------------------------------------------------------------------

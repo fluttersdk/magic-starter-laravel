@@ -4,6 +4,10 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Fixed
+
+- **An abandoned checkout no longer logs a billing warning every hour.** The reconciler walked every subject with no provenance and a `stripe_id`, but Cashier creates the customer when a checkout starts, so a customer who opened a checkout and never paid was walked on every run and skipped with a `no_local_subscription` warning, forever. On a model that carries Cashier rows the walk now needs a row for such a subject; one with a row is still read and converges, and the walk of a model without Cashier is unchanged. (`src/Console/ReconcileBillingEntitlements.php`)
+
 ## [0.0.46] - 2026-10-22
 
 ### Fixed

@@ -406,10 +406,21 @@ class ReconcileBillingEntitlements extends Command
                     // therefore genuinely unreachable from here, and it is named
                     // rather than papered over with an arm that would select the
                     // wrong rows.
+                    //
+                    // Where the model carries Cashier rows the signal is a ROW
+                    // of the type the rail reads, not a `stripe_id`: Cashier
+                    // creates the customer when a checkout starts, so a
+                    // customer id with no row is an abandoned checkout, and
+                    // the Stripe rail reads only the local row, so walking it
+                    // could never decide anything and logged a
+                    // `no_local_subscription` skip on every run.
                     ->orWhere(fn (Builder $unprovenanced): Builder => $unprovenanced
                         ->whereNull('plan_provider')
                         ->where(fn (Builder $signal): Builder => $carriesLocalSubscriptions
-                            ? $signal->whereNotNull('stripe_id')->orWhereHas('subscriptions')
+                            ? $signal->whereHas(
+                                'subscriptions',
+                                fn (Builder $row): Builder => $row->where('type', self::STRIPE_SUBSCRIPTION_TYPE),
+                            )
                             : $signal->whereNotNull('stripe_id')));
             })
             ->when($only !== null, fn (Builder $query): Builder => $query->whereKey($only));
@@ -562,8 +573,9 @@ class ReconcileBillingEntitlements extends Command
                 // path's own drop log. A tier read through anything that answers
                 // a free-tier word over a NULL row would print that word here
                 // instead, and this is the skip an operator sees most: it fires
-                // every run for a subject carrying a `stripe_id` and no Cashier
-                // row, so a wrong value here is the one that gets believed.
+                // every run for a subject whose provenance names the Stripe rail
+                // and who has no Cashier row, so a wrong value here is the one
+                // that gets believed.
                 'stored_plan' => $this->stringAttribute($billable, 'plan'),
             ]);
 
