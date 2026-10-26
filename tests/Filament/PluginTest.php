@@ -7,6 +7,7 @@ use Filament\Notifications\Notification;
 use Filament\Panel;
 use Filament\Resources\Pages\CreateRecord;
 use Filament\Resources\Pages\EditRecord;
+use Filament\Resources\RelationManagers\RelationManager;
 use Filament\Support\Exceptions\Halt;
 use FlutterSdk\MagicStarter\Events\AdminActionPerformed;
 use FlutterSdk\MagicStarter\Filament\AdminNavigationGroup;
@@ -127,6 +128,21 @@ class PluginTest extends FilamentTestCase
         $this->assertSame($plugin, $plugin->authorizeBillingUsing($callback));
         $this->assertSame($callback, $plugin->getAuthorizeBillingUsing());
         $this->assertNull($plugin->authorizeBillingUsing(null)->getAuthorizeBillingUsing());
+    }
+
+    public function test_the_user_relations_are_kept_on_the_plugin_and_append_across_calls(): void
+    {
+        $first = $this->plainRelationManager();
+        $second = $this->plainRelationManager();
+        $plugin = MagicStarterPlugin::make();
+
+        $this->assertSame([], $plugin->getUserRelations());
+        $this->assertSame($plugin, $plugin->userRelations([$first]));
+        $this->assertSame([$first], $plugin->getUserRelations());
+
+        $plugin->userRelations([$second]);
+
+        $this->assertSame([$first, $second], $plugin->getUserRelations());
     }
 
     public function test_a_resource_without_its_own_group_sits_under_none_until_the_app_names_one(): void
@@ -381,6 +397,16 @@ class PluginTest extends FilamentTestCase
                 return ConcreteUser::class;
             }
         })::class;
+    }
+
+    /**
+     * A relation manager that overrides nothing; distinct per call, so a test can tell two apart.
+     *
+     * @return class-string<RelationManager>
+     */
+    private function plainRelationManager(): string
+    {
+        return (new class extends RelationManager {})::class;
     }
 
     /**
