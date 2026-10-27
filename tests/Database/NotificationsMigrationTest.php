@@ -68,6 +68,71 @@ class NotificationsMigrationTest extends TestCase
             (string) $notification->notifiable_id,
         );
         $this->assertSame('Deploy finished', $notification->data['title']);
+
+        // 4. The payload answers a JSON path, the query Filament's database
+        //    notifications run on every panel page. PostgreSQL refuses `->>` on text.
+        $this->assertSame(1, $this->payloadMatches('title', 'Deploy finished'));
+    }
+
+    public function test_the_conversion_turns_a_text_payload_into_json_and_keeps_its_rows(): void
+    {
+        // 1. The table the create stub built before its payload became JSON.
+        config()->set('magic-starter.use_uuids', false);
+        $this->migrate('create_users_table.php');
+        $this->createTextPayloadNotificationsTable();
+        $user = $this->createUser();
+        $id = (string) Str::uuid();
+        DB::table('notifications')->insert([
+            'id' => $id,
+            'type' => DatabaseChannelNotification::class,
+            'notifiable_type' => $user->getMorphClass(),
+            'notifiable_id' => $user->getKey(),
+            'data' => json_encode([
+                'format' => 'filament',
+                'title' => 'Carried over',
+            ]),
+            'read_at' => null,
+            'created_at' => now(),
+            'updated_at' => now(),
+        ]);
+
+        $this->migrate('convert_notifications_data_to_json.php');
+
+        // 2. The row survived and its payload now answers a JSON path.
+        $this->assertSame('Carried over', DatabaseNotification::query()->findOrFail($id)->data['title']);
+        $this->assertSame(1, $this->payloadMatches('format', 'filament'));
+
+        // 3. A second run finds nothing left to convert.
+        $migration = require __DIR__ . '/../../database/migrations/convert_notifications_data_to_json.php';
+        $migration->up();
+        $this->assertSame(1, $this->payloadMatches('format', 'filament'));
+    }
+
+    public function test_the_conversion_reverses_to_text_and_keeps_its_rows(): void
+    {
+        config()->set('magic-starter.use_uuids', false);
+        $this->migrate('create_users_table.php');
+        $this->createTextPayloadNotificationsTable();
+        $migration = require __DIR__ . '/../../database/migrations/convert_notifications_data_to_json.php';
+        $migration->up();
+        $sent = new DatabaseChannelNotification;
+        $sent->id = (string) Str::uuid();
+        $this->createUser()->notify($sent);
+
+        $migration->down();
+
+        $this->assertSame('Deploy finished', DatabaseNotification::query()->sole()->data['title']);
+
+        if (DB::getDriverName() === 'pgsql') {
+            $this->assertSame('text', Schema::getColumnType('notifications', 'data'));
+        }
+    }
+
+    public function test_the_conversion_skips_an_install_without_the_table(): void
+    {
+        $this->migrate('convert_notifications_data_to_json.php');
+
+        $this->assertFalse(Schema::hasTable('notifications'));
     }
 
     public function test_the_rekey_rebuilds_an_integer_keyed_table_and_keeps_its_rows(): void
@@ -124,6 +189,9 @@ class NotificationsMigrationTest extends TestCase
         $sent->id = (string) Str::uuid();
         $user->notify($sent);
         $this->assertTrue(DatabaseNotification::query()->whereKey($sent->id)->exists());
+
+        // 7. The rebuilt payload column answers a JSON path like a fresh one.
+        $this->assertSame(1, $this->payloadMatches('title', 'Deploy finished'));
     }
 
     public function test_the_rekey_finishes_a_run_that_stopped_between_the_drop_and_the_rename(): void
@@ -253,6 +321,30 @@ class NotificationsMigrationTest extends TestCase
                 'read_at',
             ]);
         });
+    }
+
+    /**
+     * The UUID-keyed shape the create stub produced before its payload became JSON.
+     */
+    private function createTextPayloadNotificationsTable(): void
+    {
+        Schema::create('notifications', function (Blueprint $table): void {
+            $table->uuid('id')->primary();
+            $table->string('type');
+            $table->morphs('notifiable');
+            $table->text('data');
+            $table->timestamp('read_at')->nullable();
+            $table->timestamps();
+        });
+    }
+
+    /**
+     * Count the notifications whose payload holds the value at the key, through a
+     * JSON path the way Filament's database notifications filter on `format`.
+     */
+    private function payloadMatches(string $key, string $value): int
+    {
+        return DatabaseNotification::query()->where("data->{$key}", $value)->count();
     }
 
     private function idAutoIncrements(): bool

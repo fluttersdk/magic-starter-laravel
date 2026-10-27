@@ -8,6 +8,10 @@ All notable changes to this project will be documented in this file.
 
 - **Tabs on the user page without replacing the user resource.** `MagicStarterPlugin::userRelations()` takes relation manager classes and `getUserRelations()` returns them; each call appends, and `UserResource::getRelations()` lists them after the starter's own tabs. Swapping the resource for a subclass would also mean replacing its three pages, whose `$resource` binds the starter class. (`src/Filament/MagicStarterPlugin.php`, `src/Filament/Resources/Users/UserResource.php`)
 
+### Fixed
+
+- **The notifications payload is JSON, so Filament's bell works on PostgreSQL.** The create and rekey stubs built `notifications.data` as text, and Filament's database notifications filter on `data->>'format'`, which PostgreSQL refuses on text ("operator does not exist: text ->> unknown"), so every panel page with `databaseNotifications()` answered 500. Both stubs now build the column with `json()`, and a new `convert_notifications_data_to_json` migration casts an existing PostgreSQL column in place, keeping every row; it is a no-op on SQLite and MySQL and on a column that is already JSON, and `down()` casts it back. New installs publish it with the `notifications` feature. To upgrade, copy `vendor/fluttersdk/magic-starter-laravel/database/migrations/convert_notifications_data_to_json.php` into `database/migrations/` under a timestamp later than your notifications migrations, then run `php artisan migrate`. (`database/migrations/create_notifications_table.php`, `database/migrations/rekey_notifications_table_by_uuid.php`, `database/migrations/convert_notifications_data_to_json.php`, `src/Console/InstallCommand.php`)
+
 ## [0.0.47] - 2026-10-25
 
 ### Fixed

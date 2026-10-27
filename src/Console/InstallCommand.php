@@ -142,6 +142,9 @@ class InstallCommand extends Command
             // table before its id became a UUID in both key modes. A no-op on a
             // table that is already right, so a fresh install runs it harmlessly.
             'rekey_notifications_table_by_uuid.php',
+            // After both, which built the payload as text before it became JSON.
+            // A no-op off PostgreSQL and on a column that is already JSON.
+            'convert_notifications_data_to_json.php',
             'create_notification_settings_table.php',
             'add_sms_registered_at_to_users_table.php',
             // The push-state rows the `onesignal` routes read and write. Not an
