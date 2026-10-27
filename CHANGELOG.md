@@ -4,6 +4,8 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [0.0.48] - 2026-10-27
+
 ### Added
 
 - **Tabs on the user page without replacing the user resource.** `MagicStarterPlugin::userRelations()` takes relation manager classes and `getUserRelations()` returns them; each call appends, and `UserResource::getRelations()` lists them after the starter's own tabs. Swapping the resource for a subclass would also mean replacing its three pages, whose `$resource` binds the starter class. (`src/Filament/MagicStarterPlugin.php`, `src/Filament/Resources/Users/UserResource.php`)
