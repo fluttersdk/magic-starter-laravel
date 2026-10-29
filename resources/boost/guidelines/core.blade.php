@@ -64,7 +64,7 @@ Bound in `MagicStarterServiceProvider::register()` via `$this->app->bind()`:
 - `DeletesUsers` → `DeleteUser`
 - `CreatesTeams` → `CreateTeam` / `UpdatesTeams` → `UpdateTeam` / `DeletesTeams` → `DeleteTeam`
 - `AddsTeamMembers` → `AddTeamMember` / `RemovesTeamMembers` → `RemoveTeamMember`
-- `InvitesTeamMembers` → `InviteTeamMember` / `UpdatesTeamMemberRoles` → `UpdateTeamMemberRole`
+- `InvitesTeamMembers` → `InviteTeamMember` / `AcceptsTeamInvitations` → `AcceptTeamInvitation` / `UpdatesTeamMemberRoles` → `UpdateTeamMemberRole`
 - `TransfersTeamOwnership` → `TransferTeamOwnership` / `CancelsTeamInvitations` → `CancelTeamInvitation` / `ResendsTeamInvitations` → `ResendTeamInvitation`
 - `CancelsUserDeletion` → `CancelUserDeletion` / `RevokesApiTokens` → `RevokeApiTokens`
 - `CreatesGuestUsers` → `CreateGuestUser`
