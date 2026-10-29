@@ -64,6 +64,7 @@ The main features and their toggle methods:
 | Feature Key | Enable Method | Check Method | Description |
 |:------------|:--------------|:-------------|:------------|
 | `teams` | `Features::teams()` | `Features::hasTeamFeatures()` | Team creation, membership, invitations, and roles |
+| `restorable-teams` | `Features::restorableTeams()` | `Features::hasRestorableTeamFeatures()` | Deleting a team hides it for `teams.restore_days` days, and its owner can restore it with `POST teams/{team}/restore` ([details](../basics/teams.md#restorable-delete)) |
 | `profile-photos` | `Features::profilePhotos()` | `Features::hasProfilePhotoFeatures()` | User profile photo upload and management |
 | `sessions` | `Features::sessions()` | `Features::hasSessionFeatures()` | Active session listing and revocation |
 | `social-login` | `Features::socialLogin()` | `Features::hasSocialLoginFeatures()` | OAuth-based social login via Socialite |
