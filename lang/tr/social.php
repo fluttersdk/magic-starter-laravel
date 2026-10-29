@@ -30,6 +30,8 @@ return [
 
     'subscription_active' => 'Hesabınızın aktif bir aboneliği var. Hesabınızı silmeden önce aboneliği iptal ediniz.',
 
+    'billing_release_failed' => 'Aboneliğiniz iptal edilemedi, bu yüzden hesabınız silinmek üzere planlanmadı. Biraz sonra tekrar deneyiniz.',
+
     'deletion_scheduled' => 'Hesabınız :days gün sonra silinecek. Silme işlemini iptal etmek için bu süre içinde yeniden giriş yapınız.',
 
     'deletion_immediate' => 'Hesabınız siliniyor. Bu işlem geri alınamaz.',

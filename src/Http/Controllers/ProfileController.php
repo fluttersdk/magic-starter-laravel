@@ -9,6 +9,7 @@ use FlutterSdk\MagicStarter\Http\Requests\DeleteAccountRequest;
 use FlutterSdk\MagicStarter\Http\Requests\UpdatePasswordRequest;
 use FlutterSdk\MagicStarter\Http\Requests\UpdateProfileRequest;
 use FlutterSdk\MagicStarter\Http\Resources\UserResource;
+use FlutterSdk\MagicStarter\Support\OwnedTeams;
 use Illuminate\Http\JsonResponse;
 
 /**
@@ -57,31 +58,39 @@ class ProfileController
      * rather than after the grace period; still 202, since the deletion happens
      * on the queue, and `data.immediate` is true. Without it the body is the
      * scheduled one, unchanged.
+     *
+     * With `account_deletion.billing` set to `release` the body also carries
+     * `data.billing`: the subscriptions ended now (`cancelled`) and the store
+     * subscriptions the user still has to cancel in the store (`store`), so a
+     * client can send them to the store's cancel screen. In the default `refuse`
+     * mode the key is absent, and a subscription refuses the request instead.
      */
     public function destroy(DeleteAccountRequest $request): JsonResponse
     {
         $user = $request->user();
         $immediately = $request->boolean('immediately');
 
-        app(SchedulesUserDeletion::class)->schedule($user, immediately: $immediately);
+        $billing = app(SchedulesUserDeletion::class)->schedule($user, immediately: $immediately);
+
+        $data = [
+            'deletion_scheduled_at' => $user->deletion_scheduled_at,
+        ];
 
         if ($immediately) {
-            return response()->json([
-                'data' => [
-                    'deletion_scheduled_at' => $user->deletion_scheduled_at,
-                    'immediate' => true,
-                ],
-                'message' => __('magic-starter::social.deletion_immediate'),
-            ], 202);
+            $data['immediate'] = true;
+        }
+
+        if (OwnedTeams::releasesBilling()) {
+            $data['billing'] = $billing;
         }
 
         return response()->json([
-            'data' => [
-                'deletion_scheduled_at' => $user->deletion_scheduled_at,
-            ],
-            'message' => __('magic-starter::social.deletion_scheduled', [
-                'days' => (int) config('magic-starter.account_deletion.grace_days', 30),
-            ]),
+            'data' => $data,
+            'message' => $immediately
+                ? __('magic-starter::social.deletion_immediate')
+                : __('magic-starter::social.deletion_scheduled', [
+                    'days' => (int) config('magic-starter.account_deletion.grace_days', 30),
+                ]),
         ], 202);
     }
 }

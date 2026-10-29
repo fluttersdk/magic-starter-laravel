@@ -3,9 +3,11 @@
 namespace FlutterSdk\MagicStarter\Support;
 
 use FlutterSdk\MagicStarter\Actions\SubscriptionGuardedDeleteTeam;
+use FlutterSdk\MagicStarter\Enums\AccountDeletionBilling;
 use Illuminate\Contracts\Auth\Authenticatable;
 use Illuminate\Database\Eloquent\Collection;
 use Illuminate\Database\Eloquent\Model;
+use RuntimeException;
 
 /**
  * The account-deletion pipeline's definitions of "shared" and "billing".
@@ -13,8 +15,9 @@ use Illuminate\Database\Eloquent\Model;
  * The scheduler refuses on them, the purge un-schedules or holds on them, and
  * the default deleter refuses on them, so they live outside every one of those
  * classes: a consumer who rebinds `DeletesUsers` or `SchedulesUserDeletion`
- * keeps the same answers the purge acts on. The one policy switch they share,
- * whether a shared team is handed on instead of refused, is read here too.
+ * keeps the same answers the purge acts on. The two policy switches they share
+ * are read here too: whether a shared team is handed on instead of refused, and
+ * whether a subscription billing the user is ended instead of refused.
  */
 final class OwnedTeams
 {
@@ -33,6 +36,21 @@ final class OwnedTeams
     public static function handsOnShared(): bool
     {
         return (bool) config('magic-starter.account_deletion.hand_on_shared_teams', false);
+    }
+
+    /**
+     * Whether a subscription that bills the user is ended for them instead of
+     * refusing the deletion.
+     *
+     * Read from `account_deletion.billing` through {@see AccountDeletionBilling},
+     * which refuses a value that is not a mode. Only the user's own subscription
+     * is affected: a team a store or Stripe bills still refuses and holds.
+     *
+     * @throws RuntimeException When the configured value is not a mode.
+     */
+    public static function releasesBilling(): bool
+    {
+        return AccountDeletionBilling::configured() === AccountDeletionBilling::RELEASE;
     }
 
     /**

@@ -10,8 +10,8 @@ use Stripe\StripeClient;
 use Stripe\Subscription as StripeSubscription;
 
 /**
- * The Stripe calls the trial card check makes, and nothing else: the card read,
- * the live status read and the cancel.
+ * The Stripe calls the trial card check makes, and the account-deletion release
+ * after it: the card read, the live status read and the cancel.
  *
  * A seam rather than inline calls in {@see CheckTrialCard}: the job's rules
  * (earliest wins, refuse before cancel, keep a converted subscription) are what
@@ -118,7 +118,8 @@ class TrialCardGateway
      * Cancel a subscription now, with no proration and no final invoice.
      *
      * Never Cashier's `cancelNow()`: it prorates by default, which on a trial
-     * credits or invoices a customer who was told nothing was charged.
+     * credits or invoices a customer who was told nothing was charged, and on an
+     * account deletion refunds a period nobody offered to refund.
      *
      * A subscription Stripe has already canceled is a cancel that is done. A
      * refused DELETE is therefore followed by one retrieve, and a `canceled` (or

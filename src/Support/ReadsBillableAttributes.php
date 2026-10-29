@@ -11,6 +11,7 @@ use FlutterSdk\MagicStarter\Enums\PlanStatus;
 use FlutterSdk\MagicStarter\MagicStarter;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Support\Carbon;
+use Illuminate\Support\Collection;
 use Laravel\Cashier\Subscription;
 
 /**
@@ -193,17 +194,33 @@ trait ReadsBillableAttributes
      */
     protected function stripeIsBilling(Model $billable): bool
     {
+        return $this->stripeSubscriptions($billable)->contains(
+            static fn (Subscription $subscription): bool => $subscription->valid(),
+        );
+    }
+
+    /**
+     * Every Cashier subscription row of this subject, whatever its state.
+     *
+     * The one place the card rail's rows are read, so the hold ({@see self::stripeIsBilling()})
+     * and the release that ends them agree on which subject has any. A subject
+     * that is not the configured billable has none, and neither has a model
+     * without Cashier's trait. Queried rather than read from a loaded relation,
+     * so a subscription that arrived after the subject was loaded still counts.
+     *
+     * @return Collection<int, Subscription>
+     */
+    protected function stripeSubscriptions(Model $billable): Collection
+    {
         $billableClass = MagicStarter::billableModel();
 
         if (! $billable instanceof $billableClass || ! method_exists($billable, 'subscriptions')) {
-            return false;
+            return new Collection;
         }
 
-        // Queried rather than read from a loaded relation, so a subscription that
-        // arrived after the subject was loaded still counts.
-        return $billable->subscriptions()->get()->contains(
-            static fn (mixed $subscription): bool => $subscription instanceof Subscription && $subscription->valid(),
-        );
+        return $billable->subscriptions()->get()->filter(
+            static fn (mixed $subscription): bool => $subscription instanceof Subscription,
+        )->values();
     }
 
     /**

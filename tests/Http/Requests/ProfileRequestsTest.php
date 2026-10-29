@@ -97,7 +97,7 @@ final class ProfileRequestsTest extends TestCase
                 \Illuminate\Contracts\Auth\Authenticatable $user,
                 bool $orphan = false,
                 bool $immediately = false,
-            ): void {
+            ): array {
                 throw new \LogicException('A request that failed validation must not reach the scheduler.');
             }
         });

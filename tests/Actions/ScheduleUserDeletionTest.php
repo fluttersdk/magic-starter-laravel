@@ -6,9 +6,11 @@ use FlutterSdk\MagicStarter\Actions\ScheduleUserDeletion;
 use FlutterSdk\MagicStarter\Contracts\SchedulesUserDeletion;
 use FlutterSdk\MagicStarter\Http\Controllers\AuthController;
 use FlutterSdk\MagicStarter\Http\Controllers\ProfileController;
+use FlutterSdk\MagicStarter\Jobs\PurgeUserNow;
 use FlutterSdk\MagicStarter\MagicStarter;
 use FlutterSdk\MagicStarter\Tests\Fixtures\ConcreteTeam;
 use FlutterSdk\MagicStarter\Tests\Fixtures\ConcreteUser;
+use FlutterSdk\MagicStarter\Tests\Support\StripeHttpStub;
 use FlutterSdk\MagicStarter\Tests\TestCase;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Schema\Blueprint;
@@ -17,6 +19,7 @@ use Illuminate\Http\JsonResponse;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Hash;
+use Illuminate\Support\Facades\Queue;
 use Illuminate\Support\Facades\Route;
 use Illuminate\Support\Facades\Schema;
 use Illuminate\Validation\ValidationException;
@@ -131,6 +134,13 @@ class ScheduleUserDeletionTest extends TestCase
 
         Route::post('/login', [AuthController::class, 'login']);
         Route::delete('/user', [ProfileController::class, 'destroy']);
+    }
+
+    protected function tearDown(): void
+    {
+        StripeHttpStub::uninstall();
+
+        parent::tearDown();
     }
 
     public function test_the_contract_resolves_to_the_default_action(): void
@@ -403,6 +413,307 @@ class ScheduleUserDeletionTest extends TestCase
     }
 
     /**
+     * Refusing is the default, so a host that never opted in keeps the
+     * behaviour it always had.
+     */
+    public function test_billing_is_refused_rather_than_released_by_default(): void
+    {
+        $this->assertSame('refuse', config('magic-starter.account_deletion.billing'));
+    }
+
+    /**
+     * In refuse mode a subscription refuses before anything is asked of Stripe:
+     * nothing is cancelled for the customer, and a user nothing bills schedules
+     * with an empty report and no `billing` key in the 202 body.
+     */
+    public function test_refuse_mode_never_asks_stripe_and_leaves_the_response_unchanged(): void
+    {
+        $stripe = StripeHttpStub::install();
+        $payer = $this->useBillableUsers('payer@example.test');
+        $this->subscribe($payer, 'active');
+
+        $this->actingAs($payer)
+            ->deleteJson('/user', ['password' => 'Password123'])
+            ->assertStatus(422)
+            ->assertJsonPath('code', 'subscription_active');
+
+        $this->assertSame([], $stripe->requests);
+
+        $free = ScheduleUserDeletionTestBillableUser::query()->create([
+            'name' => 'User',
+            'email' => 'free@example.test',
+            'password' => Hash::make('Password123'),
+        ]);
+
+        $response = $this->actingAs($free)
+            ->deleteJson('/user', ['password' => 'Password123'])
+            ->assertStatus(202);
+
+        $this->assertSame(['deletion_scheduled_at'], array_keys($response->json('data')));
+        $this->assertSame($this->nothingReleased(), $this->app->make(SchedulesUserDeletion::class)->schedule($free));
+    }
+
+    /**
+     * A value this build does not know is a typo in the host's config, and
+     * guessing which way it meant would either strand a charge or cancel one
+     * nobody asked for. It stops before anything is locked.
+     */
+    public function test_an_unknown_billing_mode_is_refused_before_anything_is_locked(): void
+    {
+        config([
+            'magic-starter.account_deletion.billing' => 'cancel',
+        ]);
+        $user = $this->createUser('typo@example.test');
+        $user->createToken('device');
+
+        try {
+            $this->app->make(SchedulesUserDeletion::class)->schedule($user);
+            $this->fail('Expected the unknown mode to be refused.');
+        } catch (RuntimeException $exception) {
+            $this->assertStringContainsString('account_deletion.billing', $exception->getMessage());
+        }
+
+        $this->assertNull($user->refresh()->deletion_scheduled_at);
+        $this->assertSame(1, $user->tokens()->count());
+    }
+
+    /**
+     * Releasing ends the Stripe subscription at once, with no proration and no
+     * final invoice, then locks and stamps the account as usual. The remaining
+     * period is not refunded.
+     */
+    public function test_release_mode_cancels_a_stripe_subscription_without_proration_and_schedules(): void
+    {
+        $stripe = $this->releaseBilling();
+        $user = $this->useBillableUsers('card@example.test');
+        $this->subscribe($user, 'active', id: 'sub_card');
+        $user->createToken('device');
+        $stripe->answer($this->canceledSubscription('sub_card'));
+
+        $report = $this->app->make(SchedulesUserDeletion::class)->schedule($user);
+
+        $deletes = $stripe->requestsTo('delete', '/v1/subscriptions/sub_card');
+        $this->assertCount(1, $deletes);
+        $this->assertSame('false', $deletes[0]['params']['prorate']);
+        $this->assertSame('false', $deletes[0]['params']['invoice_now']);
+        $this->assertSame([
+            'cancelled' => [
+                [
+                    'provider' => 'stripe',
+                    'id' => 'sub_card',
+                ],
+            ],
+            'store' => [],
+        ], $report);
+
+        $user->refresh();
+        $this->assertNotNull($user->deletion_scheduled_at);
+        $this->assertSame(0, $user->tokens()->count());
+    }
+
+    /**
+     * The 202 body tells a client what happened to the billing, so it can say
+     * the web subscription ended.
+     */
+    public function test_release_mode_reports_a_cancelled_stripe_subscription_in_the_202_body(): void
+    {
+        $stripe = $this->releaseBilling();
+        $user = $this->useBillableUsers('card@example.test');
+        $this->subscribe($user, 'active', id: 'sub_card');
+        $stripe->answer($this->canceledSubscription('sub_card'));
+
+        $this->actingAs($user)
+            ->deleteJson('/user', ['password' => 'Password123'])
+            ->assertStatus(202)
+            ->assertJsonPath('data.billing.cancelled', [
+                [
+                    'provider' => 'stripe',
+                    'id' => 'sub_card',
+                ],
+            ])
+            ->assertJsonPath('data.billing.store', [])
+            ->assertJsonPath('data.deletion_scheduled_at', fn (mixed $stamp): bool => $stamp !== null);
+    }
+
+    /**
+     * Only the store can cancel a store subscription, so it does not stand in
+     * the way: the account is scheduled, nothing is asked of Stripe, and the
+     * body names the store so the client can send the person to its cancel
+     * screen.
+     */
+    public function test_release_mode_reports_a_store_subscription_and_schedules(): void
+    {
+        $stripe = $this->releaseBilling();
+        $user = $this->useBillableUsers('store@example.test');
+        $user->forceFill([
+            'plan' => 'pro',
+            'plan_status' => 'active',
+            'plan_provider' => 'app_store',
+        ])->save();
+        $user->createToken('device');
+
+        $this->actingAs($user)
+            ->deleteJson('/user', ['password' => 'Password123'])
+            ->assertStatus(202)
+            ->assertJsonPath('data.billing.cancelled', [])
+            ->assertJsonPath('data.billing.store', [
+                [
+                    'provider' => 'app_store',
+                    'manage_url' => null,
+                ],
+            ]);
+
+        $this->assertSame([], $stripe->requests);
+        $user->refresh();
+        $this->assertNotNull($user->deletion_scheduled_at);
+        $this->assertSame('pro', $user->plan, 'The entitlement is the store\'s to end.');
+    }
+
+    /**
+     * A user nothing bills still gets the block, empty, so a client in release
+     * mode can rely on the key.
+     */
+    public function test_release_mode_answers_an_empty_block_when_nothing_bills_the_user(): void
+    {
+        $this->releaseBilling();
+        $user = $this->useBillableUsers('free@example.test');
+
+        $this->actingAs($user)
+            ->deleteJson('/user', ['password' => 'Password123'])
+            ->assertStatus(202)
+            ->assertJsonPath('data.billing', $this->nothingReleased());
+    }
+
+    /**
+     * The immediate answer carries the block too.
+     */
+    public function test_release_mode_reports_billing_on_the_immediate_answer(): void
+    {
+        Queue::fake();
+        $stripe = $this->releaseBilling();
+        $user = $this->useBillableUsers('card@example.test');
+        $this->subscribe($user, 'active', id: 'sub_card');
+        $stripe->answer($this->canceledSubscription('sub_card'));
+
+        $this->actingAs($user)
+            ->deleteJson('/user', ['password' => 'Password123', 'immediately' => true])
+            ->assertStatus(202)
+            ->assertJsonPath('data.immediate', true)
+            ->assertJsonPath('data.billing.cancelled.0.id', 'sub_card');
+
+        Queue::assertPushed(PurgeUserNow::class);
+    }
+
+    /**
+     * A Stripe failure is a refusal, never a half-done deletion: the account is
+     * not locked, not stamped, and keeps its tokens, so the person can try
+     * again.
+     */
+    public function test_release_mode_refuses_when_stripe_fails_and_schedules_nothing(): void
+    {
+        $stripe = $this->releaseBilling();
+        $user = $this->useBillableUsers('card@example.test');
+        $this->subscribe($user, 'active', id: 'sub_card');
+        $user->createToken('device');
+        $this->createPushDevice($user);
+
+        $this->actingAs($user)
+            ->deleteJson('/user', ['password' => 'Password123'])
+            ->assertStatus(422)
+            ->assertJsonPath('code', 'billing_release_failed')
+            ->assertJsonPath('message', __('magic-starter::social.billing_release_failed'))
+            ->assertJsonPath('team_ids', [])
+            ->assertJsonMissingPath('data');
+
+        $this->assertCount(1, $stripe->requestsTo('delete', '/v1/subscriptions/sub_card'));
+        $user->refresh();
+        $this->assertNull($user->deletion_scheduled_at);
+        $this->assertSame(1, $user->tokens()->count());
+        $this->assertSame(1, DB::table('push_devices')->where('user_id', $user->getKey())->count());
+    }
+
+    /**
+     * What only the user can resolve is checked before anything remote runs, so
+     * a refusal never leaves a subscription cancelled behind it.
+     */
+    public function test_release_mode_refuses_a_shared_team_before_asking_stripe(): void
+    {
+        $stripe = $this->releaseBilling();
+        $user = $this->useBillableUsers('owner@example.test');
+        $this->subscribe($user, 'active', id: 'sub_card');
+        $shared = $this->createTeam($user, 'Shared');
+        $shared->users()->attach($this->createUser('member@example.test')->getKey(), ['role' => 'member']);
+
+        $body = $this->refusalBody(fn () => $this->app->make(SchedulesUserDeletion::class)->schedule($user));
+
+        $this->assertSame('owns_shared_teams', $body['code']);
+        $this->assertSame([], $stripe->requests);
+        $this->assertNull($user->refresh()->deletion_scheduled_at);
+    }
+
+    /**
+     * Releasing is about the user's own subscription. A team a store or Stripe
+     * bills is still the owner's to settle, as it was.
+     */
+    public function test_release_mode_still_refuses_a_billing_team(): void
+    {
+        $stripe = $this->releaseBilling();
+        $user = $this->createUser('payer@example.test');
+        $team = $this->createTeam($user, 'Paid');
+        $team->forceFill([
+            'plan' => 'pro',
+            'plan_status' => 'active',
+            'plan_provider' => 'play_store',
+        ])->save();
+
+        $body = $this->refusalBody(fn () => $this->app->make(SchedulesUserDeletion::class)->schedule($user));
+
+        $this->assertSame('team_has_active_subscription', $body['code']);
+        $this->assertSame([(string) $team->getKey()], $body['team_ids']);
+        $this->assertSame([], $stripe->requests);
+        $this->assertNull($user->refresh()->deletion_scheduled_at);
+    }
+
+    /**
+     * An orphan is never refused, and nobody is left to cancel for them, so a
+     * subscription is released for them too: the purge will not hold the
+     * account back for it.
+     */
+    public function test_release_mode_releases_an_orphans_subscription(): void
+    {
+        $stripe = $this->releaseBilling();
+        $orphan = $this->useBillableUsers('orphan@example.test');
+        $this->subscribe($orphan, 'active', id: 'sub_orphan');
+        $stripe->answer($this->canceledSubscription('sub_orphan'));
+
+        $report = $this->app->make(SchedulesUserDeletion::class)->schedule($orphan, orphan: true);
+
+        $this->assertSame('sub_orphan', $report['cancelled'][0]['id']);
+        $orphan->refresh();
+        $this->assertNotNull($orphan->deletion_scheduled_at);
+        $this->assertNotNull($orphan->orphaned_at);
+    }
+
+    /**
+     * A Stripe failure stops an orphan's schedule too, so the provider's
+     * notification fails and is delivered again rather than the account being
+     * scheduled with its subscription still charging.
+     */
+    public function test_release_mode_does_not_schedule_an_orphan_when_stripe_fails(): void
+    {
+        $this->releaseBilling();
+        $orphan = $this->useBillableUsers('orphan@example.test');
+        $this->subscribe($orphan, 'active', id: 'sub_orphan');
+
+        $body = $this->refusalBody(
+            fn () => $this->app->make(SchedulesUserDeletion::class)->schedule($orphan, orphan: true),
+        );
+
+        $this->assertSame('billing_release_failed', $body['code']);
+        $this->assertNull($orphan->refresh()->deletion_scheduled_at);
+    }
+
+    /**
      * A solo user is locked out at once and deleted later: tokens and push
      * devices go now, the user and the team rows stay.
      */
@@ -582,6 +893,44 @@ class ScheduleUserDeletionTest extends TestCase
         $this->fail('Expected the scheduler to refuse.');
     }
 
+    /**
+     * Switch the host to releasing billing and put a Stripe transport stub in
+     * front of the SDK.
+     */
+    private function releaseBilling(): StripeHttpStub
+    {
+        config([
+            'magic-starter.account_deletion.billing' => 'release',
+            'cashier.secret' => 'sk_test_schedule_user_deletion',
+        ]);
+
+        return StripeHttpStub::install();
+    }
+
+    /**
+     * @return array<string, mixed>
+     */
+    private function canceledSubscription(string $id): array
+    {
+        return [
+            'id' => $id,
+            'object' => 'subscription',
+            'customer' => 'cus_leaver',
+            'status' => 'canceled',
+        ];
+    }
+
+    /**
+     * @return array{cancelled: list<mixed>, store: list<mixed>}
+     */
+    private function nothingReleased(): array
+    {
+        return [
+            'cancelled' => [],
+            'store' => [],
+        ];
+    }
+
     private function createUser(string $email): ScheduleUserDeletionTestUser
     {
         return ScheduleUserDeletionTestUser::query()->create([
@@ -615,10 +964,11 @@ class ScheduleUserDeletionTest extends TestCase
         ScheduleUserDeletionTestBillableUser $user,
         string $status,
         ?Carbon $endsAt = null,
+        ?string $id = null,
     ): void {
         $user->subscriptions()->create([
             'type' => 'default',
-            'stripe_id' => 'sub_' . bin2hex(random_bytes(6)),
+            'stripe_id' => $id ?? 'sub_' . bin2hex(random_bytes(6)),
             'stripe_status' => $status,
             'stripe_price' => 'price_pro',
             'quantity' => 1,

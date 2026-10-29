@@ -34,6 +34,9 @@ return [
     // Under user billing, the account's own subscription blocks its deletion.
     'subscription_active' => 'Your account has an active subscription. Cancel it before deleting your account.',
 
+    // With account deletion releasing billing, the rail could not end the subscription, so nothing was scheduled.
+    'billing_release_failed' => 'We could not cancel your subscription, so your account was not scheduled for deletion. Try again in a moment.',
+
     // Every session was just signed out, so signing in again is the only way to cancel.
     'deletion_scheduled' => 'Your account will be deleted in :days days. Sign in again before then to cancel the deletion.',
 

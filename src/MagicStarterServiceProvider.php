@@ -79,6 +79,7 @@ class MagicStarterServiceProvider extends ServiceProvider
         $this->app->bind(Contracts\UpdatesUserPasswords::class, Actions\UpdateUserPassword::class);
         $this->app->bind(Contracts\DeletesUsers::class, Actions\DeleteUser::class);
         $this->app->bind(Contracts\SchedulesUserDeletion::class, Actions\ScheduleUserDeletion::class);
+        $this->app->bind(Contracts\ReleasesUserBilling::class, Actions\ReleaseUserBilling::class);
         $this->app->bind(Contracts\CreatesTeams::class, Actions\CreateTeam::class);
         $this->app->bind(Contracts\UpdatesTeams::class, Actions\UpdateTeam::class);
         // Bound to the subscription-guarded action rather than the plain one.

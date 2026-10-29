@@ -1353,11 +1353,26 @@ return [
     | always. Only ownership moves: a team a subscription is still billing
     | keeps refusing the request and holding the purge, on either setting.
     |
+    | `billing` decides what a subscription that bills the USER directly
+    | (`billing.billable` is `user`) does to the deletion. `refuse`, the
+    | default, answers the request with 422 `subscription_active` and holds
+    | the purge: nothing is cancelled for the customer. `release` accepts the
+    | request and ends the card rail's subscriptions in Stripe at once, with
+    | no proration and no final invoice (the remaining period is not
+    | refunded), through the `ReleasesUserBilling` contract. A store
+    | subscription cannot be cancelled from here, so it is reported in the
+    | response's `data.billing.store` for the client to send the user to the
+    | store's cancel screen, and the deletion goes ahead after the grace
+    | period either way. A Stripe failure answers 422 `billing_release_failed`
+    | and schedules nothing. A team a subscription bills keeps refusing the
+    | request and holding the purge, on either setting.
+    |
     */
 
     'account_deletion' => [
         'grace_days' => (int) env('MAGIC_STARTER_ACCOUNT_DELETION_GRACE_DAYS', 30),
         'hand_on_shared_teams' => (bool) env('MAGIC_STARTER_ACCOUNT_DELETION_HAND_ON_SHARED_TEAMS', false),
+        'billing' => env('MAGIC_STARTER_ACCOUNT_DELETION_BILLING', 'refuse'),
     ],
 
     /*
