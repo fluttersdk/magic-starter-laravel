@@ -191,8 +191,9 @@ deletion pipeline, so it runs from `magic-starter:purge-deleted-users` once the 
 not from `DELETE user`. The default action deletes the user's owned teams through `DeletesTeams`
 (so its billing guard runs on each), detaches memberships, removes the linked social identities and
 tokens, and, after the outermost transaction commits, revokes the Apple grants and deletes the
-profile photo. It refuses a user who owns a shared team or whom a subscription bills. Any
-additional teardown belongs here.
+profile photo. It refuses a user who owns a shared team or whom a subscription bills; the purge
+hands a shared team on first (always for an orphan, and for any user with
+`account_deletion.hand_on_shared_teams` on). Any additional teardown belongs here.
 
 ---
 
@@ -206,12 +207,13 @@ public function schedule(Authenticatable $user, bool $orphan = false, bool $imme
 ```
 
 The one entry point to the deletion pipeline, for a user's own request and for an identity provider
-reporting the account deleted (`$orphan = true`). It refuses a user who owns a shared team or a
-billing team, or whom a subscription bills directly (422 `owns_shared_teams`,
-`team_has_active_subscription` or `subscription_active`), then revokes every token, drops the push
-devices, stamps `deletion_scheduled_at` and dispatches `UserDeletionScheduled`. Nothing is deleted
-in the request: with `$immediately` a queued `PurgeUserNow` purges the account right away instead
-of after the grace period. See [Account Deletion](../basics/account-deletion.md).
+reporting the account deleted (`$orphan = true`). It refuses a user who owns a shared team (unless
+`account_deletion.hand_on_shared_teams` is on) or a billing team, or whom a subscription bills
+directly (422 `owns_shared_teams`, `team_has_active_subscription` or `subscription_active`), then
+revokes every token, drops the push devices, stamps `deletion_scheduled_at` and dispatches
+`UserDeletionScheduled`. Nothing is deleted in the request: with `$immediately` a queued
+`PurgeUserNow` purges the account right away instead of after the grace period. See
+[Account Deletion](../basics/account-deletion.md).
 
 ---
 

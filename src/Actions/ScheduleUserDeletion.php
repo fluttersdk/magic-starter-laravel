@@ -36,6 +36,10 @@ use RuntimeException;
  * could still act on either is told now rather than surprised in thirty days. An
  * orphan skips both: the provider has deleted the identity, nobody is left to
  * act, and the purge decides what happens to their teams.
+ *
+ * With `account_deletion.hand_on_shared_teams` on, a shared team is no longer a
+ * refusal for anyone: the purge hands it to a member. The billing refusals are
+ * not affected, since handing a team on never settles what bills it.
  */
 class ScheduleUserDeletion implements SchedulesUserDeletion
 {
@@ -104,8 +108,8 @@ class ScheduleUserDeletion implements SchedulesUserDeletion
     }
 
     /**
-     * Refuse a user who owns a shared team or a billing team, or whom a
-     * subscription bills directly under user billing.
+     * Refuse a user who owns a shared team (unless the purge hands those on) or
+     * a billing team, or whom a subscription bills directly under user billing.
      *
      * @throws ValidationException
      */
@@ -113,7 +117,7 @@ class ScheduleUserDeletion implements SchedulesUserDeletion
     {
         $shared = OwnedTeams::shared($user);
 
-        if ($shared->isNotEmpty()) {
+        if ($shared->isNotEmpty() && ! OwnedTeams::handsOnShared()) {
             $this->refuse('owns_shared_teams', $shared);
         }
 

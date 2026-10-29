@@ -153,6 +153,28 @@ class PurgeUserNowTest extends TestCase
         $this->assertNull($user->refresh()->deletion_scheduled_at);
     }
 
+    /**
+     * The job hands a shared team on like the grace-period purge does, since
+     * both run the same per-account decision.
+     */
+    public function test_a_shared_team_is_handed_on_before_the_deletion_when_shared_teams_are_handed_on(): void
+    {
+        config([
+            'magic-starter.account_deletion.hand_on_shared_teams' => true,
+        ]);
+
+        $user = $this->createUser('Leaving');
+        $team = $this->createTeam($user, 'Shared');
+        $heir = $this->createUser('Heir');
+        $team->users()->attach($heir->getKey(), ['role' => 'member']);
+        $this->app->make(SchedulesUserDeletion::class)->schedule($user);
+
+        PurgeUserNow::dispatchSync($user->getKey());
+
+        $this->assertSame([$user->getKey()], $this->deleter->deleted);
+        $this->assertSame($heir->getKey(), $team->refresh()->user_id);
+    }
+
     private function createUser(string $name): PurgeUserNowTestUser
     {
         return PurgeUserNowTestUser::query()->create([

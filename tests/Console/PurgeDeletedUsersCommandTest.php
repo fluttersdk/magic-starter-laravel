@@ -3,10 +3,12 @@
 namespace FlutterSdk\MagicStarter\Tests\Console;
 
 use FlutterSdk\MagicStarter\Actions\SubscriptionGuardedDeleteTeam;
+use FlutterSdk\MagicStarter\Actions\TransferTeamOwnership;
 use FlutterSdk\MagicStarter\Console\PurgeDeletedUsersCommand;
 use FlutterSdk\MagicStarter\Contracts\DeletesTeams;
 use FlutterSdk\MagicStarter\Contracts\DeletesUsers;
 use FlutterSdk\MagicStarter\Contracts\SchedulesUserDeletion;
+use FlutterSdk\MagicStarter\Contracts\TransfersTeamOwnership;
 use FlutterSdk\MagicStarter\MagicStarter;
 use FlutterSdk\MagicStarter\Tests\Fixtures\ConcreteTeam;
 use FlutterSdk\MagicStarter\Tests\Fixtures\ConcreteUser;
@@ -193,6 +195,250 @@ class PurgeDeletedUsersCommandTest extends TestCase
         $this->assertNotNull(ConcreteTeam::query()->find($team->getKey()));
         $this->assertSame(2, DB::table('team_user')->where('team_id', $team->getKey())->count());
         $this->assertSame([], $this->teamSpy->deleted);
+    }
+
+    /**
+     * With hand-on on, a user who asked is not un-scheduled for a shared team:
+     * it goes to the earliest-joined ADMIN, even when a plain member joined
+     * earlier, the user is deleted, and the team lives on with its members.
+     */
+    public function test_a_users_shared_team_goes_to_the_oldest_admin_when_shared_teams_are_handed_on(): void
+    {
+        config([
+            'magic-starter.account_deletion.hand_on_shared_teams' => true,
+        ]);
+
+        $user = $this->createUser('Leaver');
+        $team = $this->createTeam($user, 'Leaver Personal', personal: true);
+
+        $earliestMember = $this->createUser('Earliest Member');
+        $team->users()->attach($earliestMember->getKey(), ['role' => 'member']);
+
+        $this->travel(1)->days();
+        $oldestAdmin = $this->createUser('Oldest Admin');
+        $team->users()->attach($oldestAdmin->getKey(), ['role' => 'admin']);
+
+        $this->travel(1)->days();
+        $newerAdmin = $this->createUser('Newer Admin');
+        $team->users()->attach($newerAdmin->getKey(), ['role' => 'admin']);
+
+        $this->schedule($user);
+
+        $this->travel(31)->days();
+
+        $this->artisan(PurgeDeletedUsersCommand::NAME)
+            ->expectsOutputToContain('1 deleted, 0 held, 0 un-scheduled')
+            ->assertSuccessful();
+
+        $team = ConcreteTeam::query()->findOrFail($team->getKey());
+        $this->assertSame($oldestAdmin->getKey(), $team->user_id);
+        $this->assertFalse($team->personal_team, 'A handed-on team is nobody\'s personal team.');
+        $this->assertSame('owner', $this->roleOf($team, $oldestAdmin));
+        $this->assertSame('admin', $this->roleOf($team, $newerAdmin));
+        $this->assertSame('member', $this->roleOf($team, $earliestMember));
+        $this->assertSame(3, DB::table('team_user')->where('team_id', $team->getKey())->count());
+        $this->assertSame(0, DB::table('team_user')->where('user_id', $user->getKey())->count());
+        $this->assertNull(PurgeDeletedUsersCommandTestUser::query()->find($user->getKey()));
+        $this->assertSame([], $this->teamSpy->deleted, 'A handed-on team is not deleted.');
+    }
+
+    /**
+     * Without an admin the earliest-joined member inherits the team of a user
+     * who asked, as it does an orphan's.
+     */
+    public function test_without_an_admin_the_oldest_member_inherits_when_shared_teams_are_handed_on(): void
+    {
+        config([
+            'magic-starter.account_deletion.hand_on_shared_teams' => true,
+        ]);
+
+        $user = $this->createUser('Leaver');
+        $team = $this->createTeam($user, 'Shared');
+
+        $oldest = $this->createUser('Oldest');
+        $team->users()->attach($oldest->getKey(), ['role' => 'member']);
+
+        $this->travel(1)->days();
+        $team->users()->attach($this->createUser('Newer')->getKey(), ['role' => 'member']);
+
+        $this->schedule($user);
+
+        $this->travel(31)->days();
+
+        $this->artisan(PurgeDeletedUsersCommand::NAME)->assertSuccessful();
+
+        $team = ConcreteTeam::query()->findOrFail($team->getKey());
+        $this->assertSame($oldest->getKey(), $team->user_id);
+        $this->assertSame('owner', $this->roleOf($team, $oldest));
+        $this->assertNull(PurgeDeletedUsersCommandTestUser::query()->find($user->getKey()));
+    }
+
+    /**
+     * Only a team another person belongs to is handed on: the user's solo team
+     * is deleted with them through `DeletesTeams`, as it always was.
+     */
+    public function test_a_sole_member_team_is_deleted_while_a_shared_one_is_handed_on(): void
+    {
+        config([
+            'magic-starter.account_deletion.hand_on_shared_teams' => true,
+        ]);
+
+        $user = $this->createUser('Leaver');
+        $shared = $this->createTeam($user, 'Shared');
+        $solo = $this->createTeam($user, 'Solo');
+        $heir = $this->createUser('Heir');
+        $shared->users()->attach($heir->getKey(), ['role' => 'member']);
+
+        $this->schedule($user);
+
+        $this->travel(31)->days();
+
+        $this->artisan(PurgeDeletedUsersCommand::NAME)->assertSuccessful();
+
+        $this->assertNull(PurgeDeletedUsersCommandTestUser::query()->find($user->getKey()));
+        $this->assertNull(ConcreteTeam::query()->find($solo->getKey()));
+        $this->assertSame([$solo->getKey()], $this->teamSpy->deleted);
+        $this->assertSame($heir->getKey(), ConcreteTeam::query()->findOrFail($shared->getKey())->user_id);
+        $this->assertNotNull(PurgeDeletedUsersCommandTestUser::query()->find($heir->getKey()));
+    }
+
+    /**
+     * A team that gained its first member during the grace period is handed on
+     * all the same: hand-on reads the team at purge time, not at schedule time.
+     */
+    public function test_a_team_that_became_shared_during_the_grace_period_is_handed_on(): void
+    {
+        config([
+            'magic-starter.account_deletion.hand_on_shared_teams' => true,
+        ]);
+
+        $user = $this->createUser('Leaver');
+        $team = $this->createTeam($user, 'Grew');
+        $this->schedule($user);
+
+        $newcomer = $this->createUser('Newcomer');
+        $team->users()->attach($newcomer->getKey(), ['role' => 'member']);
+
+        $this->travel(31)->days();
+
+        $this->artisan(PurgeDeletedUsersCommand::NAME)->assertSuccessful();
+
+        $this->assertSame($newcomer->getKey(), ConcreteTeam::query()->findOrFail($team->getKey())->user_id);
+        $this->assertNull(PurgeDeletedUsersCommandTestUser::query()->find($user->getKey()));
+    }
+
+    /**
+     * Hand-on moves ownership, never money: a shared team a subscription started
+     * billing during the grace period holds the account as it always did, before
+     * any team moves.
+     */
+    public function test_a_billing_shared_team_is_still_held_when_shared_teams_are_handed_on(): void
+    {
+        config([
+            'magic-starter.account_deletion.hand_on_shared_teams' => true,
+        ]);
+
+        $user = $this->createUser('Payer');
+        $paid = $this->createTeam($user, 'Shared and paid');
+        $paid->users()->attach($this->createUser('Member')->getKey(), ['role' => 'admin']);
+        $shared = $this->createTeam($user, 'Shared');
+        $shared->users()->attach($this->createUser('Other Member')->getKey(), ['role' => 'admin']);
+
+        $this->schedule($user);
+
+        $paid->forceFill([
+            'plan' => 'pro',
+            'plan_status' => 'active',
+            'plan_provider' => 'app_store',
+        ])->save();
+
+        $this->travel(31)->days();
+
+        $this->artisan(PurgeDeletedUsersCommand::NAME)
+            ->expectsOutputToContain('held')
+            ->assertSuccessful();
+
+        $this->assertNotNull(PurgeDeletedUsersCommandTestUser::query()->find($user->getKey()));
+        $this->assertNotNull($user->refresh()->deletion_scheduled_at, 'A held account stays scheduled.');
+        $this->assertSame($user->getKey(), ConcreteTeam::query()->findOrFail($paid->getKey())->user_id);
+        $this->assertSame($user->getKey(), ConcreteTeam::query()->findOrFail($shared->getKey())->user_id);
+        $this->assertSame([], $this->teamSpy->deleted);
+    }
+
+    /**
+     * A hand-on that fails part way undoes the ones before it: the run reports
+     * the failure, the user stays scheduled for the next run, and every team is
+     * still theirs with its roles untouched. Nothing is half deleted.
+     */
+    public function test_a_failing_hand_on_leaves_the_user_scheduled_and_every_team_untouched(): void
+    {
+        Exceptions::fake();
+
+        config([
+            'magic-starter.account_deletion.hand_on_shared_teams' => true,
+        ]);
+
+        $user = $this->createUser('Leaver');
+        $first = $this->createTeam($user, 'First');
+        $second = $this->createTeam($user, 'Second');
+        $firstHeir = $this->createUser('First Heir');
+        $secondHeir = $this->createUser('Second Heir');
+        $first->users()->attach($firstHeir->getKey(), ['role' => 'member']);
+        $second->users()->attach($secondHeir->getKey(), ['role' => 'member']);
+
+        $this->schedule($user);
+
+        $this->app->instance(
+            TransfersTeamOwnership::class,
+            new PurgeDeletedUsersCommandTestFailingSecondTransfer(new TransferTeamOwnership),
+        );
+
+        $this->travel(31)->days();
+
+        $this->artisan(PurgeDeletedUsersCommand::NAME)->assertFailed();
+
+        Exceptions::assertReported(RuntimeException::class);
+        $this->assertNotNull(PurgeDeletedUsersCommandTestUser::query()->find($user->getKey()));
+        $this->assertNotNull($user->refresh()->deletion_scheduled_at, 'A failed hand-on stays scheduled.');
+
+        foreach ([$first, $second] as $team) {
+            $this->assertSame($user->getKey(), ConcreteTeam::query()->findOrFail($team->getKey())->user_id);
+            $this->assertSame('owner', $this->roleOf($team, $user));
+        }
+
+        $this->assertSame('member', $this->roleOf($first, $firstHeir));
+        $this->assertSame('member', $this->roleOf($second, $secondHeir));
+        $this->assertSame([], $this->teamSpy->deleted);
+    }
+
+    /**
+     * An orphan and a user who asked are told apart only by the flag: with it
+     * off the orphan is handed on and the user is un-scheduled, in one run.
+     */
+    public function test_with_hand_on_off_only_the_orphan_is_handed_on(): void
+    {
+        $orphan = $this->createUser('Orphan');
+        $orphanTeam = $this->createTeam($orphan, 'Orphan Shared');
+        $orphanHeir = $this->createUser('Orphan Heir');
+        $orphanTeam->users()->attach($orphanHeir->getKey(), ['role' => 'member']);
+
+        $asker = $this->createUser('Asker');
+        $askerTeam = $this->createTeam($asker, 'Asker Shared');
+        $this->schedule($asker);
+        $askerTeam->users()->attach($this->createUser('Asker Member')->getKey(), ['role' => 'member']);
+
+        $this->schedule($orphan, orphan: true);
+
+        $this->travel(31)->days();
+
+        $this->artisan(PurgeDeletedUsersCommand::NAME)
+            ->expectsOutputToContain('1 deleted, 0 held, 1 un-scheduled')
+            ->assertSuccessful();
+
+        $this->assertNull(PurgeDeletedUsersCommandTestUser::query()->find($orphan->getKey()));
+        $this->assertSame($orphanHeir->getKey(), ConcreteTeam::query()->findOrFail($orphanTeam->getKey())->user_id);
+        $this->assertNull($asker->refresh()->deletion_scheduled_at);
+        $this->assertSame($asker->getKey(), ConcreteTeam::query()->findOrFail($askerTeam->getKey())->user_id);
     }
 
     /**
@@ -493,6 +739,28 @@ class PurgeDeletedUsersCommandTestBillableUser extends PurgeDeletedUsersCommandT
     public function getForeignKey(): string
     {
         return 'user_id';
+    }
+}
+
+/**
+ * Hands the first team on through the real action and fails on the second, so a
+ * purge dies with one transfer already written.
+ */
+class PurgeDeletedUsersCommandTestFailingSecondTransfer implements TransfersTeamOwnership
+{
+    private int $transfers = 0;
+
+    public function __construct(
+        private readonly TransfersTeamOwnership $inner,
+    ) {}
+
+    public function transfer(Authenticatable $actor, Model $team, Model $newOwner): void
+    {
+        if (++$this->transfers > 1) {
+            throw new RuntimeException('The second transfer failed.');
+        }
+
+        $this->inner->transfer($actor, $team, $newOwner);
     }
 }
 
