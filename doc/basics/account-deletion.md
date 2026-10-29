@@ -7,6 +7,7 @@
 - [Grace Period](#grace-period)
 - [Purging](#purging)
 - [Handing On Shared Teams](#handing-on-shared-teams)
+- [Releasing Billing](#releasing-billing)
 - [Scheduling the Purge](#scheduling-the-purge)
 - [Team Deletion Guard](#team-deletion-guard)
 - [Lifecycle Events](#lifecycle-events)
@@ -44,6 +45,8 @@ The caller confirms their identity with `password`. A password-less account uses
 ```
 
 The sentence tells the user how to cancel because every session was just signed out: signing in again within the grace period is the only way back.
+
+With [`account_deletion.billing`](#releasing-billing) set to `release`, `data` also carries a `billing` block saying what happened to the user's subscriptions. In the default `refuse` mode the key is absent and the body is exactly the one above.
 
 In one transaction, every Sanctum token of the user is revoked and every push device row is dropped, so the account stops signing in and stops ringing at once. The rows that hold the user's data stay until the purge. Scheduling an account that is already scheduled keeps the earlier date.
 
@@ -122,9 +125,10 @@ A value is `stripe`, `app_store` or `play_store`. A store is named from the team
 |------|-------|
 | `owns_shared_teams` | The user owns a team that another person belongs to. Deleting the user would take that person's data with it. Hand the team over or delete it first. A pending invitation is not a member. Never raised while `hand_on_shared_teams` is on. |
 | `team_has_active_subscription` | The user owns a team that a store subscription or a valid Stripe subscription is still billing. Cancel it first. |
-| `subscription_active` | The user itself is the billable subject (`magic-starter.billing.billable` is `user`) and a store or valid Stripe subscription is billing it. Cancel it first. |
+| `subscription_active` | The user itself is the billable subject (`magic-starter.billing.billable` is `user`) and a store or valid Stripe subscription is billing it. Cancel it first. Never raised while `billing` is `release`. |
+| `billing_release_failed` | Only while `billing` is `release`: Stripe refused or could not be reached while the user's subscription was being ended. Nothing was scheduled; the request can be repeated. |
 
-The Stripe check is Cashier's `valid()`, so a trial, a `past_due` dunning period and a subscription cancelled at period end all count as live until the period is over. This package never cancels a subscription for anyone.
+The Stripe check is Cashier's `valid()`, so a trial, a `past_due` dunning period and a subscription cancelled at period end all count as live until the period is over. In the default `refuse` mode this package never cancels a subscription for anyone; [`release`](#releasing-billing) is the opt-in that does, for the user's own subscription.
 
 ---
 
@@ -164,7 +168,7 @@ The command selects every account whose `deletion_scheduled_at` is older than th
 | Situation | Outcome |
 |-----------|---------|
 | The user owns a shared team (it gained a member during the grace period), and `hand_on_shared_teams` is off. | **Un-scheduled** and reported. Deleting the user would take the new member's team with them. |
-| The account owns a team that a subscription is still billing, or is itself billed by one. | **Held** and reported. It is left exactly as it was and retried on the next run. |
+| The account owns a team that a subscription is still billing, or is itself billed by one (with `billing` set to `release`, only by a card subscription that is still valid: a store's does not hold it). | **Held** and reported. It is left exactly as it was and retried on the next run. |
 | The user signed in after the walk loaded them (the schedule was cleared). | **Cancelled**: skipped without a change. The row is read again under a lock, so a sign-in that lands during the purge waits for it instead of racing the deletion. |
 | An orphan owns shared teams, or the user does and `hand_on_shared_teams` is on. | Each team moves to its earliest-joined admin, else its earliest-joined member, who becomes owner. Then the account is deleted. |
 | Anything else. | **Deleted.** |
@@ -201,6 +205,63 @@ With it on:
 - A team is read as shared when the purge runs, not when the user asked, so a member who joined during the grace period inherits like any other.
 
 Billing is not affected. A shared team a store or Stripe subscription is still billing refuses the request with `team_has_active_subscription` and holds the purge, on either setting, because handing a team on does not settle who pays for it.
+
+---
+
+<a name="releasing-billing"></a>
+## Releasing Billing
+
+By default a subscription that bills the user directly (`magic-starter.billing.billable` is `user`) refuses the request with `subscription_active` and holds the purge: the customer has to cancel first, and nothing is cancelled on their behalf. That is the conservative answer. An application that sells a subscription to the account, and tells the customer on its confirmation screen that deleting the account ends it, wants the other one.
+
+Switch it with `config('magic-starter.account_deletion.billing')` (env `MAGIC_STARTER_ACCOUNT_DELETION_BILLING`, default `refuse`):
+
+```php
+'account_deletion' => [
+    'grace_days' => 7,
+    'billing' => 'release',
+],
+```
+
+A value that is neither `refuse` nor `release` raises a `RuntimeException` before anything is locked, rather than guessing which way a typo meant.
+
+With `release`:
+
+- `DELETE {prefix}/user` is accepted for a user a subscription bills. Before the account is locked, the `ReleasesUserBilling` contract (default `Actions\ReleaseUserBilling`) ends what it can and reports the rest. It runs after every other refusal, so a refused request cancels nothing, and before the scheduler's own lock transaction, so that transaction never waits on Stripe. A caller that schedules inside a transaction of its own holds it open across the call: the Apple `account-deleted` handler applies its notification atomically, so a Stripe failure there rolls the whole notification back and Apple's redelivery is processed.
+- **Stripe** subscriptions are cancelled at once, with `prorate` and `invoice_now` off: no credit, no final invoice, and the remaining period is not refunded. This is not Cashier's `cancelNow()`, which prorates. Every subscription Stripe could still bill or activate goes, which includes one cancelled at the end of its period, one in dunning and one still waiting on its first payment. The local Cashier row is ended with it, rather than left valid until Stripe's `customer.subscription.deleted` webhook lands, so the purge of an immediate deletion is not held by the subscription its own request cancelled; the webhook then revokes the entitlement as usual. A subscription Stripe has no record of counts as ended.
+- A **store** subscription (App Store or Play) cannot be cancelled from here: it lives in the customer's store account. It does not stand in the way. The response names it so the client can send the person to the store's cancel screen, and the deletion goes ahead after the grace period either way.
+- A **Stripe failure** refuses the request with 422 `billing_release_failed` and locks nothing, so an account is never scheduled with its subscription still charging. The exception is reported and logged through the billing log. When a user has several subscriptions the ones cancelled before the failure stay cancelled, and repeating the request finds them ended.
+- An **orphan** is released too, since nobody is left to cancel for them, and a Stripe failure stops its schedule as well, so the identity provider's notification fails and is delivered again.
+- The **purge** and `DeletesUsers` no longer hold or refuse an account for the user's own **store** subscription. A **card** subscription still holds them. Neither releases anything itself (the purge holds a row lock and the deleter a transaction, and neither belongs across a remote call), so a card subscription that is still valid when they run is one the scheduler never saw: an orphan scheduled while the host still refused, which skips every refusal, an account locked by a `SchedulesUserDeletion` binding that does not release, a checkout completed after the lock. Deleting that user would leave Stripe charging a customer who no longer exists, so the purge holds the account and reports it, and `DeletesUsers` refuses with `subscription_active`. Scheduling it again in release mode (the admin panel's schedule action, or a new request) cancels the subscription, and the next purge deletes it. A team a store or Stripe subscription bills is not affected: it refuses the request with `team_has_active_subscription` and holds the purge on either setting. Under `billing.billable` = `team` the user has nothing to release.
+
+The 202 body gains `data.billing`, on the scheduled and the immediate answer alike:
+
+```json
+{
+  "data": {
+    "deletion_scheduled_at": "2026-10-03T12:00:00.000000Z",
+    "billing": {
+      "cancelled": [
+        { "provider": "stripe", "id": "sub_1Nxyz..." }
+      ],
+      "store": [
+        { "provider": "app_store", "manage_url": "https://apps.apple.com/account/subscriptions" }
+      ]
+    }
+  },
+  "message": "Your account will be deleted in 7 days. Sign in again before then to cancel the deletion."
+}
+```
+
+| Field | Meaning |
+|-------|---------|
+| `billing.cancelled` | Each subscription ended now: its `provider` (`stripe`) and the rail's `id`. |
+| `billing.store` | Each store subscription still billing, which the user has to cancel there: its `provider` (`app_store` or `play_store`) and the `manage_url` the store gave for it, `null` when it gave none. |
+
+Both lists are empty for a user nothing bills. A store subscription counts only while the user holds a paid tier, the test the [team deletion guard](#team-deletion-guard) applies.
+
+Signing in during the grace period cancels the deletion as always, but a subscription cancelled by the release stays cancelled: the customer can subscribe again. Nothing restores the store's.
+
+To end a rail this package does not know, or to add a step (a CRM, a refund), bind your own `ReleasesUserBilling`; the scheduler only reads the report it returns.
 
 ---
 
@@ -264,7 +325,8 @@ Both halves are contract bindings, so a host can swap either:
 
 | Contract | Default action | Role |
 |----------|----------------|------|
-| `SchedulesUserDeletion` | `Actions\ScheduleUserDeletion` | Refuses, locks and stamps the account, and queues `PurgeUserNow` for an immediate deletion. |
+| `SchedulesUserDeletion` | `Actions\ScheduleUserDeletion` | Refuses, releases billing when configured, locks and stamps the account, and queues `PurgeUserNow` for an immediate deletion. Returns the billing report. |
+| `ReleasesUserBilling` | `Actions\ReleaseUserBilling` | Ends the card rail's subscriptions and reports the store's, when `billing` is `release`. |
 | `DeletesUsers` | `Actions\DeleteUser` | The irreversible end, run by the purge. |
 
 See [Action Contracts](../architecture/action-contracts.md) for how bindings work.

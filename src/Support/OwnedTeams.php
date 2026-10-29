@@ -3,9 +3,11 @@
 namespace FlutterSdk\MagicStarter\Support;
 
 use FlutterSdk\MagicStarter\Actions\SubscriptionGuardedDeleteTeam;
+use FlutterSdk\MagicStarter\Enums\AccountDeletionBilling;
 use Illuminate\Contracts\Auth\Authenticatable;
 use Illuminate\Database\Eloquent\Collection;
 use Illuminate\Database\Eloquent\Model;
+use RuntimeException;
 
 /**
  * The account-deletion pipeline's definitions of "shared" and "billing".
@@ -13,8 +15,9 @@ use Illuminate\Database\Eloquent\Model;
  * The scheduler refuses on them, the purge un-schedules or holds on them, and
  * the default deleter refuses on them, so they live outside every one of those
  * classes: a consumer who rebinds `DeletesUsers` or `SchedulesUserDeletion`
- * keeps the same answers the purge acts on. The one policy switch they share,
- * whether a shared team is handed on instead of refused, is read here too.
+ * keeps the same answers the purge acts on. The two policy switches they share
+ * are read here too: whether a shared team is handed on instead of refused, and
+ * whether a subscription billing the user is ended instead of refused.
  */
 final class OwnedTeams
 {
@@ -33,6 +36,21 @@ final class OwnedTeams
     public static function handsOnShared(): bool
     {
         return (bool) config('magic-starter.account_deletion.hand_on_shared_teams', false);
+    }
+
+    /**
+     * Whether a subscription that bills the user is ended for them instead of
+     * refusing the deletion.
+     *
+     * Read from `account_deletion.billing` through {@see AccountDeletionBilling},
+     * which refuses a value that is not a mode. Only the user's own subscription
+     * is affected: a team a store or Stripe bills still refuses and holds.
+     *
+     * @throws RuntimeException When the configured value is not a mode.
+     */
+    public static function releasesBilling(): bool
+    {
+        return AccountDeletionBilling::configured() === AccountDeletionBilling::RELEASE;
     }
 
     /**
@@ -97,6 +115,32 @@ final class OwnedTeams
         }
 
         return $teams->get();
+    }
+
+    /**
+     * Whether a subscription still bills this USER in a way that holds their
+     * deletion back at the purge and in the deleter.
+     *
+     * Any rail does, in the default refuse mode. With billing released, only a
+     * valid card subscription does, and that is deliberate rather than a
+     * leftover of the refusal. The scheduler ends the card rail's subscriptions
+     * when the deletion is asked for, so one still valid when the purge runs is
+     * one it never saw: an orphan scheduled while the host still refused (orphans
+     * skip every refusal), an account locked by a custom `SchedulesUserDeletion`
+     * that does not release, a checkout completed after the lock. Neither the
+     * purge nor the deleter releases anything itself (the purge holds a row lock
+     * and the deleter a transaction, and neither belongs across a remote call),
+     * so deleting that user would leave Stripe charging a customer who no longer
+     * exists. A store's subscription never holds a released deletion: only the
+     * customer can cancel it there, and the deletion goes ahead either way.
+     */
+    public static function blocksUserDeletion(Model $user): bool
+    {
+        if (! self::releasesBilling()) {
+            return self::isBilling($user);
+        }
+
+        return (new self)->stripeIsBilling($user);
     }
 
     /**

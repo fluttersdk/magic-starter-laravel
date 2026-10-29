@@ -14,6 +14,7 @@ use FlutterSdk\MagicStarter\Events\TeamOwnershipTransferred;
 use FlutterSdk\MagicStarter\MagicStarter;
 use FlutterSdk\MagicStarter\Tests\Fixtures\ConcreteTeam;
 use FlutterSdk\MagicStarter\Tests\Fixtures\ConcreteUser;
+use FlutterSdk\MagicStarter\Tests\Support\StripeHttpStub;
 use FlutterSdk\MagicStarter\Tests\TestCase;
 use Illuminate\Contracts\Auth\Authenticatable;
 use Illuminate\Database\Eloquent\Model;
@@ -53,6 +54,9 @@ class PurgeDeletedUsersCommandTest extends TestCase
             $table->uuid('id')->primary();
             $table->string('name');
             $table->string('profile_photo_path')->nullable();
+            $table->string('plan')->nullable();
+            $table->string('plan_status')->nullable();
+            $table->string('plan_provider')->nullable();
             $table->timestamp('deletion_scheduled_at')->nullable();
             $table->timestamp('orphaned_at')->nullable();
             $table->timestamps();
@@ -127,6 +131,13 @@ class PurgeDeletedUsersCommandTest extends TestCase
 
         $this->teamSpy = new PurgeDeletedUsersCommandTestTeamSpy;
         $this->app->instance(DeletesTeams::class, $this->teamSpy);
+    }
+
+    protected function tearDown(): void
+    {
+        StripeHttpStub::uninstall();
+
+        parent::tearDown();
     }
 
     public function test_the_command_is_registered_under_its_name(): void
@@ -628,6 +639,148 @@ class PurgeDeletedUsersCommandTest extends TestCase
     }
 
     /**
+     * With billing released the scheduler ended the Stripe subscription when
+     * the deletion was asked for, and ended the local row with it, so there is
+     * nothing left to hold the account for: the purge deletes it and asks Stripe
+     * for nothing.
+     */
+    public function test_when_billing_is_released_a_stripe_subscribed_user_is_deleted(): void
+    {
+        $stripe = StripeHttpStub::install();
+        $user = $this->useReleasedBillableUser('Leaver');
+        $team = $this->createTeam($user, 'Personal', personal: true);
+        $this->subscribe($user, 'sub_leaver');
+        $stripe->answer([
+            'id' => 'sub_leaver',
+            'object' => 'subscription',
+            'status' => 'canceled',
+        ]);
+        $this->schedule($user);
+
+        $this->travel(31)->days();
+
+        $this->artisan(PurgeDeletedUsersCommand::NAME)
+            ->expectsOutputToContain('1 deleted, 0 held')
+            ->assertSuccessful();
+
+        $this->assertNull(PurgeDeletedUsersCommandTestUser::query()->find($user->getKey()));
+        $this->assertNull(ConcreteTeam::query()->find($team->getKey()));
+        $this->assertSame([$team->getKey()], $this->teamSpy->deleted);
+        $this->assertCount(1, $stripe->requests, 'Only the scheduler asked Stripe; the purge asks nothing.');
+    }
+
+    /**
+     * The purge only trusts that billing was released, it never releases it.
+     * An orphan scheduled while the host still refused (orphans skip every
+     * refusal) with a card subscription Stripe is still billing is held after
+     * the host switches to release, because deleting the user would leave
+     * Stripe charging a customer who no longer exists. The same holds for an
+     * account a custom scheduler locked without releasing anything.
+     */
+    public function test_an_account_scheduled_under_refuse_is_held_under_release_while_a_card_bills_it(): void
+    {
+        $stripe = StripeHttpStub::install();
+        $orphan = $this->useBillableUser('Paying orphan');
+        $team = $this->createTeam($orphan, 'Personal', personal: true);
+        $this->schedule($orphan, orphan: true);
+        $this->subscribe($orphan, 'sub_orphan');
+
+        config([
+            'magic-starter.account_deletion.billing' => 'release',
+        ]);
+        $this->travel(31)->days();
+
+        $this->artisan(PurgeDeletedUsersCommand::NAME)
+            ->expectsOutputToContain('1 held')
+            ->assertSuccessful();
+
+        $this->assertNotNull(PurgeDeletedUsersCommandTestUser::query()->find($orphan->getKey()));
+        $this->assertNotNull(ConcreteTeam::query()->find($team->getKey()));
+        $this->assertNotNull($orphan->refresh()->deletion_scheduled_at, 'A held account stays scheduled.');
+        $this->assertSame([], $this->teamSpy->deleted);
+        $this->assertSame([], $stripe->requests, 'The purge makes no remote call.');
+    }
+
+    /**
+     * Only the card rail holds a released deletion. A store's subscription is
+     * the person's to cancel there, so an account scheduled under refuse with a
+     * store entitlement is deleted once the host releases billing.
+     */
+    public function test_an_account_scheduled_under_refuse_is_deleted_under_release_when_only_a_store_bills_it(): void
+    {
+        $orphan = $this->useBillableUser('Store orphan');
+        $this->schedule($orphan, orphan: true);
+        $orphan->forceFill([
+            'plan' => 'pro',
+            'plan_status' => 'active',
+            'plan_provider' => 'play_store',
+        ])->save();
+
+        config([
+            'magic-starter.account_deletion.billing' => 'release',
+        ]);
+        $this->travel(31)->days();
+
+        $this->artisan(PurgeDeletedUsersCommand::NAME)
+            ->expectsOutputToContain('1 deleted, 0 held')
+            ->assertSuccessful();
+
+        $this->assertNull(PurgeDeletedUsersCommandTestUser::query()->find($orphan->getKey()));
+    }
+
+    /**
+     * A store subscription cannot be cancelled by this application, and the
+     * deletion goes ahead after the grace period either way.
+     */
+    public function test_when_billing_is_released_a_store_billed_user_is_deleted(): void
+    {
+        $user = $this->useReleasedBillableUser('Store leaver');
+        $this->schedule($user);
+        $user->forceFill([
+            'plan' => 'pro',
+            'plan_status' => 'active',
+            'plan_provider' => 'app_store',
+        ])->save();
+
+        $this->travel(31)->days();
+
+        $this->artisan(PurgeDeletedUsersCommand::NAME)
+            ->expectsOutputToContain('1 deleted, 0 held')
+            ->assertSuccessful();
+
+        $this->assertNull(PurgeDeletedUsersCommandTestUser::query()->find($user->getKey()));
+    }
+
+    /**
+     * Releasing covers the user's own subscription. A team a store still bills
+     * is held as before, and nothing is deleted or handed on.
+     */
+    public function test_when_billing_is_released_a_billing_team_is_still_held(): void
+    {
+        config([
+            'magic-starter.account_deletion.billing' => 'release',
+        ]);
+
+        $orphan = $this->createUser('Orphan');
+        $paid = $this->createTeam($orphan, 'Paid');
+        $paid->forceFill([
+            'plan' => 'pro',
+            'plan_status' => 'active',
+            'plan_provider' => 'app_store',
+        ])->save();
+        $this->schedule($orphan, orphan: true);
+
+        $this->travel(31)->days();
+
+        $this->artisan(PurgeDeletedUsersCommand::NAME)
+            ->expectsOutputToContain('1 held')
+            ->assertSuccessful();
+
+        $this->assertNotNull(PurgeDeletedUsersCommandTestUser::query()->find($orphan->getKey()));
+        $this->assertSame([], $this->teamSpy->deleted);
+    }
+
+    /**
      * A sign-in clears the schedule while the walk already holds the row it
      * loaded: the purge re-reads the row under a lock and leaves the account.
      */
@@ -739,6 +892,48 @@ class PurgeDeletedUsersCommandTest extends TestCase
         $this->artisan(PurgeDeletedUsersCommand::NAME)->assertSuccessful();
 
         $this->assertNotNull(PurgeDeletedUsersCommandTestUser::query()->find($user->getKey()));
+    }
+
+    /**
+     * Switch to user billing with billing released, and create one user on a
+     * model carrying Cashier's trait.
+     */
+    private function useReleasedBillableUser(string $name): PurgeDeletedUsersCommandTestBillableUser
+    {
+        config([
+            'magic-starter.account_deletion.billing' => 'release',
+            'cashier.secret' => 'sk_test_purge_deleted_users',
+        ]);
+
+        return $this->useBillableUser($name);
+    }
+
+    /**
+     * Switch to user billing, with the default refusing mode, and create one
+     * user on a model carrying Cashier's trait.
+     */
+    private function useBillableUser(string $name): PurgeDeletedUsersCommandTestBillableUser
+    {
+        MagicStarter::useUserModel(PurgeDeletedUsersCommandTestBillableUser::class);
+
+        config([
+            'magic-starter.billing.billable' => 'user',
+        ]);
+
+        return PurgeDeletedUsersCommandTestBillableUser::query()->create([
+            'name' => $name,
+        ]);
+    }
+
+    private function subscribe(PurgeDeletedUsersCommandTestBillableUser $user, string $id): void
+    {
+        $user->subscriptions()->create([
+            'type' => 'default',
+            'stripe_id' => $id,
+            'stripe_status' => 'active',
+            'stripe_price' => 'price_pro',
+            'quantity' => 1,
+        ]);
     }
 
     private function schedule(Model $user, bool $orphan = false): void

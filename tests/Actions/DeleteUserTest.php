@@ -64,6 +64,9 @@ class DeleteUserTest extends TestCase
             $table->uuid('id')->primary();
             $table->string('name');
             $table->string('profile_photo_path')->nullable();
+            $table->string('plan')->nullable();
+            $table->string('plan_status')->nullable();
+            $table->string('plan_provider')->nullable();
             $table->timestamps();
         });
 
@@ -401,6 +404,124 @@ class DeleteUserTest extends TestCase
 
         $this->assertNotNull(DeleteUserTestUser::query()->find($user->getKey()));
         $this->assertNotNull(ConcreteTeam::query()->find($team->getKey()));
+    }
+
+    /**
+     * The deleter only trusts that billing was released, it never releases it.
+     * A card subscription still valid when it runs is one the scheduler never
+     * saw, and deleting the user would leave Stripe charging nobody, so it
+     * refuses on either setting and changes nothing.
+     */
+    public function test_when_billing_is_released_a_card_subscription_still_valid_refuses(): void
+    {
+        MagicStarter::useUserModel(DeleteUserTestBillableUser::class);
+        config([
+            'magic-starter.billing.billable' => 'user',
+            'magic-starter.account_deletion.billing' => 'release',
+        ]);
+
+        $user = DeleteUserTestBillableUser::query()->create([
+            'name' => 'Payer',
+        ]);
+        $team = $this->createTeam($user, 'Personal', personal: true);
+        $user->subscriptions()->create([
+            'type' => 'default',
+            'stripe_id' => 'sub_payer',
+            'stripe_status' => 'active',
+            'stripe_price' => 'price_pro',
+            'quantity' => 1,
+        ]);
+
+        try {
+            $this->app->make(DeletesUsers::class)->delete($user);
+            $this->fail('Expected the user-level billing refusal.');
+        } catch (ValidationException $exception) {
+            $this->assertSame(
+                __('magic-starter::social.subscription_active'),
+                $exception->errors()['user'][0],
+            );
+        }
+
+        $this->assertNotNull(DeleteUserTestUser::query()->find($user->getKey()));
+        $this->assertNotNull(ConcreteTeam::query()->find($team->getKey()));
+    }
+
+    /**
+     * Once the release has ended the subscription, locally as well, nothing
+     * stands in the way.
+     */
+    public function test_when_billing_is_released_an_ended_card_subscription_is_deleted(): void
+    {
+        MagicStarter::useUserModel(DeleteUserTestBillableUser::class);
+        config([
+            'magic-starter.billing.billable' => 'user',
+            'magic-starter.account_deletion.billing' => 'release',
+        ]);
+
+        $user = DeleteUserTestBillableUser::query()->create([
+            'name' => 'Payer',
+        ]);
+        $team = $this->createTeam($user, 'Personal', personal: true);
+        $user->subscriptions()->create([
+            'type' => 'default',
+            'stripe_id' => 'sub_payer',
+            'stripe_status' => 'canceled',
+            'stripe_price' => 'price_pro',
+            'quantity' => 1,
+            'ends_at' => now()->subMinute(),
+        ]);
+
+        $this->app->make(DeletesUsers::class)->delete($user);
+
+        $this->assertNull(DeleteUserTestUser::query()->find($user->getKey()));
+        $this->assertNull(ConcreteTeam::query()->find($team->getKey()));
+    }
+
+    /**
+     * A store subscription is the customer's to cancel in the store; the
+     * deletion does not wait for it once billing is released.
+     */
+    public function test_when_billing_is_released_a_store_billed_user_is_deleted(): void
+    {
+        MagicStarter::useUserModel(DeleteUserTestBillableUser::class);
+        config([
+            'magic-starter.billing.billable' => 'user',
+            'magic-starter.account_deletion.billing' => 'release',
+        ]);
+
+        $user = DeleteUserTestBillableUser::query()->create([
+            'name' => 'Store payer',
+            'plan' => 'pro',
+            'plan_status' => 'active',
+            'plan_provider' => 'play_store',
+        ]);
+
+        $this->app->make(DeletesUsers::class)->delete($user);
+
+        $this->assertNull(DeleteUserTestUser::query()->find($user->getKey()));
+    }
+
+    /**
+     * Releasing billing does not touch the shared-team refusal.
+     */
+    public function test_when_billing_is_released_a_shared_team_still_refuses(): void
+    {
+        config([
+            'magic-starter.account_deletion.billing' => 'release',
+        ]);
+
+        $user = $this->createUser('Owner');
+        $team = $this->createTeam($user, 'Shared');
+        $team->users()->attach($this->createUser('Member')->getKey(), ['role' => 'member']);
+
+        try {
+            $this->app->make(DeletesUsers::class)->delete($user);
+            $this->fail('Expected the shared-team refusal.');
+        } catch (ValidationException $exception) {
+            $this->assertSame(__('magic-starter::social.owns_shared_teams'), $exception->errors()['user'][0]);
+        }
+
+        $this->assertNotNull(DeleteUserTestUser::query()->find($user->getKey()));
     }
 
     /**

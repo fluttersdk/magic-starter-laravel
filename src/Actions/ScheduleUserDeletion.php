@@ -2,11 +2,13 @@
 
 namespace FlutterSdk\MagicStarter\Actions;
 
+use FlutterSdk\MagicStarter\Contracts\ReleasesUserBilling;
 use FlutterSdk\MagicStarter\Contracts\SchedulesUserDeletion;
 use FlutterSdk\MagicStarter\Enums\BillingProvider;
 use FlutterSdk\MagicStarter\Events\UserDeletionScheduled;
 use FlutterSdk\MagicStarter\Jobs\PurgeUserNow;
 use FlutterSdk\MagicStarter\Models\PushDevice;
+use FlutterSdk\MagicStarter\Support\BillingReleaseFailed;
 use FlutterSdk\MagicStarter\Support\OwnedTeams;
 use FlutterSdk\MagicStarter\Support\ReadsBillableAttributes;
 use Illuminate\Contracts\Auth\Authenticatable;
@@ -40,6 +42,22 @@ use RuntimeException;
  * With `account_deletion.hand_on_shared_teams` on, a shared team is no longer a
  * refusal for anyone: the purge hands it to a member. The billing refusals are
  * not affected, since handing a team on never settles what bills it.
+ *
+ * With `account_deletion.billing` set to `release`, the user's own subscription
+ * is no longer a refusal either: {@see ReleasesUserBilling} ends the card rail's
+ * subscriptions and reports a store's, and the report is what this returns. That
+ * is a remote call, so it runs after the refusals (a refused request cancels
+ * nothing) and before the lock transaction, which therefore never waits on
+ * Stripe. A caller that wraps this action in a transaction of its own (the Apple
+ * notification handler does, to apply a notification atomically) holds that one
+ * open across the call; a failure then rolls the whole notification back, and
+ * the provider's redelivery is processed.
+ * A rail that fails refuses the request with 422 `billing_release_failed` and
+ * locks nothing, so an account is never scheduled with its subscription still
+ * charging. An orphan is released too: nobody is left to cancel for them, and the
+ * purge no longer holds the account for a subscription.
+ *
+ * @phpstan-import-type BillingRelease from ReleasesUserBilling
  */
 class ScheduleUserDeletion implements SchedulesUserDeletion
 {
@@ -54,6 +72,10 @@ class ScheduleUserDeletion implements SchedulesUserDeletion
         'orphaned_at',
     ];
 
+    public function __construct(
+        protected ReleasesUserBilling $billing,
+    ) {}
+
     /**
      * Schedule the user's account for deletion.
      *
@@ -62,12 +84,16 @@ class ScheduleUserDeletion implements SchedulesUserDeletion
      *
      * @param  bool  $orphan  true when the identity provider deleted the account
      * @param  bool  $immediately  true to queue the purge now instead of after the grace period
+     * @return BillingRelease what {@see ReleasesUserBilling::release()} did: both lists are empty
+     *                        unless billing is released and something bills the user
      *
      * @throws ValidationException When a shared or billing owned team, or the
-     *                             user's own subscription, refuses it.
-     * @throws RuntimeException When the users table lacks the deletion columns.
+     *                             user's own subscription, refuses it, or a
+     *                             billing rail could not release the user.
+     * @throws RuntimeException When the users table lacks the deletion columns,
+     *                          or `account_deletion.billing` is not a mode.
      */
-    public function schedule(Authenticatable $user, bool $orphan = false, bool $immediately = false): void
+    public function schedule(Authenticatable $user, bool $orphan = false, bool $immediately = false): array
     {
         // 1. Without the columns no purge could ever find this account, and
         //    locking it would strand it signed out forever.
@@ -78,7 +104,11 @@ class ScheduleUserDeletion implements SchedulesUserDeletion
             $this->refuseUnlessDeletable($user);
         }
 
-        // 3. Lock and stamp atomically: a stamp without the lock would leave
+        // 3. End what bills the user, after every refusal so a refused request
+        //    cancels nothing, and before the lock so no transaction waits on a rail.
+        $released = $this->releaseBilling($user);
+
+        // 4. Lock and stamp atomically: a stamp without the lock would leave
         //    live tokens on an account that is going away.
         DB::transaction(function () use ($user, $orphan): void {
             $user->tokens()->delete();
@@ -97,19 +127,47 @@ class ScheduleUserDeletion implements SchedulesUserDeletion
             ])->save();
         });
 
-        // 4. Only once the lock has committed, so a listener pausing the host's
+        // 5. Only once the lock has committed, so a listener pausing the host's
         //    resources and the purge both read the stamped row.
         Event::dispatch(new UserDeletionScheduled($user, $immediately));
 
-        // 5. Queued, never run here: a team cascade can outlast the request.
+        // 6. Queued, never run here: a team cascade can outlast the request.
         if ($immediately) {
             PurgeUserNow::dispatch($user->getAuthIdentifier());
+        }
+
+        return $released;
+    }
+
+    /**
+     * End what bills the user when the host releases billing; otherwise nothing.
+     *
+     * @return BillingRelease
+     *
+     * @throws ValidationException With `billing_release_failed` when a rail could not release the user.
+     */
+    protected function releaseBilling(Authenticatable $user): array
+    {
+        if (! OwnedTeams::releasesBilling()) {
+            return [
+                'cancelled' => [],
+                'store' => [],
+            ];
+        }
+
+        try {
+            return $this->billing->release($user);
+        } catch (BillingReleaseFailed $failure) {
+            report($failure);
+
+            $this->refuse('billing_release_failed', new Collection);
         }
     }
 
     /**
      * Refuse a user who owns a shared team (unless the purge hands those on) or
-     * a billing team, or whom a subscription bills directly under user billing.
+     * a billing team, or whom a subscription bills directly under user billing
+     * (unless billing is released).
      *
      * @throws ValidationException
      */
@@ -127,7 +185,9 @@ class ScheduleUserDeletion implements SchedulesUserDeletion
             $this->refuse('team_has_active_subscription', $billing, $this->providersOf($billing));
         }
 
-        if ($user instanceof Model && OwnedTeams::isBilling($user)) {
+        // Released billing ends the user's own subscription once the request is
+        // accepted, so it is no reason to refuse.
+        if (! OwnedTeams::releasesBilling() && $user instanceof Model && OwnedTeams::isBilling($user)) {
             $this->refuse('subscription_active', new Collection);
         }
     }
