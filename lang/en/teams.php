@@ -21,6 +21,9 @@ return [
      * status code already distinguishes the 403 from the 404.
      */
     'deleted' => 'Team deleted successfully.',
+    'trashed' => 'Team deleted. Its owner can restore it until the restore window closes.',
+    'restored' => 'Team restored successfully.',
+    'restore_window_closed' => 'This team can no longer be restored.',
     'switched' => 'Team switched successfully',
     'not_found' => 'The selected team does not exist.',
     'not_a_member' => 'You are not a member of this team.',

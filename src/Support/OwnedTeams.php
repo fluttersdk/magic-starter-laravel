@@ -60,19 +60,43 @@ final class OwnedTeams
 
     /**
      * The teams this user owns that a store or a valid Cashier subscription is
-     * still billing; always empty under user billing.
+     * still billing, trashed ones included; always empty under user billing.
+     *
+     * A trashed team is hidden, not gone, and is deleted through the same
+     * guard when its window closes or its owner's account is purged, so a
+     * subscription that still bills it holds the account back like any other.
      *
      * @return Collection<int, Model> empty for a user model without teams
      */
     public static function billing(Authenticatable $user): Collection
     {
+        return self::includingTrashed($user)->filter(
+            fn (Model $team): bool => self::isBilling($team),
+        )->values();
+    }
+
+    /**
+     * Every team this user owns, trashed ones included when the team model can be trashed.
+     *
+     * The account purge deletes all of them, so it reads this where the
+     * lists a person sees read `ownedTeams()`. A team model that does not use
+     * SoftDeletes has no trashed rows and no `withTrashed()` to ask for.
+     *
+     * @return Collection<int, Model> empty for a user model without teams
+     */
+    public static function includingTrashed(Authenticatable $user): Collection
+    {
         if (! method_exists($user, 'ownedTeams')) {
             return new Collection;
         }
 
-        return $user->ownedTeams()->get()->filter(
-            fn (Model $team): bool => self::isBilling($team),
-        )->values();
+        $teams = $user->ownedTeams();
+
+        if (SoftDeletingTeams::usedBy($teams->getRelated())) {
+            $teams->withTrashed();
+        }
+
+        return $teams->get();
     }
 
     /**

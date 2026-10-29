@@ -18,6 +18,14 @@ class Features
     }
 
     /**
+     * Enable the restorable team delete: deleting a team hides it for a window in which its owner can restore it.
+     */
+    public static function restorableTeams(): string
+    {
+        return 'restorable-teams';
+    }
+
+    /**
      * Enable the profile photos feature.
      */
     public static function profilePhotos(): string
@@ -223,6 +231,14 @@ class Features
     public static function hasTeamFeatures(): bool
     {
         return static::enabled(static::teams());
+    }
+
+    /**
+     * Determine whether the restorable team delete is enabled.
+     */
+    public static function hasRestorableTeamFeatures(): bool
+    {
+        return static::enabled(static::restorableTeams());
     }
 
     /**

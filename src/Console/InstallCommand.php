@@ -109,6 +109,13 @@ class InstallCommand extends Command
             'create_team_invitations_table.php',
             'add_current_team_id_to_users_table.php',
             'add_expires_at_to_team_invitations_table.php',
+            // Published with `teams` and not behind a feature of its own: the published
+            // `App\Models\Team` stub uses SoftDeletes, so the column has to exist
+            // whether or not `restorable-teams` is ever switched on. That feature is
+            // deliberately not selectable here: it makes a delete reversible and needs
+            // `magic-starter:purge-trashed-teams` scheduled, so it is switched on by
+            // hand in `config/magic-starter.php`, where its line waits commented out.
+            'add_soft_deletes_to_teams_table.php',
         ],
         // `add_guest_and_phone_fields_to_users_table.php` is listed under both
         // of the features that own its columns, and `publishMigrations()` runs

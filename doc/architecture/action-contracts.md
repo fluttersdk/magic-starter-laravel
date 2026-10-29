@@ -66,6 +66,7 @@ $this->app->bind(Contracts\SchedulesUserDeletion::class,  Actions\ScheduleUserDe
 $this->app->bind(Contracts\CreatesTeams::class,           Actions\CreateTeam::class);
 $this->app->bind(Contracts\UpdatesTeams::class,           Actions\UpdateTeam::class);
 $this->app->bind(Contracts\DeletesTeams::class,           Actions\SubscriptionGuardedDeleteTeam::class);
+$this->app->bind(Contracts\TrashesTeams::class,           Actions\SubscriptionGuardedTrashTeam::class);
 $this->app->bind(Contracts\AddsTeamMembers::class,        Actions\AddTeamMember::class);
 $this->app->bind(Contracts\RemovesTeamMembers::class,     Actions\RemoveTeamMember::class);
 $this->app->bind(Contracts\InvitesTeamMembers::class,     Actions\InviteTeamMember::class);
@@ -277,10 +278,35 @@ Default action: `Actions\SubscriptionGuardedDeleteTeam`
 public function delete(Model $team): void;
 ```
 
-Permanently deletes the team. Cascade constraints handle membership and invitation records. The
-default is `Actions\SubscriptionGuardedDeleteTeam`, which refuses while a store subscription or a
-valid Stripe subscription is billing the team, for `DELETE teams/{team}` and the account purge alike.
-A host that bound or extended the earlier `StoreSubscriptionGuardedDeleteTeam` has to switch to it.
+Permanently deletes the team: the purge. It removes the photo, the memberships and the invitations,
+and on a team model that uses `SoftDeletes` it force deletes rather than trashes. The default is
+`Actions\SubscriptionGuardedDeleteTeam`, which refuses while a store subscription or a valid Stripe
+subscription is billing the team, for `DELETE teams/{team}` and the account purge alike. With the
+[restorable delete](../basics/teams.md#restorable-delete) on, `DELETE teams/{team}` goes through
+`TrashesTeams` instead, and this contract is what the `magic-starter:purge-trashed-teams` command and
+the account purge call. A host that bound or extended the earlier `StoreSubscriptionGuardedDeleteTeam`
+has to switch to it.
+
+---
+
+#### `TrashesTeams`
+
+Namespace: `FlutterSdk\MagicStarter\Contracts\TrashesTeams`
+Default action: `Actions\SubscriptionGuardedTrashTeam`
+
+```php
+public function trash(Model $team, ?int $restoreDays = null): void;
+public function restore(Model $team): void;
+```
+
+The restorable half of a team delete, used only with the `restorable-teams` feature on. `trash()` clears
+`current_team_id` for everyone on the team, cancels its pending invitations, writes `restore_until`
+(`$restoreDays`, else `magic-starter.teams.restore_days`) and soft deletes it; members stay attached. `restore()` clears
+`deleted_at` and `restore_until`, and throws a `ValidationException` once `restore_until` is not in the
+future. Both throw a `LogicException` for a team model that does not use `SoftDeletes`. The default
+refuses to trash a team a payment rail is still billing, with the same sentences as `DeletesTeams`; a
+host that needs more, such as a plan limit on restoring, extends `Actions\TrashTeam` or the guarded
+class and rebinds the contract.
 
 ---
 

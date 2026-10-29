@@ -38,6 +38,7 @@ return [
     'features' => [
         // \FlutterSdk\MagicStarter\Features::twoFactorAuthentication(),
         // \FlutterSdk\MagicStarter\Features::teams(),
+        // \FlutterSdk\MagicStarter\Features::restorableTeams(),
         // \FlutterSdk\MagicStarter\Features::profilePhotos(),
         // \FlutterSdk\MagicStarter\Features::sessions(),
         // \FlutterSdk\MagicStarter\Features::socialLogin(),
@@ -1358,6 +1359,31 @@ return [
     'account_deletion' => [
         'grace_days' => (int) env('MAGIC_STARTER_ACCOUNT_DELETION_GRACE_DAYS', 30),
         'hand_on_shared_teams' => (bool) env('MAGIC_STARTER_ACCOUNT_DELETION_HAND_ON_SHARED_TEAMS', false),
+    ],
+
+    /*
+    |--------------------------------------------------------------------------
+    | Teams
+    |--------------------------------------------------------------------------
+    |
+    | With the restorable-teams feature on, deleting a team trashes it instead
+    | of deleting it: the team is hidden from every member, their active-team
+    | pointers are cleared, and the owner can restore it until the window
+    | closes. The `magic-starter:purge-trashed-teams` command then deletes it
+    | for good; schedule it, because nothing else does.
+    |
+    | `restore_days` is the length of that window, in days, counted from the
+    | moment the team is trashed. 0 closes it at once: the team can no longer
+    | be restored and the next purge run deletes it.
+    |
+    | Needs a team model that uses Illuminate\Database\Eloquent\SoftDeletes
+    | (the published App\Models\Team stub does) and the
+    | `add_soft_deletes_to_teams_table` migration.
+    |
+    */
+
+    'teams' => [
+        'restore_days' => (int) env('MAGIC_STARTER_TEAM_RESTORE_DAYS', 30),
     ],
 
     /*

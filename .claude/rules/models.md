@@ -13,7 +13,7 @@ alsoApplyTo: "src/Traits/**/*.php"
 - Use `casts()` method (Laravel 11+ syntax), not `$casts` property
 - Resolve related models dynamically: `MagicStarter::userModel()` in relation definitions
 - BelongsToMany pivot: always chain `->using(MagicStarter::membershipModel())` and `->withPivot('role')`
-- No soft deletes — use `cascadeOnDelete()` on foreign keys instead
+- No soft deletes in `src/Models` — use `cascadeOnDelete()` on foreign keys instead. The one opt-in exception is the published Team stub (`stubs/models/Team.php`), which uses `SoftDeletes` for the restorable team delete (`Features::restorableTeams()`); the shipped `Team` model must stay free of the trait so a consumer without the `deleted_at` column keeps working
 - `$fillable` array for mass assignment, not `$guarded`
 
 ## Traits
