@@ -304,6 +304,8 @@ DELETE /teams/{team}/members/{user}
 
 Removes a member from the team. Requires `manageMembers` policy authorization (owner or admin). Cannot remove the team owner (returns `403`).
 
+If the removed member's `current_team_id` points at this team, it is cleared, so their next read lands on their personal team instead of the team they were removed from. A member whose current team is another team keeps it.
+
 **Response:** `200 OK`
 
 ```json
@@ -333,7 +335,7 @@ DELETE /teams/{team}/leave
 
 Allows the authenticated user to leave a team. The team owner cannot leave (returns `403`). If the user is not a member, returns `404`.
 
-If the team being left was the user's current active team, the user is switched to their next available team.
+If the team being left was the user's current active team, `current_team_id` is cleared and the user falls back to their personal team (`getCurrentTeamOrPersonal()`). A user whose current team is another team keeps it.
 
 **Response:** `200 OK`
 
