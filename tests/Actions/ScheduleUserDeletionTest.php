@@ -165,6 +165,103 @@ class ScheduleUserDeletionTest extends TestCase
     }
 
     /**
+     * Handing a shared team on is the host's choice, so a package that is not
+     * configured for it keeps refusing exactly as before.
+     */
+    public function test_handing_on_shared_teams_is_off_by_default(): void
+    {
+        $this->assertFalse(config('magic-starter.account_deletion.hand_on_shared_teams'));
+    }
+
+    /**
+     * With hand-on on, a shared owned team is no reason to refuse: the account
+     * is locked and stamped, and the team keeps its owner and its members until
+     * the purge hands it on.
+     */
+    public function test_a_shared_owned_team_schedules_when_shared_teams_are_handed_on(): void
+    {
+        config([
+            'magic-starter.account_deletion.hand_on_shared_teams' => true,
+        ]);
+
+        $user = $this->createUser('owner@example.test');
+        $shared = $this->createTeam($user, 'Shared');
+        $solo = $this->createTeam($user, 'Solo');
+        $shared->users()->attach($this->createUser('member@example.test')->getKey(), ['role' => 'member']);
+        $user->createToken('device');
+        $this->createPushDevice($user);
+
+        $this->app->make(SchedulesUserDeletion::class)->schedule($user);
+
+        $user->refresh();
+        $this->assertNotNull($user->deletion_scheduled_at);
+        $this->assertNull($user->orphaned_at);
+        $this->assertSame(0, $user->tokens()->count());
+        $this->assertSame(0, DB::table('push_devices')->where('user_id', $user->getKey())->count());
+        $this->assertSame($user->getKey(), $shared->refresh()->user_id, 'Nothing is handed on before the purge.');
+        $this->assertSame(2, DB::table('team_user')->where('team_id', $shared->getKey())->count());
+        $this->assertNotNull(ConcreteTeam::query()->find($solo->getKey()));
+    }
+
+    /**
+     * Hand-on moves ownership, never money: a shared team a subscription is
+     * still billing refuses with the billing code, and the account stays whole.
+     */
+    public function test_a_billing_shared_team_still_refuses_when_shared_teams_are_handed_on(): void
+    {
+        config([
+            'magic-starter.account_deletion.hand_on_shared_teams' => true,
+        ]);
+
+        $user = $this->createUser('payer@example.test');
+        $shared = $this->createTeam($user, 'Shared and paid');
+        $shared->forceFill([
+            'plan' => 'pro',
+            'plan_status' => 'active',
+            'plan_provider' => 'app_store',
+        ])->save();
+        $shared->users()->attach($this->createUser('member@example.test')->getKey(), ['role' => 'member']);
+        $user->createToken('device');
+
+        $body = $this->refusalBody(fn () => $this->app->make(SchedulesUserDeletion::class)->schedule($user));
+
+        $this->assertSame('team_has_active_subscription', $body['code']);
+        $this->assertSame([(string) $shared->getKey()], $body['team_ids']);
+        $this->assertSame([(string) $shared->getKey() => 'app_store'], $body['team_providers']);
+
+        $user->refresh();
+        $this->assertNull($user->deletion_scheduled_at);
+        $this->assertSame(1, $user->tokens()->count());
+    }
+
+    /**
+     * The endpoint a client calls answers 202 for an owner of a shared team
+     * when hand-on is on, where it answers 422 `owns_shared_teams` otherwise.
+     */
+    public function test_delete_user_answers_202_for_a_shared_owner_when_shared_teams_are_handed_on(): void
+    {
+        $user = $this->createUser('owner@example.test');
+        $shared = $this->createTeam($user, 'Shared');
+        $shared->users()->attach($this->createUser('member@example.test')->getKey(), ['role' => 'member']);
+
+        $this->actingAs($user)
+            ->deleteJson('/user', ['password' => 'Password123'])
+            ->assertStatus(422)
+            ->assertJsonPath('code', 'owns_shared_teams');
+
+        config([
+            'magic-starter.account_deletion.hand_on_shared_teams' => true,
+        ]);
+
+        $this->actingAs($user)
+            ->deleteJson('/user', ['password' => 'Password123'])
+            ->assertStatus(202)
+            ->assertJsonStructure(['data' => ['deletion_scheduled_at'], 'message']);
+
+        $this->assertNotNull($user->refresh()->deletion_scheduled_at);
+    }
+
+    /**
      * The refusal names only what the customer can do here. The package serves
      * no ownership transfer, so a sentence asking for a hand-over sends them
      * looking for a screen that does not exist; the wording is magic_starter's.

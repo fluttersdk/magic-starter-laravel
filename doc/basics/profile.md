@@ -169,7 +169,7 @@ Content-Type: application/json
 
 ### Response
 
-`202 Accepted` with `data.deletion_scheduled_at` and a `message`. With `immediately: true` the body also carries `data.immediate: true` and the `deletion_immediate` message; without it the body is exactly the scheduled one. The refusals and the step-up are the same either way, and nothing is queued when one of them answers. An owned team that another member belongs to, or that holds a live subscription, answers 422 with `code` `owns_shared_teams` or `team_has_active_subscription` and the `team_ids` to resolve first. A live subscription billing the user directly answers 422 `subscription_active` with an empty `team_ids`.
+`202 Accepted` with `data.deletion_scheduled_at` and a `message`. With `immediately: true` the body also carries `data.immediate: true` and the `deletion_immediate` message; without it the body is exactly the scheduled one. The refusals and the step-up are the same either way, and nothing is queued when one of them answers. An owned team that another member belongs to, or that holds a live subscription, answers 422 with `code` `owns_shared_teams` or `team_has_active_subscription` and the `team_ids` to resolve first; with `account_deletion.hand_on_shared_teams` on, a shared team is no longer a reason to refuse, and the purge [hands it on](account-deletion.md#handing-on-shared-teams). A live subscription billing the user directly answers 422 `subscription_active` with an empty `team_ids`.
 
 ---
 

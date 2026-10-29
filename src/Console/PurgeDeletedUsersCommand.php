@@ -31,12 +31,15 @@ use Throwable;
  * - an account whose schedule was cleared since the walk loaded it (a sign-in)
  *   is left alone, read again under a row lock;
  * - a user who asked, and whose team has since gained a member, is un-scheduled
- *   and reported, since deleting them would take that member's team with them;
+ *   and reported, since deleting them would take that member's team with them,
+ *   unless `account_deletion.hand_on_shared_teams` is on, which hands the team
+ *   on exactly as it does an orphan's;
  * - an account owning a team a store or Cashier is still billing, or billed
  *   itself under user billing, is HELD and reported, since deleting it strands
  *   the charge and this package never cancels a subscription for anyone;
  * - an orphan's shared teams are handed on, to the earliest-joined admin and
- *   else the earliest-joined member, who becomes owner;
+ *   else the earliest-joined member, who becomes owner; so are a user's own with
+ *   `hand_on_shared_teams` on;
  * - the rest are deleted through {@see DeletesUsers}.
  *
  * The package registers the command and does not schedule it; the consuming
@@ -177,12 +180,14 @@ class PurgeDeletedUsersCommand extends Command
                 return 'cancelled';
             }
 
-            $orphan = $user->getAttribute('orphaned_at') !== null;
+            // An orphan's teams are always handed on, since nobody is left to resolve
+            // them; a user who asked has them handed on only when the host chose that.
+            $handOn = $user->getAttribute('orphaned_at') !== null || OwnedTeams::handsOnShared();
             $shared = OwnedTeams::shared($user);
 
             // 2. The user can still resolve a shared team themselves, and deleting
             //    it would take its other members' data with it.
-            if (! $orphan && $shared->isNotEmpty()) {
+            if (! $handOn && $shared->isNotEmpty()) {
                 $this->cancellations->cancel($user);
 
                 $this->reportSkipped(
@@ -210,8 +215,9 @@ class PurgeDeletedUsersCommand extends Command
                 return 'held';
             }
 
-            // 4. Hand on and delete together, so a failed deletion does not leave
-            //    an orphan's teams transferred to someone else.
+            // 4. Hand on and delete together, so a failed hand-on or deletion does
+            //    not leave some of the user's teams transferred to someone else
+            //    and the account still scheduled.
             foreach ($shared as $team) {
                 $this->handOn($team, $user);
             }

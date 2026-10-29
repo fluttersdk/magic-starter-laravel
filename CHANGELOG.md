@@ -4,6 +4,10 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Added
+
+- **Account deletion can hand a shared team on instead of refusing.** The new `account_deletion.hand_on_shared_teams` key (env `MAGIC_STARTER_ACCOUNT_DELETION_HAND_ON_SHARED_TEAMS`, default `false`) lets a user who owns a team another person belongs to delete their account. `ScheduleUserDeletion` no longer answers 422 `owns_shared_teams`; `PurgeDeletedUsersCommand` no longer un-schedules such a user and hands each shared team to its earliest-joined admin, else its earliest-joined member (the rule an orphan's teams already follow, through `TransfersTeamOwnership`), in the same transaction as the deletion, so a failing hand-on leaves the user scheduled and every team untouched. A team nobody else belongs to is deleted with the user as before, and billing is unchanged: a shared team a subscription bills still refuses the request and holds the purge. With the key off, the default, behaviour is byte-identical to before. (`config/magic-starter.php`, `src/Support/OwnedTeams.php`, `src/Actions/ScheduleUserDeletion.php`, `src/Console/PurgeDeletedUsersCommand.php`, `doc/basics/account-deletion.md`, `doc/basics/profile.md`, `doc/architecture/action-contracts.md`)
+
 ## [0.0.50] - 2026-10-29
 
 ### Added

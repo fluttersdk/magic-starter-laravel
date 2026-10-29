@@ -1341,10 +1341,23 @@ return [
     | 0 means the account is purged at the next purge run, not at the moment
     | of the request.
     |
+    | `hand_on_shared_teams` decides what a team the user owns and another
+    | person belongs to does to the deletion. Off, the default, it refuses
+    | the request with 422 `owns_shared_teams`, and the purge un-schedules a
+    | user whose team gained a member during the grace period: deleting the
+    | user would take that member's data with it. On, neither happens. The
+    | request is accepted, and the purge hands each such team to its
+    | earliest-joined admin, else its earliest-joined member, who becomes
+    | owner (the same rule an orphan's teams already follow), before the user
+    | is deleted. A team nobody else belongs to is deleted with the user as
+    | always. Only ownership moves: a team a subscription is still billing
+    | keeps refusing the request and holding the purge, on either setting.
+    |
     */
 
     'account_deletion' => [
         'grace_days' => (int) env('MAGIC_STARTER_ACCOUNT_DELETION_GRACE_DAYS', 30),
+        'hand_on_shared_teams' => (bool) env('MAGIC_STARTER_ACCOUNT_DELETION_HAND_ON_SHARED_TEAMS', false),
     ],
 
     /*

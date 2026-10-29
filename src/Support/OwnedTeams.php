@@ -13,13 +13,27 @@ use Illuminate\Database\Eloquent\Model;
  * The scheduler refuses on them, the purge un-schedules or holds on them, and
  * the default deleter refuses on them, so they live outside every one of those
  * classes: a consumer who rebinds `DeletesUsers` or `SchedulesUserDeletion`
- * keeps the same answers the purge acts on.
+ * keeps the same answers the purge acts on. The one policy switch they share,
+ * whether a shared team is handed on instead of refused, is read here too.
  */
 final class OwnedTeams
 {
     use ReadsBillableAttributes;
 
     private function __construct() {}
+
+    /**
+     * Whether a shared team is handed to a member instead of refusing the deletion.
+     *
+     * Read from `account_deletion.hand_on_shared_teams`. The literal default is
+     * load-bearing: `mergeConfigFrom` is a shallow merge, so a config published
+     * before the key existed replaces the whole `account_deletion` array and
+     * finds no such path.
+     */
+    public static function handsOnShared(): bool
+    {
+        return (bool) config('magic-starter.account_deletion.hand_on_shared_teams', false);
+    }
 
     /**
      * The teams this user owns that at least one other person belongs to.
