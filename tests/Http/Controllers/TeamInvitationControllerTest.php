@@ -5,6 +5,7 @@ namespace FlutterSdk\MagicStarter\Tests\Http\Controllers;
 use FlutterSdk\MagicStarter\Actions\AcceptTeamInvitation;
 use FlutterSdk\MagicStarter\Contracts\AcceptsTeamInvitations;
 use FlutterSdk\MagicStarter\Contracts\InvitesTeamMembers;
+use FlutterSdk\MagicStarter\Events\TeamMemberJoined;
 use FlutterSdk\MagicStarter\Http\Controllers\TeamInvitationController;
 use FlutterSdk\MagicStarter\MagicStarter;
 use FlutterSdk\MagicStarter\Tests\TestCase;
@@ -17,6 +18,7 @@ use Illuminate\Database\Eloquent\Relations\HasMany;
 use Illuminate\Database\Schema\Blueprint;
 use Illuminate\Foundation\Auth\Access\Authorizable;
 use Illuminate\Http\JsonResponse;
+use Illuminate\Support\Facades\Event;
 use Illuminate\Validation\ValidationException;
 use LogicException;
 
@@ -173,6 +175,30 @@ final class TeamInvitationControllerTest extends TestCase
         $this->assertSame('admin', $team->fresh()->users()->find($invitee->id)?->pivot?->role);
         $invitationModelClass = MagicStarter::teamInvitationModel();
         $this->assertNull($invitationModelClass::query()->find($invitation->id));
+    }
+
+    public function test_accept_dispatches_joined_once_even_when_the_link_is_followed_twice(): void
+    {
+        Event::fake([TeamMemberJoined::class]);
+        $owner = TeamInvitationControllerTestUser::query()->create(['name' => 'Owner', 'email' => 'owner@test.dev']);
+        $invitee = TeamInvitationControllerTestUser::query()->create(['name' => 'Invitee', 'email' => 'invitee@test.dev']);
+        $team = TeamInvitationControllerTestTeam::query()->create(['user_id' => $owner->id, 'name' => 'A Team', 'personal_team' => false]);
+        $team->invitations()->create([
+            'email' => $invitee->email,
+            'role' => 'member',
+            'token' => 'accept-token',
+        ]);
+
+        $this->actingAs($invitee)->postJson('/invitations/accept-token/accept')->assertOk();
+        $this->actingAs($invitee)->postJson('/invitations/accept-token/accept')->assertNotFound();
+
+        Event::assertDispatchedTimes(TeamMemberJoined::class, 1);
+        Event::assertDispatched(
+            TeamMemberJoined::class,
+            fn (TeamMemberJoined $event): bool => $event->teamId === (string) $team->id
+                && $event->userId === (string) $invitee->id
+                && $event->actorId === (string) $invitee->id,
+        );
     }
 
     public function test_accept_rejects_when_email_does_not_match(): void

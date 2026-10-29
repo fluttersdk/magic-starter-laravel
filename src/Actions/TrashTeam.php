@@ -4,12 +4,15 @@ namespace FlutterSdk\MagicStarter\Actions;
 
 use FlutterSdk\MagicStarter\Contracts\DeletesTeams;
 use FlutterSdk\MagicStarter\Contracts\TrashesTeams;
+use FlutterSdk\MagicStarter\Events\TeamRestored;
+use FlutterSdk\MagicStarter\Events\TeamTrashed;
 use FlutterSdk\MagicStarter\MagicStarter;
 use FlutterSdk\MagicStarter\Support\SoftDeletingTeams;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\SoftDeletes;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Event;
 use Illuminate\Validation\ValidationException;
 use LogicException;
 
@@ -32,6 +35,9 @@ use LogicException;
  * team would find no team, and a link to a household its owner deleted should
  * not work in any case. A restore does not bring them back; the owner invites
  * again.
+ *
+ * Dispatches {@see TeamTrashed} once a team is hidden and {@see TeamRestored}
+ * once it is back. Neither fires for a call that changed nothing or refused.
  */
 class TrashTeam implements TrashesTeams
 {
@@ -64,6 +70,9 @@ class TrashTeam implements TrashesTeams
             // 4. Hide it.
             $team->delete();
         });
+
+        // 5. Tell the host, after the team is hidden.
+        Event::dispatch(new TeamTrashed(teamId: (string) $team->getKey()));
     }
 
     /**
@@ -99,6 +108,9 @@ class TrashTeam implements TrashesTeams
 
         // 3. The deadline goes with `deleted_at`, in one write.
         $team->forceFill(['restore_until' => null])->restore();
+
+        // 4. Tell the host, after the team is live again.
+        Event::dispatch(new TeamRestored(teamId: (string) $team->getKey()));
     }
 
     /**

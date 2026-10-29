@@ -9,6 +9,8 @@ use FlutterSdk\MagicStarter\Contracts\DeletesTeams;
 use FlutterSdk\MagicStarter\Contracts\DeletesUsers;
 use FlutterSdk\MagicStarter\Contracts\SchedulesUserDeletion;
 use FlutterSdk\MagicStarter\Contracts\TransfersTeamOwnership;
+use FlutterSdk\MagicStarter\Events\TeamDeleted;
+use FlutterSdk\MagicStarter\Events\TeamOwnershipTransferred;
 use FlutterSdk\MagicStarter\MagicStarter;
 use FlutterSdk\MagicStarter\Tests\Fixtures\ConcreteTeam;
 use FlutterSdk\MagicStarter\Tests\Fixtures\ConcreteUser;
@@ -18,6 +20,7 @@ use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Schema\Blueprint;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Event;
 use Illuminate\Support\Facades\Exceptions;
 use Illuminate\Support\Facades\Schema;
 use Laravel\Cashier\Billable;
@@ -170,6 +173,30 @@ class PurgeDeletedUsersCommandTest extends TestCase
         $this->assertSame([$team->getKey()], $this->teamSpy->deleted);
         $this->assertSame(0, DB::table('team_user')->where('user_id', $user->getKey())->count());
         $this->assertNotNull(PurgeDeletedUsersCommandTestUser::query()->find($unscheduled->getKey()));
+    }
+
+    /**
+     * The purge deletes through the contracts, so the team events a host
+     * listens to fire for an account's teams too.
+     */
+    public function test_a_solo_users_team_is_reported_deleted_with_its_members(): void
+    {
+        Event::fake([TeamDeleted::class]);
+        $user = $this->createUser('Leaver');
+        $team = $this->createTeam($user, 'Personal');
+        $this->schedule($user);
+
+        $this->travel(31)->days();
+
+        $this->artisan(PurgeDeletedUsersCommand::NAME)->assertSuccessful();
+
+        Event::assertDispatchedTimes(TeamDeleted::class, 1);
+        Event::assertDispatched(
+            TeamDeleted::class,
+            fn (TeamDeleted $event): bool => $event->teamId === (string) $team->getKey()
+                && $event->ownerId === (string) $user->getKey()
+                && $event->memberIds === [(string) $user->getKey()],
+        );
     }
 
     /**
@@ -476,6 +503,33 @@ class PurgeDeletedUsersCommandTest extends TestCase
         $this->assertSame(0, DB::table('team_user')->where('user_id', $orphan->getKey())->count());
         $this->assertNull(PurgeDeletedUsersCommandTestUser::query()->find($orphan->getKey()));
         $this->assertSame([], $this->teamSpy->deleted, 'A handed-on team is not deleted.');
+    }
+
+    /**
+     * The hand-on is a transfer like any other: the heir is told through the
+     * same event, with the departing owner as the actor.
+     */
+    public function test_handing_a_team_on_reports_one_ownership_transfer(): void
+    {
+        Event::fake([TeamOwnershipTransferred::class]);
+        $orphan = $this->createUser('Orphan');
+        $team = $this->createTeam($orphan, 'Orphan Personal', personal: true);
+        $heir = $this->createUser('Heir');
+        $team->users()->attach($heir->getKey(), ['role' => 'admin']);
+        $this->schedule($orphan, orphan: true);
+
+        $this->travel(31)->days();
+
+        $this->artisan(PurgeDeletedUsersCommand::NAME)->assertSuccessful();
+
+        Event::assertDispatchedTimes(TeamOwnershipTransferred::class, 1);
+        Event::assertDispatched(
+            TeamOwnershipTransferred::class,
+            fn (TeamOwnershipTransferred $event): bool => $event->teamId === (string) $team->getKey()
+                && $event->previousOwnerId === (string) $orphan->getKey()
+                && $event->newOwnerId === (string) $heir->getKey()
+                && $event->actorId === (string) $orphan->getKey(),
+        );
     }
 
     /**

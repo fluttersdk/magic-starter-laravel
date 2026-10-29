@@ -3,14 +3,18 @@
 namespace FlutterSdk\MagicStarter\Actions;
 
 use FlutterSdk\MagicStarter\Contracts\AddsTeamMembers;
+use FlutterSdk\MagicStarter\Events\TeamMemberJoined;
 use FlutterSdk\MagicStarter\MagicStarter;
 use Illuminate\Contracts\Auth\Authenticatable;
 use Illuminate\Database\Eloquent\Model;
+use Illuminate\Support\Facades\Event;
 use Illuminate\Support\Str;
 use Illuminate\Validation\ValidationException;
 
 /**
  * Default action for adding a member to a team by email.
+ *
+ * Dispatches {@see TeamMemberJoined} once the member is attached.
  */
 class AddTeamMember implements AddsTeamMembers
 {
@@ -47,5 +51,12 @@ class AddTeamMember implements AddsTeamMembers
 
         // 3. Attach member with role.
         $team->users()->attach($teamMember->id, ['role' => $role]);
+
+        // 4. Tell the host, after the attach: a refused add never reaches here.
+        Event::dispatch(new TeamMemberJoined(
+            teamId: (string) $team->getKey(),
+            userId: (string) $teamMember->getKey(),
+            actorId: (string) $user->getAuthIdentifier(),
+        ));
     }
 }

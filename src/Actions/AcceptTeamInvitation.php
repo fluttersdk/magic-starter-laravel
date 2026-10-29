@@ -3,11 +3,13 @@
 namespace FlutterSdk\MagicStarter\Actions;
 
 use FlutterSdk\MagicStarter\Contracts\AcceptsTeamInvitations;
+use FlutterSdk\MagicStarter\Events\TeamMemberJoined;
 use FlutterSdk\MagicStarter\MagicStarter;
 use FlutterSdk\MagicStarter\Support\TeamInvitationRefused;
 use Illuminate\Contracts\Auth\Authenticatable;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Event;
 use Illuminate\Validation\ValidationException;
 
 /**
@@ -23,6 +25,10 @@ use Illuminate\Validation\ValidationException;
  *
  * Bind a subclass over {@see AcceptsTeamInvitations} and override
  * `ensureCanJoin()`; the rest of the flow stays the package's.
+ *
+ * Dispatches {@see TeamMemberJoined} for a join that went through, from inside
+ * the transaction: the event waits for the commit, and a join that rolls back
+ * never reaches a listener.
  */
 class AcceptTeamInvitation implements AcceptsTeamInvitations
 {
@@ -61,6 +67,12 @@ class AcceptTeamInvitation implements AcceptsTeamInvitations
 
             $team->users()->attach($user->getAuthIdentifier(), ['role' => $invitation->role]);
             $invitation->delete();
+
+            Event::dispatch(new TeamMemberJoined(
+                teamId: (string) $team->getKey(),
+                userId: (string) $user->getAuthIdentifier(),
+                actorId: (string) $user->getAuthIdentifier(),
+            ));
 
             return true;
         });

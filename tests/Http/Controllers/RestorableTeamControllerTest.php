@@ -3,6 +3,9 @@
 namespace FlutterSdk\MagicStarter\Tests\Http\Controllers;
 
 use FlutterSdk\MagicStarter\Actions\TrashTeam;
+use FlutterSdk\MagicStarter\Events\TeamDeleted;
+use FlutterSdk\MagicStarter\Events\TeamRestored;
+use FlutterSdk\MagicStarter\Events\TeamTrashed;
 use FlutterSdk\MagicStarter\Features;
 use FlutterSdk\MagicStarter\Http\Controllers\TeamController;
 use FlutterSdk\MagicStarter\Http\Controllers\TeamInvitationController;
@@ -12,6 +15,7 @@ use FlutterSdk\MagicStarter\Tests\Fixtures\RestorableTeam;
 use FlutterSdk\MagicStarter\Tests\TestCase;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Event;
 use Illuminate\Support\Facades\Gate;
 use Illuminate\Support\Str;
 
@@ -246,6 +250,69 @@ final class RestorableTeamControllerTest extends TestCase
         $this->actingAs($owner)->postJson('/teams/' . $team->getKey() . '/restore')->assertOk();
 
         $this->assertNotNull(RestorableTeam::query()->find($team->getKey()));
+    }
+
+    public function test_with_the_flag_off_delete_dispatches_deleted_with_every_member(): void
+    {
+        Event::fake([TeamDeleted::class, TeamTrashed::class]);
+        $owner = $this->makeUser();
+        $member = $this->makeUser('Member');
+        $team = $this->makeTeam($owner);
+        $this->addMember($team, $member);
+
+        $this->actingAs($owner)->deleteJson('/teams/' . $team->getKey())->assertOk();
+
+        Event::assertNotDispatched(TeamTrashed::class);
+        Event::assertDispatchedTimes(TeamDeleted::class, 1);
+        Event::assertDispatched(
+            TeamDeleted::class,
+            fn (TeamDeleted $event): bool => $event->teamId === (string) $team->getKey()
+                && $event->ownerId === (string) $owner->getKey()
+                && count($event->memberIds) === 2
+                && in_array((string) $member->getKey(), $event->memberIds, true),
+        );
+    }
+
+    public function test_with_the_flag_on_delete_dispatches_trashed_and_the_restore_dispatches_restored(): void
+    {
+        Event::fake([TeamDeleted::class, TeamTrashed::class, TeamRestored::class]);
+        $this->enableRestorableTeams();
+        $owner = $this->makeUser();
+        $team = $this->makeTeam($owner);
+
+        $this->actingAs($owner)->deleteJson('/teams/' . $team->getKey())->assertOk();
+
+        Event::assertNotDispatched(TeamDeleted::class);
+        Event::assertDispatchedTimes(TeamTrashed::class, 1);
+        Event::assertNotDispatched(TeamRestored::class);
+
+        $this->actingAs($owner)->postJson('/teams/' . $team->getKey() . '/restore')->assertOk();
+        $this->actingAs($owner)->postJson('/teams/' . $team->getKey() . '/restore')->assertOk();
+
+        Event::assertDispatchedTimes(TeamRestored::class, 1);
+        Event::assertDispatched(
+            TeamRestored::class,
+            fn (TeamRestored $event): bool => $event->teamId === (string) $team->getKey(),
+        );
+    }
+
+    public function test_a_refused_delete_or_restore_dispatches_nothing(): void
+    {
+        Event::fake([TeamDeleted::class, TeamTrashed::class, TeamRestored::class]);
+        $this->enableRestorableTeams();
+        $owner = $this->makeUser();
+        $member = $this->makeUser('Member');
+        $team = $this->makeTeam($owner);
+        $this->addMember($team, $member);
+        $personal = $this->makeTeam($owner, ['name' => 'Personal', 'personal_team' => true]);
+
+        $this->actingAs($member)->deleteJson('/teams/' . $team->getKey())->assertForbidden();
+        $this->actingAs($owner)->deleteJson('/teams/' . $personal->getKey())->assertStatus(422);
+        $this->actingAs($member)->postJson('/teams/' . $team->getKey() . '/restore')->assertForbidden();
+
+        Event::assertNotDispatched(TeamDeleted::class);
+        Event::assertNotDispatched(TeamTrashed::class);
+        Event::assertNotDispatched(TeamRestored::class);
     }
 
     private function enableRestorableTeams(): void
