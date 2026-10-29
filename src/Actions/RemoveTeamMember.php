@@ -3,10 +3,12 @@
 namespace FlutterSdk\MagicStarter\Actions;
 
 use FlutterSdk\MagicStarter\Contracts\RemovesTeamMembers;
+use FlutterSdk\MagicStarter\Events\TeamMemberRemoved;
 use FlutterSdk\MagicStarter\MagicStarter;
 use Illuminate\Contracts\Auth\Authenticatable;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Http\JsonResponse;
+use Illuminate\Support\Facades\Event;
 use Illuminate\Validation\ValidationException;
 
 /**
@@ -18,6 +20,8 @@ use Illuminate\Validation\ValidationException;
  * A removed member whose `current_team_id` points at the team is left pointing
  * at nothing, so `getCurrentTeamOrPersonal()` lands them on their personal team
  * instead of the team they were removed from.
+ *
+ * Dispatches {@see TeamMemberRemoved} when a membership was actually removed.
  */
 class RemoveTeamMember implements RemovesTeamMembers
 {
@@ -39,9 +43,20 @@ class RemoveTeamMember implements RemovesTeamMembers
             leaving: (string) $user->getAuthIdentifier() === (string) $teamMember->getKey(),
         );
 
-        $team->users()->detach($teamMember->getKey());
+        $detached = $team->users()->detach($teamMember->getKey());
 
         self::clearCurrentTeam($team, $teamMember);
+
+        // A user who was not on the team lost nothing, so there is nothing to tell.
+        if ($detached === 0) {
+            return;
+        }
+
+        Event::dispatch(new TeamMemberRemoved(
+            teamId: (string) $team->getKey(),
+            userId: (string) $teamMember->getKey(),
+            actorId: (string) $user->getAuthIdentifier(),
+        ));
     }
 
     /**

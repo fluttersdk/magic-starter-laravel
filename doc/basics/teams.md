@@ -25,6 +25,8 @@
   - [Upload Team Photo](#upload-team-photo)
   - [Delete Team Photo](#delete-team-photo)
 - [Switch Current Team](#switch-current-team)
+- [Lifecycle Events](#lifecycle-events)
+  - [Transferring Ownership](#transferring-ownership)
 - [Authorization](#authorization)
   - [TeamPolicy](#teampolicy)
   - [Policy Abilities Summary](#policy-abilities-summary)
@@ -732,6 +734,64 @@ Switches the authenticated user's active team. The request is authorized via the
 **Request:** `SwitchTeamRequest` (authorization is handled in the request's `authorize()` method via `Gate::allows('switchTo', $team)`)
 
 **Controller:** `AuthController@switchTeam`
+
+---
+
+<a name="lifecycle-events"></a>
+## Lifecycle Events
+
+A host that tells people when something happens to their team (a member joined, the household was deleted, ownership passed) listens to six events instead of overriding the actions:
+
+| Event | Dispatched | Properties |
+|-------|------------|------------|
+| `Events\TeamMemberJoined` | After a member is attached: an invitation accepted (`AcceptTeamInvitation`) or a user added by email (`AddTeamMember`). | `teamId`, `userId`, `actorId` (the joiner when they accepted, the user who added them otherwise) |
+| `Events\TeamMemberRemoved` | After a member is detached by `RemoveTeamMember`, which serves both the remove and the leave endpoints. | `teamId`, `userId`, `actorId` (equal to `userId` when the member left) |
+| `Events\TeamDeleted` | After a team is deleted for good by `DeleteTeam`: the delete endpoint with the restorable delete off, `magic-starter:purge-trashed-teams`, the admin panel, and the account purge for each team the user owned. | `teamId`, `ownerId`, `memberIds` (everyone who belonged, the owner included, in no particular order) |
+| `Events\TeamTrashed` | After `TrashTeam` hides a team for its restore window. | `teamId` |
+| `Events\TeamRestored` | After `TrashTeam` brings a trashed team back inside the window. | `teamId` |
+| `Events\TeamOwnershipTransferred` | After `TransferTeamOwnership` hands a team to another member: a host's own transfer, the admin panel, and the account purge when it hands on a departing owner's team. | `teamId`, `previousOwnerId`, `newOwnerId`, `actorId` |
+
+```php
+use FlutterSdk\MagicStarter\Events\TeamDeleted;
+use FlutterSdk\MagicStarter\Events\TeamMemberJoined;
+use Illuminate\Support\Facades\Event;
+
+Event::listen(TeamMemberJoined::class, fn (TeamMemberJoined $event) => /* tell the owner */);
+Event::listen(TeamDeleted::class, fn (TeamDeleted $event) => /* tell every former member */);
+```
+
+Four rules hold for all six:
+
+- **After the commit.** Each event implements `ShouldDispatchAfterCommit`. The account purge calls these actions inside its own transaction, so a listener hears of a change only once the whole of it has committed, and never hears of one that rolled back. Outside a transaction an event is dispatched at once.
+- **Once, and only for a change.** An action that refuses fires nothing: a join the plan or `ensureCanJoin()` refuses, the owner being removed, a delete or trash the billing guard refuses, a restore after the window closed, a transfer to a user who is not a member. Neither does a call that changes nothing: removing someone who is not a member, restoring a team that is not trashed, transferring a team to the owner it already has.
+- **Keys, not models.** The payload is keys as strings, whatever the key type, and nothing else: no model, name or address, so a queued listener loads what it needs when it runs. `TeamDeleted` cannot load its members, because the team and its memberships are gone by then, so it carries `memberIds`, read before the members are detached.
+- **A bound action owns its event.** The events are dispatched by the default actions. An application that binds its own class over `AddsTeamMembers`, `RemovesTeamMembers`, `DeletesTeams`, `TrashesTeams`, `TransfersTeamOwnership` or `AcceptsTeamInvitations` without extending the default has to dispatch them itself. Extending the default and overriding one hook keeps them.
+
+Two departures follow from what the actions do. Deleting a team detaches its members without firing `TeamMemberRemoved` for each: `TeamDeleted` and its `memberIds` are the record. Deleting an account detaches the user from the other teams they belonged to the same way, and fires no event for it.
+
+<a name="transferring-ownership"></a>
+### Transferring Ownership
+
+`TransferTeamOwnership` makes the new owner the owner and leaves the outgoing owner on the team as an `admin`. A host whose teams have fewer roles overrides `outgoingRole()` and keeps the rest of the transfer, the event included:
+
+```php
+use FlutterSdk\MagicStarter\Actions\TransferTeamOwnership;
+use FlutterSdk\MagicStarter\Contracts\TransfersTeamOwnership;
+use FlutterSdk\MagicStarter\Enums\Role;
+
+class TransferHouseholdOwnership extends TransferTeamOwnership
+{
+    protected function outgoingRole(): Role
+    {
+        return Role::MEMBER;
+    }
+}
+
+// AppServiceProvider::register()
+$this->app->bind(TransfersTeamOwnership::class, TransferHouseholdOwnership::class);
+```
+
+Return anything but `Role::OWNER`: the new owner takes that role in the same transfer.
 
 ---
 
