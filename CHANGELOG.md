@@ -4,6 +4,10 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Added
+
+- **An invitation can be accepted with a different email, after an explicit confirmation, for Sign in with Apple relay addresses.** A new `invitation_confirm_email_mismatch` config key (`MAGIC_STARTER_INVITATION_CONFIRM_EMAIL_MISMATCH`, `false` by default) changes what `POST invitations/{token}/accept` answers when the signed-in email is not the invited one. With it off the `403 wrong_email` is byte-identical. With it on, a user who holds a Sign in with Apple link that is not revoked, or whose address is on `@privaterelay.appleid.com`, gets `409` with `code: email_mismatch`, `requires_confirmation: true` and the invited address as `masked_email` (`a***@example.com`), nothing attached and the invitation untouched; a repeat request carrying `confirm_email_mismatch: true` goes through `AcceptsTeamInvitations`, so the expiry, already-a-member and `ensureCanJoin()` checks still run and the token is used up by the join. Every other user keeps the `403`. New translation line `teams.invitations.email_mismatch` (en, tr). (`config/magic-starter.php`, `src/Http/Controllers/TeamInvitationController.php`, `lang/en/teams.php`, `lang/tr/teams.php`)
+
 ## [0.0.54] - 2026-10-29
 
 ### Added

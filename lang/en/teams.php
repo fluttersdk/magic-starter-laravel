@@ -61,6 +61,7 @@ return [
         'already_sent' => 'An invitation has already been sent to this email.',
         'canceled' => 'Invitation canceled successfully.',
         'wrong_email' => 'This invitation was sent to a different email address.',
+        'email_mismatch' => 'This invitation was sent to a different email address. Confirm to join with this account.',
         'expired' => 'This invitation has expired.',
         'already_joined' => 'You are already a member of this team.',
         'accepted' => 'Invitation accepted. You have joined the team.',

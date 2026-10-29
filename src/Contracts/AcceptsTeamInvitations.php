@@ -16,13 +16,16 @@ interface AcceptsTeamInvitations
      * Returns only after a join. Every other outcome is a refusal, so the
      * caller never has to ask afterwards whether the user got in. Whether
      * `$user` is the person the invitation was sent to is the caller's job
-     * and is checked before this runs.
+     * and is checked before this runs. When `invitation_confirm_email_mismatch`
+     * is on, a user whose email differs from the invitation's can reach this
+     * method after confirming, so an implementation must not treat `$user->email`
+     * as verified by the invitation.
      *
      * An implementation joins inside one transaction with the team row locked,
      * so two accepts for the same team cannot both pass a check that counts
      * its members.
      *
-     * @param  Authenticatable  $user  The invited user, already matched to the invitation's email.
+     * @param  Authenticatable  $user  The invited user; matched to the invitation's email, or a confirmed mismatch.
      * @param  Model  $invitation  The invitation being accepted.
      *
      * @throws \FlutterSdk\MagicStarter\Support\TeamInvitationRefused When the invitation has expired

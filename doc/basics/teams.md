@@ -652,6 +652,30 @@ If the user is already a member, the invitation is deleted and a success message
 }
 ```
 
+**Confirming a different email (opt-in):** Sign in with Apple can hand the app a private relay address
+(`@privaterelay.appleid.com`), so someone invited at their real address can never match. Set
+`invitation_confirm_email_mismatch` (`MAGIC_STARTER_INVITATION_CONFIRM_EMAIL_MISMATCH`, off by default) and a user
+who may confirm is asked first instead of refused. They may confirm when they hold a Sign in with Apple link that has
+not been revoked, or their address is on `privaterelay.appleid.com` (the whole domain, case-insensitive). Everyone
+else keeps the `403` above, whatever the request carries.
+
+`409 Conflict`, with nothing attached and the invitation left in place:
+
+```json
+{
+  "message": "This invitation was sent to a different email address. Confirm to join with this account.",
+  "code": "email_mismatch",
+  "requires_confirmation": true,
+  "masked_email": "a***@example.com"
+}
+```
+
+`masked_email` is the invited address reduced to its first character and its domain, for the client to show. Repeat
+the request with `{"confirm_email_mismatch": true}` to join; only a true value confirms. The repeat goes through
+`AcceptsTeamInvitations` like any other accept, so the expiry, already-a-member and `ensureCanJoin()` checks all still
+run, and the token is used up by the join. The invitation token is the proof that the person was invited: anyone
+holding the link and an Apple account can use this, which is why it is off by default.
+
 **Controller:** `TeamInvitationController@accept`
 
 ---

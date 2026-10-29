@@ -6,8 +6,10 @@ use FlutterSdk\MagicStarter\Actions\AcceptTeamInvitation;
 use FlutterSdk\MagicStarter\Contracts\AcceptsTeamInvitations;
 use FlutterSdk\MagicStarter\Contracts\InvitesTeamMembers;
 use FlutterSdk\MagicStarter\Events\TeamMemberJoined;
+use FlutterSdk\MagicStarter\Features;
 use FlutterSdk\MagicStarter\Http\Controllers\TeamInvitationController;
 use FlutterSdk\MagicStarter\MagicStarter;
+use FlutterSdk\MagicStarter\Models\SocialAccount;
 use FlutterSdk\MagicStarter\Tests\TestCase;
 use Illuminate\Auth\Authenticatable as AuthenticatableTrait;
 use Illuminate\Contracts\Auth\Authenticatable as AuthenticatableContract;
@@ -21,9 +23,15 @@ use Illuminate\Http\JsonResponse;
 use Illuminate\Support\Facades\Event;
 use Illuminate\Validation\ValidationException;
 use LogicException;
+use PHPUnit\Framework\Attributes\DataProvider;
 
 final class TeamInvitationControllerTest extends TestCase
 {
+    /**
+     * An address Sign in with Apple hands out when the person hides their own.
+     */
+    private const RELAY_EMAIL = 'x7k2m9@privaterelay.appleid.com';
+
     protected function setUp(): void
     {
         parent::setUp();
@@ -46,7 +54,7 @@ final class TeamInvitationControllerTest extends TestCase
         \call_user_func([\call_user_func('app', 'db.schema'), 'create'], 'users', function (Blueprint $table): void {
             $table->uuid('id')->primary();
             $table->string('name');
-            $table->string('email')->unique();
+            $table->string('email')->nullable()->unique();
             $table->string('password')->nullable();
             $table->string('current_team_id')->nullable();
             $table->timestamps();
@@ -491,6 +499,478 @@ final class TeamInvitationControllerTest extends TestCase
         $this->actingAs($other)
             ->postJson('/invitations/mismatch-token/accept')
             ->assertStatus(403);
+    }
+
+    public function test_the_email_mismatch_confirmation_is_off_by_default(): void
+    {
+        $this->assertFalse(config('magic-starter.invitation_confirm_email_mismatch'));
+    }
+
+    /**
+     * With the flag off a relay address is just another different email: the
+     * 403 body is the one clients already parse, and a confirmation flag in the
+     * request changes nothing.
+     */
+    public function test_accept_keeps_the_403_for_a_relay_user_while_confirmation_is_off(): void
+    {
+        [$team, $invitation] = $this->teamWithInvitation('ayse@example.com', 'relay-off');
+        $relay = $this->makeUser(self::RELAY_EMAIL);
+
+        $this->actingAs($relay)
+            ->postJson('/invitations/relay-off/accept', ['confirm_email_mismatch' => true])
+            ->assertStatus(403)
+            ->assertExactJson(['message' => 'This invitation was sent to a different email address.']);
+
+        $this->assertSame(0, $team->fresh()->users()->count());
+        $this->assertNotNull(TeamInvitationControllerTestInvitation::query()->find($invitation->id));
+    }
+
+    /**
+     * The first call only asks: nothing is attached and the invitation is not
+     * consumed. The repeat call carrying the confirmation joins through the
+     * same contract as any other accept, with the invitation's role.
+     */
+    public function test_accept_asks_a_relay_user_to_confirm_and_then_joins(): void
+    {
+        $this->enableEmailMismatchConfirmation();
+        [$team, $invitation] = $this->teamWithInvitation('ayse@example.com', 'relay-on');
+        $relay = $this->makeUser(self::RELAY_EMAIL);
+
+        $this->actingAs($relay)
+            ->postJson('/invitations/relay-on/accept')
+            ->assertStatus(409)
+            ->assertExactJson([
+                'message' => 'This invitation was sent to a different email address. Confirm to join with this account.',
+                'code' => 'email_mismatch',
+                'requires_confirmation' => true,
+                'masked_email' => 'a***@example.com',
+            ]);
+
+        $this->assertSame(0, $team->fresh()->users()->count(), 'The question must not attach anybody.');
+        $this->assertNotNull(
+            TeamInvitationControllerTestInvitation::query()->find($invitation->id),
+            'The question must not consume the invitation.',
+        );
+
+        $this->actingAs($relay)
+            ->postJson('/invitations/relay-on/accept', ['confirm_email_mismatch' => true])
+            ->assertOk()
+            ->assertExactJson(['data' => null, 'message' => 'Invitation accepted. You have joined the team.']);
+
+        $this->assertSame('admin', $team->fresh()->users()->find($relay->id)?->pivot?->role);
+        $this->assertNull(TeamInvitationControllerTestInvitation::query()->find($invitation->id));
+    }
+
+    /**
+     * An Apple link is enough on its own, whatever address the account holds:
+     * a person who signed up with a password and linked Apple later has an
+     * ordinary address that is not the one they were invited at.
+     */
+    public function test_accept_asks_a_user_with_an_apple_link_to_confirm_and_then_joins(): void
+    {
+        $this->enableEmailMismatchConfirmation();
+        $this->enableSocialLogin();
+        [$team, $invitation] = $this->teamWithInvitation('ayse@example.com', 'apple-on');
+        $user = $this->makeUser('ayse.work@example.org');
+        $this->linkProvider($user, 'apple');
+
+        $this->actingAs($user)
+            ->postJson('/invitations/apple-on/accept')
+            ->assertStatus(409)
+            ->assertJsonPath('code', 'email_mismatch')
+            ->assertJsonPath('requires_confirmation', true);
+
+        $this->actingAs($user)
+            ->postJson('/invitations/apple-on/accept', ['confirm_email_mismatch' => true])
+            ->assertOk();
+
+        $this->assertTrue($team->fresh()->users()->where('user_id', $user->id)->exists());
+        $this->assertNull(TeamInvitationControllerTestInvitation::query()->find($invitation->id));
+    }
+
+    /**
+     * Only the confirmation is optional for the people who may give it. Everyone
+     * else keeps the 403, even when the request claims to confirm.
+     */
+    public function test_accept_keeps_the_403_for_a_user_who_may_not_confirm_even_with_the_flag(): void
+    {
+        $this->enableEmailMismatchConfirmation();
+        $this->enableSocialLogin();
+        [$team, $invitation] = $this->teamWithInvitation('ayse@example.com', 'plain-on');
+        $other = $this->makeUser('other@test.dev');
+
+        foreach ([[], ['confirm_email_mismatch' => true]] as $payload) {
+            $this->actingAs($other)
+                ->postJson('/invitations/plain-on/accept', $payload)
+                ->assertStatus(403)
+                ->assertExactJson(['message' => 'This invitation was sent to a different email address.']);
+        }
+
+        $this->assertSame(0, $team->fresh()->users()->count());
+        $this->assertNotNull(TeamInvitationControllerTestInvitation::query()->find($invitation->id));
+    }
+
+    public function test_accept_keeps_the_403_for_a_revoked_apple_link(): void
+    {
+        $this->enableEmailMismatchConfirmation();
+        $this->enableSocialLogin();
+        $this->teamWithInvitation('ayse@example.com', 'revoked-on');
+        $user = $this->makeUser('ayse.work@example.org');
+        $this->linkProvider($user, 'apple', ['revoked_at' => now()]);
+
+        $this->actingAs($user)
+            ->postJson('/invitations/revoked-on/accept', ['confirm_email_mismatch' => true])
+            ->assertStatus(403);
+    }
+
+    public function test_accept_keeps_the_403_for_a_link_to_another_provider(): void
+    {
+        $this->enableEmailMismatchConfirmation();
+        $this->enableSocialLogin();
+        $this->teamWithInvitation('ayse@example.com', 'google-on');
+        $user = $this->makeUser('ayse.work@example.org');
+        $this->linkProvider($user, 'google');
+
+        $this->actingAs($user)
+            ->postJson('/invitations/google-on/accept', ['confirm_email_mismatch' => true])
+            ->assertStatus(403);
+    }
+
+    /**
+     * The relay domain is matched as the whole domain of the address, never as
+     * a substring: a lookalike must not buy the confirmation path.
+     */
+    #[DataProvider('lookalikeRelayAddresses')]
+    public function test_accept_keeps_the_403_for_a_lookalike_of_the_relay_domain(string $email): void
+    {
+        $this->enableEmailMismatchConfirmation();
+        $this->teamWithInvitation('ayse@example.com', 'lookalike-on');
+        $user = $this->makeUser($email);
+
+        $this->actingAs($user)
+            ->postJson('/invitations/lookalike-on/accept', ['confirm_email_mismatch' => true])
+            ->assertStatus(403);
+    }
+
+    /**
+     * @return array<string, array{0: string}>
+     */
+    public static function lookalikeRelayAddresses(): array
+    {
+        return [
+            'prefixed domain' => ['x7k2m9@evil-privaterelay.appleid.com'],
+            'suffixed domain' => ['x7k2m9@privaterelay.appleid.com.evil.test'],
+            'subdomain' => ['x7k2m9@mail.privaterelay.appleid.com'],
+            'domain in the local part' => ['privaterelay.appleid.com@evil.test'],
+        ];
+    }
+
+    public function test_accept_matches_the_relay_domain_case_insensitively(): void
+    {
+        $this->enableEmailMismatchConfirmation();
+        $this->teamWithInvitation('ayse@example.com', 'relay-case');
+        $user = $this->makeUser('X7K2M9@PrivateRelay.AppleID.com');
+
+        $this->actingAs($user)
+            ->postJson('/invitations/relay-case/accept')
+            ->assertStatus(409);
+    }
+
+    /**
+     * An application that never installed social login holds no Apple link and
+     * may have no `social_accounts` table: the check must answer 403 rather
+     * than fail on the query. The relay address still opens the question.
+     */
+    public function test_accept_does_not_read_social_accounts_when_social_login_is_off(): void
+    {
+        $this->enableEmailMismatchConfirmation();
+        $this->teamWithInvitation('ayse@example.com', 'no-social');
+
+        $this->actingAs($this->makeUser('other@test.dev'))
+            ->postJson('/invitations/no-social/accept', ['confirm_email_mismatch' => true])
+            ->assertStatus(403);
+
+        $this->actingAs($this->makeUser(self::RELAY_EMAIL))
+            ->postJson('/invitations/no-social/accept')
+            ->assertStatus(409);
+    }
+
+    /**
+     * A user without an address (a guest) can never match, so only an Apple
+     * link can open the question for them.
+     */
+    public function test_accept_handles_a_user_without_an_email(): void
+    {
+        $this->enableEmailMismatchConfirmation();
+        $this->enableSocialLogin();
+        $this->teamWithInvitation('ayse@example.com', 'no-email');
+        $guest = $this->makeUser(null);
+
+        $this->actingAs($guest)
+            ->postJson('/invitations/no-email/accept', ['confirm_email_mismatch' => true])
+            ->assertStatus(403);
+
+        $this->linkProvider($guest, 'apple');
+
+        $this->actingAs($guest)
+            ->postJson('/invitations/no-email/accept')
+            ->assertStatus(409);
+    }
+
+    /**
+     * Only a real yes confirms. Anything else is the question again, so a
+     * client that sends the field blank cannot join by accident.
+     */
+    #[DataProvider('refusedConfirmations')]
+    public function test_accept_asks_again_unless_the_confirmation_is_true(mixed $value): void
+    {
+        $this->enableEmailMismatchConfirmation();
+        [$team] = $this->teamWithInvitation('ayse@example.com', 'not-confirmed');
+
+        $this->actingAs($this->makeUser(self::RELAY_EMAIL))
+            ->postJson('/invitations/not-confirmed/accept', ['confirm_email_mismatch' => $value])
+            ->assertStatus(409);
+
+        $this->assertSame(0, $team->fresh()->users()->count());
+    }
+
+    /**
+     * @return array<string, array{0: mixed}>
+     */
+    public static function refusedConfirmations(): array
+    {
+        return [
+            'false' => [false],
+            'null' => [null],
+            'zero' => [0],
+            'the word no' => ['no'],
+            'the word false' => ['false'],
+            'an empty string' => [''],
+        ];
+    }
+
+    /**
+     * Turning the flag on changes nothing for the person the invitation was
+     * sent to: there is no question to ask.
+     */
+    public function test_accept_does_not_ask_the_invited_person_to_confirm(): void
+    {
+        $this->enableEmailMismatchConfirmation();
+        $invitee = $this->makeUser('Ayse@Example.com');
+        [$team] = $this->teamWithInvitation('ayse@example.com', 'matched-on');
+
+        $this->actingAs($invitee)
+            ->postJson('/invitations/matched-on/accept')
+            ->assertOk()
+            ->assertExactJson(['data' => null, 'message' => 'Invitation accepted. You have joined the team.']);
+
+        $this->assertTrue($team->fresh()->users()->where('user_id', $invitee->id)->exists());
+    }
+
+    /**
+     * The confirmation is not a way round the expiry: the invitation is
+     * deleted and answers 410 once the person has confirmed.
+     */
+    public function test_accept_still_refuses_an_expired_invitation_after_confirmation(): void
+    {
+        $this->enableEmailMismatchConfirmation();
+        [$team, $invitation] = $this->teamWithInvitation('ayse@example.com', 'expired-on', [
+            'expires_at' => now()->subDay(),
+        ]);
+
+        $this->actingAs($this->makeUser(self::RELAY_EMAIL))
+            ->postJson('/invitations/expired-on/accept', ['confirm_email_mismatch' => true])
+            ->assertStatus(410)
+            ->assertExactJson(['message' => 'This invitation has expired.']);
+
+        $this->assertSame(0, $team->fresh()->users()->count());
+        $this->assertNull(TeamInvitationControllerTestInvitation::query()->find($invitation->id));
+    }
+
+    /**
+     * A confirmed accept runs the same contract as any other, so the hook an
+     * application binds still refuses a join (a member cap) and the invitation
+     * stays for a retry. The unconfirmed call never reaches the contract.
+     */
+    public function test_accept_runs_the_bound_contract_only_after_confirmation(): void
+    {
+        $this->enableEmailMismatchConfirmation();
+        $this->app->instance(AcceptsTeamInvitations::class, new class extends AcceptTeamInvitation
+        {
+            public int $calls = 0;
+
+            protected function ensureCanJoin(Model $team, AuthenticatableContract $user): void
+            {
+                $this->calls++;
+
+                $message = 'This household is full.';
+                $exception = ValidationException::withMessages(['invitation' => $message]);
+                $exception->response = new JsonResponse([
+                    'message' => $message,
+                    'code' => 'member_limit_reached',
+                    'errors' => $exception->errors(),
+                ], 422);
+
+                throw $exception;
+            }
+        });
+        [$team, $invitation] = $this->teamWithInvitation('ayse@example.com', 'capped-on');
+        $relay = $this->makeUser(self::RELAY_EMAIL);
+
+        $this->actingAs($relay)->postJson('/invitations/capped-on/accept')->assertStatus(409);
+
+        $this->assertSame(0, $this->app->make(AcceptsTeamInvitations::class)->calls);
+
+        $this->actingAs($relay)
+            ->postJson('/invitations/capped-on/accept', ['confirm_email_mismatch' => true])
+            ->assertStatus(422)
+            ->assertJsonPath('code', 'member_limit_reached');
+
+        $this->assertSame(1, $this->app->make(AcceptsTeamInvitations::class)->calls);
+        $this->assertSame(0, $team->fresh()->users()->count());
+        $this->assertNotNull(TeamInvitationControllerTestInvitation::query()->find($invitation->id));
+    }
+
+    public function test_accept_does_not_attach_a_confirmed_user_who_already_belongs(): void
+    {
+        $this->enableEmailMismatchConfirmation();
+        [$team, $invitation] = $this->teamWithInvitation('ayse@example.com', 'member-on');
+        $relay = $this->makeUser(self::RELAY_EMAIL);
+        $team->users()->attach($relay->id, ['role' => 'member']);
+
+        $this->actingAs($relay)
+            ->postJson('/invitations/member-on/accept', ['confirm_email_mismatch' => true])
+            ->assertOk()
+            ->assertJsonPath('message', 'You are already a member of this team.');
+
+        $this->assertSame(1, $team->fresh()->users()->count());
+        $this->assertSame('member', $team->fresh()->users()->find($relay->id)?->pivot?->role);
+        $this->assertNull(TeamInvitationControllerTestInvitation::query()->find($invitation->id));
+    }
+
+    /**
+     * The token stays single use: the confirmed accept consumes it, so a second
+     * call (from the same person or anybody else) finds no invitation.
+     */
+    public function test_accept_after_a_confirmed_join_does_not_attach_twice(): void
+    {
+        $this->enableEmailMismatchConfirmation();
+        [$team] = $this->teamWithInvitation('ayse@example.com', 'twice-on');
+        $relay = $this->makeUser(self::RELAY_EMAIL);
+
+        $this->actingAs($relay)
+            ->postJson('/invitations/twice-on/accept', ['confirm_email_mismatch' => true])
+            ->assertOk();
+        $this->actingAs($relay)
+            ->postJson('/invitations/twice-on/accept', ['confirm_email_mismatch' => true])
+            ->assertStatus(404);
+        $this->actingAs($this->makeUser('second-relay@privaterelay.appleid.com'))
+            ->postJson('/invitations/twice-on/accept', ['confirm_email_mismatch' => true])
+            ->assertStatus(404);
+
+        $this->assertSame(1, $team->fresh()->users()->count());
+    }
+
+    public function test_accept_asks_for_confirmation_in_the_callers_locale(): void
+    {
+        $this->enableEmailMismatchConfirmation();
+        \call_user_func('app')->setLocale('tr');
+        $this->teamWithInvitation('ayse@example.com', 'relay-tr');
+
+        $this->actingAs($this->makeUser(self::RELAY_EMAIL))
+            ->postJson('/invitations/relay-tr/accept')
+            ->assertStatus(409)
+            ->assertJsonPath('message', 'Bu davet farklı bir e-posta adresine gönderilmiş. Bu hesapla katılmak için onaylayın.');
+    }
+
+    /**
+     * The invited address is shown to a person who is not yet known to own
+     * it, so it is masked: the first character and the domain, which is what
+     * they need to recognise their own address, and a fixed run of stars so
+     * the length of the rest is not given away.
+     */
+    #[DataProvider('invitedAddresses')]
+    public function test_the_confirmation_masks_the_invited_email(string $invited, string $masked): void
+    {
+        $this->enableEmailMismatchConfirmation();
+        $this->teamWithInvitation($invited, 'mask-token');
+
+        $this->actingAs($this->makeUser(self::RELAY_EMAIL))
+            ->postJson('/invitations/mask-token/accept')
+            ->assertStatus(409)
+            ->assertJsonPath('masked_email', $masked);
+    }
+
+    /**
+     * @return array<string, array{0: string, 1: string}>
+     */
+    public static function invitedAddresses(): array
+    {
+        return [
+            'a plain address' => ['ayse@example.com', 'a***@example.com'],
+            'a one character local part' => ['a@example.com', 'a***@example.com'],
+            'a long local part' => ['ayse.cakir.household@example.com', 'a***@example.com'],
+            'a multibyte first character' => ['Çağlar@example.com', 'Ç***@example.com'],
+            'a tagged address keeps its domain only' => ['ayse+home@mail.example.co.uk', 'a***@mail.example.co.uk'],
+        ];
+    }
+
+    private function enableEmailMismatchConfirmation(): void
+    {
+        config(['magic-starter.invitation_confirm_email_mismatch' => true]);
+    }
+
+    /**
+     * Turn social login on and create its table with the shipped migration.
+     */
+    private function enableSocialLogin(): void
+    {
+        config(['magic-starter.features' => [Features::socialLogin()]]);
+
+        (require __DIR__ . '/../../../database/migrations/create_social_accounts_table.php')->up();
+    }
+
+    /**
+     * @param  array<string, mixed>  $attributes
+     */
+    private function linkProvider(TeamInvitationControllerTestUser $user, string $provider, array $attributes = []): void
+    {
+        SocialAccount::query()->create([
+            'user_id' => $user->getKey(),
+            'provider' => $provider,
+            'provider_user_id' => $provider . '-' . $user->getKey(),
+            ...$attributes,
+        ]);
+    }
+
+    private function makeUser(?string $email): TeamInvitationControllerTestUser
+    {
+        return TeamInvitationControllerTestUser::query()->create(['name' => 'Person', 'email' => $email]);
+    }
+
+    /**
+     * A team with an invitation to `$email`, owned by somebody else.
+     *
+     * @param  array<string, mixed>  $attributes
+     * @return array{0: TeamInvitationControllerTestTeam, 1: Model}
+     */
+    private function teamWithInvitation(string $email, string $token, array $attributes = []): array
+    {
+        $owner = $this->makeUser('owner-' . $token . '@test.dev');
+        $team = TeamInvitationControllerTestTeam::query()->create([
+            'user_id' => $owner->id,
+            'name' => 'A Team',
+            'personal_team' => false,
+        ]);
+
+        $invitation = $team->invitations()->create([
+            'email' => $email,
+            'role' => 'admin',
+            'token' => $token,
+            ...$attributes,
+        ]);
+
+        return [$team, $invitation];
     }
 }
 
