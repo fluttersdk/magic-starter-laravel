@@ -233,12 +233,15 @@ public function release(Authenticatable $user): array;
 Ends what bills a user before their account is locked, when `account_deletion.billing` is
 `release`. The default action cancels every Stripe subscription the user has that could still bill
 or activate, through `TrialCardGateway::cancel()` (no proration, no final invoice), and reports a
-store subscription (which only the customer can cancel, in the store) without touching it. Returns
+store subscription (which only the customer can cancel, in the store) without touching it. A
+subscription it cancels is ended in the local Cashier row too, because the purge and `DeletesUsers`
+hold an account while a card subscription is valid and neither releases anything. Returns
 `['cancelled' => [['provider' => 'stripe', 'id' => 'sub_...']], 'store' => [['provider' =>
 'app_store', 'manage_url' => null]]]`, both lists empty for a user nothing bills. Throws
 `Support\BillingReleaseFailed` when a rail refuses or cannot be reached; the scheduler answers that
-with 422 `billing_release_failed` and locks nothing. It runs before the scheduler's lock
-transaction, so it may make remote calls. See
+with 422 `billing_release_failed` and locks nothing. It runs before the scheduler's own lock
+transaction, so it may make remote calls; a caller that schedules inside a transaction of its own
+(the Apple `account-deleted` handler) holds it open across them. See
 [Releasing Billing](../basics/account-deletion.md#releasing-billing).
 
 ---
