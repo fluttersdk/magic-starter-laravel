@@ -6,6 +6,7 @@
 - [Refusals](#refusals)
 - [Grace Period](#grace-period)
 - [Purging](#purging)
+- [Handing On Shared Teams](#handing-on-shared-teams)
 - [Scheduling the Purge](#scheduling-the-purge)
 - [Team Deletion Guard](#team-deletion-guard)
 - [Lifecycle Events](#lifecycle-events)
@@ -74,7 +75,7 @@ The request runs exactly the scheduled path: the same [refusals](#refusals), the
 
 A refusal or a missing proof answers as it does without the flag, and nothing is queued. A request without `immediately`, or with `false`, answers the scheduled body unchanged.
 
-The job runs the purge command's own per-account decision with a cutoff of now, so it re-reads the account under a row lock and re-checks everything the [purge](#purging) does: a schedule cleared by a sign-in in the meantime is left alone, a team that gained a member un-schedules the account, a billing subscription holds it, and the rest is deleted through `DeletesUsers`. It carries the account's key rather than the model, so a duplicate that runs after the account is gone does nothing.
+The job runs the purge command's own per-account decision with a cutoff of now, so it re-reads the account under a row lock and re-checks everything the [purge](#purging) does: a schedule cleared by a sign-in in the meantime is left alone, a team that gained a member un-schedules the account (or is [handed on](#handing-on-shared-teams), when that is switched on), a billing subscription holds it, and the rest is deleted through `DeletesUsers`. It carries the account's key rather than the model, so a duplicate that runs after the account is gone does nothing.
 
 > [!WARNING]
 > The job is queued after the scheduling transaction commits. With the `sync` queue connection it runs inside the request after all, and a large team cascade can outlast it. Run a real queue worker.
@@ -84,7 +85,7 @@ The job runs the purge command's own per-account decision with a cutoff of now, 
 <a name="refusals"></a>
 ## Refusals
 
-A user who owns a team that deletion would damage, or whom a subscription bills directly, is refused before anything is locked:
+A user who owns a team that deletion would damage, or whom a subscription bills directly, is refused before anything is locked. `owns_shared_teams` is the one refusal a host can switch off, with [`hand_on_shared_teams`](#handing-on-shared-teams):
 
 ```json
 {
@@ -119,7 +120,7 @@ A value is `stripe`, `app_store` or `play_store`. A store is named from the team
 
 | Code | Cause |
 |------|-------|
-| `owns_shared_teams` | The user owns a team that another person belongs to. Deleting the user would take that person's data with it. Hand the team over or delete it first. A pending invitation is not a member. |
+| `owns_shared_teams` | The user owns a team that another person belongs to. Deleting the user would take that person's data with it. Hand the team over or delete it first. A pending invitation is not a member. Never raised while `hand_on_shared_teams` is on. |
 | `team_has_active_subscription` | The user owns a team that a store subscription or a valid Stripe subscription is still billing. Cancel it first. |
 | `subscription_active` | The user itself is the billable subject (`magic-starter.billing.billable` is `user`) and a store or valid Stripe subscription is billing it. Cancel it first. |
 
@@ -162,10 +163,10 @@ The command selects every account whose `deletion_scheduled_at` is older than th
 
 | Situation | Outcome |
 |-----------|---------|
-| The user owns a shared team (it gained a member during the grace period). | **Un-scheduled** and reported. Deleting the user would take the new member's team with them. |
+| The user owns a shared team (it gained a member during the grace period), and `hand_on_shared_teams` is off. | **Un-scheduled** and reported. Deleting the user would take the new member's team with them. |
 | The account owns a team that a subscription is still billing, or is itself billed by one. | **Held** and reported. It is left exactly as it was and retried on the next run. |
 | The user signed in after the walk loaded them (the schedule was cleared). | **Cancelled**: skipped without a change. The row is read again under a lock, so a sign-in that lands during the purge waits for it instead of racing the deletion. |
-| An orphan owns shared teams. | Each team moves to its earliest-joined admin, else its earliest-joined member, who becomes owner. Then the account is deleted. |
+| An orphan owns shared teams, or the user does and `hand_on_shared_teams` is on. | Each team moves to its earliest-joined admin, else its earliest-joined member, who becomes owner. Then the account is deleted. |
 | Anything else. | **Deleted.** |
 
 Deletion goes through the `DeletesUsers` contract in one transaction. The user's solo teams are deleted through `DeletesTeams`, so the [billing guard](#team-deletion-guard) runs on every one of them; memberships of other people's teams are detached; every linked social identity and every token is removed, and so are the user's database notifications, notification settings and newsletter subscription, together with the audit rows that describe them. A refusal part way rolls back the teams already deleted. The Apple grants are revoked and the profile photo is deleted only after the outermost transaction commits, because neither can be rolled back: a grant revoked for an account that then survives could not be restored.
@@ -175,6 +176,31 @@ Held and un-scheduled accounts are logged as well as printed, because the output
 ```
 Purge finished: 12 deleted, 1 held, 0 un-scheduled, 0 cancelled, 0 failed.
 ```
+
+---
+
+<a name="handing-on-shared-teams"></a>
+## Handing On Shared Teams
+
+By default a user who owns a team another person belongs to cannot delete their account: the request is refused with `owns_shared_teams`, and the purge un-schedules a user whose team gained a member during the grace period. That is the safe answer for an application where a team is somebody's workspace. In an application where a team is a household, it is the wrong one: the person leaving is not taking the household with them.
+
+Switch the refusal off with `config('magic-starter.account_deletion.hand_on_shared_teams')` (env `MAGIC_STARTER_ACCOUNT_DELETION_HAND_ON_SHARED_TEAMS`, default `false`):
+
+```php
+'account_deletion' => [
+    'grace_days' => 30,
+    'hand_on_shared_teams' => true,
+],
+```
+
+With it on:
+
+- `DELETE {prefix}/user` answers 202 for an owner of a shared team, and nothing changes hands yet: the team keeps its owner and its members for the whole grace period.
+- The purge moves each shared team to its earliest-joined admin, else its earliest-joined member, who becomes owner. The rule is the one an orphan's teams already follow, and it goes through `TransfersTeamOwnership`, so a host that rebinds that contract decides the heir's rights too. The leaving user stays on the team as an admin until `DeletesUsers` detaches them.
+- A team nobody else belongs to is deleted with the user, through `DeletesTeams`, as before. Every hand-on runs before it, in the same transaction as the deletion: a hand-on that fails rolls back the ones before it, the run reports the account as failed, and the user stays scheduled for the next run.
+- A team is read as shared when the purge runs, not when the user asked, so a member who joined during the grace period inherits like any other.
+
+Billing is not affected. A shared team a store or Stripe subscription is still billing refuses the request with `team_has_active_subscription` and holds the purge, on either setting, because handing a team on does not settle who pays for it.
 
 ---
 
