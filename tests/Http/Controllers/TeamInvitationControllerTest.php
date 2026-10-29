@@ -2,6 +2,8 @@
 
 namespace FlutterSdk\MagicStarter\Tests\Http\Controllers;
 
+use FlutterSdk\MagicStarter\Actions\AcceptTeamInvitation;
+use FlutterSdk\MagicStarter\Contracts\AcceptsTeamInvitations;
 use FlutterSdk\MagicStarter\Contracts\InvitesTeamMembers;
 use FlutterSdk\MagicStarter\Http\Controllers\TeamInvitationController;
 use FlutterSdk\MagicStarter\MagicStarter;
@@ -14,6 +16,9 @@ use Illuminate\Database\Eloquent\Relations\BelongsToMany;
 use Illuminate\Database\Eloquent\Relations\HasMany;
 use Illuminate\Database\Schema\Blueprint;
 use Illuminate\Foundation\Auth\Access\Authorizable;
+use Illuminate\Http\JsonResponse;
+use Illuminate\Validation\ValidationException;
+use LogicException;
 
 final class TeamInvitationControllerTest extends TestCase
 {
@@ -345,6 +350,121 @@ final class TeamInvitationControllerTest extends TestCase
         $this->actingAs($user)
             ->postJson('/invitations/nonexistent-token/accept')
             ->assertStatus(404);
+    }
+
+    /**
+     * The three answers a client already parses, pinned to their exact bodies:
+     * the accept moved behind a contract, and a body that grew a key or lost
+     * `data` would pass every `assertJsonPath` above.
+     */
+    public function test_accept_keeps_the_wire_shape_of_each_answer(): void
+    {
+        $owner = TeamInvitationControllerTestUser::query()->create(['name' => 'Owner', 'email' => 'owner@test.dev']);
+        $invitee = TeamInvitationControllerTestUser::query()->create(['name' => 'Invitee', 'email' => 'invitee@test.dev']);
+        $team = TeamInvitationControllerTestTeam::query()->create(['user_id' => $owner->id, 'name' => 'A Team', 'personal_team' => false]);
+        $team->invitations()->create(['email' => $invitee->email, 'role' => 'admin', 'token' => 'shape-accepted']);
+        $team->invitations()->create(['email' => $owner->email, 'role' => 'admin', 'token' => 'shape-joined']);
+        $team->invitations()->create([
+            'email' => $invitee->email,
+            'role' => 'admin',
+            'token' => 'shape-expired',
+            'expires_at' => now()->subDay(),
+        ]);
+
+        $this->actingAs($invitee)
+            ->postJson('/invitations/shape-expired/accept')
+            ->assertStatus(410)
+            ->assertExactJson(['message' => 'This invitation has expired.']);
+
+        $this->actingAs($owner)
+            ->postJson('/invitations/shape-joined/accept')
+            ->assertOk()
+            ->assertExactJson(['data' => null, 'message' => 'You are already a member of this team.']);
+
+        $this->actingAs($invitee)
+            ->postJson('/invitations/shape-accepted/accept')
+            ->assertOk()
+            ->assertExactJson(['data' => null, 'message' => 'Invitation accepted. You have joined the team.']);
+    }
+
+    /**
+     * A link opened twice joins once: the first accept consumes the token, so
+     * the second finds no invitation at all.
+     */
+    public function test_accept_twice_with_the_same_token_attaches_once(): void
+    {
+        $owner = TeamInvitationControllerTestUser::query()->create(['name' => 'Owner', 'email' => 'owner@test.dev']);
+        $invitee = TeamInvitationControllerTestUser::query()->create(['name' => 'Invitee', 'email' => 'invitee@test.dev']);
+        $team = TeamInvitationControllerTestTeam::query()->create(['user_id' => $owner->id, 'name' => 'A Team', 'personal_team' => false]);
+        $team->invitations()->create(['email' => $invitee->email, 'role' => 'admin', 'token' => 'twice-token']);
+
+        $this->actingAs($invitee)->postJson('/invitations/twice-token/accept')->assertOk();
+        $this->actingAs($invitee)->postJson('/invitations/twice-token/accept')->assertStatus(404);
+
+        $this->assertSame(1, $team->fresh()->users()->count());
+    }
+
+    /**
+     * The endpoint resolves whatever is bound over the contract, so an app can
+     * refuse a join (a plan's member cap) and the endpoint answers the refusal
+     * as the contract's validation error, with nothing attached and the
+     * invitation left for a retry after the cap is lifted.
+     */
+    public function test_accept_answers_a_refusal_from_the_bound_contract(): void
+    {
+        $this->app->instance(AcceptsTeamInvitations::class, new class extends AcceptTeamInvitation
+        {
+            protected function ensureCanJoin(Model $team, AuthenticatableContract $user): void
+            {
+                $message = 'This household is full.';
+                $exception = ValidationException::withMessages(['invitation' => $message]);
+                $exception->response = new JsonResponse([
+                    'message' => $message,
+                    'code' => 'member_limit_reached',
+                    'errors' => $exception->errors(),
+                ], 422);
+
+                throw $exception;
+            }
+        });
+
+        $owner = TeamInvitationControllerTestUser::query()->create(['name' => 'Owner', 'email' => 'owner@test.dev']);
+        $invitee = TeamInvitationControllerTestUser::query()->create(['name' => 'Invitee', 'email' => 'invitee@test.dev']);
+        $team = TeamInvitationControllerTestTeam::query()->create(['user_id' => $owner->id, 'name' => 'A Team', 'personal_team' => false]);
+        $invitation = $team->invitations()->create(['email' => $invitee->email, 'role' => 'admin', 'token' => 'full-token']);
+
+        $this->actingAs($invitee)
+            ->postJson('/invitations/full-token/accept')
+            ->assertStatus(422)
+            ->assertJsonPath('code', 'member_limit_reached')
+            ->assertJsonPath('message', 'This household is full.');
+
+        $this->assertSame(0, $team->fresh()->users()->count());
+        $this->assertNotNull(TeamInvitationControllerTestInvitation::query()->find($invitation->id));
+    }
+
+    /**
+     * The email check stays with the endpoint, ahead of the contract: a
+     * binding never sees an invitation addressed to somebody else.
+     */
+    public function test_accept_does_not_call_the_contract_for_a_different_email(): void
+    {
+        $this->app->instance(AcceptsTeamInvitations::class, new class implements AcceptsTeamInvitations
+        {
+            public function accept(AuthenticatableContract $user, Model $invitation): void
+            {
+                throw new LogicException('The contract must not run for a mismatched email.');
+            }
+        });
+
+        $owner = TeamInvitationControllerTestUser::query()->create(['name' => 'Owner', 'email' => 'owner@test.dev']);
+        $other = TeamInvitationControllerTestUser::query()->create(['name' => 'Other', 'email' => 'other@test.dev']);
+        $team = TeamInvitationControllerTestTeam::query()->create(['user_id' => $owner->id, 'name' => 'A Team', 'personal_team' => false]);
+        $team->invitations()->create(['email' => 'invitee@test.dev', 'role' => 'admin', 'token' => 'mismatch-token']);
+
+        $this->actingAs($other)
+            ->postJson('/invitations/mismatch-token/accept')
+            ->assertStatus(403);
     }
 }
 

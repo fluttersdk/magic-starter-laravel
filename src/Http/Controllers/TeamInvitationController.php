@@ -2,10 +2,12 @@
 
 namespace FlutterSdk\MagicStarter\Http\Controllers;
 
+use FlutterSdk\MagicStarter\Contracts\AcceptsTeamInvitations;
 use FlutterSdk\MagicStarter\Contracts\InvitesTeamMembers;
 use FlutterSdk\MagicStarter\Http\Requests\StoreTeamInvitationRequest;
 use FlutterSdk\MagicStarter\Http\Resources\TeamInvitationResource;
 use FlutterSdk\MagicStarter\MagicStarter;
+use FlutterSdk\MagicStarter\Support\TeamInvitationRefused;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Http\Resources\Json\AnonymousResourceCollection;
@@ -105,8 +107,14 @@ class TeamInvitationController
 
     /**
      * Accept a team invitation via token.
+     *
+     * The token and the email match stay here; the join itself, and whatever an
+     * application refuses it for, is {@see AcceptsTeamInvitations}. An expired
+     * invitation answers 410, and one whose person already belongs answers 200,
+     * since they are where the link was taking them. Any other refusal is the
+     * binding's own validation error and propagates as its 422.
      */
-    public function accept(Request $request, string $token): JsonResponse
+    public function accept(Request $request, string $token, AcceptsTeamInvitations $accepter): JsonResponse
     {
         $invitationModelClass = MagicStarter::teamInvitationModel();
         $invitation = $invitationModelClass::query()->where('token', $token)->firstOrFail();
@@ -118,24 +126,20 @@ class TeamInvitationController
             ], 403);
         }
 
-        if ($invitation->isExpired()) {
-            $invitation->delete();
-
-            return response()->json([
-                'message' => __('magic-starter::teams.invitations.expired'),
-            ], 410);
+        try {
+            $accepter->accept($user, $invitation);
+        } catch (TeamInvitationRefused $refusal) {
+            return match ($refusal->refusal()) {
+                TeamInvitationRefused::EXPIRED => response()->json([
+                    'message' => $refusal->getMessage(),
+                ], 410),
+                TeamInvitationRefused::ALREADY_JOINED => response()->json([
+                    'data' => null,
+                    'message' => $refusal->getMessage(),
+                ]),
+                default => throw $refusal,
+            };
         }
-        if ($invitation->team->users()->where('user_id', $user->id)->exists() || (string) $invitation->team->user_id === (string) $user->id) {
-            $invitation->delete();
-
-            return response()->json([
-                'data' => null,
-                'message' => __('magic-starter::teams.invitations.already_joined'),
-            ]);
-        }
-
-        $invitation->team->users()->attach($user->id, ['role' => $invitation->role]);
-        $invitation->delete();
 
         return response()->json([
             'data' => null,
