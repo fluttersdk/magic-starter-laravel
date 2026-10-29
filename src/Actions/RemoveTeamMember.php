@@ -3,6 +3,7 @@
 namespace FlutterSdk\MagicStarter\Actions;
 
 use FlutterSdk\MagicStarter\Contracts\RemovesTeamMembers;
+use FlutterSdk\MagicStarter\MagicStarter;
 use Illuminate\Contracts\Auth\Authenticatable;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Http\JsonResponse;
@@ -13,11 +14,15 @@ use Illuminate\Validation\ValidationException;
  *
  * The owner is never removed: a team without its owner is a team nobody can
  * manage or bill. The owner leaves by transferring ownership first.
+ *
+ * A removed member whose `current_team_id` points at the team is left pointing
+ * at nothing, so `getCurrentTeamOrPersonal()` lands them on their personal team
+ * instead of the team they were removed from.
  */
 class RemoveTeamMember implements RemovesTeamMembers
 {
     /**
-     * Remove the given user from the given team.
+     * Remove the given user from the given team and clear their pointer to it.
      *
      * @param  Authenticatable  $user  The user performing the removal; the same
      *                                 account as `$teamMember` means leaving.
@@ -35,6 +40,26 @@ class RemoveTeamMember implements RemovesTeamMembers
         );
 
         $team->users()->detach($teamMember->getKey());
+
+        self::clearCurrentTeam($team, $teamMember);
+    }
+
+    /**
+     * Null the member's `current_team_id` when it is the team they just left.
+     *
+     * A query-builder update rather than `forceFill()->save()` on `$teamMember`:
+     * the column is system-managed and kept out of `$fillable`, which the
+     * builder never consults, and the given instance may hold a pointer that
+     * has since moved. A member whose pointer is another team is not touched.
+     */
+    private static function clearCurrentTeam(Model $team, Model $teamMember): void
+    {
+        $userModel = MagicStarter::userModel();
+
+        $userModel::query()
+            ->whereKey($teamMember->getKey())
+            ->where('current_team_id', $team->getKey())
+            ->update(['current_team_id' => null]);
     }
 
     /**

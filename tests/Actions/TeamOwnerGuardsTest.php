@@ -36,6 +36,7 @@ final class TeamOwnerGuardsTest extends TestCase
             $table->uuid('id')->primary();
             $table->string('name');
             $table->string('email')->nullable();
+            $table->string('current_team_id')->nullable();
             $table->timestamps();
         });
 
