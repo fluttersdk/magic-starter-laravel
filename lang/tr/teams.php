@@ -52,6 +52,7 @@ return [
         'already_sent' => 'Bu e-posta adresine zaten bir davet gönderilmiş.',
         'canceled' => 'Davet iptal edildi.',
         'wrong_email' => 'Bu davet farklı bir e-posta adresine gönderilmiş.',
+        'email_mismatch' => 'Bu davet farklı bir e-posta adresine gönderilmiş. Bu hesapla katılmak için onaylayın.',
         'expired' => 'Bu davetin süresi dolmuş.',
         'already_joined' => 'Bu takımın zaten üyesisiniz.',
         'accepted' => 'Davet kabul edildi. Takıma katıldınız.',

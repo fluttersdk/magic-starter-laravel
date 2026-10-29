@@ -450,6 +450,32 @@ return [
 
     /*
     |--------------------------------------------------------------------------
+    | Confirm A Different Email When Accepting An Invitation
+    |--------------------------------------------------------------------------
+    |
+    | An invitation can only be accepted by the user whose email it was sent
+    | to, and anyone else is refused with a 403. Sign in with Apple can hand
+    | the app a private relay address (@privaterelay.appleid.com) instead of
+    | the person's real one, so someone invited at their real address can never
+    | match.
+    |
+    | When true, a user with an active Sign in with Apple link, or an address
+    | on that relay domain, is answered with a 409 (`code: email_mismatch`,
+    | `requires_confirmation: true`, the invited address masked) instead, and
+    | joins on a repeat request that carries `confirm_email_mismatch: true`.
+    | Every other user keeps the 403. The invitation token stays the proof that
+    | the person was invited: it is not consumed by the question, and is used
+    | up by the join.
+    |
+    | Off by default, because it lets a holder of the link join with an
+    | account whose address was never the invited one.
+    |
+    */
+
+    'invitation_confirm_email_mismatch' => (bool) env('MAGIC_STARTER_INVITATION_CONFIRM_EMAIL_MISMATCH', false),
+
+    /*
+    |--------------------------------------------------------------------------
     | Token Expiration
     |--------------------------------------------------------------------------
     |
