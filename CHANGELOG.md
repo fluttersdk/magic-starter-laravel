@@ -4,6 +4,10 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Added
+
+- **An invitation can be accepted with a different email, after an explicit confirmation, for Sign in with Apple relay addresses.** A new `invitation_confirm_email_mismatch` config key (`MAGIC_STARTER_INVITATION_CONFIRM_EMAIL_MISMATCH`, `false` by default) changes what `POST invitations/{token}/accept` answers when the signed-in email is not the invited one. With it off the `403 wrong_email` is byte-identical. With it on, a user who holds a Sign in with Apple link that is not revoked, or whose address is on `@privaterelay.appleid.com`, gets `409` with `code: email_mismatch`, `requires_confirmation: true` and the invited address as `masked_email` (`a***@example.com`), nothing attached and the invitation untouched; a repeat request carrying `confirm_email_mismatch: true` goes through `AcceptsTeamInvitations`, so the expiry, already-a-member and `ensureCanJoin()` checks still run and the token is used up by the join. Every other user keeps the `403`. New translation line `teams.invitations.email_mismatch` (en, tr). (`config/magic-starter.php`, `src/Http/Controllers/TeamInvitationController.php`, `lang/en/teams.php`, `lang/tr/teams.php`)
+
 ## [0.0.54] - 2026-10-29
 
 ### Added
@@ -42,7 +46,6 @@ All notable changes to this project will be documented in this file.
 ### Added
 
 - **Accepting an invitation is a contract, with a hook to gate the join.** `POST invitations/{token}/accept` now calls `Contracts\AcceptsTeamInvitations::accept(Authenticatable $user, Model $invitation): void`, bound to `Actions\AcceptTeamInvitation`. The action runs the expiry check, the already-a-member check and the attach in one `DB::transaction` with the team row read `FOR UPDATE`, and calls an empty `protected ensureCanJoin(Model $team, Authenticatable $user): void` under that lock, so an application can bind a subclass that refuses a join (a plan's member cap) without two accepts racing past the count. A refusal from the hook rolls back and leaves the invitation. The default refusals are `Support\TeamInvitationRefused`, a `ValidationException` whose `refusal()` is `expired` or `already_joined`; the endpoint maps them to the same 410 and 200 it always answered, and every other body and status is unchanged. `AddTeamMember` is unchanged. (`src/Contracts/AcceptsTeamInvitations.php`, `src/Actions/AcceptTeamInvitation.php`, `src/Support/TeamInvitationRefused.php`, `src/Http/Controllers/TeamInvitationController.php`, `src/MagicStarterServiceProvider.php`)
-- **An invitation can be accepted with a different email, after an explicit confirmation, for Sign in with Apple relay addresses.** A new `invitation_confirm_email_mismatch` config key (`MAGIC_STARTER_INVITATION_CONFIRM_EMAIL_MISMATCH`, `false` by default) changes what `POST invitations/{token}/accept` answers when the signed-in email is not the invited one. With it off the `403 wrong_email` is byte-identical. With it on, a user who holds a Sign in with Apple link that is not revoked, or whose address is on `@privaterelay.appleid.com`, gets `409` with `code: email_mismatch`, `requires_confirmation: true` and the invited address as `masked_email` (`a***@example.com`), nothing attached and the invitation untouched; a repeat request carrying `confirm_email_mismatch: true` goes through `AcceptsTeamInvitations`, so the expiry, already-a-member and `ensureCanJoin()` checks still run and the token is used up by the join. Every other user keeps the `403`. New translation line `teams.invitations.email_mismatch` (en, tr). (`config/magic-starter.php`, `src/Http/Controllers/TeamInvitationController.php`, `lang/en/teams.php`, `lang/tr/teams.php`)
 
 ## [0.0.49] - 2026-10-29
 
