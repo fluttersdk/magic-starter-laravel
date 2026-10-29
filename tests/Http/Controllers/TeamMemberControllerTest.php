@@ -3,7 +3,6 @@
 namespace FlutterSdk\MagicStarter\Tests\Http\Controllers;
 
 use FlutterSdk\MagicStarter\Contracts\AddsTeamMembers;
-use FlutterSdk\MagicStarter\Contracts\RemovesTeamMembers;
 use FlutterSdk\MagicStarter\Contracts\UpdatesTeamMemberRoles;
 use FlutterSdk\MagicStarter\Http\Controllers\TeamMemberController;
 use FlutterSdk\MagicStarter\MagicStarter;
@@ -85,14 +84,6 @@ final class TeamMemberControllerTest extends TestCase
             }
         });
 
-        $this->app->instance(RemovesTeamMembers::class, new class implements RemovesTeamMembers
-        {
-            public function remove(\Illuminate\Contracts\Auth\Authenticatable $user, \Illuminate\Database\Eloquent\Model $team, \Illuminate\Database\Eloquent\Model $teamMember): void
-            {
-                $team->users()->detach($teamMember->getKey());
-            }
-        });
-
         $this->app->instance(UpdatesTeamMemberRoles::class, new class implements UpdatesTeamMemberRoles
         {
             public function update(mixed $user, mixed $team, mixed $teamMember, string $role): void
@@ -152,23 +143,92 @@ final class TeamMemberControllerTest extends TestCase
         $this->assertFalse($team->fresh()->users()->where('user_id', $member->id)->exists());
     }
 
-    public function test_leave_removes_current_user_and_switches_team(): void
+    public function test_leave_removes_the_current_user_from_the_team(): void
     {
         $owner = TeamMemberControllerTestUser::query()->create(['name' => 'Owner', 'email' => 'owner@test.dev']);
         $member = TeamMemberControllerTestUser::query()->create(['name' => 'Member', 'email' => 'member@test.dev']);
+        $team = TeamMemberControllerTestTeam::query()->create(['user_id' => $owner->id, 'name' => 'A Team', 'personal_team' => false]);
+        $team->users()->attach($member->id, ['role' => 'member']);
 
+        $this->actingAs($member)
+            ->deleteJson('/teams/' . $team->id . '/members/leave')
+            ->assertOk()
+            ->assertJsonPath('message', 'You have left the team.');
+
+        $this->assertFalse($team->fresh()->users()->where('user_id', $member->id)->exists());
+    }
+
+    public function test_leave_resets_the_current_team_pointer_to_the_personal_team_fallback(): void
+    {
+        $owner = TeamMemberControllerTestUser::query()->create(['name' => 'Owner', 'email' => 'owner@test.dev']);
+        $member = TeamMemberControllerTestUser::query()->create(['name' => 'Member', 'email' => 'member@test.dev']);
+        $personal = TeamMemberControllerTestTeam::query()->create(['user_id' => $member->id, 'name' => 'Personal', 'personal_team' => true]);
         $teamA = TeamMemberControllerTestTeam::query()->create(['user_id' => $owner->id, 'name' => 'A Team', 'personal_team' => false]);
         $teamB = TeamMemberControllerTestTeam::query()->create(['user_id' => $owner->id, 'name' => 'B Team', 'personal_team' => false]);
         $teamA->users()->attach($member->id, ['role' => 'member']);
         $teamB->users()->attach($member->id, ['role' => 'member']);
-        $member->update(['current_team_id' => $teamA->id]);
+        $member->forceFill(['current_team_id' => $teamA->id])->save();
 
         $this->actingAs($member)
             ->deleteJson('/teams/' . $teamA->id . '/members/leave')
-            ->assertOk()
-            ->assertJsonPath('message', 'You have left the team.');
+            ->assertOk();
 
-        $this->assertFalse($teamA->fresh()->users()->where('user_id', $member->id)->exists());
+        $left = $member->fresh();
+        $this->assertNull($left->current_team_id);
+        $this->assertSame($personal->id, $left->getCurrentTeamOrPersonal()?->getKey());
+    }
+
+    public function test_leave_keeps_the_pointer_of_a_member_working_in_another_team(): void
+    {
+        $owner = TeamMemberControllerTestUser::query()->create(['name' => 'Owner', 'email' => 'owner@test.dev']);
+        $member = TeamMemberControllerTestUser::query()->create(['name' => 'Member', 'email' => 'member@test.dev']);
+        $teamA = TeamMemberControllerTestTeam::query()->create(['user_id' => $owner->id, 'name' => 'A Team', 'personal_team' => false]);
+        $teamB = TeamMemberControllerTestTeam::query()->create(['user_id' => $owner->id, 'name' => 'B Team', 'personal_team' => false]);
+        $teamA->users()->attach($member->id, ['role' => 'member']);
+        $teamB->users()->attach($member->id, ['role' => 'member']);
+        $member->forceFill(['current_team_id' => $teamB->id])->save();
+
+        $this->actingAs($member)
+            ->deleteJson('/teams/' . $teamA->id . '/members/leave')
+            ->assertOk();
+
+        $this->assertSame($teamB->id, $member->fresh()->current_team_id);
+    }
+
+    public function test_destroy_by_an_admin_resets_the_removed_members_current_team_pointer(): void
+    {
+        $owner = TeamMemberControllerTestUser::query()->create(['name' => 'Owner', 'email' => 'owner@test.dev']);
+        $admin = TeamMemberControllerTestUser::query()->create(['name' => 'Admin', 'email' => 'admin@test.dev']);
+        $member = TeamMemberControllerTestUser::query()->create(['name' => 'Member', 'email' => 'member@test.dev']);
+        $personal = TeamMemberControllerTestTeam::query()->create(['user_id' => $member->id, 'name' => 'Personal', 'personal_team' => true]);
+        $team = TeamMemberControllerTestTeam::query()->create(['user_id' => $owner->id, 'name' => 'A Team', 'personal_team' => false]);
+        $team->users()->attach($admin->id, ['role' => 'admin']);
+        $team->users()->attach($member->id, ['role' => 'member']);
+        $member->forceFill(['current_team_id' => $team->id])->save();
+
+        $this->actingAs($admin)
+            ->deleteJson('/teams/' . $team->id . '/members/' . $member->id)
+            ->assertOk();
+
+        $removed = $member->fresh();
+        $this->assertNull($removed->current_team_id);
+        $this->assertSame($personal->id, $removed->getCurrentTeamOrPersonal()?->getKey());
+    }
+
+    public function test_destroy_keeps_the_pointer_of_a_member_working_in_another_team(): void
+    {
+        $owner = TeamMemberControllerTestUser::query()->create(['name' => 'Owner', 'email' => 'owner@test.dev']);
+        $member = TeamMemberControllerTestUser::query()->create(['name' => 'Member', 'email' => 'member@test.dev']);
+        $teamA = TeamMemberControllerTestTeam::query()->create(['user_id' => $owner->id, 'name' => 'A Team', 'personal_team' => false]);
+        $teamB = TeamMemberControllerTestTeam::query()->create(['user_id' => $owner->id, 'name' => 'B Team', 'personal_team' => false]);
+        $teamA->users()->attach($member->id, ['role' => 'member']);
+        $teamB->users()->attach($member->id, ['role' => 'member']);
+        $member->forceFill(['current_team_id' => $teamB->id])->save();
+
+        $this->actingAs($owner)
+            ->deleteJson('/teams/' . $teamA->id . '/members/' . $member->id)
+            ->assertOk();
+
         $this->assertSame($teamB->id, $member->fresh()->current_team_id);
     }
 
@@ -224,7 +284,12 @@ final class TeamMemberControllerTestUser extends Model implements Authenticatabl
 
     protected $keyType = 'string';
 
-    protected $guarded = [];
+    /** Mirrors the published User stub: `current_team_id` is system-managed and not mass assignable. */
+    protected $fillable = [
+        'name',
+        'email',
+        'password',
+    ];
 }
 
 final class TeamMemberControllerTestTeam extends \FlutterSdk\MagicStarter\Models\Team

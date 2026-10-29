@@ -4,6 +4,10 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Fixed
+
+- **A removed member no longer keeps the team as their current one.** Only the leave endpoint reset `current_team_id`; removing a member (the endpoint, or the admin panel through `RemovesTeamMembers`) only detached the pivot, so the removed user's `auth/user` still answered the team they had been removed from as `current_team`. `RemoveTeamMember::remove()` now nulls the member's `current_team_id` after the detach when it equals the team's key, through a query-builder update on the configured user model, so the guarded column needs no `$fillable` entry. A member whose current team is another team is untouched, and `getCurrentTeamOrPersonal()` lands the cleared user on their personal team. Leaving shares the same reset, so `TeamMemberController::leave` no longer picks the next team by name: a user who leaves their current team now falls back to their personal team. A custom `RemovesTeamMembers` binding has to clear the pointer itself. (`src/Actions/RemoveTeamMember.php`, `src/Http/Controllers/TeamMemberController.php`, `stubs/actions/RemoveTeamMember.php`, `doc/basics/teams.md`, `doc/basics/admin-panel.md`)
+
 ## [0.0.48] - 2026-10-27
 
 ### Added

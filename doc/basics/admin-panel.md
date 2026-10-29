@@ -290,4 +290,4 @@ Each tool has one global auth closure, so with more than one panel the last to e
 - No tenancy: the panel is global staff access.
 - No bulk delete on Users or Teams. An account leaves through scheduled deletion, a team through `DeletesTeams`.
 - No direct model writes where a contract exists.
-- A custom `RemovesTeamMembers` or `UpdatesTeamMemberRoles` binding must keep the team-owner guards (`RemoveTeamMember::ensureRemovable()`, `UpdateTeamMemberRole::ensureAssignable()`). The API controllers enforce them whatever is bound; the panel calls only the contract.
+- A custom `RemovesTeamMembers` or `UpdatesTeamMemberRoles` binding must keep the team-owner guards (`RemoveTeamMember::ensureRemovable()`, `UpdateTeamMemberRole::ensureAssignable()`). The API controllers enforce them whatever is bound; the panel calls only the contract. A custom `RemovesTeamMembers` also owns clearing the removed member's `current_team_id` when it points at the team, as the default action does; the leave endpoint no longer does it.
