@@ -70,6 +70,24 @@ class SubscriptionGuardedDeleteTeam extends DeleteTeam
      */
     public function delete(Model $team): void
     {
+        $this->refuseWhileBilling($team);
+
+        parent::delete($team);
+    }
+
+    /**
+     * Refuse while a store or a valid Cashier subscription is still billing the team.
+     *
+     * Public so {@see SubscriptionGuardedTrashTeam} raises the same refusal for
+     * the restorable delete: one rule and one pair of sentences decide whether
+     * the owner may remove a team that is still being charged.
+     *
+     * @param  Model  $team  The team about to be deleted or trashed.
+     *
+     * @throws ValidationException When either rail still funds the team.
+     */
+    public function refuseWhileBilling(Model $team): void
+    {
         if (self::storeIsBilling($team)) {
             throw ValidationException::withMessages([
                 'team' => __('magic-starter::billing.refusals.store_subscription_active'),
@@ -81,8 +99,6 @@ class SubscriptionGuardedDeleteTeam extends DeleteTeam
                 'team' => __('magic-starter::billing.refusals.stripe_subscription_active'),
             ])->errorBag('deleteTeam');
         }
-
-        parent::delete($team);
     }
 
     /**

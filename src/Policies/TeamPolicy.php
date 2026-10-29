@@ -50,6 +50,17 @@ class TeamPolicy
     }
 
     /**
+     * Determine whether the user can restore the trashed team.
+     *
+     * @param  mixed  $user  The authenticated user.
+     * @param  mixed  $team  The trashed team being restored.
+     */
+    public function restore(mixed $user, mixed $team): bool
+    {
+        return $user->ownsTeam($team);
+    }
+
+    /**
      * Determine whether the user can manage team members.
      *
      * Allowed for team owners and users with the 'admin' role.

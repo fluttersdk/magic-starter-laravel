@@ -34,7 +34,8 @@ use Illuminate\Validation\ValidationException;
  * on that contract: a store or card subscription would keep charging a team that
  * no longer exists. A team somebody else still belongs to is never deleted with
  * its owner; the purge hands it on or un-schedules the account first, and this
- * action refuses if neither happened.
+ * action refuses if neither happened. A team the user trashed is still theirs:
+ * it is deleted for good with the rest, since nothing is left to restore it.
  *
  * Everything in the database runs in one transaction, so a team refused half
  * way (its billing guard) rolls back the teams already deleted and leaves the
@@ -75,10 +76,9 @@ class DeleteUser implements DeletesUsers
             $this->refuseUnlessDeletable($user);
 
             // 2. Through the contract, so the billing guards run on every team.
-            if (method_exists($user, 'ownedTeams')) {
-                foreach ($user->ownedTeams()->get() as $team) {
-                    $this->teams->delete($team);
-                }
+            //    A trashed team is still the user's and goes with them, for good.
+            foreach (OwnedTeams::includingTrashed($user) as $team) {
+                $this->teams->delete($team);
             }
 
             // 3. Memberships of other people's teams; those teams stay.

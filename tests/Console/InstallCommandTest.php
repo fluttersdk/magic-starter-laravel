@@ -86,6 +86,31 @@ final class InstallCommandTest extends TestCase
         }
     }
 
+    public function test_teams_feature_publishes_the_soft_deletes_migration_after_the_teams_table(): void
+    {
+        $this->artisan('magic-starter:install', [
+            '--features' => ['teams'],
+        ])->assertExitCode(0);
+
+        $create = glob(database_path('migrations/*_create_teams_table.php')) ?: [];
+        $softDeletes = glob(database_path('migrations/*_add_soft_deletes_to_teams_table.php')) ?: [];
+
+        $this->assertNotEmpty($softDeletes, 'Expected the teams feature to publish the soft deletes migration.');
+        $this->assertGreaterThan(basename($create[0]), basename($softDeletes[0]));
+    }
+
+    public function test_installing_everything_leaves_the_restorable_teams_feature_off(): void
+    {
+        $this->artisan('magic-starter:install', [
+            '--all' => true,
+        ])->assertExitCode(0);
+
+        $config = File::get(config_path('magic-starter.php'));
+
+        $this->assertStringContainsString('// \\FlutterSdk\\MagicStarter\\Features::restorableTeams(),', $config);
+        $this->assertStringContainsString("'restore_days' =>", $config);
+    }
+
     /**
      * The guest and phone columns follow the features that own them.
      *

@@ -73,6 +73,32 @@ final class RouteRegistrationTest extends TestCase
         $this->assertRouteExists('DELETE', '/sessions/uuid-token');
     }
 
+    public function test_the_restore_route_is_registered_only_with_the_restorable_teams_feature(): void
+    {
+        $this->bootRoutesWithConfig([
+            Features::teams(),
+        ]);
+
+        $this->assertRouteExists('DELETE', '/teams/uuid-team');
+        $this->assertRouteMissing('POST', '/teams/uuid-team/restore');
+
+        $this->bootRoutesWithConfig([
+            Features::teams(),
+            Features::restorableTeams(),
+        ]);
+
+        $this->assertRouteExists('POST', '/teams/uuid-team/restore');
+    }
+
+    public function test_the_restore_route_needs_the_teams_feature_too(): void
+    {
+        $this->bootRoutesWithConfig([
+            Features::restorableTeams(),
+        ]);
+
+        $this->assertRouteMissing('POST', '/teams/uuid-team/restore');
+    }
+
     public function test_team_routes_are_not_registered_when_teams_feature_disabled(): void
     {
         $this->bootRoutesWithConfig([

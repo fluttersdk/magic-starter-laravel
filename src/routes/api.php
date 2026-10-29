@@ -153,6 +153,10 @@ Route::prefix((string) config('magic-starter.route_prefix', ''))
                 Route::delete('teams/{team}', [TeamController::class, 'destroy']);
 
                 Route::prefix('teams/{team}')->group(function (): void {
+                    if (Features::hasRestorableTeamFeatures()) {
+                        Route::post('restore', [TeamController::class, 'restore']);
+                    }
+
                     Route::get('invitations', [TeamInvitationController::class, 'index']);
                     Route::post('invitations', [TeamInvitationController::class, 'store']);
                     Route::delete('invitations/{invitation}', [TeamInvitationController::class, 'destroy']);
