@@ -139,6 +139,7 @@ Every key available in `config/magic-starter.php`:
 | `route_prefix` | `'api/v1'` | Global prefix applied to all package-registered routes |
 | `route_middleware` | `[]` | Middleware applied to every package-registered route. These routes join NO group on their own |
 | `invitation_expiry_days` | `7` | Number of days until a team invitation token expires |
+| `invitation_confirm_email_mismatch` | `false` | When `true`, a user with an active Sign in with Apple link or an `@privaterelay.appleid.com` address who accepts an invitation sent to another email is answered `409 email_mismatch` and joins on a repeat request carrying `confirm_email_mismatch: true`; everyone else keeps the `403`. See [Accept Invitation](../basics/teams.md#accept-invitation) |
 | `token_expiration_minutes` | `null` | Sanctum personal access token TTL in minutes; `null` means tokens never expire |
 | `auth.email` | `true` | Whether email-based authentication is accepted for login and registration |
 | `auth.phone` | `false` | Whether phone-based authentication is accepted for login and registration |
@@ -448,6 +449,7 @@ All environment variables recognized by the package:
 | `MAGIC_STARTER_TEAM_PHOTO_PATH` | `team_photo_path` | `'team-photos'` | Directory for team photos |
 | `MAGIC_STARTER_ROUTE_PREFIX` | `route_prefix` | `'api/v1'` | Route prefix for all package routes |
 | `MAGIC_STARTER_INVITATION_EXPIRY_DAYS` | `invitation_expiry_days` | `7` | Team invitation expiry in days |
+| `MAGIC_STARTER_INVITATION_CONFIRM_EMAIL_MISMATCH` | `invitation_confirm_email_mismatch` | `false` | Let a Sign in with Apple user confirm joining with a different email |
 | `MAGIC_STARTER_TOKEN_EXPIRATION` | `token_expiration_minutes` | `null` | Sanctum token TTL in minutes |
 | `MAGIC_STARTER_AUTH_EMAIL` | `auth.email` | `true` | Enable email-based authentication |
 | `MAGIC_STARTER_AUTH_PHONE` | `auth.phone` | `false` | Enable phone-based authentication |
