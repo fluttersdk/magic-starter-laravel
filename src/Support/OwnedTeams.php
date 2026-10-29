@@ -94,6 +94,32 @@ final class OwnedTeams
     }
 
     /**
+     * Whether a subscription still bills this USER in a way that holds their
+     * deletion back at the purge and in the deleter.
+     *
+     * Any rail does, in the default refuse mode. With billing released, only a
+     * valid card subscription does, and that is deliberate rather than a
+     * leftover of the refusal. The scheduler ends the card rail's subscriptions
+     * when the deletion is asked for, so one still valid when the purge runs is
+     * one it never saw: an orphan scheduled while the host still refused (orphans
+     * skip every refusal), an account locked by a custom `SchedulesUserDeletion`
+     * that does not release, a checkout completed after the lock. Neither the
+     * purge nor the deleter releases anything itself (the purge holds a row lock
+     * and the deleter a transaction, and neither belongs across a remote call),
+     * so deleting that user would leave Stripe charging a customer who no longer
+     * exists. A store's subscription never holds a released deletion: only the
+     * customer can cancel it there, and the deletion goes ahead either way.
+     */
+    public static function blocksUserDeletion(Model $user): bool
+    {
+        if (! self::releasesBilling()) {
+            return self::isBilling($user);
+        }
+
+        return (new self)->stripeIsBilling($user);
+    }
+
+    /**
      * Whether a store or a valid Cashier subscription is billing this subject.
      *
      * Applied to a team by {@see self::billing()} and to the user row itself by

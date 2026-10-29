@@ -3,12 +3,15 @@
 namespace FlutterSdk\MagicStarter\Tests\Http\Controllers;
 
 use Firebase\JWT\JWT;
+use FlutterSdk\MagicStarter\Contracts\ReleasesUserBilling;
 use FlutterSdk\MagicStarter\Features;
 use FlutterSdk\MagicStarter\MagicStarter;
 use FlutterSdk\MagicStarter\MagicStarterServiceProvider;
 use FlutterSdk\MagicStarter\Models\SocialAccount;
+use FlutterSdk\MagicStarter\Support\BillingReleaseFailed;
 use FlutterSdk\MagicStarter\Tests\TestCase;
 use FlutterSdk\MagicStarter\Traits\HasSocialAccounts;
+use Illuminate\Contracts\Auth\Authenticatable as AuthenticatableContract;
 use Illuminate\Database\Eloquent\Concerns\HasUuids;
 use Illuminate\Database\Events\QueryExecuted;
 use Illuminate\Database\Schema\Blueprint;
@@ -293,6 +296,41 @@ class AppleNotificationTest extends TestCase
         $this->assertSame(0, $user->tokens()->count());
     }
 
+    /**
+     * The notification is applied in one transaction, and an orphan's schedule
+     * is part of it. When the host releases billing and a rail fails, the whole
+     * notification rolls back: the link is not left revoked beside an account
+     * that was never scheduled, and the claim is released so Apple's redelivery
+     * of the same payload is processed instead of acknowledged as a replay.
+     */
+    public function test_a_billing_release_failure_rolls_the_whole_notification_back_for_a_redelivery(): void
+    {
+        $this->fakeAppleKeys();
+        config([
+            'magic-starter.account_deletion.billing' => 'release',
+        ]);
+        $release = new AppleNotificationTestRelease(fail: true);
+        $this->app->instance(ReleasesUserBilling::class, $release);
+        [$user, $account] = $this->appleUser(password: null);
+        $payload = $this->payload('account-deleted');
+
+        $this->notify($payload)
+            ->assertStatus(422)
+            ->assertJsonPath('code', 'billing_release_failed');
+
+        $this->assertNull($account->fresh()?->revoked_at, 'The revocation rolled back with the schedule.');
+        $this->assertNull($user->fresh()?->getAttribute('deletion_scheduled_at'));
+        $this->assertSame(1, $user->tokens()->count());
+
+        $release->fail = false;
+
+        $this->notify($payload)->assertOk();
+
+        $this->assertSame(2, $release->calls, 'The redelivery was processed, not acknowledged as a replay.');
+        $this->assertNotNull($user->fresh()?->getAttribute('deletion_scheduled_at'));
+        $this->assertNotNull($account->fresh()?->revoked_at);
+    }
+
     public function test_account_deleted_for_a_user_with_a_password_only_revokes(): void
     {
         $this->fakeAppleKeys();
@@ -546,4 +584,30 @@ class AppleNotificationTestUser extends Authenticatable
     protected $table = 'users';
 
     protected $guarded = [];
+}
+
+/**
+ * Stands in for the billing release: counts its calls and fails on demand.
+ */
+class AppleNotificationTestRelease implements ReleasesUserBilling
+{
+    public int $calls = 0;
+
+    public function __construct(
+        public bool $fail,
+    ) {}
+
+    public function release(AuthenticatableContract $user): array
+    {
+        $this->calls++;
+
+        if ($this->fail) {
+            throw new BillingReleaseFailed('The rail refused.');
+        }
+
+        return [
+            'cancelled' => [],
+            'store' => [],
+        ];
+    }
 }

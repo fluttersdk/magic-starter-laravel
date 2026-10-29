@@ -407,10 +407,12 @@ class DeleteUserTest extends TestCase
     }
 
     /**
-     * With billing released the scheduler ended the subscription when the
-     * deletion was asked for, so the deletion no longer refuses for it.
+     * The deleter only trusts that billing was released, it never releases it.
+     * A card subscription still valid when it runs is one the scheduler never
+     * saw, and deleting the user would leave Stripe charging nobody, so it
+     * refuses on either setting and changes nothing.
      */
-    public function test_when_billing_is_released_a_subscribed_user_is_deleted(): void
+    public function test_when_billing_is_released_a_card_subscription_still_valid_refuses(): void
     {
         MagicStarter::useUserModel(DeleteUserTestBillableUser::class);
         config([
@@ -428,6 +430,45 @@ class DeleteUserTest extends TestCase
             'stripe_status' => 'active',
             'stripe_price' => 'price_pro',
             'quantity' => 1,
+        ]);
+
+        try {
+            $this->app->make(DeletesUsers::class)->delete($user);
+            $this->fail('Expected the user-level billing refusal.');
+        } catch (ValidationException $exception) {
+            $this->assertSame(
+                __('magic-starter::social.subscription_active'),
+                $exception->errors()['user'][0],
+            );
+        }
+
+        $this->assertNotNull(DeleteUserTestUser::query()->find($user->getKey()));
+        $this->assertNotNull(ConcreteTeam::query()->find($team->getKey()));
+    }
+
+    /**
+     * Once the release has ended the subscription, locally as well, nothing
+     * stands in the way.
+     */
+    public function test_when_billing_is_released_an_ended_card_subscription_is_deleted(): void
+    {
+        MagicStarter::useUserModel(DeleteUserTestBillableUser::class);
+        config([
+            'magic-starter.billing.billable' => 'user',
+            'magic-starter.account_deletion.billing' => 'release',
+        ]);
+
+        $user = DeleteUserTestBillableUser::query()->create([
+            'name' => 'Payer',
+        ]);
+        $team = $this->createTeam($user, 'Personal', personal: true);
+        $user->subscriptions()->create([
+            'type' => 'default',
+            'stripe_id' => 'sub_payer',
+            'stripe_status' => 'canceled',
+            'stripe_price' => 'price_pro',
+            'quantity' => 1,
+            'ends_at' => now()->subMinute(),
         ]);
 
         $this->app->make(DeletesUsers::class)->delete($user);

@@ -13,6 +13,7 @@ use Illuminate\Database\Eloquent\Model;
 use Laravel\Cashier\Subscription;
 use Stripe\Exception\ApiErrorException;
 use Stripe\Exception\InvalidRequestException;
+use Stripe\Subscription as StripeSubscription;
 
 /**
  * Default release of a user's billing: end the card rail's subscriptions now,
@@ -26,9 +27,12 @@ use Stripe\Exception\InvalidRequestException;
  * Everything Stripe could still bill or activate is cancelled, which is wider
  * than what holds a deletion in refuse mode: a subscription cancelled at the end
  * of its period, a payment in dunning and a first payment still pending would
- * each outlive a deleted account. The local Cashier row is left to Stripe's own
- * `customer.subscription.deleted` webhook, the path every other cancel here
- * takes, so the rail stays the single writer of its rows.
+ * each outlive a deleted account. The local Cashier row is ended in the same
+ * breath, as Cashier's own `cancelNow()` does, instead of left valid until the
+ * `customer.subscription.deleted` webhook lands: the purge and the deleter hold
+ * an account while a card subscription is valid, and an immediate deletion's
+ * purge would otherwise be held by the very subscription its request cancelled.
+ * The webhook then finds the row ended and revokes the entitlement as usual.
  *
  * Only the user's own subscriptions are released, and only when the user is the
  * configured billable subject. A team a subscription bills is the team owner's
@@ -133,6 +137,12 @@ class ReleaseUserBilling implements ReleasesUserBilling
                 'subscription' => $id,
             ]);
         }
+
+        // Ended here too, once Stripe has agreed (or has no record to disagree).
+        $subscription->forceFill([
+            'stripe_status' => StripeSubscription::STATUS_CANCELED,
+            'ends_at' => now(),
+        ])->save();
 
         return [
             'provider' => BillingProvider::STRIPE->value,

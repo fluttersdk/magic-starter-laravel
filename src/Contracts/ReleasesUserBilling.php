@@ -9,8 +9,12 @@ use Illuminate\Contracts\Auth\Authenticatable;
  * Contract for ending what bills a user before their account is deleted.
  *
  * Called by the account-deletion scheduler, before it locks the account, when
- * `account_deletion.billing` is `release`. It is a remote call, so it never
- * runs inside a transaction of the caller's.
+ * `account_deletion.billing` is `release`. It is a remote call, so the scheduler
+ * makes it before its own lock transaction and never holds one open across it.
+ * A caller that schedules inside a transaction of its own holds that one open
+ * across the call: the Apple notification handler does, to apply a notification
+ * atomically, so a failure here rolls the whole notification back for the
+ * provider's redelivery.
  *
  * What a rail can do differs. The card rail is this application's own merchant
  * account, so its subscriptions are cancelled. A store's subscription lives in
@@ -36,6 +40,9 @@ interface ReleasesUserBilling
      * billable subject.
      *
      * Idempotent: a subscription that has already ended is not cancelled again.
+     * A subscription it cancels is ended in the application's own records too,
+     * not only at the rail, because the purge and the deleter hold an account
+     * while a card subscription is still valid and neither releases anything.
      * Not atomic: when it throws, the subscriptions ended before the failure
      * stay ended.
      *

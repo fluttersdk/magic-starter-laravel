@@ -1364,8 +1364,10 @@ return [
     | response's `data.billing.store` for the client to send the user to the
     | store's cancel screen, and the deletion goes ahead after the grace
     | period either way. A Stripe failure answers 422 `billing_release_failed`
-    | and schedules nothing. A team a subscription bills keeps refusing the
-    | request and holding the purge, on either setting.
+    | and schedules nothing. The purge never cancels anything itself, so it
+    | still holds an account whose card subscription is valid when it runs
+    | (one scheduled before the switch, say). A team a subscription bills
+    | keeps refusing the request and holding the purge, on either setting.
     |
     */
 

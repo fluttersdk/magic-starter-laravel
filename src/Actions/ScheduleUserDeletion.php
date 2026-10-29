@@ -47,7 +47,11 @@ use RuntimeException;
  * is no longer a refusal either: {@see ReleasesUserBilling} ends the card rail's
  * subscriptions and reports a store's, and the report is what this returns. That
  * is a remote call, so it runs after the refusals (a refused request cancels
- * nothing) and before the lock transaction (a transaction never waits on Stripe).
+ * nothing) and before the lock transaction, which therefore never waits on
+ * Stripe. A caller that wraps this action in a transaction of its own (the Apple
+ * notification handler does, to apply a notification atomically) holds that one
+ * open across the call; a failure then rolls the whole notification back, and
+ * the provider's redelivery is processed.
  * A rail that fails refuses the request with 422 `billing_release_failed` and
  * locks nothing, so an account is never scheduled with its subscription still
  * charging. An orphan is released too: nobody is left to cancel for them, and the

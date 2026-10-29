@@ -64,8 +64,8 @@ class DeleteUser implements DeletesUsers
      * @param  Authenticatable  $user  The user to delete.
      *
      * @throws ValidationException When the user still owns a team another member
-     *                             belongs to, a subscription bills the user (unless
-     *                             `account_deletion.billing` releases it), or
+     *                             belongs to, a subscription bills the user (a store's
+     *                             not, once `account_deletion.billing` releases it), or
      *                             `DeletesTeams` refuses a solo team.
      */
     public function delete(Authenticatable $user): void
@@ -180,10 +180,12 @@ class DeleteUser implements DeletesUsers
     }
 
     /**
-     * Refuse a user who still owns a shared team or whom a subscription bills,
-     * unless `account_deletion.billing` releases billing: the scheduler then
-     * ended the card subscriptions when the deletion was asked for, and a store's
-     * is the person's to cancel there.
+     * Refuse a user who still owns a shared team or whom a subscription bills.
+     *
+     * With `account_deletion.billing` set to `release` a store's subscription no
+     * longer refuses (only the person can cancel there), but a valid card
+     * subscription still does: the scheduler ended those when the deletion was
+     * asked for, so one still valid here is one it never saw.
      *
      * @throws ValidationException
      */
@@ -195,7 +197,7 @@ class DeleteUser implements DeletesUsers
             ]);
         }
 
-        if (! OwnedTeams::releasesBilling() && $user instanceof Model && OwnedTeams::isBilling($user)) {
+        if ($user instanceof Model && OwnedTeams::blocksUserDeletion($user)) {
             throw ValidationException::withMessages([
                 'user' => __('magic-starter::social.subscription_active'),
             ]);

@@ -605,6 +605,26 @@ class ScheduleUserDeletionTest extends TestCase
     }
 
     /**
+     * An immediate deletion releases first, so the purge it queues finds the
+     * local subscription ended and deletes the account at once instead of being
+     * held by the very subscription the request just cancelled.
+     */
+    public function test_release_mode_deletes_at_once_on_an_immediate_request(): void
+    {
+        $stripe = $this->releaseBilling();
+        $user = $this->useBillableUsers('card@example.test');
+        $this->subscribe($user, 'active', id: 'sub_card');
+        $stripe->answer($this->canceledSubscription('sub_card'));
+
+        $this->actingAs($user)
+            ->deleteJson('/user', ['password' => 'Password123', 'immediately' => true])
+            ->assertStatus(202)
+            ->assertJsonPath('data.billing.cancelled.0.id', 'sub_card');
+
+        $this->assertNull(ScheduleUserDeletionTestBillableUser::query()->find($user->getKey()));
+    }
+
+    /**
      * A Stripe failure is a refusal, never a half-done deletion: the account is
      * not locked, not stamped, and keeps its tokens, so the person can try
      * again.

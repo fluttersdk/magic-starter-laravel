@@ -37,9 +37,11 @@ use Throwable;
  * - an account owning a team a store or Cashier is still billing is HELD and
  *   reported, since deleting it strands the charge and this package never
  *   cancels a team's subscription for anyone; so is one billed itself under user
- *   billing, unless `account_deletion.billing` is `release`, where the scheduler
- *   ended its card subscriptions when the deletion was asked for and a store's
- *   is the person's to cancel there, so the deletion goes ahead;
+ *   billing. With `account_deletion.billing` set to `release` a store's
+ *   subscription no longer holds it (only the person can cancel there, and the
+ *   deletion goes ahead either way), but a valid card subscription still does:
+ *   the scheduler ended those when the deletion was asked for, so one still valid
+ *   here is one it never saw, and the purge never cancels anything itself;
  * - an orphan's shared teams are handed on, to the earliest-joined admin and
  *   else the earliest-joined member, who becomes owner; so are a user's own with
  *   `hand_on_shared_teams` on;
@@ -212,7 +214,7 @@ class PurgeDeletedUsersCommand extends Command
                 return 'held';
             }
 
-            if (! OwnedTeams::releasesBilling() && OwnedTeams::isBilling($user)) {
+            if (OwnedTeams::blocksUserDeletion($user)) {
                 $this->reportSkipped($user, 'held: a subscription is still billing the account', new Collection);
 
                 return 'held';

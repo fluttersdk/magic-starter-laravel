@@ -134,6 +134,27 @@ class ReleaseUserBillingTest extends TestCase
     }
 
     /**
+     * The local Cashier row is ended with the Stripe subscription, rather than
+     * left valid until the `customer.subscription.deleted` webhook lands: the
+     * purge and the deleter hold an account while a card subscription is valid,
+     * and an immediate deletion would otherwise be held by its own release.
+     */
+    public function test_the_local_row_is_ended_with_the_stripe_subscription(): void
+    {
+        Carbon::setTestNow('2026-10-29 12:00:00');
+        $user = $this->createUser();
+        $this->subscribe($user, 'sub_live', 'active');
+        $this->stripe->answer($this->canceled('sub_live'));
+
+        $this->release($user);
+
+        $row = $user->subscriptions()->firstOrFail();
+        $this->assertSame('canceled', $row->stripe_status);
+        $this->assertSame('2026-10-29 12:00:00', $row->ends_at?->toDateTimeString());
+        $this->assertTrue($row->ended());
+    }
+
+    /**
      * Whatever Stripe could still bill or activate ends with the account: a
      * trial, a subscription cancelled at period end, a payment in dunning and a
      * first payment still pending. A subscription that has ended already is not
@@ -158,6 +179,7 @@ class ReleaseUserBillingTest extends TestCase
             ['sub_trial', 'sub_grace', 'sub_dunning', 'sub_pending'],
             array_column($release['cancelled'], 'id'),
         );
+        $this->assertSame([], $user->subscriptions()->get()->reject->ended()->all());
         $this->assertSame([], $this->stripe->requestsTo('delete', '/v1/subscriptions/sub_ended'));
         $this->assertCount(4, $this->stripe->requests);
     }
@@ -243,6 +265,7 @@ class ReleaseUserBillingTest extends TestCase
         $release = $this->release($user);
 
         $this->assertSame('sub_gone', $release['cancelled'][0]['id']);
+        $this->assertTrue($user->subscriptions()->firstOrFail()->ended(), 'A stale row is ended too.');
     }
 
     /**
@@ -261,6 +284,8 @@ class ReleaseUserBillingTest extends TestCase
             $this->assertInstanceOf(ApiErrorException::class, $failure->getPrevious());
             $this->assertStringContainsString('sub_unreachable', $failure->getMessage());
         }
+
+        $this->assertTrue($user->subscriptions()->firstOrFail()->valid(), 'A subscription Stripe kept stays valid.');
     }
 
     /**
