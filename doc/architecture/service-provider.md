@@ -62,6 +62,7 @@ All bindings are registered in `register()`. Each entry maps an interface from `
 | `Contracts\UpdatesUserPasswords` | `Actions\UpdateUserPassword` | Auth |
 | `Contracts\DeletesUsers` | `Actions\DeleteUser` | Auth |
 | `Contracts\SchedulesUserDeletion` | `Actions\ScheduleUserDeletion` | Account deletion |
+| `Contracts\ReleasesUserBilling` | `Actions\ReleaseUserBilling` | Account deletion |
 | `Contracts\CreatesTeams` | `Actions\CreateTeam` | Teams |
 | `Contracts\UpdatesTeams` | `Actions\UpdateTeam` | Teams |
 | `Contracts\DeletesTeams` | `Actions\SubscriptionGuardedDeleteTeam` | Teams |

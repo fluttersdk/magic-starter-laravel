@@ -49,6 +49,7 @@ In practice, most apps override nothing. Extend models with domain relations (e.
 | `CancelsTeamInvitations` | `CancelTeamInvitation` | `cancel(Authenticatable $actor, Model $invitation): void` |
 | `ResendsTeamInvitations` | `ResendTeamInvitation` | `resend(Authenticatable $actor, Model $invitation): void` |
 | `CancelsUserDeletion` | `CancelUserDeletion` | `cancel(Authenticatable $user): bool` |
+| `ReleasesUserBilling` | `ReleaseUserBilling` | `release(Authenticatable $user): array` |
 | `RevokesApiTokens` | `RevokeApiTokens` | `revoke(Authenticatable $user, ?string $tokenId = null): void` |
 | `CreatesGuestUsers` | `CreateGuestUser` | `create(array $input): Authenticatable` |
 | `SendsOtpCodes` | `LogOtpProvider` | `send(string $phone, string $code): void` |

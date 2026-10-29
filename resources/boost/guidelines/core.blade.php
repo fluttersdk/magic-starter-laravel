@@ -67,6 +67,7 @@ Bound in `MagicStarterServiceProvider::register()` via `$this->app->bind()`:
 - `InvitesTeamMembers` → `InviteTeamMember` / `AcceptsTeamInvitations` → `AcceptTeamInvitation` / `UpdatesTeamMemberRoles` → `UpdateTeamMemberRole`
 - `TransfersTeamOwnership` → `TransferTeamOwnership` / `CancelsTeamInvitations` → `CancelTeamInvitation` / `ResendsTeamInvitations` → `ResendTeamInvitation`
 - `CancelsUserDeletion` → `CancelUserDeletion` / `RevokesApiTokens` → `RevokeApiTokens`
+- `ReleasesUserBilling` → `ReleaseUserBilling`
 - `CreatesGuestUsers` → `CreateGuestUser`
 - `SendsOtpCodes` → `LogOtpProvider` / `VerifiesOtpCodes` → `CacheOtpVerifier`
 - `EnablesTwoFactorAuthentication`, `ConfirmsTwoFactorAuthentication`, `DisablesTwoFactorAuthentication`, `GeneratesNewRecoveryCodes`

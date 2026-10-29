@@ -63,6 +63,7 @@ $this->app->bind(Contracts\UpdatesUserProfiles::class,    Actions\UpdateUserProf
 $this->app->bind(Contracts\UpdatesUserPasswords::class,   Actions\UpdateUserPassword::class);
 $this->app->bind(Contracts\DeletesUsers::class,           Actions\DeleteUser::class);
 $this->app->bind(Contracts\SchedulesUserDeletion::class,  Actions\ScheduleUserDeletion::class);
+$this->app->bind(Contracts\ReleasesUserBilling::class,    Actions\ReleaseUserBilling::class);
 $this->app->bind(Contracts\CreatesTeams::class,           Actions\CreateTeam::class);
 $this->app->bind(Contracts\UpdatesTeams::class,           Actions\UpdateTeam::class);
 $this->app->bind(Contracts\DeletesTeams::class,           Actions\SubscriptionGuardedDeleteTeam::class);
@@ -202,17 +203,43 @@ Namespace: `FlutterSdk\MagicStarter\Contracts\SchedulesUserDeletion`
 Default action: `Actions\ScheduleUserDeletion`
 
 ```php
-public function schedule(Authenticatable $user, bool $orphan = false, bool $immediately = false): void;
+public function schedule(Authenticatable $user, bool $orphan = false, bool $immediately = false): array;
 ```
 
 The one entry point to the deletion pipeline, for a user's own request and for an identity provider
 reporting the account deleted (`$orphan = true`). It refuses a user who owns a shared team (unless
 `account_deletion.hand_on_shared_teams` is on) or a billing team, or whom a subscription bills
-directly (422 `owns_shared_teams`, `team_has_active_subscription` or `subscription_active`), then
-revokes every token, drops the push devices, stamps `deletion_scheduled_at` and dispatches
-`UserDeletionScheduled`. Nothing is deleted in the request: with `$immediately` a queued
-`PurgeUserNow` purges the account right away instead of after the grace period. See
+directly unless `account_deletion.billing` is `release` (422 `owns_shared_teams`,
+`team_has_active_subscription` or `subscription_active`), then releases the user's billing through
+`ReleasesUserBilling` when that is on, revokes every token, drops the push devices, stamps
+`deletion_scheduled_at` and dispatches `UserDeletionScheduled`. Nothing is deleted in the request:
+with `$immediately` a queued `PurgeUserNow` purges the account right away instead of after the
+grace period. It returns the billing report, `['cancelled' => [], 'store' => []]` unless billing is
+released and something bills the user; `ProfileController` puts it in the 202 body as
+`data.billing`. An implementation of this contract has to return it. See
 [Account Deletion](../basics/account-deletion.md).
+
+---
+
+#### `ReleasesUserBilling`
+
+Namespace: `FlutterSdk\MagicStarter\Contracts\ReleasesUserBilling`
+Default action: `Actions\ReleaseUserBilling`
+
+```php
+public function release(Authenticatable $user): array;
+```
+
+Ends what bills a user before their account is locked, when `account_deletion.billing` is
+`release`. The default action cancels every Stripe subscription the user has that could still bill
+or activate, through `TrialCardGateway::cancel()` (no proration, no final invoice), and reports a
+store subscription (which only the customer can cancel, in the store) without touching it. Returns
+`['cancelled' => [['provider' => 'stripe', 'id' => 'sub_...']], 'store' => [['provider' =>
+'app_store', 'manage_url' => null]]]`, both lists empty for a user nothing bills. Throws
+`Support\BillingReleaseFailed` when a rail refuses or cannot be reached; the scheduler answers that
+with 422 `billing_release_failed` and locks nothing. It runs before the scheduler's lock
+transaction, so it may make remote calls. See
+[Releasing Billing](../basics/account-deletion.md#releasing-billing).
 
 ---
 
