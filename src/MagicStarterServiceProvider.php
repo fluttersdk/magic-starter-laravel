@@ -16,6 +16,7 @@ use FlutterSdk\MagicStarter\Console\PruneBillingRecordsCommand;
 use FlutterSdk\MagicStarter\Console\PruneMailSendsCommand;
 use FlutterSdk\MagicStarter\Console\PruneSupportArticleImagesCommand;
 use FlutterSdk\MagicStarter\Console\PurgeDeletedUsersCommand;
+use FlutterSdk\MagicStarter\Console\PurgeTrashedTeamsCommand;
 use FlutterSdk\MagicStarter\Console\ReconcileBillingEntitlements;
 use FlutterSdk\MagicStarter\Console\SupportDoctorCommand;
 use FlutterSdk\MagicStarter\Console\SweepSupportConversationsCommand;
@@ -91,6 +92,12 @@ class MagicStarterServiceProvider extends ServiceProvider
         // pointed elsewhere), so the extra checks are a safe no-op there and
         // real ones only where the schema and the config both say they should be.
         $this->app->bind(Contracts\DeletesTeams::class, Actions\SubscriptionGuardedDeleteTeam::class);
+        // The restorable half of a team delete, behind the same guard: with the
+        // restorable-teams feature on, `DELETE teams/{team}` trashes through this
+        // contract instead of deleting, and must refuse a billed team just as the
+        // line above does. Unconditional like every binding here; only the
+        // feature decides whether the endpoint reaches it.
+        $this->app->bind(Contracts\TrashesTeams::class, Actions\SubscriptionGuardedTrashTeam::class);
         $this->app->bind(Contracts\AddsTeamMembers::class, Actions\AddTeamMember::class);
         $this->app->bind(Contracts\RemovesTeamMembers::class, Actions\RemoveTeamMember::class);
         $this->app->bind(Contracts\InvitesTeamMembers::class, Actions\InviteTeamMember::class);
@@ -557,6 +564,7 @@ class MagicStarterServiceProvider extends ServiceProvider
             $this->commands([
                 InstallCommand::class,
                 PurgeDeletedUsersCommand::class,
+                PurgeTrashedTeamsCommand::class,
                 MailDoctorCommand::class,
                 PruneMailSendsCommand::class,
             ]);

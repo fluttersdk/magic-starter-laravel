@@ -9,6 +9,8 @@
   - [Show Team](#show-team)
   - [Update Team](#update-team)
   - [Delete Team](#delete-team)
+  - [Restore Team](#restore-team)
+- [Restorable Delete](#restorable-delete)
 - [Team Members](#team-members)
   - [List Members](#list-members)
   - [Update Member Role](#update-member-role)
@@ -23,6 +25,8 @@
   - [Upload Team Photo](#upload-team-photo)
   - [Delete Team Photo](#delete-team-photo)
 - [Switch Current Team](#switch-current-team)
+- [Lifecycle Events](#lifecycle-events)
+  - [Transferring Ownership](#transferring-ownership)
 - [Authorization](#authorization)
   - [TeamPolicy](#teampolicy)
   - [Policy Abilities Summary](#policy-abilities-summary)
@@ -220,6 +224,125 @@ If the deleted team was the user's current active team, the user is automaticall
 **Contract:** `DeletesTeams` (overridable via service container binding)
 
 **Controller:** `TeamController@destroy`
+
+With the [restorable delete](#restorable-delete) on, this endpoint trashes the team instead and answers with the end of its restore window:
+
+```json
+{
+  "data": {
+    "restore_until": "2026-11-28T12:00:00.000000Z"
+  },
+  "message": "Team deleted. Its owner can restore it until the restore window closes."
+}
+```
+
+The same refusals apply, including the subscription guard, and the contract is `TrashesTeams`.
+
+---
+
+<a name="restore-team"></a>
+### Restore Team
+
+```
+POST /teams/{team}/restore
+```
+
+Registered only with the [restorable delete](#restorable-delete) on. Brings a trashed team back. Requires `restore` policy authorization (owner only). This is the one endpoint that finds a trashed team; every other team endpoint answers `404` for it.
+
+Restoring a team that is already live changes nothing and answers `200`, so a client that sends the request twice is not punished.
+
+**Response:** `200 OK` -- returns the `TeamResource` with a `message`.
+
+**Error (window closed):** `422 Unprocessable Entity`
+
+```json
+{
+  "message": "This team can no longer be restored.",
+  "errors": {
+    "team": ["This team can no longer be restored."]
+  }
+}
+```
+
+**Contract:** `TrashesTeams` (overridable via service container binding)
+
+**Controller:** `TeamController@restore`
+
+---
+
+<a name="restorable-delete"></a>
+## Restorable Delete
+
+By default `DELETE /teams/{team}` deletes the team for good. The `restorable-teams` feature makes that delete reversible: the team is hidden for a window, its owner can restore it, and a scheduled command deletes it once the window has closed. It is off until you switch it on, and while it is off nothing about team deletion changes.
+
+Switching it on takes three things in the consuming application:
+
+1. **The column.** `magic-starter:install` publishes `add_soft_deletes_to_teams_table` with the teams feature; on an existing install copy it from `vendor/fluttersdk/magic-starter-laravel/database/migrations/` into `database/migrations/`. It adds `deleted_at` and an indexed, nullable `restore_until`.
+2. **The trait.** The team model uses `Illuminate\Database\Eloquent\SoftDeletes`. The published `App\Models\Team` stub does; add it by hand to an older one. The package's own `Models\Team` does not, so that applications that never opt in keep a teams table without the column.
+3. **The feature and the schedule.**
+
+```php
+// config/magic-starter.php
+'features' => [
+    \FlutterSdk\MagicStarter\Features::teams(),
+    \FlutterSdk\MagicStarter\Features::restorableTeams(),
+],
+
+'teams' => [
+    'restore_days' => 30, // MAGIC_STARTER_TEAM_RESTORE_DAYS
+],
+```
+
+```php
+// routes/console.php
+use Illuminate\Support\Facades\Schedule;
+
+Schedule::command('magic-starter:purge-trashed-teams')->daily();
+```
+
+The package registers the command and does not schedule it. Without the schedule line a trashed team is never deleted.
+
+### What a trash does
+
+`TrashesTeams::trash()` runs in one transaction:
+
+1. clears `current_team_id` for every user whose active team is this one, with a query-builder update that ignores `$fillable`. A soft delete is an update and never triggers the foreign key's `nullOnDelete`, so without this the pointer would name a team nobody can see;
+2. cancels the pending invitations, because a link to a hidden team must not be acceptable;
+3. writes `restore_until`, `teams.restore_days` days from now (`0` closes the window at once);
+4. soft deletes the team.
+
+Members stay attached, so a restore brings the team back with the people it had. The team disappears from `GET /teams` and from every relation, because the model's soft delete scope hides it. A restore does not put the pointers back (they are each person's choice, and they have been somewhere else since) and does not bring the invitations back; the owner invites again.
+
+The subscription guard of the plain delete applies to a trash as well (`Actions\SubscriptionGuardedTrashTeam`), so a team a store or Stripe is still billing is refused with the same sentence.
+
+### What a restore does
+
+`TrashesTeams::restore()` clears `deleted_at` and `restore_until` in one write, and refuses with a `422` once `restore_until` is not in the future. A trashed team with no `restore_until` (trashed by other means) has no window to close and is restored.
+
+### The purge
+
+```bash
+php artisan magic-starter:purge-trashed-teams
+```
+
+Selects the trashed teams whose `restore_until` is not in the future and deletes each through `DeletesTeams`, so the subscription guard and the photo cleanup run as they do for any team. `DeletesTeams` is the purge: on a model that soft deletes it force deletes. Each team is read again under a lock first, so a restore that lands after the walk loaded it wins.
+
+| Outcome | Meaning |
+|---------|---------|
+| **Deleted** | Removed with its photo, memberships and invitations. |
+| **Held** | The billing guard refused. Logged as well as printed, left trashed, and tried again on the next run. |
+| **Restored** | Its owner restored it after the walk loaded it. Skipped. |
+| **Failed** | Reported, and the run moves on. The exit code is non-zero. |
+
+```
+Purge finished: 12 deleted, 1 held, 0 restored, 0 failed.
+```
+
+A team model that does not use `SoftDeletes`, or a table without `restore_until`, has nothing to purge and the command says so.
+
+### Account deletion
+
+An account purge deletes the teams the user trashed too, for good and through `DeletesTeams`: `OwnedTeams::includingTrashed()` reads them, and a trashed team a subscription still bills holds the purge back like any other. A trashed team does not count as a shared team, so it never blocks scheduling the deletion.
 
 ---
 
@@ -614,6 +737,64 @@ Switches the authenticated user's active team. The request is authorized via the
 
 ---
 
+<a name="lifecycle-events"></a>
+## Lifecycle Events
+
+A host that tells people when something happens to their team (a member joined, the household was deleted, ownership passed) listens to six events instead of overriding the actions:
+
+| Event | Dispatched | Properties |
+|-------|------------|------------|
+| `Events\TeamMemberJoined` | After a member is attached: an invitation accepted (`AcceptTeamInvitation`) or a user added by email (`AddTeamMember`). | `teamId`, `userId`, `actorId` (the joiner when they accepted, the user who added them otherwise) |
+| `Events\TeamMemberRemoved` | After a member is detached by `RemoveTeamMember`, which serves both the remove and the leave endpoints. | `teamId`, `userId`, `actorId` (equal to `userId` when the member left) |
+| `Events\TeamDeleted` | After a team is deleted for good by `DeleteTeam`: the delete endpoint with the restorable delete off, `magic-starter:purge-trashed-teams`, the admin panel, and the account purge for each team the user owned. | `teamId`, `ownerId`, `memberIds` (everyone who belonged, the owner included, in no particular order) |
+| `Events\TeamTrashed` | After `TrashTeam` hides a team for its restore window. | `teamId` |
+| `Events\TeamRestored` | After `TrashTeam` brings a trashed team back inside the window. | `teamId` |
+| `Events\TeamOwnershipTransferred` | After `TransferTeamOwnership` hands a team to another member: a host's own transfer, the admin panel, and the account purge when it hands on a departing owner's team. | `teamId`, `previousOwnerId`, `newOwnerId`, `actorId` |
+
+```php
+use FlutterSdk\MagicStarter\Events\TeamDeleted;
+use FlutterSdk\MagicStarter\Events\TeamMemberJoined;
+use Illuminate\Support\Facades\Event;
+
+Event::listen(TeamMemberJoined::class, fn (TeamMemberJoined $event) => /* tell the owner */);
+Event::listen(TeamDeleted::class, fn (TeamDeleted $event) => /* tell every former member */);
+```
+
+Four rules hold for all six:
+
+- **After the commit.** Each event implements `ShouldDispatchAfterCommit`. The account purge calls these actions inside its own transaction, so a listener hears of a change only once the whole of it has committed, and never hears of one that rolled back. Outside a transaction an event is dispatched at once.
+- **Once, and only for a change.** An action that refuses fires nothing: a join the plan or `ensureCanJoin()` refuses, the owner being removed, a delete or trash the billing guard refuses, a restore after the window closed, a transfer to a user who is not a member. Neither does a call that changes nothing: removing someone who is not a member, restoring a team that is not trashed, transferring a team to the owner it already has.
+- **Keys, not models.** The payload is keys as strings, whatever the key type, and nothing else: no model, name or address, so a queued listener loads what it needs when it runs. `TeamDeleted` cannot load its members, because the team and its memberships are gone by then, so it carries `memberIds`, read before the members are detached.
+- **A bound action owns its event.** The events are dispatched by the default actions. An application that binds its own class over `AddsTeamMembers`, `RemovesTeamMembers`, `DeletesTeams`, `TrashesTeams`, `TransfersTeamOwnership` or `AcceptsTeamInvitations` without extending the default has to dispatch them itself. Extending the default and overriding one hook keeps them.
+
+Two departures follow from what the actions do. Deleting a team detaches its members without firing `TeamMemberRemoved` for each: `TeamDeleted` and its `memberIds` are the record. Deleting an account detaches the user from the other teams they belonged to the same way, and fires no event for it.
+
+<a name="transferring-ownership"></a>
+### Transferring Ownership
+
+`TransferTeamOwnership` makes the new owner the owner and leaves the outgoing owner on the team as an `admin`. A host whose teams have fewer roles overrides `outgoingRole()` and keeps the rest of the transfer, the event included:
+
+```php
+use FlutterSdk\MagicStarter\Actions\TransferTeamOwnership;
+use FlutterSdk\MagicStarter\Contracts\TransfersTeamOwnership;
+use FlutterSdk\MagicStarter\Enums\Role;
+
+class TransferHouseholdOwnership extends TransferTeamOwnership
+{
+    protected function outgoingRole(): Role
+    {
+        return Role::MEMBER;
+    }
+}
+
+// AppServiceProvider::register()
+$this->app->bind(TransfersTeamOwnership::class, TransferHouseholdOwnership::class);
+```
+
+Return anything but `Role::OWNER`: the new owner takes that role in the same transfer.
+
+---
+
 <a name="authorization"></a>
 ## Authorization
 
@@ -637,6 +818,7 @@ App providers boot after package providers, so the override takes precedence.
 | `view`              | Team members (owner + members) | `TeamController@show`, `TeamMemberController@index` |
 | `update`            | Owner only                 | `TeamController@update`, `TeamPhotoController`     |
 | `delete`            | Owner only                 | `TeamController@destroy`                       |
+| `restore`           | Owner only                 | `TeamController@restore`                       |
 | `manageMembers`     | Owner or admin role        | `TeamMemberController@update`, `TeamMemberController@destroy` |
 | `manageInvitations` | Owner or admin role        | `TeamInvitationController@index`, `store`, `destroy` |
 | `switchTo`          | Team members (owner + members) | `SwitchTeamRequest` authorization              |
@@ -661,6 +843,8 @@ App providers boot after package providers, so the override takes precedence.
 | `profile_photo_url`   | string\|null (read) | Stored photo URL, or `null` when none is stored |
 | `created_at`          | Carbon\|null  | Timestamp                                       |
 | `updated_at`          | Carbon\|null  | Timestamp                                       |
+| `deleted_at`          | Carbon\|null  | Set on a trashed team; only with the [restorable delete](#restorable-delete) |
+| `restore_until`       | Carbon\|null  | End of a trashed team's restore window; only with the [restorable delete](#restorable-delete) |
 
 **Relationships:**
 
@@ -672,7 +856,7 @@ App providers boot after package providers, so the override takes precedence.
 
 **Fillable:** `user_id`, `name`, `personal_team`, `profile_photo_path`
 
-**Casts:** `personal_team` as `boolean`
+**Casts:** `personal_team` as `boolean`, `restore_until` as `datetime`
 
 **Appends:** `profile_photo_url`
 

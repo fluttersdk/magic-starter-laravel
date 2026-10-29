@@ -17,6 +17,9 @@ return [
      * distinguishes the two cases.
      */
     'deleted' => 'Takım silindi.',
+    'trashed' => 'Takım silindi. Sahibi, geri yükleme süresi dolana kadar geri alabilir.',
+    'restored' => 'Takım geri yüklendi.',
+    'restore_window_closed' => 'Bu takım artık geri yüklenemez.',
     'switched' => 'Takım değiştirildi',
     'not_found' => 'Seçilen takım bulunamadı.',
     'not_a_member' => 'Bu takımın üyesi değilsiniz.',

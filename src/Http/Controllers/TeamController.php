@@ -4,11 +4,14 @@ namespace FlutterSdk\MagicStarter\Http\Controllers;
 
 use FlutterSdk\MagicStarter\Contracts\CreatesTeams;
 use FlutterSdk\MagicStarter\Contracts\DeletesTeams;
+use FlutterSdk\MagicStarter\Contracts\TrashesTeams;
 use FlutterSdk\MagicStarter\Contracts\UpdatesTeams;
+use FlutterSdk\MagicStarter\Features;
 use FlutterSdk\MagicStarter\Http\Requests\StoreTeamRequest;
 use FlutterSdk\MagicStarter\Http\Requests\UpdateTeamRequest;
 use FlutterSdk\MagicStarter\Http\Resources\TeamResource;
 use FlutterSdk\MagicStarter\MagicStarter;
+use FlutterSdk\MagicStarter\Support\SoftDeletingTeams;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Http\Resources\Json\AnonymousResourceCollection;
@@ -94,11 +97,10 @@ class TeamController
     }
 
     /**
-     * Delete the specified team.
+     * Delete the specified team, or trash it while the restorable delete is on.
      */
     public function destroy(Request $request, string $team): JsonResponse
     {
-        $deleter = app(DeletesTeams::class);
         $teamModel = $this->findTeam($team);
         $user = $request->user();
         Gate::forUser($user)->authorize('delete', $teamModel);
@@ -111,15 +113,44 @@ class TeamController
         }
 
         $teamId = $teamModel->getKey();
-        $deleter->delete($teamModel);
+        $trashed = Features::hasRestorableTeamFeatures();
+
+        if ($trashed) {
+            app(TrashesTeams::class)->trash($teamModel);
+        } else {
+            app(DeletesTeams::class)->delete($teamModel);
+        }
 
         // Switch to the next available team if the deleted team was active.
         $this->switchToNextTeamIfNeeded($user, $teamId);
+
+        if ($trashed) {
+            return response()->json([
+                'data' => [
+                    'restore_until' => $teamModel->restore_until,
+                ],
+                'message' => __('magic-starter::teams.trashed'),
+            ]);
+        }
 
         return response()->json([
             'data' => null,
             'message' => __('magic-starter::teams.deleted'),
         ]);
+    }
+
+    /**
+     * Restore a trashed team. Registered only with the restorable delete on.
+     */
+    public function restore(Request $request, string $team): TeamResource
+    {
+        $teamModel = $this->findTeam($team, withTrashed: true);
+        Gate::forUser($request->user())->authorize('restore', $teamModel);
+
+        app(TrashesTeams::class)->restore($teamModel);
+
+        return (new TeamResource($teamModel->refresh()))
+            ->additional(['message' => __('magic-starter::teams.restored')]);
     }
 
     /**
@@ -141,12 +172,21 @@ class TeamController
     }
 
     /**
-     * Find a team by its ID.
+     * Find a team by its ID, trashed ones too when asked.
+     *
+     * Only the restore route asks: every other endpoint answers 404 for a
+     * trashed team, as it does for one that never existed. A team model that
+     * cannot be trashed has no trashed rows to include.
      */
-    private function findTeam(string $id): mixed
+    private function findTeam(string $id, bool $withTrashed = false): mixed
     {
         $modelClass = MagicStarter::teamModel();
+        $query = $modelClass::query();
 
-        return $modelClass::query()->findOrFail($id);
+        if ($withTrashed && SoftDeletingTeams::usedBy($modelClass)) {
+            $query->withTrashed();
+        }
+
+        return $query->findOrFail($id);
     }
 }

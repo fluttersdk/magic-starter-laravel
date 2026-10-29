@@ -45,6 +45,21 @@ class FeaturesTest extends TestCase
         $this->assertTrue(Features::hasTeamFeatures());
     }
 
+    public function test_has_restorable_team_features_returns_false_by_default(): void
+    {
+        config(['magic-starter.features' => []]);
+
+        $this->assertFalse(Features::hasRestorableTeamFeatures());
+    }
+
+    public function test_has_restorable_team_features_returns_true_when_enabled(): void
+    {
+        config(['magic-starter.features' => [Features::restorableTeams()]]);
+
+        $this->assertSame('restorable-teams', Features::restorableTeams());
+        $this->assertTrue(Features::hasRestorableTeamFeatures());
+    }
+
     public function test_has_profile_photo_features_returns_false_by_default(): void
     {
         config(['magic-starter.features' => []]);

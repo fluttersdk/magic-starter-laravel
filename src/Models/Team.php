@@ -22,6 +22,8 @@ use Illuminate\Support\Facades\Storage;
  * @property-read  string|null  $profile_photo_url
  * @property Carbon|null $created_at
  * @property Carbon|null $updated_at
+ * @property Carbon|null $deleted_at Set on a trashed team; present only on a model that uses SoftDeletes.
+ * @property Carbon|null $restore_until End of a trashed team's restore window.
  * @property-read  Model $owner
  * @property-read  Collection<int, Model>  $users
  * @property-read  Collection<int, TeamInvitation>  $invitations
@@ -55,6 +57,7 @@ class Team extends Model
     {
         return [
             'personal_team' => 'boolean',
+            'restore_until' => 'datetime',
         ];
     }
 

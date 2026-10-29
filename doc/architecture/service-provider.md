@@ -66,6 +66,7 @@ All bindings are registered in `register()`. Each entry maps an interface from `
 | `Contracts\CreatesTeams` | `Actions\CreateTeam` | Teams |
 | `Contracts\UpdatesTeams` | `Actions\UpdateTeam` | Teams |
 | `Contracts\DeletesTeams` | `Actions\SubscriptionGuardedDeleteTeam` | Teams |
+| `Contracts\TrashesTeams` | `Actions\SubscriptionGuardedTrashTeam` | Teams |
 | `Contracts\AddsTeamMembers` | `Actions\AddTeamMember` | Teams |
 | `Contracts\RemovesTeamMembers` | `Actions\RemoveTeamMember` | Teams |
 | `Contracts\InvitesTeamMembers` | `Actions\InviteTeamMember` | Teams |

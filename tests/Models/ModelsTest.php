@@ -58,7 +58,10 @@ class ModelsTest extends TestCase
         $teamClass = \FlutterSdk\MagicStarter\MagicStarter::teamModel();
         $casts = $castsMethod->invoke(new $teamClass);
 
-        $this->assertSame(['personal_team' => 'boolean'], $casts);
+        $this->assertSame([
+            'personal_team' => 'boolean',
+            'restore_until' => 'datetime',
+        ], $casts);
     }
 
     public function test_team_invitation_team_relation_uses_configured_team_model(): void

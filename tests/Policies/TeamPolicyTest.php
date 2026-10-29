@@ -150,6 +150,34 @@ final class TeamPolicyTest extends TestCase
         $this->assertFalse($this->policy->delete($stranger, $team));
     }
 
+    public function test_restore_allows_owner(): void
+    {
+        $owner = $this->createUser('Owner', 'owner-restore@example.test');
+        $team = $this->createTeam($owner, 'Restorable Team');
+
+        $this->assertTrue($this->policy->restore($owner, $team));
+    }
+
+    public function test_restore_denies_member(): void
+    {
+        $owner = $this->createUser('Owner', 'owner-member-restore@example.test');
+        $member = $this->createUser('Member', 'member-restore@example.test');
+        $team = $this->createTeam($owner, 'Restorable Team');
+
+        $this->attachMember($team, $member, 'admin');
+
+        $this->assertFalse($this->policy->restore($member, $team));
+    }
+
+    public function test_restore_denies_non_member(): void
+    {
+        $owner = $this->createUser('Owner', 'owner-non-member-restore@example.test');
+        $stranger = $this->createUser('Stranger', 'stranger-restore@example.test');
+        $team = $this->createTeam($owner, 'Restorable Team');
+
+        $this->assertFalse($this->policy->restore($stranger, $team));
+    }
+
     public function test_manage_members_allows_owner(): void
     {
         $owner = $this->createUser('Owner', 'owner-manage-members@example.test');

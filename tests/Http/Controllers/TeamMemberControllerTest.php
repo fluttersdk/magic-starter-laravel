@@ -4,6 +4,7 @@ namespace FlutterSdk\MagicStarter\Tests\Http\Controllers;
 
 use FlutterSdk\MagicStarter\Contracts\AddsTeamMembers;
 use FlutterSdk\MagicStarter\Contracts\UpdatesTeamMemberRoles;
+use FlutterSdk\MagicStarter\Events\TeamMemberRemoved;
 use FlutterSdk\MagicStarter\Http\Controllers\TeamMemberController;
 use FlutterSdk\MagicStarter\MagicStarter;
 use FlutterSdk\MagicStarter\Tests\TestCase;
@@ -14,6 +15,7 @@ use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsToMany;
 use Illuminate\Database\Schema\Blueprint;
 use Illuminate\Foundation\Auth\Access\Authorizable;
+use Illuminate\Support\Facades\Event;
 
 final class TeamMemberControllerTest extends TestCase
 {
@@ -141,6 +143,55 @@ final class TeamMemberControllerTest extends TestCase
             ->assertJsonPath('message', 'Team member removed successfully.');
 
         $this->assertFalse($team->fresh()->users()->where('user_id', $member->id)->exists());
+    }
+
+    public function test_destroy_dispatches_removed_with_the_owner_as_the_actor(): void
+    {
+        Event::fake([TeamMemberRemoved::class]);
+        $owner = TeamMemberControllerTestUser::query()->create(['name' => 'Owner', 'email' => 'owner@test.dev']);
+        $member = TeamMemberControllerTestUser::query()->create(['name' => 'Member', 'email' => 'member@test.dev']);
+        $team = TeamMemberControllerTestTeam::query()->create(['user_id' => $owner->id, 'name' => 'A Team', 'personal_team' => false]);
+        $team->users()->attach($member->id, ['role' => 'member']);
+
+        $this->actingAs($owner)->deleteJson('/teams/' . $team->id . '/members/' . $member->id)->assertOk();
+
+        Event::assertDispatchedTimes(TeamMemberRemoved::class, 1);
+        Event::assertDispatched(
+            TeamMemberRemoved::class,
+            fn (TeamMemberRemoved $event): bool => $event->teamId === (string) $team->id
+                && $event->userId === (string) $member->id
+                && $event->actorId === (string) $owner->id,
+        );
+    }
+
+    public function test_leave_dispatches_removed_with_the_member_as_the_actor(): void
+    {
+        Event::fake([TeamMemberRemoved::class]);
+        $owner = TeamMemberControllerTestUser::query()->create(['name' => 'Owner', 'email' => 'owner@test.dev']);
+        $member = TeamMemberControllerTestUser::query()->create(['name' => 'Member', 'email' => 'member@test.dev']);
+        $team = TeamMemberControllerTestTeam::query()->create(['user_id' => $owner->id, 'name' => 'A Team', 'personal_team' => false]);
+        $team->users()->attach($member->id, ['role' => 'member']);
+
+        $this->actingAs($member)->deleteJson('/teams/' . $team->id . '/members/leave')->assertOk();
+
+        Event::assertDispatchedTimes(TeamMemberRemoved::class, 1);
+        Event::assertDispatched(
+            TeamMemberRemoved::class,
+            fn (TeamMemberRemoved $event): bool => $event->userId === (string) $member->id
+                && $event->actorId === (string) $member->id,
+        );
+    }
+
+    public function test_a_refused_removal_dispatches_nothing(): void
+    {
+        Event::fake([TeamMemberRemoved::class]);
+        $owner = TeamMemberControllerTestUser::query()->create(['name' => 'Owner', 'email' => 'owner@test.dev']);
+        $team = TeamMemberControllerTestTeam::query()->create(['user_id' => $owner->id, 'name' => 'A Team', 'personal_team' => false]);
+
+        $this->actingAs($owner)->deleteJson('/teams/' . $team->id . '/members/' . $owner->id)->assertStatus(403);
+        $this->actingAs($owner)->deleteJson('/teams/' . $team->id . '/members/leave')->assertStatus(403);
+
+        Event::assertNotDispatched(TeamMemberRemoved::class);
     }
 
     public function test_leave_removes_the_current_user_from_the_team(): void
