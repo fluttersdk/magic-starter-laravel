@@ -35,7 +35,7 @@ class AcceptTeamInvitation implements AcceptsTeamInvitations
     /**
      * Join the invitation's team as `$user` and consume the invitation.
      *
-     * @param  Authenticatable  $user  The invited user, already matched to the invitation's email.
+     * @param  Authenticatable  $user  The invited user; matched to the invitation's email, or a confirmed mismatch.
      * @param  Model  $invitation  The invitation being accepted.
      *
      * @throws TeamInvitationRefused When the invitation expired or the user already belongs to the team.
