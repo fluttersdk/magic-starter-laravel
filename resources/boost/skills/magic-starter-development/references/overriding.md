@@ -43,6 +43,7 @@ In practice, most apps override nothing. Extend models with domain relations (e.
 | `AddsTeamMembers` | `AddTeamMember` | `add(Authenticatable $user, Model $team, string $email, string $role): void` |
 | `RemovesTeamMembers` | `RemoveTeamMember` | `remove(Authenticatable $user, Model $team, Model $teamMember): void` |
 | `InvitesTeamMembers` | `InviteTeamMember` | `invite(Authenticatable $user, Model $team, string $email, string $role): Model` |
+| `AcceptsTeamInvitations` | `AcceptTeamInvitation` | `accept(Authenticatable $user, Model $invitation): void` |
 | `UpdatesTeamMemberRoles` | `UpdateTeamMemberRole` | `update(Authenticatable $user, Model $team, Model $teamMember, string $role): void` |
 | `TransfersTeamOwnership` | `TransferTeamOwnership` | `transfer(Authenticatable $actor, Model $team, Model $newOwner): void` |
 | `CancelsTeamInvitations` | `CancelTeamInvitation` | `cancel(Authenticatable $actor, Model $invitation): void` |

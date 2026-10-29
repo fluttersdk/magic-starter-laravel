@@ -68,6 +68,7 @@ All bindings are registered in `register()`. Each entry maps an interface from `
 | `Contracts\AddsTeamMembers` | `Actions\AddTeamMember` | Teams |
 | `Contracts\RemovesTeamMembers` | `Actions\RemoveTeamMember` | Teams |
 | `Contracts\InvitesTeamMembers` | `Actions\InviteTeamMember` | Teams |
+| `Contracts\AcceptsTeamInvitations` | `Actions\AcceptTeamInvitation` | Teams |
 | `Contracts\UpdatesTeamMemberRoles` | `Actions\UpdateTeamMemberRole` | Teams |
 | `Contracts\CreatesGuestUsers` | `Actions\CreateGuestUser` | Guest Auth |
 | `Contracts\SendsOtpCodes` | `Actions\LogOtpProvider` | OTP |

@@ -69,6 +69,7 @@ $this->app->bind(Contracts\DeletesTeams::class,           Actions\SubscriptionGu
 $this->app->bind(Contracts\AddsTeamMembers::class,        Actions\AddTeamMember::class);
 $this->app->bind(Contracts\RemovesTeamMembers::class,     Actions\RemoveTeamMember::class);
 $this->app->bind(Contracts\InvitesTeamMembers::class,     Actions\InviteTeamMember::class);
+$this->app->bind(Contracts\AcceptsTeamInvitations::class, Actions\AcceptTeamInvitation::class);
 $this->app->bind(Contracts\UpdatesTeamMemberRoles::class, Actions\UpdateTeamMemberRole::class);
 $this->app->bind(Contracts\CreatesGuestUsers::class,      Actions\CreateGuestUser::class);
 $this->app->bind(Contracts\SendsOtpCodes::class,          Actions\LogOtpProvider::class);
@@ -319,8 +320,48 @@ public function invite(Authenticatable $user, Model $team, string $email, string
 ```
 
 Creates a `TeamInvitation` record with a random token and sends `TeamInvitationNotification` to
-`$email`. Returns the invitation model. Acceptance is handled by a separate route that calls
-`AddsTeamMembers`.
+`$email`. Returns the invitation model. Acceptance is `AcceptsTeamInvitations`.
+
+---
+
+#### `AcceptsTeamInvitations`
+
+Namespace: `FlutterSdk\MagicStarter\Contracts\AcceptsTeamInvitations`
+Default action: `Actions\AcceptTeamInvitation`
+
+```php
+public function accept(Authenticatable $user, Model $invitation): void;
+```
+
+Joins the invitation's team as `$user` and deletes the invitation. The endpoint
+(`POST invitations/{token}/accept`) looks the token up and checks that `$user`'s email is the
+invitation's, then calls this; the default action holds the rest. It returns only after a join,
+and refuses everything else:
+
+- `Support\TeamInvitationRefused` (a `ValidationException`) with `refusal()` of `expired` or
+  `already_joined`. The invitation is deleted either way. The endpoint answers these with its own
+  410 and 200.
+- Whatever `ensureCanJoin()` throws, which the endpoint lets through as the validation error it is.
+
+The join runs in one `DB::transaction` with the team row read `FOR UPDATE`, so two accepts for the
+same team are serialised. To gate who may join (a member cap, say), extend the default action and
+override its `protected function ensureCanJoin(Model $team, Authenticatable $user): void`. It is
+empty by default, runs inside that transaction with `$team` locked and freshly read, after the
+already-a-member check and before the attach, and is not called for an expired invitation or a
+user who already belongs. Throw a `ValidationException` (with a stable `code`, as
+`RemoveTeamMember` does) to refuse: the transaction rolls back and the invitation stays.
+
+```php
+class CappedAcceptTeamInvitation extends AcceptTeamInvitation
+{
+    protected function ensureCanJoin(Model $team, Authenticatable $user): void
+    {
+        if ($team->users()->count() >= 5) {
+            throw ValidationException::withMessages(['invitation' => 'This team is full.']);
+        }
+    }
+}
+```
 
 ---
 

@@ -4,6 +4,10 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Added
+
+- **Accepting an invitation is a contract, with a hook to gate the join.** `POST invitations/{token}/accept` now calls `Contracts\AcceptsTeamInvitations::accept(Authenticatable $user, Model $invitation): void`, bound to `Actions\AcceptTeamInvitation`. The action runs the expiry check, the already-a-member check and the attach in one `DB::transaction` with the team row read `FOR UPDATE`, and calls an empty `protected ensureCanJoin(Model $team, Authenticatable $user): void` under that lock, so an application can bind a subclass that refuses a join (a plan's member cap) without two accepts racing past the count. A refusal from the hook rolls back and leaves the invitation. The default refusals are `Support\TeamInvitationRefused`, a `ValidationException` whose `refusal()` is `expired` or `already_joined`; the endpoint maps them to the same 410 and 200 it always answered, and every other body and status is unchanged. `AddTeamMember` is unchanged. (`src/Contracts/AcceptsTeamInvitations.php`, `src/Actions/AcceptTeamInvitation.php`, `src/Support/TeamInvitationRefused.php`, `src/Http/Controllers/TeamInvitationController.php`, `src/MagicStarterServiceProvider.php`)
+
 ## [0.0.49] - 2026-10-29
 
 ### Fixed
