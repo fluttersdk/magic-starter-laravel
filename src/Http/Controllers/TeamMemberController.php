@@ -115,12 +115,6 @@ class TeamMemberController
 
         $remover->remove($user, $teamModel, $user);
 
-        if ((string) $user->current_team_id === (string) $teamModel->getKey()) {
-            $nextTeam = $user->allTeams()->where('id', '!=', $teamModel->getKey())->first();
-            // current_team_id is kept out of $fillable; forceFill persists it.
-            $user->forceFill(['current_team_id' => $nextTeam?->getKey()])->save();
-        }
-
         return response()->json(['message' => __('magic-starter::teams.members.left')]);
     }
 
