@@ -4,6 +4,8 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [0.0.56] - 2026-11-01
+
 ### Fixed
 
 - **The named rate limiters count an IPv6 client by its /64, not by each address.** Every limiter that keyed on the source address (`magic-starter-auth-login`, `-auth-register`, `-auth-social`, `-auth-password-reset`, `-2fa-challenge`, `-guest-auth`, `-otp`, `-settings`, `-releases`, `-email-verification`, `-push-test`, `-support`, `-support-public`, `-newsletter-unsubscribe` and `-newsletter-unsubscribe-page`) used the full address, so a client holding a /64 (one subscriber is routinely handed one) got a fresh bucket per address: guesses against one account, or a flood of mail to one inbox, were not bounded at all. The key is now the address with an IPv6 collapsed to its /64 (`2001:db8:1:2::/64`) and an IPv4 address unchanged, so every IPv4 bucket keeps its key. Several people behind one /64 now share a bucket, as several behind one IPv4 NAT already did. No response or route changes. (`src/MagicStarterServiceProvider.php`, `doc/architecture/service-provider.md`)
