@@ -125,7 +125,7 @@ The route prefix is read from `config('magic-starter.route_prefix')` (default: `
 <a name="rate-limiters"></a>
 ## Rate Limiters
 
-`configureRateLimiting()` registers nine named `RateLimiter` definitions. All are keyed by a combination of IP address and a request-specific discriminator to prevent credential-stuffing while not unfairly blocking shared NATs.
+`configureRateLimiting()` registers nine named `RateLimiter` definitions. All are keyed by a combination of IP address and a request-specific discriminator to prevent credential-stuffing while not unfairly blocking shared NATs. An IPv6 address is collapsed to its /64 before it becomes part of a key (an IPv4 address is used as is), because one subscriber is routinely handed a whole /64 and a key on the full address would give that host a fresh bucket per address.
 
 | Limiter Name | Limit | Key Strategy |
 |:-------------|:------|:-------------|
