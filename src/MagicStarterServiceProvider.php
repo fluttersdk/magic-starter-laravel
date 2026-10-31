@@ -34,6 +34,7 @@ use Illuminate\Cache\RateLimiting\Limit;
 // other is a single entry on the schedule.
 use Illuminate\Console\Scheduling\Event as ScheduledEvent;
 use Illuminate\Console\Scheduling\Schedule;
+use Illuminate\Http\Request;
 use Illuminate\Mail\Events\MessageSending;
 use Illuminate\Notifications\Events\NotificationSending;
 use Illuminate\Support\Facades\Event;
@@ -1126,40 +1127,60 @@ class MagicStarterServiceProvider extends ServiceProvider
     }
 
     /**
+     * The source address as a limiter key, with IPv6 collapsed to its /64.
+     *
+     * One IPv6 subscriber is routinely handed a whole /64, so a key on the full
+     * address gives a single host 2^64 fresh buckets and no limiter bounds it:
+     * guesses against one account, or mail to one inbox, rotate the low 64 bits
+     * and start again. An IPv4 address is returned as is. Every limiter below
+     * that keys on the address goes through this and none calls `ip()` itself.
+     */
+    private function addressKey(Request $request): string
+    {
+        $ip = (string) $request->ip();
+
+        if (filter_var($ip, FILTER_VALIDATE_IP, FILTER_FLAG_IPV6) === false) {
+            return $ip;
+        }
+
+        return inet_ntop(substr(inet_pton($ip), 0, 8) . str_repeat("\0", 8)) . '/64';
+    }
+
+    /**
      * Configure named rate limiters for Magic Starter endpoints.
      */
     private function configureRateLimiting(): void
     {
         // Authentication endpoints
         RateLimiter::for('magic-starter-auth-login', function ($request) {
-            return Limit::perMinute(5)->by($request->ip() . '|' . $request->input('email', ''));
+            return Limit::perMinute(5)->by($this->addressKey($request) . '|' . $request->input('email', ''));
         });
 
         RateLimiter::for('magic-starter-auth-register', function ($request) {
-            return Limit::perMinute(3)->by($request->ip());
+            return Limit::perMinute(3)->by($this->addressKey($request));
         });
 
         RateLimiter::for('magic-starter-auth-social', function ($request) {
-            return Limit::perMinute(10)->by($request->ip() . '|' . $request->route('provider', ''));
+            return Limit::perMinute(10)->by($this->addressKey($request) . '|' . $request->route('provider', ''));
         });
 
         RateLimiter::for('magic-starter-auth-password-reset', function ($request) {
-            return Limit::perMinute(3)->by($request->ip() . '|' . $request->input('email', ''));
+            return Limit::perMinute(3)->by($this->addressKey($request) . '|' . $request->input('email', ''));
         });
 
         // 2FA challenge
         RateLimiter::for('magic-starter-2fa-challenge', function ($request) {
-            return Limit::perMinute(5)->by($request->ip() . '|' . $request->input('two_factor_token', ''));
+            return Limit::perMinute(5)->by($this->addressKey($request) . '|' . $request->input('two_factor_token', ''));
         });
 
         // Guest auth
         RateLimiter::for('magic-starter-guest-auth', function ($request) {
-            return Limit::perMinute(10)->by($request->ip() . '|' . $request->input('device_id', ''));
+            return Limit::perMinute(10)->by($this->addressKey($request) . '|' . $request->input('device_id', ''));
         });
 
         // OTP endpoints - combined limiter for both send and verify
         RateLimiter::for('magic-starter-otp', function ($request) {
-            $key = $request->ip();
+            $key = $this->addressKey($request);
             if ($request->is('*otp/send*')) {
                 return Limit::perMinute(2)->by($key . '|send|' . $request->input('phone', ''));
             }
@@ -1169,17 +1190,17 @@ class MagicStarterServiceProvider extends ServiceProvider
 
         // Public settings
         RateLimiter::for('magic-starter-settings', function ($request) {
-            return Limit::perMinute(30)->by($request->ip());
+            return Limit::perMinute(30)->by($this->addressKey($request));
         });
 
         // Public releases feed: cached server-side, so the limit only guards the cache hit.
         RateLimiter::for('magic-starter-releases', function ($request) {
-            return Limit::perMinute(60)->by($request->ip());
+            return Limit::perMinute(60)->by($this->addressKey($request));
         });
 
         // Email verification
         RateLimiter::for('magic-starter-email-verification', function ($request) {
-            return Limit::perMinute(1)->by($request->user()?->id ?: $request->ip());
+            return Limit::perMinute(1)->by($request->user()?->id ?: $this->addressKey($request));
         });
 
         // Self-addressed push test. Bucketed on the caller and not on the IP,
@@ -1188,7 +1209,7 @@ class MagicStarterServiceProvider extends ServiceProvider
         // a phone that changes network must not get a fresh allowance by moving.
         // Five a minute is a person pressing a button, not a client loop.
         RateLimiter::for('magic-starter-push-test', function ($request) {
-            return Limit::perMinute(5)->by($request->user()?->getAuthIdentifier() ?: $request->ip());
+            return Limit::perMinute(5)->by($request->user()?->getAuthIdentifier() ?: $this->addressKey($request));
         });
 
         // Support desk, signed in: bucketed on the caller like the push test.
@@ -1197,7 +1218,7 @@ class MagicStarterServiceProvider extends ServiceProvider
         // thread costs a show, a receipt and a list reread and the client
         // polls every 30 seconds.
         RateLimiter::for('magic-starter-support', function ($request) {
-            $caller = $request->user()?->getAuthIdentifier() ?: $request->ip();
+            $caller = $request->user()?->getAuthIdentifier() ?: $this->addressKey($request);
             $path = $request->path();
 
             // A thread of images fetches each file as it scrolls, so files ride
@@ -1229,13 +1250,13 @@ class MagicStarterServiceProvider extends ServiceProvider
 
             if (! is_string($token)) {
                 return [
-                    Limit::perHour(3)->by('ip|' . $request->ip()),
+                    Limit::perHour(3)->by('ip|' . $this->addressKey($request)),
                     Limit::perDay(3)->by('email|' . mb_strtolower(trim((string) $request->input('email', '')))),
                 ];
             }
 
             if ($request->isMethod('GET')) {
-                return Limit::perMinute(60)->by('read|' . $request->ip());
+                return Limit::perMinute(60)->by('read|' . $this->addressKey($request));
             }
 
             return Limit::perHour(10)->by('thread|' . hash('sha256', $token));
@@ -1249,12 +1270,12 @@ class MagicStarterServiceProvider extends ServiceProvider
         RateLimiter::for('magic-starter-newsletter-unsubscribe', function ($request) {
             return [
                 Limit::perMinute(10)->by('newsletter|' . hash('sha256', (string) $request->route('token'))),
-                Limit::perMinute(300)->by('newsletter-ip|' . $request->ip()),
+                Limit::perMinute(300)->by('newsletter-ip|' . $this->addressKey($request)),
             ];
         });
 
         RateLimiter::for('magic-starter-newsletter-unsubscribe-page', function ($request) {
-            return Limit::perMinute(60)->by($request->ip());
+            return Limit::perMinute(60)->by($this->addressKey($request));
         });
     }
 }
