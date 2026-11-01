@@ -374,7 +374,7 @@ Resolution order:
 2. Otherwise: returns `null`. The client draws its own initials, in its own theme.
 
 > [!NOTE]
-> The `Team` model implements an equivalent `profilePhotoUrl` Attribute directly (not via this trait), with the same `null` for a team with no photo. The trait is for user models only.
+> The `Team` model implements an equivalent `profilePhotoUrl` Attribute directly (not via this trait), with the same `null` for a team with no photo. It resolves the URL on `MagicStarter::teamPhotoDisk()` (`magic-starter.team_photo_disk`, then `profile_photo_disk`, then `filesystems.default`), the same disk the team photo upload and both deletes use. The trait is for user models only.
 
 ### <a name="hasnotifications"></a>HasNotifications
 
