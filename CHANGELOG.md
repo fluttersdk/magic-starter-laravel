@@ -4,6 +4,14 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Fixed
+
+- **File writes no longer ask an S3-compatible disk for an ACL, and a team photo is read, written and deleted on one disk.** The profile and team photo uploads (`ProfilePhotoController`, `TeamPhotoController`, `UpdateTeam`) used `storePublicly`, which sends `x-amz-acl: public-read` with every write; they now `store` under the same directory and the same random name, and the disk alone decides whether the file is public. The support article editor saved an image and then called `setVisibility()` on it, which a CDN that answers PutObjectAcl by rewriting the object turns into an empty file; the editor now stores the image without any visibility call and still answers `url()` of the disk. `UpdateTeam`, `DeleteTeam` and `Team::profile_photo_url` read only `profile_photo_disk`, while `TeamPhotoController` honoured `team_photo_disk`, so with the two keys apart a team photo was written to one disk and read or deleted from another; every team path now resolves `MagicStarter::teamPhotoDisk()` and every profile path `MagicStarter::profilePhotoDisk()`. No config key or route changes. (`src/MagicStarter.php`, `src/Http/Controllers/ProfilePhotoController.php`, `src/Http/Controllers/TeamPhotoController.php`, `src/Actions/UpdateTeam.php`, `src/Actions/DeleteTeam.php`, `src/Actions/DeleteUser.php`, `src/Models/Team.php`, `src/Traits/HasProfilePhoto.php`, `src/Filament/Resources/SupportArticles/SupportArticleResource.php`)
+
+### Changed
+
+- **A photo or article image is now as public as its disk, not as `storePublicly` made it.** On a local `public` disk, or an S3 bucket whose policy serves objects, nothing changes. On a plain AWS S3 disk with ACLs enabled and no `'visibility' => 'public'` in its config, new profile photos, team photos and article images are stored private (the adapter's default) where they used to be public-read, and their `url()` answers 403 until the disk sets `'visibility' => 'public'` or the bucket serves them by policy.
+
 ## [0.0.56] - 2026-11-01
 
 ### Fixed

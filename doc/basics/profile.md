@@ -192,7 +192,7 @@ Available when the `profile-photos` feature is enabled in `config/magic-starter.
 |-------|------|-------|
 | `photo` | file | Required, image, max:1024 KB (1 MB) |
 
-The photo is stored publicly on the disk configured by `magic-starter.profile_photo_disk` (falls back to `filesystems.default`, typically `public`). The storage path is controlled by `magic-starter.profile_photo_path` (default: `profile-photos`). If a previous photo exists, it is deleted from the disk before storing the new one.
+The photo is stored on the disk configured by `magic-starter.profile_photo_disk` (falls back to `filesystems.default`, typically `public`) with no visibility or ACL call, so it is as public as that disk's own `visibility` setting: set `'visibility' => 'public'` on an S3 disk that serves its objects by ACL, or serve the bucket by policy. The storage path is controlled by `magic-starter.profile_photo_path` (default: `profile-photos`). If a previous photo exists, it is deleted from the disk before storing the new one.
 
 #### Request Example
 
