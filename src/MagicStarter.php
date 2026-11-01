@@ -243,6 +243,29 @@ class MagicStarter
     }
 
     /**
+     * The disk every profile photo is written to, read from and deleted from.
+     */
+    public static function profilePhotoDisk(): string
+    {
+        return (string) (config('magic-starter.profile_photo_disk')
+            ?? config('filesystems.default', 'public'));
+    }
+
+    /**
+     * The disk every team photo is written to, read from and deleted from.
+     *
+     * One answer for the upload, the URL and both deletes, because a team
+     * photo written to one disk and read or deleted from another is a broken
+     * avatar or an orphaned file.
+     */
+    public static function teamPhotoDisk(): string
+    {
+        return (string) (config('magic-starter.team_photo_disk')
+            ?? config('magic-starter.profile_photo_disk')
+            ?? config('filesystems.default', 'public'));
+    }
+
+    /**
      * Resolve the configured OneSignal app id, or `null` when unusable.
      *
      * The single definition of "push is provisioned": a non-empty trimmed

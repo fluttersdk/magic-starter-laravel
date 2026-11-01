@@ -21,15 +21,16 @@ class TeamPhotoController
         $teamModel = $this->findTeam($team);
         Gate::forUser($request->user())->authorize('update', $teamModel);
 
-        $disk = (string) (config('magic-starter.team_photo_disk') ?? config('magic-starter.profile_photo_disk')
-            ?? config('filesystems.default', 'public'));
+        $disk = MagicStarter::teamPhotoDisk();
         $filesystem = app('filesystem')->disk($disk);
 
         if (! empty($teamModel->profile_photo_path)) {
             $filesystem->delete((string) $teamModel->profile_photo_path);
         }
 
-        $path = $request->file('photo')->storePublicly(
+        // No visibility option: on an S3-compatible CDN it rides on the write as an ACL.
+        // The disk itself decides whether the file is public.
+        $path = $request->file('photo')->store(
             config('magic-starter.team_photo_path', 'team-photos'),
             ['disk' => $disk],
         );
@@ -49,9 +50,7 @@ class TeamPhotoController
         $teamModel = $this->findTeam($team);
         Gate::forUser($request->user())->authorize('update', $teamModel);
 
-        $disk = (string) (config('magic-starter.team_photo_disk') ?? config('magic-starter.profile_photo_disk')
-            ?? config('filesystems.default', 'public'));
-        $filesystem = app('filesystem')->disk($disk);
+        $filesystem = app('filesystem')->disk(MagicStarter::teamPhotoDisk());
 
         if (! empty($teamModel->profile_photo_path)) {
             $filesystem->delete((string) $teamModel->profile_photo_path);

@@ -107,7 +107,7 @@ class Team extends Model
     {
         return Attribute::get(function (): ?string {
             return $this->profile_photo_path
-                ? Storage::disk(config('magic-starter.profile_photo_disk', config('filesystems.default')))->url($this->profile_photo_path)
+                ? Storage::disk(MagicStarter::teamPhotoDisk())->url($this->profile_photo_path)
                 : null;
         });
     }

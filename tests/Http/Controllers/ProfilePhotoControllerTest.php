@@ -4,6 +4,7 @@ namespace FlutterSdk\MagicStarter\Tests\Http\Controllers;
 
 use FlutterSdk\MagicStarter\Http\Controllers\ProfilePhotoController;
 use FlutterSdk\MagicStarter\MagicStarter;
+use FlutterSdk\MagicStarter\Tests\Fixtures\VisibilityRecordingDisk;
 use FlutterSdk\MagicStarter\Tests\TestCase;
 use Illuminate\Database\Eloquent\Concerns\HasUuids;
 use Illuminate\Foundation\Auth\User as Authenticatable;
@@ -80,6 +81,32 @@ final class ProfilePhotoControllerTest extends TestCase
         $this->assertNotSame('profile-photos/old-photo.jpg', $updatedPath);
         $this->assertFalse(\call_user_func([$filesystem, 'exists'], 'profile-photos/old-photo.jpg'));
         $this->assertTrue(\call_user_func([$filesystem, 'exists'], $updatedPath));
+    }
+
+    public function test_update_stores_each_photo_under_a_random_name_without_an_acl(): void
+    {
+        $disk = VisibilityRecordingDisk::fake('profile-photos');
+
+        $user = ProfilePhotoControllerTestUser::query()->create([
+            'name' => 'Photo User',
+            'email' => 'photo@example.test',
+        ]);
+
+        $this->actingAs($user)
+            ->post('/user/profile-photo', ['photo' => UploadedFile::fake()->image('avatar.jpg', 120, 120)])
+            ->assertOk();
+        $first = (string) $user->fresh()->profile_photo_path;
+
+        $this->actingAs($user)
+            ->post('/user/profile-photo', ['photo' => UploadedFile::fake()->image('avatar.jpg', 120, 120)])
+            ->assertOk();
+        $second = (string) $user->fresh()->profile_photo_path;
+
+        $this->assertSame([], $disk->visibilityCalls);
+        $this->assertMatchesRegularExpression('#^profile-photos/[A-Za-z0-9]{40}\.jpg$#', $first);
+        $this->assertNotSame($first, $second);
+        $disk->assertMissing($first);
+        $this->assertNotSame('', $disk->get($second));
     }
 
     public function test_delete_removes_profile_photo_path_and_file(): void

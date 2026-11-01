@@ -32,6 +32,7 @@ use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Support\Arr;
 use Illuminate\Support\Facades\DB;
+use Livewire\Features\SupportFileUploads\TemporaryUploadedFile;
 use UnitEnum;
 
 /**
@@ -327,6 +328,16 @@ class SupportArticleResource extends MagicStarterResource
                     ->required($isDefault)
                     ->fileAttachmentsDisk(static fn (): string => static::articlesConfig('disk'))
                     ->fileAttachmentsDirectory(RemoveSupportArticleImages::DIRECTORY)
+                    // Filament's own save follows the store with a public ACL call. On an
+                    // S3-compatible CDN that is a PutObjectAcl, which replaces the image just
+                    // stored with an empty body; the disk alone decides whether it is public.
+                    ->saveUploadedFileAttachmentUsing(static fn (TemporaryUploadedFile $file): string|false => $file->store(
+                        RemoveSupportArticleImages::DIRECTORY,
+                        [
+                            'disk' => static::articlesConfig('disk'),
+                            'mimetype' => $file->getMimeType(),
+                        ],
+                    ))
                     ->fileAttachmentsAcceptedFileTypes([
                         'image/png',
                         'image/jpeg',

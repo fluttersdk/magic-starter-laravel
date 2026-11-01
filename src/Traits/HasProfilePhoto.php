@@ -2,6 +2,8 @@
 
 namespace FlutterSdk\MagicStarter\Traits;
 
+use FlutterSdk\MagicStarter\MagicStarter;
+
 trait HasProfilePhoto
 {
     /**
@@ -21,10 +23,7 @@ trait HasProfilePhoto
             return null;
         }
 
-        $disk = config('magic-starter.profile_photo_disk')
-            ?? config('filesystems.default', 'public');
-
-        $filesystem = app('filesystem')->disk((string) $disk);
+        $filesystem = app('filesystem')->disk(MagicStarter::profilePhotoDisk());
 
         if (method_exists($filesystem, 'url')) {
             return (string) $filesystem->url($this->profile_photo_path);
