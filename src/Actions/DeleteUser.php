@@ -7,6 +7,7 @@ use FlutterSdk\MagicStarter\Contracts\DeletesTeams;
 use FlutterSdk\MagicStarter\Contracts\DeletesUsers;
 use FlutterSdk\MagicStarter\Features;
 use FlutterSdk\MagicStarter\Jobs\DeleteOneSignalUser;
+use FlutterSdk\MagicStarter\MagicStarter;
 use FlutterSdk\MagicStarter\Models\NewsletterSubscriber;
 use FlutterSdk\MagicStarter\Models\NotificationSetting;
 use FlutterSdk\MagicStarter\Models\PushDevice;
@@ -135,7 +136,7 @@ class DeleteUser implements DeletesUsers
             }
 
             if ($photoPath !== null) {
-                Storage::disk(config('magic-starter.profile_photo_disk', 'public'))->delete($photoPath);
+                Storage::disk(MagicStarter::profilePhotoDisk())->delete($photoPath);
             }
 
             foreach ($supportFiles as $disk => $paths) {

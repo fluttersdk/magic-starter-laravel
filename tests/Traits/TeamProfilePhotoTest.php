@@ -35,10 +35,6 @@ final class TeamProfilePhotoTest extends TestCase
 
     public function test_a_team_with_a_stored_photo_answers_its_url(): void
     {
-        // Both disk keys name the same disk on purpose. The team photo's
-        // writers and its reader disagree on which key they read (#42), and
-        // this test is about the stored branch answering a URL, not about
-        // which of the two keys is right.
         config([
             'magic-starter.team_photo_disk' => 'team-photos',
             'magic-starter.profile_photo_disk' => 'team-photos',
@@ -47,6 +43,30 @@ final class TeamProfilePhotoTest extends TestCase
                 'root' => storage_path('framework/testing/disks/team-photos'),
                 'url' => 'https://cdn.example.test/team-photos',
                 'visibility' => 'public',
+            ],
+        ]);
+
+        $team = new Team;
+        $team->name = 'Acme Ops';
+        $team->profile_photo_path = 'acme.png';
+
+        $this->assertSame('https://cdn.example.test/team-photos/acme.png', $team->profile_photo_url);
+    }
+
+    public function test_a_team_photo_url_is_built_on_the_team_disk_when_it_differs_from_the_profile_disk(): void
+    {
+        config([
+            'magic-starter.team_photo_disk' => 'team-photos',
+            'magic-starter.profile_photo_disk' => 'profile-photos',
+            'filesystems.disks.team-photos' => [
+                'driver' => 'local',
+                'root' => storage_path('framework/testing/disks/team-photos'),
+                'url' => 'https://cdn.example.test/team-photos',
+            ],
+            'filesystems.disks.profile-photos' => [
+                'driver' => 'local',
+                'root' => storage_path('framework/testing/disks/profile-photos'),
+                'url' => 'https://cdn.example.test/profile-photos',
             ],
         ]);
 

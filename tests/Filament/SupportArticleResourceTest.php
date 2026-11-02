@@ -17,6 +17,7 @@ use FlutterSdk\MagicStarter\Filament\Resources\SupportArticles\Pages\ListSupport
 use FlutterSdk\MagicStarter\Filament\Resources\SupportArticles\SupportArticleResource;
 use FlutterSdk\MagicStarter\Models\SupportArticle;
 use FlutterSdk\MagicStarter\Tests\Fixtures\ConcreteAdminUser;
+use FlutterSdk\MagicStarter\Tests\Fixtures\VisibilityRecordingDisk;
 use Illuminate\Http\UploadedFile;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\Event;
@@ -340,6 +341,20 @@ class SupportArticleResourceTest extends FilamentTestCase
 
         $this->assertNotNull($answer);
         $this->assertCount(1, Storage::disk(self::DISK)->allFiles('support-articles'));
+    }
+
+    public function test_an_upload_is_stored_whole_without_an_acl_and_answers_the_disk_url(): void
+    {
+        $disk = VisibilityRecordingDisk::fake(self::DISK);
+
+        $answer = $this->upload(UploadedFile::fake()->image('a.png')->size(10));
+
+        $files = $disk->allFiles('support-articles');
+        $this->assertCount(1, $files);
+        $this->assertMatchesRegularExpression('#^support-articles/[A-Za-z0-9]{40}\.png$#', $files[0]);
+        $this->assertNotSame('', $disk->get($files[0]));
+        $this->assertSame($disk->url($files[0]), $answer);
+        $this->assertSame([], $disk->visibilityCalls);
     }
 
     public function test_a_gif_upload_is_refused_and_nothing_is_stored(): void

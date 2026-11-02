@@ -137,6 +137,40 @@ class MagicStarterTest extends TestCase
         $this->assertSame('App\\Models\\MyCustomTeam', MagicStarter::teamModel());
     }
 
+    public function test_profile_photo_disk_prefers_its_key_then_the_default_disk(): void
+    {
+        config([
+            'magic-starter.profile_photo_disk' => 'profile-disk',
+            'filesystems.default' => 'default-disk',
+        ]);
+
+        $this->assertSame('profile-disk', MagicStarter::profilePhotoDisk());
+
+        config(['magic-starter.profile_photo_disk' => null]);
+
+        $this->assertSame('default-disk', MagicStarter::profilePhotoDisk());
+    }
+
+    public function test_team_photo_disk_prefers_its_key_then_the_profile_disk_then_the_default_disk(): void
+    {
+        config([
+            'magic-starter.team_photo_disk' => 'team-disk',
+            'magic-starter.profile_photo_disk' => 'profile-disk',
+            'filesystems.default' => 'default-disk',
+        ]);
+
+        $this->assertSame('team-disk', MagicStarter::teamPhotoDisk());
+        $this->assertSame('profile-disk', MagicStarter::profilePhotoDisk());
+
+        config(['magic-starter.team_photo_disk' => null]);
+
+        $this->assertSame('profile-disk', MagicStarter::teamPhotoDisk());
+
+        config(['magic-starter.profile_photo_disk' => null]);
+
+        $this->assertSame('default-disk', MagicStarter::teamPhotoDisk());
+    }
+
     public function test_onesignal_rest_api_key_is_trimmed(): void
     {
         config(['magic-starter.onesignal.rest_api_key' => '  rest-key  ']);

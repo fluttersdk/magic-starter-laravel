@@ -5,6 +5,7 @@ namespace FlutterSdk\MagicStarter\Tests\Http\Controllers;
 use FlutterSdk\MagicStarter\Features;
 use FlutterSdk\MagicStarter\Http\Controllers\TeamPhotoController;
 use FlutterSdk\MagicStarter\MagicStarter;
+use FlutterSdk\MagicStarter\Tests\Fixtures\VisibilityRecordingDisk;
 use FlutterSdk\MagicStarter\Tests\TestCase;
 use Illuminate\Auth\Authenticatable as AuthenticatableTrait;
 use Illuminate\Contracts\Auth\Authenticatable as AuthenticatableContract;
@@ -123,6 +124,72 @@ final class TeamPhotoControllerTest extends TestCase
         Storage::disk('public')->assertMissing('team-photos/old.jpg');
         Storage::disk('public')->assertExists($team->profile_photo_path);
         $this->assertNotEquals('team-photos/old.jpg', $team->profile_photo_path);
+    }
+
+    public function test_upload_stores_each_photo_under_a_random_name_without_an_acl(): void
+    {
+        $disk = VisibilityRecordingDisk::fake('public');
+
+        $user = TestUserForTeamPhoto::create([
+            'name' => 'Test User',
+            'email' => 'test@example.com',
+            'password' => bcrypt('password'),
+        ]);
+
+        $team = TestTeamForTeamPhoto::create([
+            'user_id' => $user->id,
+            'name' => 'Test Team',
+            'personal_team' => true,
+        ]);
+
+        $this->actingAs($user)
+            ->postJson("/teams/{$team->id}/photo", ['photo' => UploadedFile::fake()->image('photo.jpg')])
+            ->assertOk();
+        $first = (string) $team->fresh()->profile_photo_path;
+
+        $this->actingAs($user)
+            ->postJson("/teams/{$team->id}/photo", ['photo' => UploadedFile::fake()->image('photo.jpg')])
+            ->assertOk();
+        $second = (string) $team->fresh()->profile_photo_path;
+
+        $this->assertSame([], $disk->visibilityCalls);
+        $this->assertMatchesRegularExpression('#^team-photos/[A-Za-z0-9]{40}\.jpg$#', $first);
+        $this->assertNotSame($first, $second);
+        $disk->assertMissing($first);
+        $this->assertNotSame('', $disk->get($second));
+    }
+
+    public function test_upload_and_delete_use_the_team_disk_when_it_differs_from_the_profile_disk(): void
+    {
+        config([
+            'magic-starter.team_photo_disk' => 'team-disk',
+            'magic-starter.profile_photo_disk' => 'public',
+        ]);
+        Storage::fake('team-disk');
+
+        $user = TestUserForTeamPhoto::create([
+            'name' => 'Test User',
+            'email' => 'test@example.com',
+            'password' => bcrypt('password'),
+        ]);
+
+        $team = TestTeamForTeamPhoto::create([
+            'user_id' => $user->id,
+            'name' => 'Test Team',
+            'personal_team' => true,
+        ]);
+
+        $this->actingAs($user)
+            ->postJson("/teams/{$team->id}/photo", ['photo' => UploadedFile::fake()->image('photo.jpg')])
+            ->assertOk();
+        $path = (string) $team->fresh()->profile_photo_path;
+
+        Storage::disk('team-disk')->assertExists($path);
+        Storage::disk('public')->assertMissing($path);
+
+        $this->actingAs($user)->deleteJson("/teams/{$team->id}/photo")->assertOk();
+
+        Storage::disk('team-disk')->assertMissing($path);
     }
 
     public function test_delete_removes_photo_and_clears_path(): void

@@ -4,6 +4,7 @@ namespace FlutterSdk\MagicStarter\Http\Controllers;
 
 use FlutterSdk\MagicStarter\Http\Requests\UpdateProfilePhotoRequest;
 use FlutterSdk\MagicStarter\Http\Resources\UserResource;
+use FlutterSdk\MagicStarter\MagicStarter;
 use Illuminate\Http\Request;
 
 /**
@@ -17,15 +18,16 @@ class ProfilePhotoController
     public function update(UpdateProfilePhotoRequest $request): UserResource
     {
         $user = $request->user();
-        $disk = (string) (config('magic-starter.profile_photo_disk')
-            ?? config('filesystems.default', 'public'));
+        $disk = MagicStarter::profilePhotoDisk();
         $filesystem = app('filesystem')->disk($disk);
 
         if (! empty($user->profile_photo_path)) {
             $filesystem->delete((string) $user->profile_photo_path);
         }
 
-        $path = $request->file('photo')->storePublicly(
+        // No visibility option: on an S3-compatible CDN it rides on the write as an ACL.
+        // The disk itself decides whether the file is public.
+        $path = $request->file('photo')->store(
             config('magic-starter.profile_photo_path', 'profile-photos'),
             ['disk' => $disk],
         );
@@ -43,9 +45,7 @@ class ProfilePhotoController
     public function delete(Request $request): UserResource
     {
         $user = $request->user();
-        $disk = (string) (config('magic-starter.profile_photo_disk')
-            ?? config('filesystems.default', 'public'));
-        $filesystem = app('filesystem')->disk($disk);
+        $filesystem = app('filesystem')->disk(MagicStarter::profilePhotoDisk());
 
         if (! empty($user->profile_photo_path)) {
             $filesystem->delete((string) $user->profile_photo_path);

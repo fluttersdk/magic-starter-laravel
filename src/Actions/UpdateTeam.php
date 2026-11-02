@@ -3,6 +3,7 @@
 namespace FlutterSdk\MagicStarter\Actions;
 
 use FlutterSdk\MagicStarter\Contracts\UpdatesTeams;
+use FlutterSdk\MagicStarter\MagicStarter;
 use Illuminate\Contracts\Auth\Authenticatable;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Support\Arr;
@@ -38,16 +39,18 @@ class UpdateTeam implements UpdatesTeams
         $photo = Arr::get($validated, 'photo');
 
         if ($photo !== null) {
+            $disk = MagicStarter::teamPhotoDisk();
+
             // 1. Delete existing photo if present.
             if (! empty($team->profile_photo_path)) {
-                Storage::disk(config('magic-starter.profile_photo_disk', 'public'))
-                    ->delete((string) $team->profile_photo_path);
+                Storage::disk($disk)->delete((string) $team->profile_photo_path);
             }
 
-            // 2. Store new photo and update model.
-            $path = $photo->storePublicly(
+            // 2. Store new photo and update model. No visibility option: on an
+            //    S3-compatible CDN it rides on the write as an ACL.
+            $path = $photo->store(
                 config('magic-starter.team_photo_path', 'team-photos'),
-                ['disk' => config('magic-starter.profile_photo_disk', 'public')],
+                ['disk' => $disk],
             );
 
             $team->forceFill([

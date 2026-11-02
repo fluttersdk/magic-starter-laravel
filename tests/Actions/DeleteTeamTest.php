@@ -68,6 +68,23 @@ final class DeleteTeamTest extends TestCase
         $this->assertSame(0, DB::table('team_invitations')->count());
     }
 
+    public function test_the_purge_removes_the_photo_from_the_team_disk_when_it_differs_from_the_profile_disk(): void
+    {
+        config([
+            'magic-starter.team_photo_disk' => 'team-disk',
+            'magic-starter.profile_photo_disk' => 'public',
+        ]);
+        Storage::fake('team-disk');
+        $team = $this->makeTeam($this->makeUser(), ['profile_photo_path' => 'team-photos/home.png']);
+        Storage::disk('team-disk')->put('team-photos/home.png', 'png');
+        Storage::disk('public')->put('team-photos/home.png', 'unrelated');
+
+        (new DeleteTeam)->delete($team);
+
+        Storage::disk('team-disk')->assertMissing('team-photos/home.png');
+        Storage::disk('public')->assertExists('team-photos/home.png');
+    }
+
     public function test_a_team_model_without_soft_deletes_is_deleted_as_before(): void
     {
         MagicStarter::useTeamModel(ConcreteTeam::class);
