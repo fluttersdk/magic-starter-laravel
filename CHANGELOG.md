@@ -4,6 +4,8 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [0.0.57] - 2026-11-02
+
 ### Fixed
 
 - **File writes no longer ask an S3-compatible disk for an ACL, and a team photo is read, written and deleted on one disk.** The profile and team photo uploads (`ProfilePhotoController`, `TeamPhotoController`, `UpdateTeam`) used `storePublicly`, which sends `x-amz-acl: public-read` with every write; they now `store` under the same directory and the same random name, and the disk alone decides whether the file is public. The support article editor saved an image and then called `setVisibility()` on it, which a CDN that answers PutObjectAcl by rewriting the object turns into an empty file; the editor now stores the image without any visibility call and still answers `url()` of the disk. `UpdateTeam`, `DeleteTeam` and `Team::profile_photo_url` read only `profile_photo_disk`, while `TeamPhotoController` honoured `team_photo_disk`, so with the two keys apart a team photo was written to one disk and read or deleted from another; every team path now resolves `MagicStarter::teamPhotoDisk()` and every profile path `MagicStarter::profilePhotoDisk()`. No config key or route changes. (`src/MagicStarter.php`, `src/Http/Controllers/ProfilePhotoController.php`, `src/Http/Controllers/TeamPhotoController.php`, `src/Actions/UpdateTeam.php`, `src/Actions/DeleteTeam.php`, `src/Actions/DeleteUser.php`, `src/Models/Team.php`, `src/Traits/HasProfilePhoto.php`, `src/Filament/Resources/SupportArticles/SupportArticleResource.php`)
