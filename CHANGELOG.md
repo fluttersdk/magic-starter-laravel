@@ -4,6 +4,8 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [0.0.58] - 2026-11-03
+
 ### Changed
 
 - **The admin Subscriptions list shows every billing rail, not only the card.** It listed Cashier's `subscriptions` rows, so an App Store or Google Play purchase and a manual plan never appeared, sandbox or not. It now lists one row per billable (a user or a team) that a rail has touched, read from the entitlement columns every rail writes: plan, status, the rail it is billed through, the store product and the period end. A purchase that lapsed stays listed with its last status; a billable with a Cashier row but no entitlement yet (a dropped webhook) is listed as "Not billed". Filters cover plan, status and rail, and a row opens the customer's Billing tab. The Cashier-only columns (`type`, `price`, `ends_at`) and their translation keys are gone. (`src/Filament/Resources/Subscriptions/SubscriptionResource.php`, `lang/*/admin_misc.php`)
