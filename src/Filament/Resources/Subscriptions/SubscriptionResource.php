@@ -123,7 +123,7 @@ class SubscriptionResource extends MagicStarterResource
                 TextColumn::make('plan')
                     ->label(__("{$key}.columns.plan"))
                     ->badge()
-                    ->formatStateUsing(static fn (mixed $state): ?string => static::planName(static::wire($state)))
+                    ->formatStateUsing(static fn (mixed $state): string => static::planName((string) static::wire($state)))
                     ->placeholder(static::ABSENT),
                 // A blank state skips the formatter, so the default is what
                 // names a billable no rail has written a status or a rail for.
@@ -238,12 +238,8 @@ class SubscriptionResource extends MagicStarterResource
      * The tier's display name from the catalogue, or the stored id for a plan
      * the catalogue does not name.
      */
-    protected static function planName(?string $plan): ?string
+    protected static function planName(string $plan): string
     {
-        if ($plan === null) {
-            return null;
-        }
-
         $name = BillingCatalogue::tiers()[$plan]['name'] ?? null;
 
         return is_string($name) ? $name : $plan;
@@ -257,7 +253,7 @@ class SubscriptionResource extends MagicStarterResource
         $options = [];
 
         foreach (BillingCatalogue::tierOrder() as $plan) {
-            $options[$plan] = (string) static::planName($plan);
+            $options[$plan] = static::planName($plan);
         }
 
         return $options;

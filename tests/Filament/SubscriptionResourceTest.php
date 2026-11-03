@@ -2,9 +2,11 @@
 
 namespace FlutterSdk\MagicStarter\Tests\Filament;
 
+use Filament\Facades\Filament;
 use FlutterSdk\MagicStarter\Enums\BillingProvider;
 use FlutterSdk\MagicStarter\Enums\PlanStatus;
 use FlutterSdk\MagicStarter\Features;
+use FlutterSdk\MagicStarter\Filament\MagicStarterPlugin;
 use FlutterSdk\MagicStarter\Filament\Resources\Billing\RelationManagers\BillingRelationManager;
 use FlutterSdk\MagicStarter\Filament\Resources\Subscriptions\Pages\ListSubscriptions;
 use FlutterSdk\MagicStarter\Filament\Resources\Subscriptions\SubscriptionResource;
@@ -240,6 +242,19 @@ class SubscriptionResourceTest extends FilamentTestCase
             )
             ->assertTableActionDoesNotExist('delete')
             ->assertTableActionDoesNotExist('edit');
+    }
+
+    public function test_a_row_offers_no_link_when_the_application_mounts_no_resource_for_its_customer(): void
+    {
+        $team = $this->team('Store payer', ['plan_provider' => BillingProvider::APP_STORE->value]);
+
+        Filament::getPanel('admin')->getPlugin(MagicStarterPlugin::ID)->withoutResources(['teams']);
+
+        Livewire::actingAs($this->admin())
+            ->test(ListSubscriptions::class)
+            ->loadTable()
+            ->assertCanSeeTableRecords([$team])
+            ->assertTableActionHidden('manage', $team);
     }
 
     public function test_the_list_keeps_its_header_actions(): void
