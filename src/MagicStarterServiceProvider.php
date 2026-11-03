@@ -111,6 +111,8 @@ class MagicStarterServiceProvider extends ServiceProvider
         $this->app->bind(Contracts\RevokesApiTokens::class, Actions\RevokeApiTokens::class);
         $this->app->bind(Contracts\CreatesGuestUsers::class, Actions\CreateGuestUser::class);
         $this->app->bind(Contracts\ClaimsGuestAccounts::class, Actions\ClaimGuestAccount::class);
+        $this->app->bind(Contracts\IssuesHandoffCodes::class, Actions\IssueHandoffCode::class);
+        $this->app->bind(Contracts\ExchangesHandoffCodes::class, Actions\ExchangeHandoffCode::class);
         $this->app->bind(Contracts\SendsOtpCodes::class, Actions\LogOtpProvider::class);
         $this->app->bind(Contracts\VerifiesOtpCodes::class, Actions\CacheOtpVerifier::class);
         $this->app->singleton(Support\TwoFactorAuthenticationProvider::class);
@@ -1162,6 +1164,17 @@ class MagicStarterServiceProvider extends ServiceProvider
 
         RateLimiter::for('magic-starter-auth-social', function ($request) {
             return Limit::perMinute(10)->by($this->addressKey($request) . '|' . $request->route('provider', ''));
+        });
+
+        // Sign-in handoff. The mint is a signed-in call, so it buckets on the
+        // caller and the address; the exchange has nobody signed in yet, so it
+        // buckets on the address alone, like the social exchange.
+        RateLimiter::for('magic-starter-auth-handoff', function ($request) {
+            return Limit::perMinute(10)->by($request->user()?->getAuthIdentifier() . '|' . $this->addressKey($request));
+        });
+
+        RateLimiter::for('magic-starter-auth-handoff-exchange', function ($request) {
+            return Limit::perMinute(10)->by($this->addressKey($request));
         });
 
         RateLimiter::for('magic-starter-auth-password-reset', function ($request) {

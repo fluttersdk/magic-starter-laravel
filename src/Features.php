@@ -50,6 +50,14 @@ class Features
     }
 
     /**
+     * Enable the sign-in handoff: a signed-in session mints a one-time code another origin trades for a sign-in.
+     */
+    public static function signInHandoff(): string
+    {
+        return 'sign-in-handoff';
+    }
+
+    /**
      * Enable the newsletter subscription feature.
      */
     public static function newsletterSubscription(): string
@@ -263,6 +271,14 @@ class Features
     public static function hasSocialLoginFeatures(): bool
     {
         return static::enabled(static::socialLogin());
+    }
+
+    /**
+     * Determine whether the sign-in handoff is enabled.
+     */
+    public static function hasSignInHandoffFeatures(): bool
+    {
+        return static::enabled(static::signInHandoff());
     }
 
     /**

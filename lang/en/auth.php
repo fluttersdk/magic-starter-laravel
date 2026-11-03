@@ -116,6 +116,19 @@ return [
     ],
 
     /*
+     * Sign-in handoff. `expired` is the one refusal of the exchange, whatever
+     * the cause (unknown, spent, expired code, or a user gone since), so it is
+     * worded to stay true in every case. `next` keeps `:attribute` for the
+     * validator, as the phone line does. `forbidden` answers a guest, or a
+     * token restricted to some abilities, asking to mint a code.
+     */
+    'handoff' => [
+        'expired' => 'This sign-in link has expired. Sign in again.',
+        'forbidden' => 'Only a fully signed-in account can start a sign-in on another device.',
+        'next' => 'The :attribute must be a path inside this app.',
+    ],
+
+    /*
      * Token sessions. A "session" here is a Sanctum personal access token
      * carrying its own device info, so `not_found` is a 404 on a token id and
      * not a signed-out browser.

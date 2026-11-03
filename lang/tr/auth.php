@@ -104,6 +104,18 @@ return [
     ],
 
     /*
+     * Sign-in handoff. `expired` is the one refusal of the exchange whatever the
+     * cause, so it stays true in every case; see the English file. `next` keeps
+     * `:attribute` for the validator. `forbidden` answers a guest or a token
+     * restricted to some abilities.
+     */
+    'handoff' => [
+        'expired' => 'Bu giriş bağlantısının süresi doldu. Tekrar giriş yapın.',
+        'forbidden' => 'Başka bir cihazda giriş başlatmak için tam yetkili bir hesapla giriş yapmış olmalısınız.',
+        'next' => ':attribute bu uygulamanın içinde bir yol olmalıdır.',
+    ],
+
+    /*
      * Token sessions. A session here is a Sanctum access token carrying its own
      * device info, so `not_found` is a missing token rather than a signed-out
      * browser.

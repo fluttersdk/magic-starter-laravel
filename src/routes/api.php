@@ -14,6 +14,7 @@ use FlutterSdk\MagicStarter\Http\Controllers\AuthController;
 use FlutterSdk\MagicStarter\Http\Controllers\BillingController;
 use FlutterSdk\MagicStarter\Http\Controllers\EmailVerificationController;
 use FlutterSdk\MagicStarter\Http\Controllers\GuestAuthController;
+use FlutterSdk\MagicStarter\Http\Controllers\HandoffController;
 use FlutterSdk\MagicStarter\Http\Controllers\NewsletterController;
 use FlutterSdk\MagicStarter\Http\Controllers\NotificationController;
 use FlutterSdk\MagicStarter\Http\Controllers\NotificationPreferenceController;
@@ -86,6 +87,14 @@ Route::prefix((string) config('magic-starter.route_prefix', ''))
             }
         });
 
+        // The unauthenticated half of a sign-in handoff: the app trades the code a
+        // signed-in session minted at `auth/handoff` (below) for a sign-in.
+        Route::prefix('auth')->middleware(['throttle:magic-starter-auth-handoff-exchange'])->group(function (): void {
+            if (Features::hasSignInHandoffFeatures()) {
+                Route::post('handoff/exchange', [HandoffController::class, 'exchange']);
+            }
+        });
+
         Route::prefix('auth')->middleware(['throttle:magic-starter-auth-password-reset'])->group(function (): void {
             Route::post('forgot-password', [PasswordResetController::class, 'sendResetLinkEmail']);
             Route::post('reset-password', [PasswordResetController::class, 'reset']);
@@ -142,6 +151,11 @@ Route::prefix((string) config('magic-starter.route_prefix', ''))
                 if (Features::hasGuestAuthFeatures()) {
                     Route::post('guest/claim', [GuestAuthController::class, 'claim'])
                         ->middleware('throttle:magic-starter-guest-auth');
+                }
+
+                if (Features::hasSignInHandoffFeatures()) {
+                    Route::post('handoff', [HandoffController::class, 'issue'])
+                        ->middleware('throttle:magic-starter-auth-handoff');
                 }
             });
 
