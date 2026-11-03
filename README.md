@@ -46,6 +46,7 @@ Stop rebuilding authentication, profile management, and team features from scrat
 |---|---------|-------------|
 | :key: | **Authentication** | Login, register, forgot/reset password, social login |
 | :link: | **Social Login** | Google, Apple, GitHub and Microsoft through a backend-hosted flow and a native ID-token endpoint, with connect, disconnect and set-password |
+| :handshake: | **Sign-in Handoff** | A signed-in session mints a single-use, 60 second code another origin trades for a sign-in, 2FA respected, with no bearer in a url |
 | :shield: | **Two-Factor Auth** | Enable/disable 2FA with QR code, OTP confirm, recovery codes |
 | :bust_in_silhouette: | **Profile Management** | Photo upload, email/password change, scheduled account deletion with a grace period |
 | :busts_in_silhouette: | **Teams** | Create, switch, invite members, manage roles, team photos |
@@ -180,6 +181,7 @@ Every feature is opt-in. Enable them by uncommenting in `config/magic-starter.ph
 | `profile-photos` | Profile photo upload and display for users and teams |
 | `sessions` | Active session listing and revocation |
 | `social-login` | Social authentication via Socialite providers |
+| `sign-in-handoff` | `POST auth/handoff` mints a one-time code for the signed-in caller, `POST auth/handoff/exchange` trades it for a sign-in |
 | `newsletter-subscription` | Newsletter subscribe/unsubscribe toggle |
 | `extended-profile` | Extended profile fields: phone, timezone, language, locale |
 | `notifications` | Notification listing, unread count, read/unread, preferences |
@@ -252,6 +254,7 @@ Request → Route (feature-gated, rate-limited)
 | [Profile](https://magic.fluttersdk.com/packages/starter-laravel/basics/profile) | Profile updates, photo upload, password change, account deletion |
 | [Two-Factor Auth](https://magic.fluttersdk.com/packages/starter-laravel/basics/two-factor-auth) | 2FA enable/disable, QR code, confirm, recovery codes |
 | [Notifications](https://magic.fluttersdk.com/packages/starter-laravel/basics/notifications) | Listing, unread count, mark read, preferences |
+| [Sign-in Handoff](doc/basics/sign-in-handoff.md) | Minting and exchanging a one-time sign-in code, `next` validation, security properties, browser use |
 | [Admin Panel](doc/basics/admin-panel.md) | Filament plugin, access gate, custom resources, eject, operations tools |
 | [Audit Trail](doc/basics/audit.md) | Recording, redaction, exclusion, pruning, what is not captured |
 | [AI Run Log](doc/ai-runs.md) | Recording model calls and cache hits, tokens and cost, secret masking, pruning, the admin view |

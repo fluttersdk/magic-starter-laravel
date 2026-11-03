@@ -4,6 +4,10 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Added
+
+- **Sign-in handoff: carry a signed-in session to another origin without a bearer in a url.** Behind the new opt-in `Features::signInHandoff()` (`'sign-in-handoff'`), `POST auth/handoff` (`auth:sanctum`, 10 a minute per user and address) mints a 64 character code for the caller with an optional same-app `next` path, answering 201 `{"data": {"code", "expires_in"}}`; a guest user or a token without every ability (`tokenCan('*')` false) is refused with 403 `handoff_forbidden`, since the exchange issues a full-ability token. `POST auth/handoff/exchange` (unauthenticated, 10 a minute per address) trades it for exactly what a login answers, a token or the two-factor challenge, plus `data.next`; a scheduled deletion is cancelled as on a login. A code is single use (claimed atomically before it is read), lives `handoff.code_ttl` seconds (default 60) in `handoff.cache_store`, and is keyed by its sha256 digest. Every refusal (unknown, spent, expired, user gone, or a code that is missing, not a string or over 255 characters) is one 422 `handoff_expired`. `next` must start with exactly one `/` and carry no backslash, whitespace, control character or `..` segment. The defaults are `Actions\IssueHandoffCode` and `Actions\ExchangeHandoffCode` behind `Contracts\IssuesHandoffCodes` and `Contracts\ExchangesHandoffCodes`. `handoff.max_token_age` (seconds, default none) refuses a mint from an older token, so a leaked token cannot clone itself into sessions that outlive its revocation. No migration; a deployment that does not list the feature has no new route. See [Sign-in Handoff](doc/basics/sign-in-handoff.md). (`src/Handoff/HandoffStore.php`, `src/Http/Controllers/HandoffController.php`, `src/Rules/SameAppPath.php`, `src/routes/api.php`, `config/magic-starter.php`, `lang/*/auth.php`)
+
 ## [0.0.58] - 2026-11-03
 
 ### Changed

@@ -42,6 +42,7 @@ return [
         // \FlutterSdk\MagicStarter\Features::profilePhotos(),
         // \FlutterSdk\MagicStarter\Features::sessions(),
         // \FlutterSdk\MagicStarter\Features::socialLogin(),
+        // \FlutterSdk\MagicStarter\Features::signInHandoff(),
         // \FlutterSdk\MagicStarter\Features::newsletterSubscription(),
         // \FlutterSdk\MagicStarter\Features::extendedProfile(),
         // \FlutterSdk\MagicStarter\Features::notifications(),
@@ -1198,6 +1199,32 @@ return [
         'code_ttl' => (int) env('MAGIC_STARTER_SOCIAL_CODE_TTL', 60),
         'link_ticket_ttl' => (int) env('MAGIC_STARTER_SOCIAL_LINK_TICKET_TTL', 300),
         'confirmation_ttl' => (int) env('MAGIC_STARTER_SOCIAL_CONFIRMATION_TTL', 600),
+    ],
+
+    /*
+    |--------------------------------------------------------------------------
+    | Sign-in Handoff
+    |--------------------------------------------------------------------------
+    |
+    | A signed-in session mints a one-time code at `POST auth/handoff`, and
+    | another origin trades it at `POST auth/handoff/exchange` for the answer
+    | a login gives. `code_ttl` (seconds, default 60) is how long a code
+    | lives. `cache_store` names the Laravel cache store that holds the codes;
+    | null means the app default. It has to be shared by every web node, since
+    | the exchange can land on a different one than the mint. `max_token_age`
+    | (seconds, null for no limit) refuses a mint from a token older than that:
+    | a leaked token could otherwise clone itself into sessions that outlive
+    | its own revocation, so a surface that only hands off a fresh sign-up sets
+    | a few minutes.
+    |
+    */
+
+    'handoff' => [
+        'code_ttl' => (int) env('MAGIC_STARTER_HANDOFF_CODE_TTL', 60),
+        'cache_store' => env('MAGIC_STARTER_HANDOFF_CACHE_STORE'),
+        'max_token_age' => env('MAGIC_STARTER_HANDOFF_MAX_TOKEN_AGE') === null
+            ? null
+            : (int) env('MAGIC_STARTER_HANDOFF_MAX_TOKEN_AGE'),
     ],
 
     /*
