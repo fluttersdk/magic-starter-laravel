@@ -165,7 +165,7 @@ Every resource sits behind the feature that owns its data.
 |----------|-------------------|-------|
 | Users | Edit profile fields; reset two-factor, revoke API tokens, resend the verification mail, schedule account deletion (optionally `immediately`) or cancel it. Tabs for tokens, social accounts, push devices, teams and audits | each tab needs its own feature: `sessions`, `social-login`, `onesignal`, `teams`, `audit` |
 | Teams | Rename; delete; add, re-role and remove members; make a member the owner; invite, resend and cancel invitations | `teams` |
-| Subscriptions | Read the list; run "Reconcile now"; "Grant a plan" to a customer picked by name or email | `billing` |
+| Subscriptions | Read every customer a billing rail has touched, whether it was a card, an App Store or Google Play purchase or a manual plan, with its plan, status, rail, store product and period end; filter by plan, status and rail; open a row's Billing tab to grant, revoke, cancel, resume, refund or sync; run "Reconcile now"; "Grant a plan" to a customer picked by name or email | `billing` |
 | Manual plans | Read every [manual grant](billing.md#manual-grants), open or ended; "Grant a plan" to a customer picked by name or email (revoke stays on the customer's Billing tab) | `billing` |
 | Newsletter subscribers | Read the list and each row's consent record; deactivate an active subscriber; export CSV | `newsletter-subscription` |
 | Audits | List and view | `audit` |

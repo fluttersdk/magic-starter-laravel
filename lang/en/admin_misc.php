@@ -3,19 +3,30 @@
 return [
 
     /*
-     * Subscriptions: a read-only view of Cashier's rows. Entitlements are
-     * written by the billing rails and the reconciler, never from here.
+     * Subscriptions: every customer a billing rail has touched, card, store or
+     * manual. Entitlements are written by the billing rails and the reconciler,
+     * and managed from the customer's Billing tab, never edited here.
      */
     'subscriptions' => [
         'navigation_label' => 'Subscriptions',
         'model_label' => 'subscription',
         'plural_model_label' => 'subscriptions',
         'columns' => [
-            'billable' => 'Billable',
-            'type' => 'Type',
+            'billable' => 'Customer',
+            'email' => 'Email',
+            'plan' => 'Plan',
             'status' => 'Status',
-            'price' => 'Price',
-            'ends_at' => 'Ends at',
+            'provider' => 'Billed through',
+            'product' => 'Product',
+            'period_end' => 'Period ends',
+        ],
+        'filters' => [
+            'plan' => 'Plan',
+            'status' => 'Status',
+            'provider' => 'Billed through',
+        ],
+        'actions' => [
+            'manage' => 'Manage billing',
         ],
         'reconcile' => [
             'label' => 'Reconcile now',

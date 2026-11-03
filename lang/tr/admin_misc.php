@@ -3,19 +3,30 @@
 return [
 
     /*
-     * Subscriptions: a read-only view of Cashier's rows. Entitlements are
-     * written by the billing rails and the reconciler, never from here.
+     * Subscriptions: every customer a billing rail has touched, card, store or
+     * manual. Entitlements are written by the billing rails and the reconciler,
+     * and managed from the customer's Billing tab, never edited here.
      */
     'subscriptions' => [
         'navigation_label' => 'Abonelikler',
         'model_label' => 'abonelik',
         'plural_model_label' => 'abonelikler',
         'columns' => [
-            'billable' => 'Faturalanan',
-            'type' => 'Tür',
+            'billable' => 'Müşteri',
+            'email' => 'E-posta',
+            'plan' => 'Plan',
             'status' => 'Durum',
-            'price' => 'Fiyat',
-            'ends_at' => 'Bitiş',
+            'provider' => 'Ödeme kanalı',
+            'product' => 'Ürün',
+            'period_end' => 'Dönem sonu',
+        ],
+        'filters' => [
+            'plan' => 'Plan',
+            'status' => 'Durum',
+            'provider' => 'Ödeme kanalı',
+        ],
+        'actions' => [
+            'manage' => 'Faturalamayı yönet',
         ],
         'reconcile' => [
             'label' => 'Şimdi uzlaştır',
