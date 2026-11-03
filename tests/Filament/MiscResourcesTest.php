@@ -7,6 +7,8 @@ use Filament\Panel;
 use FlutterSdk\MagicStarter\Audit\Audit;
 use FlutterSdk\MagicStarter\Audit\Redactor;
 use FlutterSdk\MagicStarter\Console\ReconcileBillingEntitlements;
+use FlutterSdk\MagicStarter\Enums\BillingProvider;
+use FlutterSdk\MagicStarter\Enums\PlanStatus;
 use FlutterSdk\MagicStarter\Events\AdminActionPerformed;
 use FlutterSdk\MagicStarter\Features;
 use FlutterSdk\MagicStarter\Filament\MagicStarterPlugin;
@@ -15,10 +17,12 @@ use FlutterSdk\MagicStarter\Filament\Resources\Audits\AuditResource;
 use FlutterSdk\MagicStarter\Filament\Resources\Audits\Pages\ListAudits;
 use FlutterSdk\MagicStarter\Filament\Resources\Audits\Pages\ViewAudit;
 use FlutterSdk\MagicStarter\Filament\Resources\Audits\RelationManagers\AuditsRelationManager;
+use FlutterSdk\MagicStarter\Filament\Resources\Billing\RelationManagers\BillingRelationManager;
 use FlutterSdk\MagicStarter\Filament\Resources\NewsletterSubscribers\NewsletterSubscriberResource;
 use FlutterSdk\MagicStarter\Filament\Resources\NewsletterSubscribers\Pages\ListNewsletterSubscribers;
 use FlutterSdk\MagicStarter\Filament\Resources\Subscriptions\Pages\ListSubscriptions;
 use FlutterSdk\MagicStarter\Filament\Resources\Subscriptions\SubscriptionResource;
+use FlutterSdk\MagicStarter\Filament\Resources\Users\UserResource;
 use FlutterSdk\MagicStarter\Filament\Widgets\StarterStatsWidget;
 use FlutterSdk\MagicStarter\Models\NewsletterSubscriber;
 use FlutterSdk\MagicStarter\Models\Subscription;
@@ -155,16 +159,35 @@ class MiscResourcesTest extends FilamentTestCase
     // Subscriptions
     // -------------------------------------------------------------------------
 
-    public function test_the_subscription_list_shows_cashier_rows_and_offers_no_write_action(): void
+    /**
+     * The billable is a user here (the default), so the list reads the users
+     * table: a store purchase shows, an account no rail has touched does not,
+     * and a row opens its user's Billing tab.
+     */
+    public function test_the_subscription_list_follows_a_user_billable_to_the_users_billing_tab(): void
     {
-        $active = $this->subscription('sub_active', 'active');
-        $ended = $this->subscription('sub_ended', 'canceled', now()->subDay());
+        $ops = $this->admin();
+        $store = $this->admin('store@example.com');
+        $store->forceFill([
+            'plan' => 'pro',
+            'plan_status' => PlanStatus::ACTIVE->value,
+            'plan_provider' => BillingProvider::PLAY_STORE->value,
+        ])->save();
+        $tab = array_search(BillingRelationManager::class, UserResource::getRelations(), true);
 
-        Livewire::actingAs($this->admin())
+        $this->assertIsInt($tab);
+
+        Livewire::actingAs($ops)
             ->test(ListSubscriptions::class)
             ->loadTable()
-            ->assertCanSeeTableRecords([$active, $ended])
-            ->assertSee('price_pro')
+            ->assertCanSeeTableRecords([$store])
+            ->assertCanNotSeeTableRecords([$ops])
+            ->assertSee('store@example.com')
+            ->assertTableActionHasUrl(
+                'manage',
+                UserResource::getUrl('edit', ['record' => $store, 'relation' => (string) $tab]),
+                $store,
+            )
             ->assertActionDoesNotExist('create');
 
         $this->assertSame(['index'], array_keys(SubscriptionResource::getPages()));
