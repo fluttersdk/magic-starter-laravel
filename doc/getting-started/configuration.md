@@ -177,6 +177,12 @@ Every key available in `config/magic-starter.php`:
 | `mail.brand.card_radius` | `4` | Card corner radius in pixels, 0 to 64 |
 | `mail.brand.colors.light.*` | Laravel's default theme | Eight six-digit hex colours: `primary`, `on_primary`, `heading`, `text`, `muted`, `background`, `card`, `border` |
 | `mail.brand.colors.dark.*` | all `null` | The same eight keys for dark mode: all eight or none |
+| `schedule.audit_prune` | `env('MAGIC_STARTER_SCHEDULE_AUDIT_PRUNE', '0 0 * * *')` | Cron expression for `magic-starter:audit:prune` (daily) |
+| `schedule.mail_prune_sends` | `env('MAGIC_STARTER_SCHEDULE_MAIL_PRUNE_SENDS', '0 0 * * *')` | Cron expression for `magic-starter:mail:prune-sends` (daily) |
+| `schedule.billing_prune` | `env('MAGIC_STARTER_SCHEDULE_BILLING_PRUNE', '0 0 * * *')` | Cron expression for `magic-starter:billing:prune` (daily) |
+| `schedule.support_article_images_prune` | `env('MAGIC_STARTER_SCHEDULE_SUPPORT_ARTICLE_IMAGES_PRUNE', '0 0 * * *')` | Cron expression for `magic-starter:support-articles:prune-images` (daily) |
+| `schedule.ai_runs_prune` | `env('MAGIC_STARTER_SCHEDULE_AI_RUNS_PRUNE', '0 * * * *')` | Cron expression for `magic-starter:ai-runs:prune` (hourly) |
+| `schedule.billing_expire_grants` | `env('MAGIC_STARTER_SCHEDULE_BILLING_EXPIRE_GRANTS', '0 * * * *')` | Cron expression for `magic-starter:billing:expire-grants` (hourly) |
 
 <a name="authentication-identity"></a>
 ## Authentication Identity
@@ -443,6 +449,20 @@ The Stripe price id of a product is read from `CASHIER_PRICE_<KEY>`, the product
 
 The full reference, including the refusals and the webhook, is in [Billing](../basics/billing.md).
 
+<a name="scheduled-task-times"></a>
+## Scheduled Task Times
+
+The package puts six maintenance tasks on the scheduler: the daily `magic-starter:audit:prune`, `mail:prune-sends`, `billing:prune` and `support-articles:prune-images`, and the hourly `magic-starter:ai-runs:prune` and `billing:expire-grants`. They all start at 00:00 or at minute 0, which collides with a shared box that runs its database dumps at midnight or its own spike on the hour. `config('magic-starter.schedule')` takes one cron expression per task, so a host moves each of them:
+
+```php
+'schedule' => [
+    'audit_prune' => '20 5 * * *',
+    'ai_runs_prune' => '25 * * * *',
+],
+```
+
+These are times, not cadences: each task keeps the cadence its retention needs, so move a daily one within the day and an hourly one within the hour. Any cron expression is accepted; one that is not valid raises from `schedule:run` instead of being replaced. A key that is missing, empty or not a string keeps the default shown in the table above, so a config published before this block existed changes nothing. `magic-starter:support:sweep` (every minute) and `billing:reconcile` (`billing.reconcile.cadence`) are not part of this block.
+
 <a name="environment-variables"></a>
 ## Environment Variables
 
@@ -482,3 +502,9 @@ All environment variables recognized by the package:
 | `MAGIC_STARTER_BILLING_STRIPE_TEST_EMAILS` | `billing.stripe_test_mode.emails` | empty | Comma-separated emails allowed to buy on a Stripe key that is not provably live, outside `local` and `testing` |
 | `MAGIC_STARTER_NEWSLETTER_CONSENT_VERSION` | `newsletter.consent_version` | `'1'` | Version of the newsletter consent wording recorded with each consent |
 | `MAGIC_STARTER_MAIL_BRAND_ENABLED` | `mail.brand.enabled` | `false` | Brand every markdown mail with the package layout and theme |
+| `MAGIC_STARTER_SCHEDULE_AUDIT_PRUNE` | `schedule.audit_prune` | `'0 0 * * *'` | Cron expression for `magic-starter:audit:prune` |
+| `MAGIC_STARTER_SCHEDULE_MAIL_PRUNE_SENDS` | `schedule.mail_prune_sends` | `'0 0 * * *'` | Cron expression for `magic-starter:mail:prune-sends` |
+| `MAGIC_STARTER_SCHEDULE_BILLING_PRUNE` | `schedule.billing_prune` | `'0 0 * * *'` | Cron expression for `magic-starter:billing:prune` |
+| `MAGIC_STARTER_SCHEDULE_SUPPORT_ARTICLE_IMAGES_PRUNE` | `schedule.support_article_images_prune` | `'0 0 * * *'` | Cron expression for `magic-starter:support-articles:prune-images` |
+| `MAGIC_STARTER_SCHEDULE_AI_RUNS_PRUNE` | `schedule.ai_runs_prune` | `'0 * * * *'` | Cron expression for `magic-starter:ai-runs:prune` |
+| `MAGIC_STARTER_SCHEDULE_BILLING_EXPIRE_GRANTS` | `schedule.billing_expire_grants` | `'0 * * * *'` | Cron expression for `magic-starter:billing:expire-grants` |

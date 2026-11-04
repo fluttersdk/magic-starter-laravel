@@ -923,15 +923,16 @@ class MagicStarterServiceProvider extends ServiceProvider
      * {@see self::scheduleEntitlementReconciler()} gives: only the processes
      * that consult the scheduler build it. `withoutOverlapping()` keeps a run
      * that outlasts its tick, on a trail that has grown for years, from racing
-     * its successor over the same rows. The cadence is not configurable:
-     * retention is counted in days, so a faster sweep finds nothing new.
+     * its successor over the same rows. The time of day is
+     * `magic-starter.schedule.audit_prune`; the cadence stays daily, because
+     * retention is counted in days and a faster sweep finds nothing new.
      */
     private function schedulePruneAudits(): void
     {
         $this->callAfterResolving(Schedule::class, function (Schedule $schedule): void {
             $schedule->command(PruneAuditsCommand::NAME)
                 ->name(PruneAuditsCommand::NAME)
-                ->daily()
+                ->cron($this->scheduledTime('audit_prune', '0 0 * * *'))
                 ->withoutOverlapping();
         });
     }
@@ -945,14 +946,16 @@ class MagicStarterServiceProvider extends ServiceProvider
      * that outlasts its tick from racing its successor over the same rows.
      * Hourly rather than daily because the abandon threshold is counted in
      * minutes (30 by default): a daily sweep would leave a dead run `running`
-     * for up to a day. The body pass finds nothing new on most ticks.
+     * for up to a day. The body pass finds nothing new on most ticks. The minute
+     * is `magic-starter.schedule.ai_runs_prune`; the cadence stays hourly for
+     * that reason.
      */
     private function schedulePruneAiRuns(): void
     {
         $this->callAfterResolving(Schedule::class, function (Schedule $schedule): void {
             $schedule->command(PruneAiRunsCommand::NAME)
                 ->name(PruneAiRunsCommand::NAME)
-                ->hourly()
+                ->cron($this->scheduledTime('ai_runs_prune', '0 * * * *'))
                 ->withoutOverlapping();
         });
     }
@@ -964,14 +967,15 @@ class MagicStarterServiceProvider extends ServiceProvider
      * {@see self::scheduleEntitlementReconciler()} gives, and mirroring
      * {@see self::schedulePruneAudits()}: `withoutOverlapping()` keeps a run
      * that outlasts its tick from racing its successor over the same rows. The
-     * cadence is not configurable because retention is counted in days.
+     * time of day is `magic-starter.schedule.mail_prune_sends`; the cadence stays
+     * daily because retention is counted in days.
      */
     private function schedulePruneMailSends(): void
     {
         $this->callAfterResolving(Schedule::class, function (Schedule $schedule): void {
             $schedule->command(PruneMailSendsCommand::NAME)
                 ->name(PruneMailSendsCommand::NAME)
-                ->daily()
+                ->cron($this->scheduledTime('mail_prune_sends', '0 0 * * *'))
                 ->withoutOverlapping();
         });
     }
@@ -985,15 +989,16 @@ class MagicStarterServiceProvider extends ServiceProvider
      * that outlasts its tick from racing its successor over the same rows. It
      * also takes `onOneServer()`, with the cache-store caveat that method's
      * docblock spells out: the sweep is idempotent, so a fleet that cannot
-     * share a lock only repeats a delete that finds nothing. The cadence is not
-     * configurable because retention is counted in days.
+     * share a lock only repeats a delete that finds nothing. The time of day is
+     * `magic-starter.schedule.billing_prune`; the cadence stays daily because
+     * retention is counted in days.
      */
     private function schedulePruneBillingRecords(): void
     {
         $this->callAfterResolving(Schedule::class, function (Schedule $schedule): void {
             $schedule->command(PruneBillingRecordsCommand::NAME)
                 ->name(PruneBillingRecordsCommand::NAME)
-                ->daily()
+                ->cron($this->scheduledTime('billing_prune', '0 0 * * *'))
                 ->withoutOverlapping()
                 ->onOneServer();
         });
@@ -1030,15 +1035,16 @@ class MagicStarterServiceProvider extends ServiceProvider
      * {@see self::schedulePruneAudits()}: `withoutOverlapping()` keeps a run
      * that outlasts its tick from racing its successor over the same files. It
      * also takes `onOneServer()`, since the disk is shared: a fleet that cannot
-     * share a lock only repeats a delete that finds nothing. The cadence is not
-     * configurable because the grace is counted in hours.
+     * share a lock only repeats a delete that finds nothing. The time of day is
+     * `magic-starter.schedule.support_article_images_prune`; the cadence stays
+     * daily because the grace is counted in hours.
      */
     private function schedulePruneSupportArticleImages(): void
     {
         $this->callAfterResolving(Schedule::class, function (Schedule $schedule): void {
             $schedule->command(PruneSupportArticleImagesCommand::NAME)
                 ->name(PruneSupportArticleImagesCommand::NAME)
-                ->daily()
+                ->cron($this->scheduledTime('support_article_images_prune', '0 0 * * *'))
                 ->withoutOverlapping()
                 ->onOneServer();
         });
@@ -1072,17 +1078,40 @@ class MagicStarterServiceProvider extends ServiceProvider
      * keeps a slow run from racing its successor over the same grants and
      * `onOneServer()` keeps a fleet from settling one grant twice. Hourly rather
      * than daily, because a grant's expiry is an instant an operator chose and
-     * a day's lag is a day of a plan nobody granted.
+     * a day's lag is a day of a plan nobody granted. The minute is
+     * `magic-starter.schedule.billing_expire_grants`; the cadence stays hourly
+     * for that reason.
      */
     private function scheduleExpireBillingGrants(): void
     {
         $this->callAfterResolving(Schedule::class, function (Schedule $schedule): void {
             $schedule->command(ExpireBillingGrantsCommand::NAME)
                 ->name(ExpireBillingGrantsCommand::NAME)
-                ->hourly()
+                ->cron($this->scheduledTime('billing_expire_grants', '0 * * * *'))
                 ->withoutOverlapping()
                 ->onOneServer();
         });
+    }
+
+    /**
+     * The cron expression `magic-starter.schedule.<key>` names, or the shipped default.
+     *
+     * The default is written at the call site as well as in the config file
+     * because `mergeConfigFrom` is a shallow merge: a host that published the
+     * config before the `schedule` block existed has no such key at all, and an
+     * absent, null, blank or non-string value must keep today's time. Any other
+     * string is passed on as it is, so an invalid expression raises from
+     * `schedule:run` instead of being replaced.
+     */
+    private function scheduledTime(string $key, string $default): string
+    {
+        $configured = config("magic-starter.schedule.{$key}");
+
+        if (! is_string($configured) || trim($configured) === '') {
+            return $default;
+        }
+
+        return trim($configured);
     }
 
     /**
