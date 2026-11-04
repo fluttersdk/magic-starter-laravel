@@ -20,13 +20,14 @@ use FlutterSdk\MagicStarter\Http\Controllers\SupportAttachmentDownloadController
 use FlutterSdk\MagicStarter\Http\Controllers\SupportConversationController;
 use FlutterSdk\MagicStarter\Http\Controllers\SupportFeedbackController;
 use FlutterSdk\MagicStarter\Http\Controllers\SupportRatingController;
+use FlutterSdk\MagicStarter\Http\Middleware\RequireTokenAbility;
 use Illuminate\Support\Facades\Route;
 
 Route::prefix((string) config('magic-starter.route_prefix', ''))
     ->middleware((array) config('magic-starter.route_middleware', []))
     ->group(function (): void {
         Route::prefix('support')
-            ->middleware(['auth:sanctum', 'throttle:magic-starter-support'])
+            ->middleware(['auth:sanctum', RequireTokenAbility::class, 'throttle:magic-starter-support'])
             ->group(function (): void {
                 Route::get('conversations', [SupportConversationController::class, 'index']);
                 Route::post('conversations', [SupportConversationController::class, 'store']);

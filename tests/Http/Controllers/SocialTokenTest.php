@@ -631,6 +631,51 @@ class SocialTokenTest extends TestCase
     }
 
     // ---------------------------------------------------------------------
+    // Required ability
+    // ---------------------------------------------------------------------
+
+    /**
+     * The route carries no auth middleware, so it reads its bearer itself: a
+     * token issued for another surface must not act as the user here, or a
+     * confirm mints a step-up token and a connect on a guest links a new way in.
+     */
+    public function test_a_bearer_without_the_required_ability_cannot_connect_or_confirm(): void
+    {
+        config(['magic-starter.required_ability' => 'app']);
+        Http::fake();
+        $user = $this->makeUser('jane@example.com');
+        $this->link($user, 'google', 'google-sub-1');
+        $narrow = $user->createToken('creator', ['creator'])->plainTextToken;
+
+        foreach (['connect', 'confirm'] as $intent) {
+            $this->postToken('google', [
+                'id_token' => $this->googleToken(),
+                'intent' => $intent,
+            ], $narrow)->assertStatus(401)
+                ->assertJsonMissingPath('data.confirmation_token')
+                ->assertJsonMissingPath('data.provider');
+        }
+
+        $this->assertSame(1, SocialAccount::query()->count());
+        Http::assertNothingSent();
+    }
+
+    public function test_a_bearer_with_the_required_ability_still_confirms(): void
+    {
+        config(['magic-starter.required_ability' => 'app']);
+        $this->fakeGoogleKeys();
+        $user = $this->makeUser('jane@example.com');
+        $this->link($user, 'google', 'google-sub-1');
+
+        $this->postToken('google', [
+            'id_token' => $this->googleToken(),
+            'intent' => 'confirm',
+        ], $user->createToken('app', ['app'])->plainTextToken)
+            ->assertOk()
+            ->assertJsonStructure(['data' => ['confirmation_token']]);
+    }
+
+    // ---------------------------------------------------------------------
     // Helpers
     // ---------------------------------------------------------------------
 

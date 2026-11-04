@@ -5,6 +5,7 @@ namespace FlutterSdk\MagicStarter\Http\Controllers;
 use FlutterSdk\MagicStarter\Contracts\ConnectsSocialAccounts;
 use FlutterSdk\MagicStarter\Contracts\ResolvesSocialUsers;
 use FlutterSdk\MagicStarter\Http\Controllers\Concerns\AuthenticatesUsers;
+use FlutterSdk\MagicStarter\Http\Middleware\RequireTokenAbility;
 use FlutterSdk\MagicStarter\Http\Requests\SocialTokenRequest;
 use FlutterSdk\MagicStarter\Social\AppleProviderFactory;
 use FlutterSdk\MagicStarter\Social\IdTokenVerifier;
@@ -21,7 +22,6 @@ use Illuminate\Http\Client\ConnectionException;
 use Illuminate\Http\Client\RequestException;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
-use Illuminate\Support\Facades\Auth;
 use LogicException;
 use Throwable;
 
@@ -65,7 +65,7 @@ class SocialTokenController
 
         // 2. A connect or a confirm without a bearer is refused before the token is spent.
         $intent = $request->intent();
-        $bearer = $intent === SocialFlowStore::INTENT_SIGNIN ? null : Auth::guard('sanctum')->user();
+        $bearer = $intent === SocialFlowStore::INTENT_SIGNIN ? null : RequireTokenAbility::bearer();
 
         if ($intent !== SocialFlowStore::INTENT_SIGNIN && $bearer === null) {
             return $this->unauthenticated();

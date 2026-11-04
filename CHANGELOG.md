@@ -4,6 +4,10 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Added
+
+- **Required token ability: refuse a signed-in token that was not issued for the host's surface.** `magic-starter.required_ability` (`MAGIC_STARTER_REQUIRED_ABILITY`, default null) names the Sanctum ability a token must carry; with it set, every route behind `auth:sanctum` (the signed-in routes of `api.php`, the email verification resend, and the support desk, `/teams` and `/user` included) answers a token without it 403 `missing_ability`, through the new `Http\Middleware\RequireTokenAbility`. A `*` token, a session-authenticated first-party request (transient token) and a row with NULL `abilities` pass; the NULL case is read before `can()`, which throws on it. A configured value that is not a string throws instead of switching the check off. The gate rides the signed-in groups and never `route_middleware`, so login, register, password reset, the handoff exchange and the other tokenless routes are untouched, and a host that names nothing sees no change. The public social routes that act for a bearer (`auth/social/{provider}/token` and `auth/social/exchange`, intents `connect` and `confirm`) read it through `RequireTokenAbility::bearer()` and answer 401 to a token without the ability, because a narrow token could otherwise link a sign-in method to a guest account and sign in with it as a full token. See [Configuration](doc/getting-started/configuration.md). (`src/Http/Middleware/RequireTokenAbility.php`, `src/routes/api.php`, `src/routes/support.php`, `src/Http/Controllers/SocialTokenController.php`, `src/Http/Controllers/SocialExchangeController.php`, `src/Http/Requests/SocialTokenRequest.php`, `config/magic-starter.php`, `lang/*/auth.php`)
+
 ## [0.0.59] - 2026-11-04
 
 ### Added

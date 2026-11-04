@@ -39,6 +39,7 @@ use FlutterSdk\MagicStarter\Http\Controllers\TimezoneController;
 use FlutterSdk\MagicStarter\Http\Controllers\TwoFactorAuthenticationController;
 use FlutterSdk\MagicStarter\Http\Controllers\TwoFactorChallengeController;
 use FlutterSdk\MagicStarter\Http\Controllers\TwoFactorRecoveryCodeController;
+use FlutterSdk\MagicStarter\Http\Middleware\RequireTokenAbility;
 use Illuminate\Support\Facades\Route;
 
 // Every route below carries the host's own middleware, and the default is none.
@@ -133,7 +134,12 @@ Route::prefix((string) config('magic-starter.route_prefix', ''))
         // To require email verification on protected routes, add the 'verified'
         // middleware: Route::middleware(['auth:sanctum', 'verified'])->group(...)
         // Your User model must implement MustVerifyEmail.
-        Route::middleware('auth:sanctum')->group(function (): void {
+        //
+        // The ability gate rides every `auth:sanctum` group and never the
+        // public ones above: it reads `magic-starter.required_ability` per
+        // request, does nothing while that is unset, and must not sit in
+        // `route_middleware`, which also wraps login and register.
+        Route::middleware(['auth:sanctum', RequireTokenAbility::class])->group(function (): void {
             Route::prefix('auth')->group(function (): void {
                 Route::post('logout', [AuthController::class, 'logout']);
                 Route::get('user', [AuthController::class, 'user']);
@@ -335,7 +341,7 @@ Route::prefix((string) config('magic-starter.route_prefix', ''))
                 ->name('verification.verify');
 
             // Protected route — requires Sanctum authentication and is rate-limited.
-            Route::middleware(['auth:sanctum', 'throttle:magic-starter-email-verification'])->group(function (): void {
+            Route::middleware(['auth:sanctum', RequireTokenAbility::class, 'throttle:magic-starter-email-verification'])->group(function (): void {
                 Route::post('email/verification-notification', [EmailVerificationController::class, 'sendVerificationNotification'])
                     ->name('verification.send');
             });

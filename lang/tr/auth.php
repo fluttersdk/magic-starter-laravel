@@ -116,6 +116,14 @@ return [
     ],
 
     /*
+     * `missing` answers a signed-in token that was not issued for the ability
+     * the host requires (`magic-starter.required_ability`).
+     */
+    'ability' => [
+        'missing' => 'Bu erişim anahtarının bu kaynağı kullanma yetkisi yok.',
+    ],
+
+    /*
      * Token sessions. A session here is a Sanctum access token carrying its own
      * device info, so `not_found` is a missing token rather than a signed-out
      * browser.

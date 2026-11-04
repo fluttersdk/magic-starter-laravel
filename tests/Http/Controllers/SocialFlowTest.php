@@ -664,6 +664,39 @@ class SocialFlowTest extends TestCase
         $this->assertSame(0, SocialAccount::query()->count());
     }
 
+    public function test_an_exchange_bearer_without_the_required_ability_cannot_connect(): void
+    {
+        config(['magic-starter.required_ability' => 'app']);
+        $user = $this->makeUser('jane@example.test');
+        [$verifier, $challenge] = $this->pkce();
+        $ticket = app(SocialFlowStore::class)->mintTicket($user, 'github', $challenge, SocialFlowStore::INTENT_CONNECT);
+
+        $code = $this->locationQuery($this->landOnCallback($this->providerRedirect('github', $challenge, [
+            'ticket' => $ticket,
+        ])))['code'];
+
+        $this->exchange($code, $verifier, $user->createToken('t', ['creator'])->plainTextToken)
+            ->assertStatus(401)
+            ->assertJsonMissingPath('data.provider');
+        $this->assertSame(0, SocialAccount::query()->count());
+    }
+
+    public function test_an_exchange_bearer_without_the_required_ability_cannot_confirm(): void
+    {
+        config(['magic-starter.required_ability' => 'app']);
+        $user = $this->makeUser('octocat@example.test');
+        $this->link($user, 'github', '4242');
+        [$verifier, $challenge] = $this->pkce();
+
+        $code = $this->locationQuery($this->landOnCallback($this->providerRedirect('github', $challenge, [
+            'intent' => 'confirm',
+        ])))['code'];
+
+        $this->exchange($code, $verifier, $user->createToken('t', ['creator'])->plainTextToken)
+            ->assertStatus(401)
+            ->assertJsonMissingPath('data.confirmation_token');
+    }
+
     public function test_a_connect_of_an_identity_another_user_holds_is_refused(): void
     {
         $owner = $this->makeUser('owner@example.test');

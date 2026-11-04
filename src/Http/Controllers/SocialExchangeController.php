@@ -4,6 +4,7 @@ namespace FlutterSdk\MagicStarter\Http\Controllers;
 
 use FlutterSdk\MagicStarter\Contracts\ConnectsSocialAccounts;
 use FlutterSdk\MagicStarter\Http\Controllers\Concerns\AuthenticatesUsers;
+use FlutterSdk\MagicStarter\Http\Middleware\RequireTokenAbility;
 use FlutterSdk\MagicStarter\Http\Requests\SocialExchangeRequest;
 use FlutterSdk\MagicStarter\MagicStarter;
 use FlutterSdk\MagicStarter\Social\SocialFlowStore;
@@ -11,7 +12,6 @@ use FlutterSdk\MagicStarter\Social\SocialSignInRefused;
 use FlutterSdk\MagicStarter\Social\VerifiedIdentity;
 use Illuminate\Contracts\Auth\Authenticatable;
 use Illuminate\Http\JsonResponse;
-use Illuminate\Support\Facades\Auth;
 
 /**
  * Redeems a social flow's one-time code for what the flow concluded.
@@ -50,7 +50,7 @@ class SocialExchangeController
                 : $this->signInResponse($user, $request);
         }
 
-        $bearer = Auth::guard('sanctum')->user();
+        $bearer = RequireTokenAbility::bearer();
         $identity = $outcome['identity'];
 
         if ($bearer === null || $identity === null) {
