@@ -1158,13 +1158,16 @@ return [
     | enabled; others are refused when a client requests them. Absent from
     | the array means the provider is not supported. The `redirects` object
     | carries the post-auth URL for each platform a flow may name (`ios`,
-    | `android`, `web`), any of which may be null (the refusal is by design,
-    | not a silent fallback: the client sees it as "this platform is not
-    | configured"). Point `android` at a verified https App Link: any app can
-    | register a custom scheme and catch the sign-in, and the package logs a
-    | warning at boot when it is anything else. `ios` may stay a custom
+    | `android`, `web`, `landing`), any of which may be null (the refusal is
+    | by design, not a silent fallback: the client sees it as "this platform
+    | is not configured"). Point `android` at a verified https App Link: any
+    | app can register a custom scheme and catch the sign-in, and the package
+    | logs a warning at boot when it is anything else. `ios` may stay a custom
     | scheme, since ASWebAuthenticationSession returns only to the app that
-    | started it.
+    | started it. `landing` names a page on your own site that runs the flow
+    | itself (same window, its own PKCE pair) and receives the one-time code
+    | in its query: an https page you control, because the code rides in the
+    | url.
     |
     | `audiences` lists are comma-separated, trimmed env values naming the
     | client ids an ID token may be issued to. For `google` those are the
@@ -1198,6 +1201,7 @@ return [
             'ios' => env('MAGIC_STARTER_SOCIAL_IOS_REDIRECT'),
             'android' => env('MAGIC_STARTER_SOCIAL_ANDROID_REDIRECT'),
             'web' => env('MAGIC_STARTER_SOCIAL_WEB_REDIRECT'),
+            'landing' => env('MAGIC_STARTER_SOCIAL_LANDING_REDIRECT'),
         ],
 
         'audiences' => [
