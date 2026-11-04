@@ -60,6 +60,8 @@ class SocialFlowTest extends TestCase
 
     private const WEB_TARGET = 'https://app.example.test/auth/social?from=web';
 
+    private const LANDING_TARGET = 'https://www.example.test/';
+
     private FakeOAuthServer $harness;
 
     /**
@@ -125,6 +127,7 @@ class SocialFlowTest extends TestCase
             'ios' => self::IOS_TARGET,
             'android' => self::ANDROID_TARGET,
             'web' => self::WEB_TARGET,
+            'landing' => self::LANDING_TARGET,
         ]);
         $app['config']->set('services.github.client_id', FakeOAuthServer::CLIENT_ID);
         $app['config']->set('services.google.client_id', 'google-client');
@@ -366,6 +369,7 @@ class SocialFlowTest extends TestCase
             'ios' => self::IOS_TARGET,
             'android' => self::ANDROID_TARGET,
             'web' => self::WEB_TARGET,
+            'landing' => self::LANDING_TARGET,
         ];
 
         foreach ($targets as $platform => $target) {
@@ -377,6 +381,46 @@ class SocialFlowTest extends TestCase
             $separator = str_contains($target, '?') ? '&' : '?';
             $this->assertStringStartsWith($target . $separator . 'code=', $location, "[{$platform}]");
         }
+    }
+
+    public function test_the_landing_platform_signs_in_through_the_same_flow_without_a_cookie(): void
+    {
+        [$verifier, $challenge] = $this->pkce();
+
+        $callback = $this->landOnCallback($this->providerRedirect('github', $challenge, ['platform' => 'landing']));
+
+        $this->assertStringStartsWith(self::LANDING_TARGET . '?code=', (string) $callback->headers->get('Location'));
+        $this->assertSame([], $callback->headers->getCookies());
+
+        $exchange = $this->exchange($this->locationQuery($callback)['code'], $verifier);
+
+        $exchange->assertOk()->assertJsonStructure(['data' => ['token']]);
+        $this->assertSame([], $exchange->headers->getCookies());
+    }
+
+    public function test_a_landing_code_cannot_be_redeemed_without_the_verifier_the_page_kept(): void
+    {
+        [, $challenge] = $this->pkce();
+        [$otherVerifier] = $this->pkce();
+
+        $callback = $this->landOnCallback($this->providerRedirect('github', $challenge, ['platform' => 'landing']));
+
+        $this->exchange($this->locationQuery($callback)['code'], $otherVerifier)
+            ->assertStatus(422)
+            ->assertJsonPath('code', 'flow_expired')
+            ->assertJsonMissingPath('data.token');
+    }
+
+    public function test_an_unconfigured_landing_platform_is_refused_before_the_provider_is_asked(): void
+    {
+        config(['magic-starter.social.redirects.landing' => null]);
+        [, $challenge] = $this->pkce();
+
+        $this->startFlow('github', $challenge, ['platform' => 'landing'])
+            ->assertStatus(422)
+            ->assertJsonPath('code', 'platform_not_configured');
+
+        $this->assertSame([], $this->harness->requests());
     }
 
     public function test_the_retired_native_platform_is_refused(): void

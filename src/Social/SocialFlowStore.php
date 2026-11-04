@@ -52,11 +52,18 @@ class SocialFlowStore
      * can register an Android custom scheme and catch the code, so Android
      * wants an https App Link, while iOS hands an ASWebAuthenticationSession
      * callback only to the app that started it.
+     *
+     * `landing` is a page on the host's own site that runs the flow itself with
+     * its own PKCE pair (a marketing page signing a visitor in before the app
+     * opens), apart from `web` because its target is that page and not the
+     * app's callback. Its code travels in the query like the others, bound to
+     * the verifier the page keeps in the tab.
      */
     public const PLATFORMS = [
         'ios',
         'android',
         'web',
+        'landing',
     ];
 
     protected const KEY_PREFIX = 'magic-starter:social:flow:';

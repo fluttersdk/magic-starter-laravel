@@ -123,6 +123,7 @@ Everything else lives under `social` in `config/magic-starter.php`:
 | `redirects.ios` | `MAGIC_STARTER_SOCIAL_IOS_REDIRECT` | `null` | Where the browser lands for `platform=ios`. A custom scheme is fine. |
 | `redirects.android` | `MAGIC_STARTER_SOCIAL_ANDROID_REDIRECT` | `null` | Where the browser lands for `platform=android`. Use an https App Link. |
 | `redirects.web` | `MAGIC_STARTER_SOCIAL_WEB_REDIRECT` | `null` | Where the browser lands for `platform=web`. |
+| `redirects.landing` | `MAGIC_STARTER_SOCIAL_LANDING_REDIRECT` | `null` | Where the browser lands for `platform=landing`: an https page on your own site that runs the flow itself. |
 | `audiences.google` | `MAGIC_STARTER_SOCIAL_GOOGLE_AUDIENCES` | empty | Comma-separated client ids accepted as an ID token audience. |
 | `audiences.apple` | `MAGIC_STARTER_SOCIAL_APPLE_AUDIENCES` | empty | Same, for Apple. |
 | `cache_store` | `MAGIC_STARTER_SOCIAL_CACHE_STORE` | app default | Cache store for flow state, codes and tickets. |
@@ -134,6 +135,8 @@ Everything else lives under `social` in `config/magic-starter.php`:
 A platform with no redirect target is refused with `platform_not_configured`. The target comes only from config, so nothing a request carries can choose where a code is sent.
 
 Android and iOS have separate targets because they need different ones. Any Android app can register the same custom scheme, and the system may hand it the browser's return, so another app can swallow the sign-in. An https App Link opens only the app that owns the domain. The code stays bound to your PKCE verifier, so an interceptor cannot redeem it, but it can still break the sign-in. On iOS, `ASWebAuthenticationSession` delivers the return only to the app that started it, so a custom scheme is safe. The package logs a warning at boot when the Android target is set and is not an https URL.
+
+`landing` is for a page on your own site that signs a visitor in before the app opens, such as a marketing page whose buttons start the provider flow with a same-window redirect. The page makes its own PKCE pair, keeps the verifier in the tab (`sessionStorage`), navigates to the redirect endpoint with `platform=landing`, and on its return reads `code` or `error` from the query, removes them from the address with `history.replaceState` before anything else runs, and posts the code and verifier to the exchange. The route needs no cookie or session, but the exchange is a cross-origin request when the page is not on the API's origin, so the host's CORS allowance applies. Register the provider's callback as before: it stays the package's `/magic-starter/social/{provider}/callback`, and the host that served the redirect request is the host the provider is told, so start the flow on the host registered in the provider's console.
 
 ---
 
@@ -150,7 +153,7 @@ The app first creates a PKCE pair. `code_verifier` is a random string of 43 to 1
 
 | Query | Rules |
 |-------|-------|
-| `platform` | Required. `ios`, `android` or `web`. Picks the redirect target. |
+| `platform` | Required. `ios`, `android`, `web` or `landing`. Picks the redirect target. |
 | `challenge` | Required. 43 base64url characters. |
 | `ticket` | Optional. A [link ticket](#connect-a-provider); makes the flow a connect. |
 | `intent` | Optional. Only `confirm`, a [step-up](#step-up-confirmation) re-authentication. Cannot be combined with `ticket`. |
