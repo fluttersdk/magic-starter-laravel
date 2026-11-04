@@ -440,6 +440,32 @@ return [
 
     /*
     |--------------------------------------------------------------------------
+    | Required Token Ability
+    |--------------------------------------------------------------------------
+    |
+    | The ability a Sanctum token must carry to reach a signed-in route of this
+    | package (everything behind `auth:sanctum`, `/teams` included). Sanctum
+    | mints `*` unless told otherwise and nothing checks what a token is for,
+    | so a token issued for one surface of your application reaches every route
+    | of another. Name the ability your first-party tokens carry and the rest
+    | are refused with 403 `missing_ability`. `*` satisfies any ability.
+    |
+    | The check sits on the signed-in groups only, never in `route_middleware`:
+    | login, register, password reset and the other routes a caller reaches
+    | without a token are untouched. The social connect and confirm intents
+    | act for a bearer on a public route and apply the same rule, answering
+    | 401 to a token without the ability. A token row with NULL abilities (one
+    | your application wrote by hand: Sanctum never does) is read as
+    | unrestricted.
+    |
+    | Null (the default) checks nothing. A value that is not a string or null
+    | throws, so a typo cannot switch the check off.
+    |
+    */
+    'required_ability' => env('MAGIC_STARTER_REQUIRED_ABILITY'),
+
+    /*
+    |--------------------------------------------------------------------------
     | Team Invitation Expiry
     |--------------------------------------------------------------------------
     |

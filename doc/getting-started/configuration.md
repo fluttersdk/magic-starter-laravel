@@ -138,6 +138,7 @@ Every key available in `config/magic-starter.php`:
 | `team_photo_path` | `'team-photos'` | Directory path within disk for team photos |
 | `route_prefix` | `'api/v1'` | Global prefix applied to all package-registered routes |
 | `route_middleware` | `[]` | Middleware applied to every package-registered route. These routes join NO group on their own |
+| `required_ability` | `null` | Ability a Sanctum token must carry to reach a signed-in route; others get 403 `missing_ability`. Null checks nothing |
 | `invitation_expiry_days` | `7` | Number of days until a team invitation token expires |
 | `invitation_confirm_email_mismatch` | `false` | When `true`, a user with an active Sign in with Apple link or an `@privaterelay.appleid.com` address who accepts an invitation sent to another email is answered `409 email_mismatch` and joins on a repeat request carrying `confirm_email_mismatch: true`; everyone else keeps the `403`. See [Accept Invitation](../basics/teams.md#accept-invitation) |
 | `token_expiration_minutes` | `null` | Sanctum personal access token TTL in minutes; `null` means tokens never expire |
@@ -248,6 +249,19 @@ That is invisible until something in your group is load-bearing, and then it is 
 This covers the routes in `api.php` only. The vendor webhook routes load separately and inherit nothing from here on purpose: a webhook is called by the vendor rather than by one of your users, so there is nobody for a locale resolver or a tenant scope to resolve, and an auth middleware would reject the call outright.
 
 Empty by default rather than `['api']`, so nothing changes for an existing install. Defaulting into your api group would be worse than doing nothing: every route here already declares the throttle it wants by name, and a group carrying `throttle:api` as well would silently halve a rate limit a prior release granted. Name what you want.
+
+### Required Token Ability
+
+Sanctum issues a token with `*` unless told otherwise, and nothing checks what a token is for. An application that mints a narrower token for another surface (a partner API, an operator panel) finds that token accepted by every signed-in route of this package, `/teams` and `/user` included.
+
+```php
+// config/magic-starter.php, or MAGIC_STARTER_REQUIRED_ABILITY in .env
+'required_ability' => 'app',
+```
+
+With an ability named, every route behind `auth:sanctum` refuses a token that does not carry it, with `403` and `{"code": "missing_ability"}`. A `*` token satisfies any ability and a session-authenticated first-party request is let through. A token row with a NULL `abilities` column is read as unrestricted: Sanctum never writes one itself, and its own `can()` throws on it, so it can only be a row your application inserted or migrated by hand. The tokens this package issues are `*`, so they pass. A value that is not a string (`true` from an env file, an array) stops the request with an exception instead of switching the check off.
+
+The check sits on the signed-in groups and not in `route_middleware`: login, register, password reset, the handoff exchange and the other routes a caller reaches without a token are untouched. The connect and confirm intents of the social flow (`auth/social/{provider}/token` and `auth/social/exchange`) act for a bearer on a public route; they apply the same rule and answer `401` to a bearer without the ability, so a narrow token cannot link a sign-in method or mint a step-up confirmation. Null by default, which checks nothing, so an existing install changes nothing. The sign-in handoff mint stays stricter on its own: it needs a token with every ability.
 
 ### Translations
 

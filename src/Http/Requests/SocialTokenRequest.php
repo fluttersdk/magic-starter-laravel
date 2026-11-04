@@ -2,11 +2,11 @@
 
 namespace FlutterSdk\MagicStarter\Http\Requests;
 
+use FlutterSdk\MagicStarter\Http\Middleware\RequireTokenAbility;
 use FlutterSdk\MagicStarter\Http\Requests\Concerns\ConfirmsIdentity;
 use FlutterSdk\MagicStarter\Social\SocialFlowStore;
 use Illuminate\Contracts\Auth\Authenticatable;
 use Illuminate\Foundation\Http\FormRequest;
-use Illuminate\Support\Facades\Auth;
 use Illuminate\Validation\Rule;
 use Illuminate\Validation\Validator;
 
@@ -73,11 +73,12 @@ class SocialTokenRequest extends FormRequest
 
     /**
      * The bearer, read from Sanctum: the route also serves a sign-in, so it
-     * carries no auth middleware to make Sanctum the default guard.
+     * carries no auth middleware to make Sanctum the default guard. A bearer
+     * whose token lacks the required ability is no bearer.
      */
     protected function confirmingUser(): ?Authenticatable
     {
-        return Auth::guard('sanctum')->user();
+        return RequireTokenAbility::bearer();
     }
 
     /**
