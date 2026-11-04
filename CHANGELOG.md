@@ -4,6 +4,8 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [0.0.61] - 2026-11-04
+
 ### Added
 
 - **Scheduled task times: move the package's daily and hourly maintenance tasks off 00:00 and :00.** `magic-starter.schedule` takes one cron expression per task (`audit_prune`, `mail_prune_sends`, `billing_prune`, `support_article_images_prune`, `ai_runs_prune`, `billing_expire_grants`, each with a `MAGIC_STARTER_SCHEDULE_*` variable), so a shared box that dumps its databases at 00:00 UTC or runs an hourly spike at :00 can stagger them. These are times, not cadences: the daily tasks still run once a day and the hourly ones once an hour, because their retention is counted in days, hours or minutes. The defaults are the old `0 0 * * *` and `0 * * * *`, and a key that is absent, empty or not a string falls back to its default, so a config published before this block keeps today's schedule; a value that is not a valid cron expression raises from `schedule:run`. `withoutOverlapping()` and `onOneServer()` are unchanged, and so are `magic-starter:support:sweep` and `billing:reconcile` (`billing.reconcile.cadence`). (`src/MagicStarterServiceProvider.php`, `config/magic-starter.php`, `doc/getting-started/configuration.md`, `tests/Console/ScheduledTaskTimesTest.php`)
