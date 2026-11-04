@@ -1634,4 +1634,34 @@ return [
             'extra_keys' => [],
         ],
     ],
+
+    /*
+    |--------------------------------------------------------------------------
+    | Scheduled Task Times
+    |--------------------------------------------------------------------------
+    |
+    | One cron expression for each maintenance task the package puts on the
+    | scheduler. These are TIMES, not cadences: each task keeps the cadence its
+    | retention needs (the daily ones once a day, the hourly ones once an hour),
+    | so a host moves them within the hour or the minute, for instance off the
+    | 00:00 and :00 marks a shared box runs its database dumps and its hourly
+    | spike on. Any cron expression is accepted and handed to `cron()`; one that
+    | is not valid raises from `schedule:run` instead of being replaced.
+    |
+    | A key left out, or left empty, falls back to the default shown here, so a
+    | published config that predates this block keeps today's times.
+    |
+    | `support:sweep` (every minute) and `billing:reconcile`
+    | (`billing.reconcile.cadence`) are not configured here.
+    |
+    */
+
+    'schedule' => [
+        'audit_prune' => env('MAGIC_STARTER_SCHEDULE_AUDIT_PRUNE', '0 0 * * *'),
+        'mail_prune_sends' => env('MAGIC_STARTER_SCHEDULE_MAIL_PRUNE_SENDS', '0 0 * * *'),
+        'billing_prune' => env('MAGIC_STARTER_SCHEDULE_BILLING_PRUNE', '0 0 * * *'),
+        'support_article_images_prune' => env('MAGIC_STARTER_SCHEDULE_SUPPORT_ARTICLE_IMAGES_PRUNE', '0 0 * * *'),
+        'ai_runs_prune' => env('MAGIC_STARTER_SCHEDULE_AI_RUNS_PRUNE', '0 * * * *'),
+        'billing_expire_grants' => env('MAGIC_STARTER_SCHEDULE_BILLING_EXPIRE_GRANTS', '0 * * * *'),
+    ],
 ];
