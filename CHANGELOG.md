@@ -4,6 +4,8 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [0.0.63] - 2026-11-08
+
 ### Added
 
 - **Page context: a signed-in customer's message can name the page it was written from.** `POST support/conversations` and `POST support/conversations/{conversation}/messages` accept `page_context`, a list of `{kind, id}` refs; `PostsCustomerSupportMessages::post()` takes the sanitised list as a trailing optional `$pageContext`. `SupportPageContext::sanitise()` keeps the refs whose `kind` is listed in `support.page_context.kinds` and whose `id` is 1 to 64 characters of letters, digits, `_` and `-`, deduplicated and capped at `support.page_context.max_refs` (default 3), and drops the rest without a validation error; they are stored on that message under `meta.page_context` and never sent in customer JSON. `kinds` defaults to `[]`, which reads and stores nothing. The new `DescribesSupportPage` contract ships unbound: when a host binds it, the AI job re-sanitises the stored refs, calls `describe()` and hands the result to the responder as `SupportTurn::$pageContext`; a throw is reported and the turn goes on without it. The public door never reads it. (`src/Support/SupportPageContext.php`, `src/Contracts/DescribesSupportPage.php`, `config/magic-starter.php`, `doc/support.md`)
