@@ -134,7 +134,6 @@ return [
     'attachments' => [
         'label' => 'Ekler',
         'untrusted_pdf' => 'PDF indir (güvenilmeyen dosya)',
-        'auto_screenshot' => 'Uygulamanın aldığı ekran görüntüsü',
     ],
 
     /*
@@ -147,7 +146,6 @@ return [
         'activity' => 'Son etkinlikler',
         'no_activity' => 'Kayıtlı etkinlik yok.',
         'client_keys' => [
-            'route' => 'Ekran',
             'app_version' => 'Uygulama sürümü',
             'build_number' => 'Derleme',
             'platform' => 'Platform',

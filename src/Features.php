@@ -186,11 +186,11 @@ class Features
     }
 
     /**
-     * Enable the client info and auto screenshot a support conversation carries.
+     * Enable the client info a support conversation carries.
      */
-    public static function supportDiagnostics(): string
+    public static function supportClientContext(): string
     {
-        return 'support-diagnostics';
+        return 'support-client-context';
     }
 
     /**
@@ -415,11 +415,11 @@ class Features
     }
 
     /**
-     * Determine whether support client diagnostics are enabled.
+     * Determine whether the support client context is enabled.
      */
-    public static function hasSupportDiagnosticsFeatures(): bool
+    public static function hasSupportClientContextFeatures(): bool
     {
-        return static::enabled(static::supportDiagnostics());
+        return static::enabled(static::supportClientContext());
     }
 
     /**

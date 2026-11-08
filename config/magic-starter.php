@@ -96,6 +96,11 @@ return [
     | are `magic-starter::support.topics.<topic>`. `client_thread_path` is the
     | in-app route of a thread; `{id}` is replaced with the conversation key.
     |
+    | `page_context` lets a signed-in customer's message name the page it was
+    | written from, as `{kind, id}` refs the host resolves for the AI desk
+    | through `DescribesSupportPage`. `kinds` lists the accepted kinds; empty
+    | (the default) reads and stores nothing. `max_refs` caps refs per message.
+    |
     | `ai` tunes the AI desk, which is off until the application binds
     | `RespondsToSupport`. `name` is the sender name customers see; null reads
     | `magic-starter::support.ai.name` (":app AI"). Turns run as a job on
@@ -174,6 +179,11 @@ return [
         ],
 
         'client_thread_path' => '/support/{id}',
+
+        'page_context' => [
+            'kinds' => [],
+            'max_refs' => 3,
+        ],
 
         'attachments' => [
             // A `local` disk needs `'serve' => true` only if the host calls temporaryUrl() on it elsewhere; the

@@ -17,6 +17,7 @@ use FlutterSdk\MagicStarter\Models\SupportConversation;
 use FlutterSdk\MagicStarter\Notifications\SupportTicketCreatedNotification;
 use FlutterSdk\MagicStarter\Support\MailLocale;
 use FlutterSdk\MagicStarter\Support\SupportAi\SupportHandoff;
+use FlutterSdk\MagicStarter\Support\SupportPageContext;
 use FlutterSdk\MagicStarter\Support\SupportRules;
 use FlutterSdk\MagicStarter\Support\SupportStaffRecipients;
 use FlutterSdk\MagicStarter\Support\SupportThreadToken;
@@ -25,7 +26,6 @@ use Illuminate\Contracts\Auth\MustVerifyEmail;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\UniqueConstraintViolationException;
-use Illuminate\Http\UploadedFile;
 use Illuminate\Support\Arr;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Event;
@@ -68,10 +68,13 @@ use Illuminate\Validation\ValidationException;
  *
  * A signed-in opener may send files with the first message (the
  * `support-attachments` feature), which make its body optional, and, with the
- * `support-diagnostics` feature, the app's screenshot and `client_context`.
- * Every file goes through {@see StoreSupportAttachments} and is refused before
- * anything is written. The context keeps the allowlisted keys only, its route
- * without the query or fragment that may carry a token.
+ * `support-client-context` feature, the app's `client_context`. Every file goes
+ * through {@see StoreSupportAttachments} and is refused before anything is
+ * written. The context keeps the allowlisted keys only.
+ *
+ * The first message of a new signed-in conversation, or the message that continues a contact-sales one, keeps the
+ * `page_context` refs {@see SupportPageContext} admits under `meta.page_context`, and nothing when none survive.
+ * The public door never reads them.
  */
 class OpenSupportConversation implements OpensSupportConversations
 {
@@ -103,15 +106,16 @@ class OpenSupportConversation implements OpensSupportConversations
      *                                       sent, then filed under `other`), body, an optional subject and an
      *                                       optional source (`in_app` or `contact_sales`); a contact-sales
      *                                       thread that is continued keeps its own subject and topic, so a sent
-     *                                       subject is ignored then; `attachments`, `screenshot` and
-     *                                       `client_context` as the features allow
+     *                                       subject is ignored then; `attachments` and
+     *                                       `client_context` as the features allow; `page_context` refs, kept
+     *                                       on the message this call writes
      *
      * @throws ValidationException
      */
     public function open(Authenticatable $user, array $input): SupportConversation
     {
         // 1. Validate the customer's own fields; owner fields are not even read.
-        $diagnostics = Features::hasSupportDiagnosticsFeatures();
+        $clientContext = Features::hasSupportClientContextFeatures();
         $validated = Validator::make($input, SupportRules::conversation(
             [
                 SupportConversationSource::IN_APP,
@@ -119,20 +123,17 @@ class OpenSupportConversation implements OpensSupportConversations
             ],
             topicRequired: true,
             attachments: Features::hasSupportAttachmentsFeatures(),
-            diagnostics: $diagnostics,
+            clientContext: $clientContext,
+            pageContext: true,
         ))->validate();
         $source = SupportConversationSource::from(
             Arr::get($validated, 'source', SupportConversationSource::IN_APP->value),
         );
         $body = (string) Arr::get($validated, 'body', '');
+        $pageContext = SupportPageContext::sanitise(Arr::get($validated, 'page_context'));
 
         // 2. Every file is checked, re-encoded and admitted before anything is written.
-        $screenshot = Arr::get($validated, 'screenshot');
-        $files = $this->attachments->prepare(
-            $user,
-            (array) Arr::get($validated, 'attachments', []),
-            $screenshot instanceof UploadedFile ? $screenshot : null,
-        );
+        $files = $this->attachments->prepare($user, (array) Arr::get($validated, 'attachments', []));
 
         // 3. The opener, and the team they were in, come from the account. The
         //    raw attributes are read because `current_team_id` only exists with
@@ -154,7 +155,7 @@ class OpenSupportConversation implements OpensSupportConversations
             ),
             'source' => $source,
             'status' => $toAi ? SupportConversationStatus::PENDING : SupportConversationStatus::OPEN,
-            ...($diagnostics ? ['client_context' => $this->clientContext($validated)] : []),
+            ...($clientContext ? ['client_context' => $this->clientContext($validated)] : []),
         ];
 
         // 4. Contact sales continues the opener's open thread of this team instead of filing a second one.
@@ -167,18 +168,23 @@ class OpenSupportConversation implements OpensSupportConversations
                     $body,
                     $files,
                     SupportConversationSource::CONTACT_SALES,
+                    $pageContext,
                 ),
             );
 
             if ($continued) {
-                DB::transaction(function () use ($conversation, $body, $user, $files): void {
-                    $this->attachments->store($this->messages->post($conversation, $body, $user), $files, $user);
+                DB::transaction(function () use ($conversation, $body, $user, $files, $pageContext): void {
+                    $this->attachments->store(
+                        $this->messages->post($conversation, $body, $user, $pageContext),
+                        $files,
+                        $user,
+                    );
                 });
 
                 return $conversation;
             }
         } else {
-            $conversation = $this->create($fields, $body, $user, $files);
+            $conversation = $this->create($fields, $body, $user, $files, $pageContext);
         }
 
         // 5. A pending conversation goes to the responder once it commits; any other tells staff once.
@@ -206,6 +212,7 @@ class OpenSupportConversation implements OpensSupportConversations
      * @param  array<string, mixed>  $fields
      * @param  list<array{origin: SupportAttachmentOrigin, name: string, mime: string, extension: string,
      *                    contents: string, width: int|null, height: int|null}>  $files  stored only on a new one
+     * @param  list<array{kind: string, id: string}>  $pageContext  sanitised refs, stored on a new conversation's first message
      * @return array{0: SupportConversation, 1: bool} the conversation, and whether it already existed
      */
     public function continueOrCreate(
@@ -215,6 +222,7 @@ class OpenSupportConversation implements OpensSupportConversations
         string $body,
         array $files,
         SupportConversationSource $source,
+        array $pageContext = [],
     ): array {
         // 1. Serialise concurrent taps of one account on a row that is always there.
         $user->newQuery()->whereKey($user->getKey())->lockForUpdate()->first();
@@ -227,7 +235,7 @@ class OpenSupportConversation implements OpensSupportConversations
         }
 
         // 3. Nothing to continue.
-        return [$this->create($fields, $body, $user, $files), false];
+        return [$this->create($fields, $body, $user, $files, $pageContext), false];
     }
 
     /**
@@ -338,7 +346,7 @@ class OpenSupportConversation implements OpensSupportConversations
     }
 
     /**
-     * The allowlisted context the app sent, with the route cut before its query and fragment.
+     * The allowlisted context the app sent.
      *
      * @param  array<string, mixed>  $validated
      * @return array<string, string>|null null when the app sent nothing to keep
@@ -349,10 +357,6 @@ class OpenSupportConversation implements OpensSupportConversations
             Arr::only((array) Arr::get($validated, 'client_context', []), SupportRules::CLIENT_CONTEXT_KEYS),
             static fn (mixed $value): bool => is_string($value) && $value !== '',
         );
-
-        if (isset($context['route'])) {
-            $context['route'] = Str::before(Str::before($context['route'], '#'), '?');
-        }
 
         return $context === [] ? null : $context;
     }
@@ -368,6 +372,7 @@ class OpenSupportConversation implements OpensSupportConversations
      * @param  array<string, mixed>  $attributes
      * @param  list<array{origin: SupportAttachmentOrigin, name: string, mime: string, extension: string,
      *                    contents: string, width: int|null, height: int|null}>  $files
+     * @param  list<array{kind: string, id: string}>  $pageContext  sanitised; an empty list writes no `meta`
      *
      * @throws UniqueConstraintViolationException when every attempt lost
      */
@@ -376,8 +381,9 @@ class OpenSupportConversation implements OpensSupportConversations
         string $body,
         ?Authenticatable $sender,
         array $files = [],
+        array $pageContext = [],
     ): SupportConversation {
-        $insert = function () use ($attributes, $body, $sender, $files): SupportConversation {
+        $insert = function () use ($attributes, $body, $sender, $files, $pageContext): SupportConversation {
             $now = now();
 
             $conversation = SupportConversation::query()->create([
@@ -392,6 +398,11 @@ class OpenSupportConversation implements OpensSupportConversations
                 'sender_id' => $sender?->getAuthIdentifier(),
                 'kind' => SupportMessageKind::MESSAGE,
                 'body' => $body,
+                ...($pageContext === [] ? [] : [
+                    'meta' => [
+                        'page_context' => $pageContext,
+                    ],
+                ]),
             ]);
 
             $conversation->forceFill([

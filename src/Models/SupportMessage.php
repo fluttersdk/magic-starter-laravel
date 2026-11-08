@@ -23,7 +23,9 @@ use Illuminate\Support\Carbon;
  * @property string|int|null $sender_id
  * @property SupportMessageKind $kind
  * @property string $body
- * @property array<string, mixed>|null $meta AI desk record (confidence, reason, tokens); never customer JSON.
+ * @property array<string, mixed>|null $meta AI desk record (confidence, reason, tokens), and the sanitised
+ *                                           `page_context` refs a customer message carries; never sent to the
+ *                                           customer as JSON.
  * @property Carbon|null $created_at
  * @property Carbon|null $updated_at
  * @property-read SupportConversation $conversation

@@ -4,6 +4,25 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Added
+
+- **Page context: a signed-in customer's message can name the page it was written from.** `POST support/conversations` and `POST support/conversations/{conversation}/messages` accept `page_context`, a list of `{kind, id}` refs; `PostsCustomerSupportMessages::post()` takes the sanitised list as a trailing optional `$pageContext`. `SupportPageContext::sanitise()` keeps the refs whose `kind` is listed in `support.page_context.kinds` and whose `id` is 1 to 64 characters of letters, digits, `_` and `-`, deduplicated and capped at `support.page_context.max_refs` (default 3), and drops the rest without a validation error; they are stored on that message under `meta.page_context` and never sent in customer JSON. `kinds` defaults to `[]`, which reads and stores nothing. The new `DescribesSupportPage` contract ships unbound: when a host binds it, the AI job re-sanitises the stored refs, calls `describe()` and hands the result to the responder as `SupportTurn::$pageContext`; a throw is reported and the turn goes on without it. The public door never reads it. (`src/Support/SupportPageContext.php`, `src/Contracts/DescribesSupportPage.php`, `config/magic-starter.php`, `doc/support.md`)
+
+### Changed
+
+- **The feature `support-diagnostics` is now `support-client-context`.** `Features::supportDiagnostics()` is `Features::supportClientContext()` and `Features::hasSupportDiagnosticsFeatures()` is `Features::hasSupportClientContextFeatures()`. `SupportRules::conversation()` takes `clientContext:` instead of `diagnostics:`. (`doc/support.md`)
+- **`client_context` no longer accepts `route`.** The kept keys are `app_version`, `build_number`, `platform`, `os_version`, `locale` and `timezone`; a `route` the app still sends is dropped like any other unknown key.
+
+### Removed
+
+- **The automatic screenshot on a new conversation.** `SupportAttachmentOrigin::AUTO_SCREENSHOT`, the `screenshot` request part and its validation, and the staff caption in the panel thread (`admin_support.attachments.auto_screenshot`) are gone. A `screenshot` part sent with a new conversation is ignored.
+
+### Upgrading
+
+- **Delete the stored screenshots before you upgrade, and rename the feature.** The origin enum no longer has the `auto_screenshot` case, so reading such a row throws. Delete the `support_message_attachments` rows with `origin = 'auto_screenshot'` and their files from the attachments disk first, then replace `Features::supportDiagnostics()` (`support-diagnostics`) with `Features::supportClientContext()` (`support-client-context`) in your `magic-starter.features` list.
+
+- **A host that implements `PostsCustomerSupportMessages` must add the trailing `array $pageContext = []` parameter to `post()`.** The contract gained it, so an implementation with the old signature fails to load with a declaration error. A host that only calls the contract, or extends `PostCustomerSupportMessage`, is unaffected. The job also cuts a `DescribesSupportPage` answer to one entry per page ref.
+
 ## [0.0.62] - 2026-11-05
 
 ### Added

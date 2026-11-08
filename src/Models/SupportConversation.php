@@ -56,7 +56,7 @@ use Illuminate\Support\Carbon;
  * @property Carbon|null $csat_rated_at
  * @property string|int|null $csat_assignee_id Who held the conversation when it was rated.
  * @property Carbon|null $csat_alerted_at When staff were told about a thumbs-down.
- * @property array<string, string>|null $client_context What the app sent: route, version, platform, locale.
+ * @property array<string, string>|null $client_context What the app sent: app version, build number, platform, OS version, locale, timezone.
  * @property string|null $thread_token_hash
  * @property int $thread_token_version
  * @property Carbon|null $thread_token_expires_at

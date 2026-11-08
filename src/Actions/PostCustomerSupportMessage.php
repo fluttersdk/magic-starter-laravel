@@ -35,6 +35,9 @@ use Illuminate\Validation\ValidationException;
  * door's call, and a message of files alone has none. The files themselves are
  * written by {@see StoreSupportAttachments} in the caller's transaction, which
  * the responder waits for, since it is queued after commit.
+ *
+ * The `page_context` refs the caller passes, already sanitised, are kept under
+ * the message's `meta.page_context`; with none, `meta` is not written at all.
  */
 class PostCustomerSupportMessage implements PostsCustomerSupportMessages
 {
@@ -46,12 +49,18 @@ class PostCustomerSupportMessage implements PostsCustomerSupportMessages
      * Append the customer's message to the thread.
      *
      * @param  Authenticatable|null  $user  the opener, or null for a visitor on the public link
+     * @param  list<array{kind: string, id: string}>  $pageContext  Already sanitised references to the page the
+     *                                                              customer wrote from; empty stores nothing.
      *
      * @throws AuthorizationException a 404 for anyone but the opener
      * @throws ValidationException
      */
-    public function post(SupportConversation $c, string $body, ?Authenticatable $user): SupportMessage
-    {
+    public function post(
+        SupportConversation $c,
+        string $body,
+        ?Authenticatable $user,
+        array $pageContext = [],
+    ): SupportMessage {
         // 1. Only the opener writes here; a team mate is no exception.
         if ((string) $c->user_id !== (string) $user?->getAuthIdentifier()) {
             throw (new AuthorizationException)->asNotFound();
@@ -75,7 +84,7 @@ class PostCustomerSupportMessage implements PostsCustomerSupportMessages
         $toAi = $this->desk->routesToAi($user instanceof Model ? $user : null, $c->source);
 
         [$message, $staysWithAi, $wasWaiting] = Auditor::withoutAuditing(fn (): array => DB::transaction(
-            function () use ($c, $body, $user, $toAi): array {
+            function () use ($c, $body, $user, $toAi, $pageContext): array {
                 $now = now();
                 $c->setRawAttributes(
                     SupportConversation::query()->lockForUpdate()->findOrFail($c->getKey())->getAttributes(),
@@ -89,6 +98,11 @@ class PostCustomerSupportMessage implements PostsCustomerSupportMessages
                     'sender_id' => $user?->getAuthIdentifier(),
                     'kind' => SupportMessageKind::MESSAGE,
                     'body' => $body,
+                    ...($pageContext === [] ? [] : [
+                        'meta' => [
+                            'page_context' => $pageContext,
+                        ],
+                    ]),
                 ]);
 
                 $c->forceFill([

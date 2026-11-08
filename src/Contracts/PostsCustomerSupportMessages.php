@@ -25,9 +25,16 @@ interface PostsCustomerSupportMessages
      * Append the customer's message to the thread.
      *
      * @param  Authenticatable|null  $user  the opener, or null for a visitor on the public link
+     * @param  list<array{kind: string, id: string}>  $pageContext  Already sanitised references to the page the
+     *                                                              customer wrote from; empty stores nothing.
      *
      * @throws ValidationException
      * @throws AuthorizationException
      */
-    public function post(SupportConversation $c, string $body, ?Authenticatable $user): SupportMessage;
+    public function post(
+        SupportConversation $c,
+        string $body,
+        ?Authenticatable $user,
+        array $pageContext = [],
+    ): SupportMessage;
 }

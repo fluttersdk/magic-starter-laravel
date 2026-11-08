@@ -22,7 +22,7 @@ use PHPUnit\Framework\Attributes\DataProvider;
 
 /**
  * The schema, models, flags and config the CSAT, feedback, attachment and
- * diagnostics work stands on, and the one audit rule that keeps customer text
+ * client context work stands on, and the one audit rule that keeps customer text
  * and file rows out of the trail.
  */
 class SupportFeedbackSchemaTest extends TestCase
@@ -135,7 +135,7 @@ class SupportFeedbackSchemaTest extends TestCase
             'csat_assignee_id' => $staff->getKey(),
             'csat_alerted_at' => now(),
             'client_context' => [
-                'route' => '/monitors',
+                'app_version' => '1.4.0',
                 'platform' => 'ios',
             ],
         ]);
@@ -143,15 +143,15 @@ class SupportFeedbackSchemaTest extends TestCase
             'sender_type' => SupportSenderType::CUSTOMER,
             'sender_id' => $user->getKey(),
             'kind' => SupportMessageKind::MESSAGE,
-            'body' => 'See the screenshot.',
+            'body' => 'See the chart.',
         ]);
         $attachment = SupportMessageAttachment::create([
             'conversation_id' => $conversation->getKey(),
             'message_id' => $message->getKey(),
-            'origin' => SupportAttachmentOrigin::AUTO_SCREENSHOT,
+            'origin' => SupportAttachmentOrigin::UPLOAD,
             'disk' => 'local',
             'path' => 'support/abc.png',
-            'original_name' => 'screenshot.png',
+            'original_name' => 'chart.png',
             'mime' => 'image/png',
             'size' => 1024,
             'width' => 390,
@@ -170,11 +170,11 @@ class SupportFeedbackSchemaTest extends TestCase
         $this->assertNotNull($conversation->csat_rated_at);
         $this->assertNotNull($conversation->csat_alerted_at);
         $this->assertSame((string) $staff->getKey(), (string) $conversation->csat_assignee_id);
-        $this->assertSame('/monitors', $conversation->client_context['route']);
+        $this->assertSame('1.4.0', $conversation->client_context['app_version']);
 
         $this->assertSame($attachment->getKey(), $conversation->attachments()->sole()->getKey());
         $this->assertSame($attachment->getKey(), $message->attachments()->sole()->getKey());
-        $this->assertSame(SupportAttachmentOrigin::AUTO_SCREENSHOT, $attachment->origin);
+        $this->assertSame(SupportAttachmentOrigin::UPLOAD, $attachment->origin);
         $this->assertSame(1024, $attachment->size);
         $this->assertSame(390, $attachment->width);
         $this->assertSame($message->getKey(), $attachment->message->getKey());
@@ -238,7 +238,10 @@ class SupportFeedbackSchemaTest extends TestCase
             'support-csat' => [Features::supportCsat(), Features::hasSupportCsatFeatures(...)],
             'support-feedback' => [Features::supportFeedback(), Features::hasSupportFeedbackFeatures(...)],
             'support-attachments' => [Features::supportAttachments(), Features::hasSupportAttachmentsFeatures(...)],
-            'support-diagnostics' => [Features::supportDiagnostics(), Features::hasSupportDiagnosticsFeatures(...)],
+            'support-client-context' => [
+                Features::supportClientContext(),
+                Features::hasSupportClientContextFeatures(...),
+            ],
         ];
 
         foreach ($checks as $value => [$flag, $has]) {
@@ -280,7 +283,7 @@ class SupportFeedbackSchemaTest extends TestCase
     {
         $this->assertSame(['up', 'down'], array_column(SupportCsatRating::cases(), 'value'));
         $this->assertSame(
-            ['upload', 'auto_screenshot', 'staff'],
+            ['upload', 'staff'],
             array_column(SupportAttachmentOrigin::cases(), 'value'),
         );
     }

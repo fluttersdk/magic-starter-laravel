@@ -740,35 +740,6 @@ class SupportConversationResourceTest extends FilamentTestCase
             ->assertSee('invoice.pdf');
     }
 
-    public function test_the_thread_labels_the_screenshot_the_app_captured_apart_from_an_upload(): void
-    {
-        $this->enable(Features::supportAttachments());
-        Storage::fake('local');
-        $conversation = $this->conversation($this->user('opener@example.com'));
-        $message = $this->message($conversation, SupportSenderType::CUSTOMER, SupportMessageKind::MESSAGE, 'Broken');
-        $upload = $this->attachment($message, 'chart.png', 'image/png');
-        $screenshot = $this->attachment(
-            $message,
-            'screenshot.png',
-            'image/png',
-            SupportAttachmentOrigin::AUTO_SCREENSHOT,
-        );
-        $label = (string) __('magic-starter::admin_support.attachments.auto_screenshot');
-
-        $html = Livewire::actingAs($this->staff())
-            ->test(ViewSupportConversation::class, ['record' => $conversation->getKey()])
-            ->assertSee($label)
-            ->html();
-
-        // The label sits with the screenshot alone, not with the file the customer chose.
-        $this->assertSame(1, substr_count($html, $label));
-        $this->assertLessThan(
-            strpos($html, e($this->panelFileUrl($screenshot))),
-            strpos($html, e($this->panelFileUrl($upload))),
-        );
-        $this->assertGreaterThan(strpos($html, e($this->panelFileUrl($screenshot))), strpos($html, $label));
-    }
-
     public function test_the_panel_serves_a_file_with_fixed_headers_to_staff_and_refuses_everyone_else(): void
     {
         Storage::fake('local');
@@ -1186,14 +1157,13 @@ class SupportConversationResourceTest extends FilamentTestCase
         SupportMessage $message,
         string $name,
         string $mime,
-        SupportAttachmentOrigin $origin = SupportAttachmentOrigin::UPLOAD,
     ): SupportMessageAttachment {
         $path = "support/{$message->conversation_id}/" . Str::uuid() . '.' . pathinfo($name, PATHINFO_EXTENSION);
         Storage::disk('local')->put($path, $mime === 'application/pdf' ? "%PDF-1.4\n%%EOF\n" : 'png-bytes');
 
         return $message->attachments()->create([
             'conversation_id' => $message->conversation_id,
-            'origin' => $origin,
+            'origin' => SupportAttachmentOrigin::UPLOAD,
             'disk' => 'local',
             'path' => $path,
             'original_name' => $name,

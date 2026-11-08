@@ -4,6 +4,7 @@ namespace FlutterSdk\MagicStarter\Jobs;
 
 use DateTimeInterface;
 use FlutterSdk\MagicStarter\Contracts\CapsSupportSpend;
+use FlutterSdk\MagicStarter\Contracts\DescribesSupportPage;
 use FlutterSdk\MagicStarter\Contracts\RespondsToSupport;
 use FlutterSdk\MagicStarter\Enums\SupportAttachmentOrigin;
 use FlutterSdk\MagicStarter\Enums\SupportAudience;
@@ -30,6 +31,7 @@ use FlutterSdk\MagicStarter\Support\SupportAi\SupportTurn;
 use FlutterSdk\MagicStarter\Support\SupportAi\SupportUsage;
 use FlutterSdk\MagicStarter\Support\SupportAi\Tools\SupportArticleText;
 use FlutterSdk\MagicStarter\Support\SupportAttachmentResponse;
+use FlutterSdk\MagicStarter\Support\SupportPageContext;
 use FlutterSdk\MagicStarter\Support\TeamKey;
 use Illuminate\Contracts\Cache\LockTimeoutException;
 use Illuminate\Contracts\Container\Container;
@@ -286,8 +288,12 @@ class RespondToSupportConversation implements ShouldQueue
             return;
         }
 
-        // 5. Ask; a responder that throws is a failed turn.
+        // 5. Ask, with what the host made of the page the customer wrote from; a responder that throws is a
+        //    failed turn. The host's time comes off the model's budget, like the lock wait.
         $turnLocale = $desk->locale($conversation);
+        $describeStartedAt = microtime(true);
+        $pageContext = $this->pageContext($container, $conversation, $trigger);
+        $spentSeconds = $waitedSeconds + (int) floor(microtime(true) - $describeStartedAt);
 
         try {
             $answer = $responder->respond(new SupportTurn(
@@ -295,12 +301,13 @@ class RespondToSupportConversation implements ShouldQueue
                 trigger: $trigger,
                 history: $history,
                 locale: $turnLocale,
-                deadlineSeconds: max(1, (int) config('magic-starter.support.ai.deadline_seconds', 75) - $waitedSeconds),
+                deadlineSeconds: max(1, (int) config('magic-starter.support.ai.deadline_seconds', 75) - $spentSeconds),
                 images: $uploads['images'],
                 pdfCount: $uploads['pdfs'],
                 summary: $summary,
                 summaryThroughId: $summaryThroughId,
                 historyTruncated: $historyTruncated,
+                pageContext: $pageContext,
             ));
         } catch (Throwable $exception) {
             report($exception);
@@ -373,6 +380,40 @@ class RespondToSupportConversation implements ShouldQueue
     }
 
     /**
+     * What the host's {@see DescribesSupportPage} makes of the page refs stored on the trigger.
+     *
+     * The refs are sanitised again, since the allowed kinds may have changed since they were stored. Nothing
+     * is asked without refs or a binding, and a host that throws is reported: the turn is answered without
+     * page context rather than failed. The answer is cut to one entry per ref, so a resolver that returns
+     * more cannot inflate the prompt.
+     *
+     * @return list<array<string, mixed>>
+     */
+    private function pageContext(
+        Container $container,
+        SupportConversation $conversation,
+        SupportMessage $trigger,
+    ): array {
+        $refs = SupportPageContext::sanitise($trigger->meta['page_context'] ?? []);
+
+        if ($refs === [] || ! $container->bound(DescribesSupportPage::class)) {
+            return [];
+        }
+
+        try {
+            return array_slice(
+                array_values($container->make(DescribesSupportPage::class)->describe($conversation, $refs)),
+                0,
+                count($refs),
+            );
+        } catch (Throwable $exception) {
+            report($exception);
+
+            return [];
+        }
+    }
+
+    /**
      * Whether this job's trigger is still the turn the desk owes: pending, newest, unanswered.
      */
     private function owns(SupportConversation $conversation): bool
@@ -434,8 +475,8 @@ class RespondToSupportConversation implements ShouldQueue
     /**
      * The files the customer uploaded with the trigger, split into what the model may see and what it may only be told.
      *
-     * Only the trigger's own `upload` files count: the auto screenshot, staff files and anything on an earlier
-     * message stay out. An image is a disk and a path, never bytes; the responder reads it if its provider can.
+     * Only the trigger's own `upload` files count: staff files and anything on an earlier message stay
+     * out. An image is a disk and a path, never bytes; the responder reads it if its provider can.
      * Without `support-attachments` there are none to read, and a host that never published the attachments
      * migration has no table to read them from.
      *

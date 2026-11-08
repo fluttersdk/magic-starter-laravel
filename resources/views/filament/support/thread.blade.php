@@ -7,7 +7,7 @@
     element uses `white-space: pre-line`, so any indentation would render as text.
 
     @var list<array{variant: string, out: bool, body: string, avatar: string, chip: ?string, meta: list<string>,
-                    attachments: list<array{name: string, url: string, image: bool, origin: string}>}> $items
+                    attachments: list<array{name: string, url: string, image: bool}>}> $items
     @var array{text: string, age: string}|null $summary
 --}}
 <style>
@@ -36,7 +36,6 @@
     .msl-files { display: flex; flex-wrap: wrap; gap: 6px; }
     .msl-out .msl-files { justify-content: flex-end; }
     .msl-file { display: flex; flex-direction: column; gap: 3px; }
-    .msl-file-caption { font-size: 11px; color: var(--msl-muted); }
     .msl-file-image img { display: block; max-width: 220px; max-height: 160px; border-radius: 8px; border: 1px solid var(--msl-rule); object-fit: cover; }
     .msl-file-pdf { padding: 6px 10px; border-radius: 8px; border: 1px dashed var(--msl-note-edge); font-size: 12px; overflow-wrap: anywhere; }
     .msl-event::before, .msl-event::after { content: ""; flex: 1; height: 1px; background: var(--msl-rule); }
