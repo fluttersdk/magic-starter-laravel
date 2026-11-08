@@ -9,7 +9,8 @@
 - [Satisfaction Rating](#satisfaction-rating)
 - [In-app Feedback](#in-app-feedback)
 - [Attachments](#attachments)
-- [Client Diagnostics](#client-diagnostics)
+- [Client Context](#client-context)
+- [Page Context](#page-context)
 - [Staff Recipients](#staff-recipients)
 - [Answering from the Panel](#answering-from-the-panel)
 - [Events](#events)
@@ -33,7 +34,7 @@ Five further features sit on top of it and are off by default; each needs `suppo
 | `Features::supportCsat()` (`support-csat`) | A thumbs rating of a resolved conversation |
 | `Features::supportFeedback()` (`support-feedback`) | The occasional 0-10 feedback card and the staff feedback list |
 | `Features::supportAttachments()` (`support-attachments`) | Images and PDFs on a message |
-| `Features::supportDiagnostics()` (`support-diagnostics`) | The client info and the screenshot a new conversation carries |
+| `Features::supportClientContext()` (`support-client-context`) | The client info a new conversation carries |
 | `Features::supportProposals()` (`support-proposals`) | Billing changes the AI desk records for staff to approve; also needs billing. See [Support Proposals](support-proposals.md) |
 
 ---
@@ -48,7 +49,7 @@ Five further features sit on top of it and are off by default; each needs `suppo
     Features::supportCsat(),
     Features::supportFeedback(),
     Features::supportAttachments(),
-    Features::supportDiagnostics(),
+    Features::supportClientContext(),
 ],
 ```
 
@@ -64,9 +65,9 @@ Signed in (`auth:sanctum`, throttle `magic-starter-support`):
 | Method | Route | Purpose |
 |--------|-------|---------|
 | GET | `{prefix}/support/conversations` | The caller's conversations, latest activity first, paginated (`page`, `per_page` 1 to 50, default 15) |
-| POST | `{prefix}/support/conversations` | Open one: `topic`, `body`, optional `subject`, optional `source` (`in_app` or `contact_sales`), plus `attachments`, `screenshot` and `client_context` with their features |
+| POST | `{prefix}/support/conversations` | Open one: `topic`, `body`, optional `subject`, optional `source` (`in_app` or `contact_sales`), plus `attachments` and `client_context` with their features, and `page_context` (see [Page Context](#page-context)) |
 | GET | `{prefix}/support/conversations/{conversation}` | The thread, without staff notes |
-| POST | `{prefix}/support/conversations/{conversation}/messages` | Add a message, with `attachments` under `support-attachments` |
+| POST | `{prefix}/support/conversations/{conversation}/messages` | Add a message, with `attachments` under `support-attachments` and `page_context` (see [Page Context](#page-context)) |
 | POST | `{prefix}/support/conversations/{conversation}/seen` | Mark the thread read |
 | POST | `{prefix}/support/conversations/{conversation}/rating` | Rate a resolved conversation (`support-csat`) |
 | GET | `{prefix}/support/feedback` | Whether the feedback card is due (`support-feedback`) |
@@ -118,6 +119,7 @@ A conversation belongs to its opener alone. When a visitor verifies an address t
 | `support.mail.csat_invitation` | `false` | On a transition to resolved, mails the account holder (a `MustVerifyEmail` user model with `Features::emailVerification()` enabled, and a verified, non-blank address) a link to rate the thread, when `support-csat` is on and the conversation is not yet rated for this resolution. Never a visitor or a guest |
 | `support.topics` | `billing`, `technical`, `account`, `sales`, `other` | What an opener may file under; labels are `magic-starter::support.topics.<topic>` |
 | `support.client_thread_path` | `/support/{id}` | The in-app route of a thread, used for `action_url` |
+| `support.page_context.*` | see [Page Context](#page-context) | The page kinds a message may name, and how many |
 | `support.ai.*` | see [The AI Desk](#the-ai-desk) | The AI desk's queue, timeouts, limits and quotas |
 | `support.attachments.*` | see [Attachments](#attachments) | The disk, count, size, type and daily limits of a file |
 | `support.feedback.*` | see [In-app Feedback](#in-app-feedback) | The pacing and the low-score rules of the feedback card |
@@ -154,7 +156,7 @@ A host implementation:
 
 `AssistsSupportStaff` reads the thread through `customerVisible()` as well: staff notes never go into a prompt.
 
-With `support-attachments` on, `SupportTurn::images` lists the images the customer uploaded with the trigger message, oldest first, as `disk`, `path` and `mime` (a pointer, never bytes), and `SupportTurn::pdfCount` counts its PDFs. Only that message's own uploads are listed: the auto screenshot, staff files and the files of earlier messages never are. A responder reads an image only when its provider takes images, treats its pixels as data and never as instructions, and tells the model how many PDFs there are without reading them.
+With `support-attachments` on, `SupportTurn::images` lists the images the customer uploaded with the trigger message, oldest first, as `disk`, `path` and `mime` (a pointer, never bytes), and `SupportTurn::pdfCount` counts its PDFs. Only that message's own uploads are listed: staff files and the files of earlier messages never are. A responder reads an image only when its provider takes images, treats its pixels as data and never as instructions, and tells the model how many PDFs there are without reading them.
 
 ### History Summary
 
@@ -337,7 +339,7 @@ With `support-attachments` on, a customer message carries images and PDFs. Send 
 
 `SupportAttachmentRules` is the one source of the checks, and `StoreSupportAttachments` the one write path, for the customer and for staff. The type is sniffed from the bytes and the extension must be an allowed one, so an SVG, an HTML page or an Office file never passes under a `.png` name; the two must also name the same family, so a PDF named `.png`, or an image named `.pdf`, is refused. An image's size is read from its header with `getimagesize()` before any pixel is decoded, and refused past `max_edge` or `max_pixels`. Every file is validated and every image re-encoded before the message exists, so a refused file posts nothing and alerts nobody. Errors come back as 422 keyed `attachments.N` (or `attachments`, for the daily allowance).
 
-An image has its long edge capped at `stored_max_edge` first, so the rest works on the small copy, then is turned upright from its EXIF orientation and re-encoded with GD in its own format, which drops every metadata block (GPS included). A PDF is kept byte for byte. A file lands on `support.attachments.disk` under a generated name; the sender's name is display text only. The daily allowance is a cache counter checked before anything is stored and raised once the message commits. It counts only the files the customer picked: the app's `auto_screenshot` and staff files are exempt.
+An image has its long edge capped at `stored_max_edge` first, so the rest works on the small copy, then is turned upright from its EXIF orientation and re-encoded with GD in its own format, which drops every metadata block (GPS included). A PDF is kept byte for byte. A file lands on `support.attachments.disk` under a generated name; the sender's name is display text only. The daily allowance is a cache counter checked before anything is stored and raised once the message commits. It counts only the files the customer picked: staff files are exempt.
 
 ### Serving
 
@@ -354,15 +356,32 @@ Deleting an account removes the files of its support conversations after the tra
 
 ---
 
-<a name="client-diagnostics"></a>
-## Client Diagnostics
+<a name="client-context"></a>
+## Client Context
 
-With `support-diagnostics` on, `POST support/conversations` also accepts:
+With `support-client-context` on, `POST support/conversations` also accepts `client_context[app_version|build_number|platform|os_version|locale|timezone]`, strings up to 120 characters. Only those keys are kept; any other key is dropped. Staff read them beside the thread.
 
-- `client_context[route|app_version|build_number|platform|os_version|locale|timezone]`, strings up to 120 characters. Only those keys are kept, and `route` is stored without its query and fragment, which may carry a token. Staff read them beside the thread.
-- `screenshot`, one PNG file named `screenshot.png`, stored with the origin `auto_screenshot`. It is a create-only part and is never listed in `SupportTurn::images`, so the model never sees it.
+---
 
-The screenshot is stored and read through the attachment pipeline, so turn `support-attachments` on with it: with attachments off the capture is stored but no endpoint serves it, and nobody can read it.
+<a name="page-context"></a>
+## Page Context
+
+A signed-in customer's message may name the page of the host app it was written from, so the AI desk can see it without the customer describing it. `POST support/conversations` and `POST support/conversations/{conversation}/messages` accept `page_context`, a list of `{kind, id}` refs, and store the kept refs on that message under `meta.page_context`, so a reply carries the page the customer is on when they send it. A contact-sales message that continues an open conversation carries it too. The public door never reads it, and it never appears in any customer JSON.
+
+| Key | Default | Meaning |
+|-----|---------|---------|
+| `support.page_context.kinds` | `[]` | The kinds a ref may name (`monitor`, `incident`, ...). Empty turns the feature off: nothing is read or stored |
+| `support.page_context.max_refs` | `3` | The most refs one message keeps |
+
+The refs are optional, so they are never a validation error. `SupportPageContext::sanitise()` keeps, in the order sent, the entries whose `kind` is a string listed in `kinds` (exact match) and whose `id` is a string of 1 to 64 characters of `A-Z`, `a-z`, `0-9`, `_` and `-` (a uuid or an integer key), drops duplicates and every other key, and stops at `max_refs`. Anything else is dropped silently; a message whose refs all drop stores no `meta` at all.
+
+The package never reads the refs or sends them anywhere itself. Before a turn, the AI job sanitises the stored refs again (a kind removed from `kinds` since is dropped) and, when the host binds `DescribesSupportPage`, passes them to `describe(SupportConversation $conversation, array $refs): array`. The result reaches the responder as `SupportTurn::$pageContext`, a list of small JSON-encodable entries, one per resolved page. With nothing bound, no refs, or a `describe()` that throws (it is reported), the turn is answered with an empty `pageContext`.
+
+`DescribesSupportPage` ships with no default implementation and no binding. The refs are customer-supplied and untrusted: an implementation resolves every id inside the conversation's own account scope and answers nothing for an unknown or foreign one. What it returns is data for a model, which the responder puts inside its own untrusted fence, never instructions.
+
+```php
+$this->app->bind(DescribesSupportPage::class, MyPageDescription::class);
+```
 
 ---
 
@@ -393,7 +412,7 @@ The plugin mounts the **Support inbox** under the key `support`; `withoutResourc
 With the extra features on, the panel also carries:
 
 - **Rating**: a column and a filter for the thumbs rating of a resolved conversation (`support-csat`).
-- **Attachments**: files in the thread, images shown and PDFs offered as downloads, the screenshot the app captured captioned "Screenshot captured by the app" so it is not mistaken for a file the customer chose, and a staff upload on a reply that goes through the same validation and storage as the customer's, with the origin `staff`. The attach control is hidden when the conversation has no opener (`support-attachments`).
+- **Attachments**: files in the thread, images shown and PDFs offered as downloads, and a staff upload on a reply that goes through the same validation and storage as the customer's, with the origin `staff`. The attach control is hidden when the conversation has no opener (`support-attachments`).
 - **Feedback**: a feedback list of every score and dismissal, and a respond-by on a feedback conversation from `support.feedback.response_hours` (`support-feedback`).
 - **Customer context**: a panel beside the thread with the client info the app sent, the opener's latest 20 audit rows and, when the host binds `DescribesSupportCustomer`, the host's own section. Push device rows are left out of the audit list: their heartbeat updates would fill it on their own.
 
@@ -436,6 +455,6 @@ Staff writes are two contracts, bound in the provider and replaceable like any o
 $this->app->bind(RepliesToSupport::class, MyReplyToSupport::class);
 ```
 
-`RespondsToSupport` and `AssistsSupportStaff` are the two AI contracts and ship unbound; see [The AI Desk](#the-ai-desk). `DescribesSupportCustomer` ships unbound too; see [Answering from the Panel](#answering-from-the-panel).
+`RespondsToSupport` and `AssistsSupportStaff` are the two AI contracts and ship unbound; see [The AI Desk](#the-ai-desk). `DescribesSupportCustomer` ships unbound too; see [Answering from the Panel](#answering-from-the-panel). So does `DescribesSupportPage`; see [Page Context](#page-context).
 
 The reply action does not authorize its `$staff` argument: the panel gate is the authorization. A replacement that is called from anywhere else has to check access itself.

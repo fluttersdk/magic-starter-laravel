@@ -12,9 +12,6 @@ enum SupportAttachmentOrigin: string
     /** A file the customer picked. */
     case UPLOAD = 'upload';
 
-    /** The screenshot the app captured when the conversation was opened. Never sent to the model. */
-    case AUTO_SCREENSHOT = 'auto_screenshot';
-
     /** A file staff attached from the panel. */
     case STAFF = 'staff';
 }

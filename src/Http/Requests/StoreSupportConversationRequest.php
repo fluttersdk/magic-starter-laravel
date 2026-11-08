@@ -15,7 +15,8 @@ use Illuminate\Foundation\Http\FormRequest;
  * topic is required unless the source is contact sales, which the action files
  * under `sales`; the subject is optional and derived by the action when absent.
  * Files make the body optional (the `support-attachments` feature); the app's
- * screenshot and `client_context` are read only with `support-diagnostics`.
+ * `client_context` is read only with `support-client-context`. `page_context`
+ * passes through unchecked: the action keeps its valid refs and never refuses it.
  */
 class StoreSupportConversationRequest extends FormRequest
 {
@@ -41,7 +42,8 @@ class StoreSupportConversationRequest extends FormRequest
             ],
             topicRequired: true,
             attachments: Features::hasSupportAttachmentsFeatures(),
-            diagnostics: Features::hasSupportDiagnosticsFeatures(),
+            clientContext: Features::hasSupportClientContextFeatures(),
+            pageContext: true,
         );
     }
 }

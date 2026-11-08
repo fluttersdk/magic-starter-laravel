@@ -2,6 +2,7 @@
 
 namespace FlutterSdk\MagicStarter\Support\SupportAi;
 
+use FlutterSdk\MagicStarter\Contracts\DescribesSupportPage;
 use FlutterSdk\MagicStarter\Enums\SupportMessageKind;
 use FlutterSdk\MagicStarter\Enums\SupportSenderType;
 use FlutterSdk\MagicStarter\Models\SupportConversation;
@@ -29,8 +30,11 @@ use InvalidArgumentException;
  *
  * `images` and `pdfCount` describe the files on the trigger alone. An image is
  * a pointer, never bytes: the responder reads it from the named disk, and only
- * when its provider takes images. The auto screenshot, staff files and the
- * files of earlier messages are never listed.
+ * when its provider takes images. Staff files and the files of earlier
+ * messages are never listed.
+ *
+ * `pageContext` is what the host's {@see DescribesSupportPage} made of the
+ * page refs the customer's app sent: untrusted data, like every body here.
  */
 final readonly class SupportTurn
 {
@@ -48,6 +52,8 @@ final readonly class SupportTurn
      * @param  string|null  $summary  The stored summary of the thread up to `summaryThroughId`, or null.
      * @param  int|string|null  $summaryThroughId  The stored boundary as read, even when its message is gone;
      *                                             a compaction is stored only while it is still the boundary.
+     * @param  list<array<string, mixed>>  $pageContext  What the host resolved for the trigger's page references;
+     *                                                   empty when none, unbound or the resolver failed.
      *
      * @throws InvalidArgumentException when a message is not this conversation's, a history
      *                                  entry is not customer-visible, the trigger is not a
@@ -64,6 +70,7 @@ final readonly class SupportTurn
         public ?string $summary = null,
         public int|string|null $summaryThroughId = null,
         public bool $historyTruncated = false,
+        public array $pageContext = [],
     ) {
         if ($trigger->sender_type !== SupportSenderType::CUSTOMER || $trigger->kind !== SupportMessageKind::MESSAGE) {
             throw new InvalidArgumentException('A support turn answers a customer message.');

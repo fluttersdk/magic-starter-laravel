@@ -53,23 +53,6 @@ final class SupportAttachmentRules
     }
 
     /**
-     * Rules for the screenshot the app captures when a conversation is opened: one PNG.
-     *
-     * @return array<string, list<mixed>>
-     */
-    public static function screenshot(): array
-    {
-        return [
-            'screenshot' => [
-                'sometimes',
-                ...self::file([
-                    'png',
-                ]),
-            ],
-        ];
-    }
-
-    /**
      * The extensions a file may have, from `support.attachments.types`.
      *
      * @return list<string>

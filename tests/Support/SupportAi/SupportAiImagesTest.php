@@ -137,11 +137,10 @@ class SupportAiImagesTest extends TestCase
         $this->assertSame(0, $responder->turns[0]->pdfCount);
     }
 
-    public function test_an_auto_screenshot_a_staff_file_and_a_pdf_are_not_images_for_the_model(): void
+    public function test_a_staff_file_and_a_pdf_are_not_images_for_the_model(): void
     {
         $responder = $this->bindResponder();
         [$conversation, $trigger] = $this->pendingTurn('The page looks broken.');
-        $this->attach($trigger, SupportAttachmentOrigin::AUTO_SCREENSHOT, 'image/png', 'support/screenshot.png');
         $this->attach($trigger, SupportAttachmentOrigin::STAFF, 'image/png', 'support/staff.png');
         $this->attach($trigger, SupportAttachmentOrigin::UPLOAD, 'application/pdf', 'support/invoice.pdf');
         $this->attach($trigger, SupportAttachmentOrigin::UPLOAD, 'application/pdf', 'support/receipt.pdf');

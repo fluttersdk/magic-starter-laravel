@@ -11,8 +11,9 @@ use Illuminate\Foundation\Http\FormRequest;
  * public thread link.
  *
  * Only the body is read, and on the signed-in route the `attachments` that
- * make it optional: who wrote it and what kind of entry it is are decided by
- * the action, never by the request. The public thread takes no files.
+ * make it optional and the `page_context` refs: who wrote it and what kind of
+ * entry it is are decided by the action, never by the request. The public
+ * thread takes no files and no page refs.
  */
 class StoreSupportMessageRequest extends FormRequest
 {
@@ -31,8 +32,11 @@ class StoreSupportMessageRequest extends FormRequest
      */
     public function rules(): array
     {
-        return SupportRules::message(
-            attachments: Features::hasSupportAttachmentsFeatures() && $this->route('conversation') !== null,
-        );
+        $signedIn = $this->route('conversation') !== null;
+
+        return [
+            ...SupportRules::message(attachments: Features::hasSupportAttachmentsFeatures() && $signedIn),
+            ...($signedIn ? SupportRules::pageContext() : []),
+        ];
     }
 }

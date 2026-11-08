@@ -120,7 +120,7 @@ class FaqToolsTest extends TestCase
             '',
             'Open the **Monitors** tab. ![The monitors tab](https://cdn.example.com/tab.png)',
             'See [the guide](https://docs.example.com/guide) or [the faq][faq].',
-            '<img src="https://cdn.example.com/x.png" alt="An inline screenshot">',
+            '<img src="https://cdn.example.com/x.png" alt="An inline diagram">',
             'Mail us at <https://help.example.com> or www.example.com/help.',
             '',
             '[faq]: https://docs.example.com/faq',
@@ -130,7 +130,7 @@ class FaqToolsTest extends TestCase
             ->handle(SupportToolContext::forConversation($this->conversation()), ['id' => $article->id]);
 
         $this->assertStringContainsString('The monitors tab', $result);
-        $this->assertStringContainsString('An inline screenshot', $result);
+        $this->assertStringContainsString('An inline diagram', $result);
         $this->assertStringContainsString('the guide', $result);
         $this->assertStringContainsString('Monitors', $result);
         $this->assertStringNotContainsString('example.com', $result);

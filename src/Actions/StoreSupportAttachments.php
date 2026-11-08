@@ -36,9 +36,9 @@ use RuntimeException;
  *
  * The daily allowance (`daily_files` files and `daily_kb` kilobytes per user
  * and application day) is a cache counter, raised once the message commits. It
- * counts only what the customer picked: the app's own screenshot and staff
- * files are exempt. Two uploads racing the last slot may both pass; the support
- * write limiter keeps that overshoot to a handful of files.
+ * counts only what the customer picked: staff files are exempt. Two uploads
+ * racing the last slot may both pass; the support write limiter keeps that
+ * overshoot to a handful of files.
  */
 class StoreSupportAttachments
 {
@@ -72,31 +72,23 @@ class StoreSupportAttachments
      *
      * @param  Authenticatable  $sender  whose daily allowance the files count against
      * @param  array<int, mixed>  $files  the `attachments` the sender picked
-     * @param  UploadedFile|null  $screenshot  the app's capture, stored as
-     *                                         {@see SupportAttachmentOrigin::AUTO_SCREENSHOT}
      * @param  SupportAttachmentOrigin  $origin  where `$files` came from
      * @return list<array{origin: SupportAttachmentOrigin, name: string, mime: string, extension: string,
      *                    contents: string, width: int|null, height: int|null}>
      *
-     * @throws ValidationException a refused file, keyed `attachments.N` or `screenshot`, or the
-     *                             allowance, keyed `attachments`
+     * @throws ValidationException a refused file, keyed `attachments.N`, or the allowance, keyed `attachments`
      */
     public function prepare(
         Authenticatable $sender,
         array $files,
-        ?UploadedFile $screenshot = null,
         SupportAttachmentOrigin $origin = SupportAttachmentOrigin::UPLOAD,
     ): array {
         // 1. Type, extension, size and header dimensions, before any pixel is decoded.
         Validator::make(
             [
                 'attachments' => $files,
-                'screenshot' => $screenshot,
             ],
-            [
-                ...SupportAttachmentRules::attachments(),
-                ...($screenshot === null ? [] : SupportAttachmentRules::screenshot()),
-            ],
+            SupportAttachmentRules::attachments(),
         )->validate();
 
         // 2. Re-encode each image, keep each PDF as sent.
@@ -105,10 +97,6 @@ class StoreSupportAttachments
         foreach (array_values($files) as $index => $file) {
             /** @var UploadedFile $file */
             $prepared[] = $this->prepareOne($file, "attachments.{$index}", $origin);
-        }
-
-        if ($screenshot !== null) {
-            $prepared[] = $this->prepareOne($screenshot, 'screenshot', SupportAttachmentOrigin::AUTO_SCREENSHOT);
         }
 
         // 3. The allowance counts what would be stored, so a re-encode that shrinks a photo costs less.
@@ -173,7 +161,7 @@ class StoreSupportAttachments
     /**
      * The prepared files that count against a daily allowance: the customer's uploads alone.
      *
-     * The app's screenshot is not the customer's choice and staff files are not the customer's at all.
+     * Staff files are not the customer's at all.
      *
      * @param  list<array{origin: SupportAttachmentOrigin, name: string, mime: string, extension: string,
      *                    contents: string, width: int|null, height: int|null}>  $prepared

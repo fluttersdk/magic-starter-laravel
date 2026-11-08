@@ -24,7 +24,6 @@ final class SupportRules
      * @var list<string>
      */
     public const CLIENT_CONTEXT_KEYS = [
-        'route',
         'app_version',
         'build_number',
         'platform',
@@ -132,6 +131,22 @@ final class SupportRules
     }
 
     /**
+     * Lets the page refs a signed-in customer's message carries through to the action, unchecked: they are
+     * optional, so a malformed value is never a refusal, and {@see SupportPageContext} keeps what is valid.
+     *
+     * @return array<string, list<string>>
+     */
+    public static function pageContext(): array
+    {
+        return [
+            'page_context' => [
+                'sometimes',
+                'nullable',
+            ],
+        ];
+    }
+
+    /**
      * Rules for the address a visitor's thread link is mailed to.
      *
      * @return list<string>
@@ -170,14 +185,16 @@ final class SupportRules
      *                               picker, a subject. Contact sales is filed under `sales` either way, so its
      *                               topic is not even read.
      * @param  bool  $attachments  Whether the door takes `attachments`, which make the body optional.
-     * @param  bool  $diagnostics  Whether the door takes the app's `screenshot` and `client_context`.
+     * @param  bool  $clientContext  Whether the door takes the app's `client_context`.
+     * @param  bool  $pageContext  Whether the door takes `page_context`; the signed-in door only.
      * @return array<string, list<mixed>>
      */
     public static function conversation(
         array $sources,
         bool $topicRequired = false,
         bool $attachments = false,
-        bool $diagnostics = false,
+        bool $clientContext = false,
+        bool $pageContext = false,
     ): array {
         $topicPresence = $topicRequired
             ? [
@@ -207,7 +224,8 @@ final class SupportRules
                 Rule::enum(SupportConversationSource::class)->only($sources),
             ],
             ...($attachments ? SupportAttachmentRules::attachments() : []),
-            ...($diagnostics ? [...SupportAttachmentRules::screenshot(), ...self::clientContext()] : []),
+            ...($clientContext ? self::clientContext() : []),
+            ...($pageContext ? self::pageContext() : []),
         ];
     }
 

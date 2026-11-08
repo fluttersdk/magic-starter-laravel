@@ -134,7 +134,6 @@ return [
     'attachments' => [
         'label' => 'Attachments',
         'untrusted_pdf' => 'Download PDF (untrusted)',
-        'auto_screenshot' => 'Screenshot captured by the app',
     ],
 
     /*
@@ -147,7 +146,6 @@ return [
         'activity' => 'Recent activity',
         'no_activity' => 'No recorded activity.',
         'client_keys' => [
-            'route' => 'Screen',
             'app_version' => 'App version',
             'build_number' => 'Build',
             'platform' => 'Platform',

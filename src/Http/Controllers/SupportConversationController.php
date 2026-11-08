@@ -11,6 +11,7 @@ use FlutterSdk\MagicStarter\Http\Requests\StoreSupportMessageRequest;
 use FlutterSdk\MagicStarter\Http\Resources\SupportConversationResource;
 use FlutterSdk\MagicStarter\Http\Resources\SupportMessageResource;
 use FlutterSdk\MagicStarter\Models\SupportConversation;
+use FlutterSdk\MagicStarter\Support\SupportPageContext;
 use FlutterSdk\MagicStarter\Support\TeamKey;
 use Illuminate\Database\Eloquent\ModelNotFoundException;
 use Illuminate\Http\JsonResponse;
@@ -82,11 +83,11 @@ class SupportConversationController
     }
 
     /**
-     * Add the caller's message, with any files, to one of their conversations.
+     * Add the caller's message, with any files and page refs, to one of their conversations.
      *
      * The files are checked and admitted before the message is posted, so a
      * refused file posts nothing and alerts nobody; the message and its files
-     * then commit together.
+     * then commit together. The page refs are sanitised here and never refuse a message.
      */
     public function storeMessage(StoreSupportMessageRequest $request, string $conversation): JsonResponse
     {
@@ -100,6 +101,7 @@ class SupportConversationController
                 $owned,
                 (string) $request->validated('body'),
                 $user,
+                pageContext: SupportPageContext::sanitise($request->validated('page_context')),
             );
             $attachments->store($message, $files, $user);
 

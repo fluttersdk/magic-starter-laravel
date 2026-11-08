@@ -133,7 +133,7 @@ class SupportArticleControllerTest extends TestCase
     public function test_the_suggestion_carries_plain_text_and_no_markdown_or_image(): void
     {
         $this->article(
-            'screenshots',
+            'dashboard-guide',
             'How do I read the dashboard?',
             body: "## Dashboard\n\nOpen the **dashboard** first.\n\n![Overview chart](https://cdn.example.com/chart.png)\n\n"
                 . 'See [the guide](https://example.com/guide) for more.',

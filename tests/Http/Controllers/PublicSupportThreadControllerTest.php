@@ -282,6 +282,31 @@ class PublicSupportThreadControllerTest extends TestCase
         }
     }
 
+    public function test_the_public_door_neither_reads_nor_stores_page_context(): void
+    {
+        config()->set('magic-starter.support.page_context.kinds', [
+            'monitor',
+        ]);
+        $refs = [
+            [
+                'kind' => 'monitor',
+                'id' => '42',
+            ],
+        ];
+        $this->submit([
+            'page_context' => $refs,
+        ])->assertCreated();
+        $token = SupportThreadToken::mint(SupportConversation::query()->sole());
+
+        $this->postJson("/support/public/thread/{$token}", [
+            'body' => 'Any update?',
+            'page_context' => $refs,
+        ])->assertCreated();
+
+        $this->assertSame(2, SupportMessage::query()->count());
+        $this->assertSame([], SupportMessage::query()->whereNotNull('meta')->pluck('meta')->all());
+    }
+
     public function test_bad_expired_and_revoked_tokens_answer_404(): void
     {
         [$conversation, $token] = $this->threadWithToken();

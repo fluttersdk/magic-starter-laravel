@@ -555,7 +555,6 @@ class SupportAttachmentTest extends TestCase
                 $this->upload('a.png', $this->png()),
                 $this->upload('b.png', $this->png()),
             ],
-            null,
             SupportAttachmentOrigin::STAFF,
         );
 
@@ -779,36 +778,33 @@ class SupportAttachmentTest extends TestCase
         $this->assertSame([], $this->storedFiles());
     }
 
-    public function test_the_auto_screenshot_does_not_count_against_the_daily_allowance(): void
+    public function test_a_staff_file_is_admitted_after_the_uploads_used_the_daily_allowance(): void
     {
-        config()->set('magic-starter.features', [
-            Features::support(),
-            Features::supportAttachments(),
-            Features::supportDiagnostics(),
-        ]);
         config()->set('magic-starter.support.attachments.daily_files', 1);
         $opener = $this->user('opener@example.com');
-
-        $this->actingAs($opener, 'sanctum');
-        $response = $this->postJson('/support/conversations', [
-            'topic' => 'technical',
-            'body' => 'Broken page.',
-            'screenshot' => $this->upload('screenshot.png', $this->png()),
-            'attachments' => [
-                $this->upload('chart.png', $this->png()),
-            ],
+        $conversation = $this->openWithFiles($opener, [
+            $this->upload('chart.png', $this->png()),
         ]);
 
-        $response->assertCreated();
-        $this->assertCount(2, $this->storedFiles());
-
-        // The one upload used the allowance; the screenshot did not.
-        $this->postJson("/support/conversations/{$response->json('data.id')}/messages", [
+        // The one upload used the allowance, so the next upload is refused.
+        $this->postJson("/support/conversations/{$conversation->getKey()}/messages", [
             'body' => 'One more.',
             'attachments' => [
                 $this->upload('more.png', $this->png()),
             ],
         ])->assertUnprocessable()->assertJsonValidationErrors('attachments');
+
+        // A staff file does not count against the allowance, so it still goes through.
+        $prepared = app(StoreSupportAttachments::class)->prepare(
+            $opener,
+            [
+                $this->upload('answer.png', $this->png()),
+            ],
+            SupportAttachmentOrigin::STAFF,
+        );
+
+        $this->assertCount(1, $prepared);
+        $this->assertCount(1, $this->storedFiles());
     }
 
     public function test_a_message_whose_files_fail_to_store_alerts_nobody(): void
@@ -841,12 +837,12 @@ class SupportAttachmentTest extends TestCase
         Event::assertNotDispatched(SupportConversationNeedsStaff::class);
     }
 
-    public function test_client_context_is_allowlisted_and_its_route_loses_query_and_fragment(): void
+    public function test_client_context_is_allowlisted_and_a_route_is_dropped_like_any_unknown_key(): void
     {
         config()->set('magic-starter.features', [
             Features::support(),
             Features::supportAttachments(),
-            Features::supportDiagnostics(),
+            Features::supportClientContext(),
         ]);
         $opener = $this->user('opener@example.com');
 
@@ -855,7 +851,7 @@ class SupportAttachmentTest extends TestCase
             'topic' => 'technical',
             'body' => 'Broken page.',
             'client_context' => [
-                'route' => '/monitors/42?token=secret&tab=checks#latest',
+                'route' => '/monitors/42?token=secret&tab=checks#latest' . str_repeat('a', 300),
                 'app_version' => '1.4.0',
                 'platform' => 'ios',
                 'password' => 'hunter2',
@@ -863,7 +859,6 @@ class SupportAttachmentTest extends TestCase
         ])->assertCreated();
 
         $this->assertSame([
-            'route' => '/monitors/42',
             'app_version' => '1.4.0',
             'platform' => 'ios',
         ], SupportConversation::query()->sole()->client_context);
@@ -877,7 +872,7 @@ class SupportAttachmentTest extends TestCase
         ])->assertUnprocessable()->assertJsonValidationErrors('client_context.locale');
     }
 
-    public function test_client_context_and_the_screenshot_are_ignored_while_diagnostics_is_off(): void
+    public function test_client_context_is_ignored_while_client_context_is_off(): void
     {
         $opener = $this->user('opener@example.com');
 
@@ -885,23 +880,20 @@ class SupportAttachmentTest extends TestCase
         $this->postJson('/support/conversations', [
             'topic' => 'technical',
             'body' => 'Broken page.',
-            'screenshot' => $this->upload('screenshot.png', $this->png()),
             'client_context' => [
-                'route' => '/monitors/42',
+                'platform' => 'ios',
             ],
         ])->assertCreated();
 
         $this->assertNull(SupportConversation::query()->sole()->client_context);
-        $this->assertSame(0, SupportMessageAttachment::query()->count());
-        $this->assertSame([], $this->storedFiles());
     }
 
-    public function test_the_screenshot_is_stored_as_an_auto_screenshot_while_diagnostics_is_on(): void
+    public function test_a_screenshot_part_is_ignored_and_only_the_uploads_are_stored(): void
     {
         config()->set('magic-starter.features', [
             Features::support(),
             Features::supportAttachments(),
-            Features::supportDiagnostics(),
+            Features::supportClientContext(),
         ]);
         $opener = $this->user('opener@example.com');
 
@@ -914,14 +906,13 @@ class SupportAttachmentTest extends TestCase
                 $this->upload('chart.png', $this->png()),
             ],
         ])->assertCreated()
-            ->assertJsonCount(2, 'data.messages.0.attachments');
+            ->assertJsonCount(1, 'data.messages.0.attachments');
 
-        $origins = SupportMessageAttachment::query()->pluck('origin', 'original_name')->map->value->sortKeys()->all();
-        $this->assertSame([
-            'chart.png' => 'upload',
-            'screenshot.png' => 'auto_screenshot',
-        ], $origins);
-        $this->assertCount(2, $this->storedFiles());
+        $this->assertSame(
+            ['chart.png'],
+            SupportMessageAttachment::query()->pluck('original_name')->all(),
+        );
+        $this->assertCount(1, $this->storedFiles());
     }
 
     public function test_the_public_thread_payload_carries_no_attachments(): void
