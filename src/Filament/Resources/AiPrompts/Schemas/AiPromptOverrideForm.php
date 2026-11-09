@@ -22,7 +22,7 @@ use FlutterSdk\MagicStarter\Support\AiPrompts\PromptRegistry;
 use FlutterSdk\MagicStarter\Support\AiPrompts\RequiredPhrases;
 use Illuminate\Database\Eloquent\Model;
 use SebastianBergmann\Diff\Differ;
-use SebastianBergmann\Diff\Output\UnifiedDiffOutputBuilder;
+use SebastianBergmann\Diff\Output\StrictUnifiedDiffOutputBuilder;
 
 /**
  * The prompt workbench form: pick a registered prompt, edit its body, and read what the code says.
@@ -187,9 +187,12 @@ class AiPromptOverrideForm
             return '';
         }
 
-        $header = '--- ' . __('magic-starter::admin_ai.prompts.diff.from')
-            . "\n+++ " . __('magic-starter::admin_ai.prompts.diff.to') . "\n";
+        // The strict builder is the one every supported sebastian/diff major ships; 9.0 removed the lenient one.
+        $builder = new StrictUnifiedDiffOutputBuilder([
+            'fromFile' => __('magic-starter::admin_ai.prompts.diff.from'),
+            'toFile' => __('magic-starter::admin_ai.prompts.diff.to'),
+        ]);
 
-        return (new Differ(new UnifiedDiffOutputBuilder($header, true)))->diff($default, $record->body);
+        return (new Differ($builder))->diff($default, $record->body);
     }
 }

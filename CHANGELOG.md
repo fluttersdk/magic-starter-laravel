@@ -4,6 +4,10 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Changed
+
+- **`sebastian/diff` is accepted up to 9.** The constraint is now `^6.0 || ^7.0 || ^8.0 || ^9.0`, so a host on PHPUnit 13, which requires `sebastian/diff` 9, can install the package. The prompt override page draws its diff with `StrictUnifiedDiffOutputBuilder`, the one builder every accepted major ships (9.0 removed `UnifiedDiffOutputBuilder`); the rendered `-` and `+` lines are the same. (`composer.json`, `src/Filament/Resources/AiPrompts/Schemas/AiPromptOverrideForm.php`)
+
 ## [0.0.63] - 2026-11-08
 
 ### Added
